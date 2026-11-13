@@ -191,22 +191,20 @@ impl Plan {
                 }
                 Step::Work { what, reads, writes, .. } => {
                     for r in reads {
-                        if let Some(w) = h.written.get(r) {
-                            if w != what {
+                        if let Some(w) = h.written.get(r)
+                            && w != what {
                                 return Err(format!("`{what}` reads {r}, written by `{w}`, with no barrier between"));
                             }
-                        }
                         let buffer = h.buffer(r, false);
                         h.read.insert((r.clone(), buffer), what.clone());
                     }
                     for x in writes {
                         let double = self.store(x).is_some_and(|s| s.double);
                         let buffer = h.buffer(x, double);
-                        if let Some(r) = h.read.get(&(x.clone(), buffer)) {
-                            if r != what {
+                        if let Some(r) = h.read.get(&(x.clone(), buffer))
+                            && r != what {
                                 return Err(format!("`{what}` rewrites {x} while `{r}` may still read it: no barrier between"));
                             }
-                        }
                         h.written.insert(x.clone(), what.clone());
                     }
                 }

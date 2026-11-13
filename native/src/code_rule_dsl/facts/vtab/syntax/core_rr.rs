@@ -160,7 +160,7 @@ impl Lines {
                 _ => None,
             };
             if let Some((text_end, next)) = end {
-                let text_end = if !python && text_end > 0 && b[text_end - 1] == b'\r' && text_end - 1 >= *starts.last().unwrap() as usize {
+                let text_end = if !python && text_end > 0 && b[text_end - 1] == b'\r' && text_end > *starts.last().unwrap() as usize {
                     text_end - 1
                 } else {
                     text_end
@@ -291,13 +291,12 @@ pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Li
             }
             out.prefix = Some(prefix);
         }
-        (Family::Ecma, "template_string") => {
-            if !text.contains("${") && text.len() >= 2 {
+        (Family::Ecma, "template_string")
+            if !text.contains("${") && text.len() >= 2 => {
                 let body = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::Ecma).cooked_template(&text[1..text.len() - 1]).unwrap_or_else(|| unescape(&text[1..text.len() - 1]));
                 out.value = Some((body.clone(), "string"));
                 out.str = Some(body);
             }
-        }
         (Family::Ecma, "number") => out.value = js_number(text).map(|v| (v, "number")),
         (Family::Python, "integer") => {
             let t = text.replace('_', "").to_lowercase();
@@ -916,7 +915,7 @@ impl CoreRows {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
                     .iter()
-                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .map(|name| m.get_env().get_match(name).and_then(&node_of).map(|c| (string(name) as i64, c)))
                     .collect();
                 let Some(captures) = captures else { continue };
                 self.ast_match.push([pat, n, empty, n]);

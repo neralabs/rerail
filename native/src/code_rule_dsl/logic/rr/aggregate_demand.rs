@@ -102,8 +102,7 @@ fn guards(
                 op,
                 r: right,
             } = l
-            {
-                if let Some(more) = front::cmp_binds(left, op, right, &bound) {
+                && let Some(more) = front::cmp_binds(left, op, right, &bound) {
                     // Constants can test/alias a key; do not pull an aggregate's result into demand.
                     let vars = l.vars();
                     if vars.is_empty() || !vars.is_disjoint(&connected) {
@@ -112,7 +111,6 @@ fn guards(
                         added.insert(i);
                     }
                 }
-            }
         }
         if added.len() == before {
             break;
@@ -267,12 +265,9 @@ pub fn optimize(program: &mut Program) {
             continue;
         }
         if closes {
-            match front::strata(&next) {
-                Ok((_, edges)) => {
-                    known = Some(edges);
-                    *program = next;
-                }
-                Err(_) => {}
+            if let Ok((_, edges)) = front::strata(&next) {
+                known = Some(edges);
+                *program = next;
             }
         } else {
             let edges = known.as_mut().expect("the edges of a stratified program");

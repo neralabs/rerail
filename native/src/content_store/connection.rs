@@ -357,12 +357,12 @@ pub(super) const CACHE_KIB: i64 = 1_024;
 fn trace_for_hazards(connection: &Connection) {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
             let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
             super::hazards::statement("store", &text);
         }
-        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+        if event == ffi::SQLITE_TRACE_PROFILE {
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
             let (text, ns) = unsafe { (std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())).to_string_lossy(), *x.cast::<i64>() as u64) };
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -372,7 +372,7 @@ fn trace_for_hazards(connection: &Connection) {
     }
     if super::hazards::on() {
         // SAFETY: the callback keeps no state; the connection is live.
-        unsafe { ffi::sqlite3_trace_v2(connection.handle(), (ffi::SQLITE_TRACE_PROFILE | ffi::SQLITE_TRACE_STMT) as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(connection.handle(), ffi::SQLITE_TRACE_PROFILE | ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut()) };
     }
 }
 

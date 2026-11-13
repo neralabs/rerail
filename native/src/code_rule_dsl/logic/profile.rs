@@ -865,7 +865,7 @@ fn violation(when: &str, what: &str) -> ! {
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
             let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
             strict_statement("sqlite", &text);
@@ -874,7 +874,7 @@ pub fn strict_on_every_connection() {
     }
     unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
         // SAFETY: SQLite calls this with a connection it has just opened.
-        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut()) };
         ffi::SQLITE_OK
     }
     if strict() {

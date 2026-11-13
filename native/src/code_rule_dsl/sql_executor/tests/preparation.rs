@@ -53,7 +53,7 @@ fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
         };
         e.apply_changes(patch.to_string(), None).unwrap();
     }
-    let names = scratch_names(&mut e);
+    let names = scratch_names(&e);
     assert!(!names.is_empty());
     assert!(names.iter().all(|name|e.versions.owns(name)));
     assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__rr_update_*'"),json!([[0]]));
@@ -67,7 +67,7 @@ fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
         let report: Value =
             serde_json::from_str(&e.apply_changes(patch.to_string(), None).unwrap()).unwrap();
         assert_eq!(report["scratch_tables_created"], 0, "{report}");
-        assert_eq!(scratch_names(&mut e), names);
+        assert_eq!(scratch_names(&e), names);
         assert_eq!(rows(&mut e, "PRAGMA temp.schema_version"), schema);
         for name in &names {
             assert_eq!(
@@ -84,7 +84,7 @@ fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
     );
     e.set_limits("{}".into()).unwrap();
     assert_eq!(rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1"), old);
-    assert_eq!(scratch_names(&mut e), names);
+    assert_eq!(scratch_names(&e), names);
     for name in &names {
         assert_eq!(
             rows(&mut e, &format!("SELECT count(*) FROM {name}")),
@@ -94,5 +94,5 @@ fn warm_edits_reuse_scratch_roots_and_failures_preserve_empty_pool() {
     e.apply_changes(json!([{"name":"edge","delete":[[1,2]]}]).to_string(), None)
         .unwrap();
     e.reset().unwrap();
-    assert!(scratch_names(&mut e).is_empty());
+    assert!(scratch_names(&e).is_empty());
 }

@@ -96,12 +96,11 @@ fn py_families_equal_s_producers() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "py") {
-                if let Ok(source) = std::fs::read_to_string(&path) {
+            } else if path.extension().is_some_and(|e| e == "py")
+                && let Ok(source) = std::fs::read_to_string(&path) {
                     calls += check(&source, &path.display().to_string());
                     files += 1;
                 }
-            }
         }
     }
     assert!(files > 100 && calls > 1000, "{files} files, {calls} calls");

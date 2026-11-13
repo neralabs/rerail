@@ -912,8 +912,8 @@ impl PackedDemand {
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
             // The roots as micro walks' records where every terminal program is one (decision
             // 0024 §3), else (or where a walk overflows) the backend's execution.
-            if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
-                if let Some(walked) = self.walked(range.clone(), programs.clone()) {
+            if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none()
+                && let Some(walked) = self.walked(range.clone(), programs.clone()) {
                     if std::env::var_os("RERAIL_ROOTS_CHECK").is_some() {
                         let packed = execute_planned(
                             self.backend,
@@ -927,7 +927,6 @@ impl PackedDemand {
                     }
                     return Ok((range.start, programs.start, walked));
                 }
-            }
             execute_planned(
                 self.backend,
                 self.plan_of(programs.clone()),

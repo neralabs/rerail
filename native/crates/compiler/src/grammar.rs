@@ -1533,8 +1533,8 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
         let here = order[at];
         for a in arms.iter().filter(|a| usize::from(a.0) == here) {
             let t = usize::from(a.2);
-            if !number.contains_key(&class[t]) {
-                number.insert(class[t], order.len() as u16);
+            if let std::collections::hash_map::Entry::Vacant(e) = number.entry(class[t]) {
+                e.insert(order.len() as u16);
                 order.push(t);
             }
         }

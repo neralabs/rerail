@@ -505,7 +505,7 @@ pub mod tests {
         let refuse = rerail_compiler::stream_ir::REFUSE;
         let flag = rerail_compiler::program::FLAG;
         // Where a `RETURN` goes: the places after each `PUSH`'s target, by its mode.
-        let pushes: Vec<usize> = words.iter().filter_map(|&w| (split(w).0 == PUSH).then(|| usize::from(split(w).2))).collect();
+        let pushes: Vec<usize> = words.iter().filter(|&&w| split(w).0 == PUSH).map(|&w| usize::from(split(w).2)).collect();
         let next = |pc: usize| -> Vec<usize> {
             let (op, mode, x) = split(words[pc]);
             match op {
@@ -582,11 +582,10 @@ pub mod tests {
         for (i, words_of) in code.iter().enumerate() {
             for &pc in words_of {
                 for n in next(pc) {
-                    if let Some(&j) = index.get(&n) {
-                        if j != i {
+                    if let Some(&j) = index.get(&n)
+                        && j != i {
                             *fixed.entry((i.min(j), i.max(j))).or_default() += 1;
                         }
-                    }
                 }
             }
         }

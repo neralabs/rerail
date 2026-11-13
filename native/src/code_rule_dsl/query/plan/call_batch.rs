@@ -218,8 +218,8 @@ pub(crate) fn collect<'t>(
             emit(*doc_id, &call, &mut observed, &mut observe);
             emit(*doc_id, &callee, &mut observed, &mut observe);
             emit(*doc_id, &report, &mut observed, &mut observe);
-            if report.kind_id() == kinds.attribute {
-                if let (Some(object), Some(name)) =
+            if report.kind_id() == kinds.attribute
+                && let (Some(object), Some(name)) =
                     (report.field("object"), report.field("attribute"))
                 {
                     emit(*doc_id, &object, &mut observed, &mut observe);
@@ -234,7 +234,6 @@ pub(crate) fn collect<'t>(
                             .into_owned(),
                     });
                 }
-            }
             out.calls.push(CallSite {
                 call: NodeRef::of(*doc_id, &call),
                 callee: NodeRef::of(*doc_id, &callee),
@@ -319,7 +318,7 @@ pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> Argum
                 let mut starred = false;
                 for (ordinal, argument) in arguments
                     .children()
-                    .filter(|node| named(node, &kinds))
+                    .filter(|node| named(node, kinds))
                     .enumerate()
                 {
                     let kind = argument.kind_id();
@@ -340,7 +339,7 @@ pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> Argum
                     } else if spread != Spread::None {
                         argument
                             .children()
-                            .find(|child| named(child, &kinds))
+                            .find(|child| named(child, kinds))
                             .unwrap_or_else(|| argument.clone())
                     } else {
                         argument.clone()

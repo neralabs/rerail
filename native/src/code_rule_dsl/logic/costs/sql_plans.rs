@@ -307,8 +307,8 @@ pub fn insert(
             json
         ])?);
     }
-    if let (Some(first), Some(last)) = (ids.first(), ids.last()) {
-        if (first - 1) / QUEUE_LIMIT as i64 != last / QUEUE_LIMIT as i64 {
+    if let (Some(first), Some(last)) = (ids.first(), ids.last())
+        && (first - 1) / QUEUE_LIMIT as i64 != last / QUEUE_LIMIT as i64 {
             tx.execute(
                 "DELETE FROM sql_plan_observations
                  WHERE machine=?1 AND threads=?2 AND profile=?3 AND version=?4 AND id < (
@@ -319,7 +319,6 @@ pub fn insert(
                 params![machine, threads, PROFILE, VERSION],
             )?;
         }
-    }
     Ok(ids)
 }
 

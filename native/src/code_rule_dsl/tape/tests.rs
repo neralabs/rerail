@@ -662,7 +662,7 @@ fn direct_field_ids_and_navigation_match_native() {
         let held = |node: &tree_sitter::Node<'_>| ids.contains(&node.id());
         for (a, b) in native_nodes
             .iter()
-            .map(|node| node.get_inner_node().clone())
+            .map(|node| node.get_inner_node())
             .zip(right.root().get_inner_node().dfs())
         {
             for id in [
@@ -1806,8 +1806,8 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
             );
         }
         // The comparison is not vacuous: one code's memberships dropped makes it fail.
-        if !checked_detects {
-            if let Some(member) = image.codes.iter().position(|code| code.class_count > 0) {
+        if !checked_detects
+            && let Some(member) = image.codes.iter().position(|code| code.class_count > 0) {
                 let mut altered = image.clone();
                 let code = &mut altered.codes[member];
                 code.class_count -= 1;
@@ -1816,7 +1816,6 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
                 assert_ne!(restored.transducer_supertypes().collect::<Vec<_>>(), expected, "{path}: altered memberships go unnoticed");
                 checked_detects = true;
             }
-        }
         nodes += native_nodes.len();
         memberships += expected.len();
         documents += 1;

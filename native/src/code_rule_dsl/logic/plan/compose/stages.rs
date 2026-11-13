@@ -43,13 +43,10 @@ fn simplify(prog: &mut Program, db: &Connection, inputs: &mut Inputs, resident: 
             let rel=scc.iter().next().unwrap();
             if prog.inputs.contains(rel) || prog.natives.contains_key(rel) || prog.facts.get(rel).is_some_and(|f|!f.is_empty()) { continue; }
             let rules: Vec<_> = prog.rules.iter().filter(|r|r.head.rel==*rel).collect();
-            if let [rule] = rules.as_slice() {
-                if let Some((old,gone)) = survivors(rule,&scc,&native) {
-                    if empty.contains(&gone) {
-                        if let Some(held)=component::held(db,&old).filter(|h|h.none_stored()) { quiet.push((rel.clone(),held)); }
-                    }
-                }
-            }
+            if let [rule] = rules.as_slice()
+                && let Some((old,gone)) = survivors(rule,&scc,&native)
+                    && empty.contains(&gone)
+                        && let Some(held)=component::held(db,&old).filter(|h|h.none_stored()) { quiet.push((rel.clone(),held)); }
         }
         for (rel,held) in quiet {
             component::hold_as(db,&rel,held);

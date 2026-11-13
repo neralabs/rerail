@@ -145,11 +145,10 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
         let c = comp[rel.as_str()];
         let (mut reach, mut todo) = (BTreeSet::new(), vec![rel.clone()]);
         while let Some(v) = todo.pop() {
-            if comp.get(v.as_str()) == Some(&c) || v.starts_with("ask_") {
-                if reach.insert(v.clone()) {
+            if (comp.get(v.as_str()) == Some(&c) || v.starts_with("ask_"))
+                && reach.insert(v.clone()) {
                     todo.extend(reads.get(&v).into_iter().flatten().cloned());
                 }
-            }
         }
         let deps: Vec<String> = rules
             .iter()

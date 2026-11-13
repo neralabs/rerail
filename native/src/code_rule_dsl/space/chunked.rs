@@ -1465,8 +1465,8 @@ pub mod tests {
                     at = end + 1 + g.next() % 30_000;
                 }
             } else {
-                let density = if shape % 3 == 0 { 50 } else { 2 };
-                for p in (0..span).filter(|_| g.next() % density == 0) {
+                let density = if shape.is_multiple_of(3) { 50 } else { 2 };
+                for p in (0..span).filter(|_| g.next().is_multiple_of(density)) {
                     model.insert(base + p);
                     b.node(base + p);
                 }

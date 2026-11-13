@@ -2983,6 +2983,61 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     }
 }
 
+/// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
+/// (`demand::driver::catalog::sql_backend`), which only tests run.
+#[cfg(test)]
+fn producer_facts<'tree, D: ast_grep_core::Doc>(
+    source: &crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource,
+    node: ast_grep_core::Node<'tree, D>,
+    env: &ast_grep_core::meta_var::MetaVarEnv<'tree, D>,
+) -> crate::code_rule_dsl::transducer::semantic_facts::Facts<'tree, D> {
+    use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
+    use crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource;
+    let mut facts = Facts::new();
+    match source {
+        SemanticFactSource::Binding { test, request } => {
+            test.facts(node, env, &mut facts, *request)
+        }
+        SemanticFactSource::Binds { test, request } => test.facts(node, env, &mut facts, *request),
+        SemanticFactSource::FormatArgs(test) => test.facts(env, &mut facts),
+        SemanticFactSource::Arguments(arguments) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if arguments.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+                for (position, (name, _)) in arguments.bind.iter().enumerate() {
+                    if let Some(target) = trial.get_match(name) {
+                        facts.push(
+                            slot::ARGUMENT,
+                            position as i64,
+                            1,
+                            Target::Node(target.clone()),
+                        );
+                    }
+                }
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Resolves(resolves) => {
+            if resolves.holds(&node) {
+                facts.gate(1, Target::None);
+            }
+        }
+        SemanticFactSource::Layout(layout) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if layout.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Calls(_) => {}
+    }
+    facts
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3316,59 +3371,4 @@ mod tests {
         assert_eq!(repeated, 1);
         assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
     }
-}
-
-/// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
-/// (`demand::driver::catalog::sql_backend`), which only tests run.
-#[cfg(test)]
-fn producer_facts<'tree, D: ast_grep_core::Doc>(
-    source: &crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource,
-    node: ast_grep_core::Node<'tree, D>,
-    env: &ast_grep_core::meta_var::MetaVarEnv<'tree, D>,
-) -> crate::code_rule_dsl::transducer::semantic_facts::Facts<'tree, D> {
-    use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
-    use crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource;
-    let mut facts = Facts::new();
-    match source {
-        SemanticFactSource::Binding { test, request } => {
-            test.facts(node, env, &mut facts, *request)
-        }
-        SemanticFactSource::Binds { test, request } => test.facts(node, env, &mut facts, *request),
-        SemanticFactSource::FormatArgs(test) => test.facts(env, &mut facts),
-        SemanticFactSource::Arguments(arguments) => {
-            let mut trial = std::borrow::Cow::Borrowed(env);
-            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
-            if arguments.match_node(node, &mut trial).is_some() {
-                facts.gate(1, Target::None);
-                for (position, (name, _)) in arguments.bind.iter().enumerate() {
-                    if let Some(target) = trial.get_match(name) {
-                        facts.push(
-                            slot::ARGUMENT,
-                            position as i64,
-                            1,
-                            Target::Node(target.clone()),
-                        );
-                    }
-                }
-            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
-                facts.gate(-1, Target::None);
-            }
-        }
-        SemanticFactSource::Resolves(resolves) => {
-            if resolves.holds(&node) {
-                facts.gate(1, Target::None);
-            }
-        }
-        SemanticFactSource::Layout(layout) => {
-            let mut trial = std::borrow::Cow::Borrowed(env);
-            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
-            if layout.match_node(node, &mut trial).is_some() {
-                facts.gate(1, Target::None);
-            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
-                facts.gate(-1, Target::None);
-            }
-        }
-        SemanticFactSource::Calls(_) => {}
-    }
-    facts
 }

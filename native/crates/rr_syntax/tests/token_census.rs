@@ -47,11 +47,10 @@ fn token_census() {
         nodes += t.len();
         let mut children: Vec<Vec<u32>> = vec![Vec::new(); t.len()];
         for (i, n) in t.iter().enumerate() {
-            if let Some(p) = n.parent {
-                if !n.extra {
+            if let Some(p) = n.parent
+                && !n.extra {
                     children[p as usize].push(i as u32);
                 }
-            }
         }
         for (p, kids) in children.iter().enumerate() {
             if kids.is_empty() || t[p].is_error() {

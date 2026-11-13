@@ -584,6 +584,28 @@ fn binary(operator: &str, left: Type, right: Type) -> Type {
     }
 }
 
+/// Python's format styles (`FormatPreparer`): `brace` (`str.format`) or `%`.
+pub struct Python {
+    brace: bool,
+}
+
+/// `str.format`'s preparer.
+pub const BRACE: Python = Python { brace: true };
+/// `%`'s preparer.
+pub const PERCENT: Python = Python { brace: false };
+
+impl super::FormatPreparer for Python {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        prepare(format, env, self.brace)
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        prepare(format, env, self.brace)
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        prepare(format, env, self.brace)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -636,27 +658,5 @@ pub mod tests {
             type_of("1 if c else 'a'"),
             Type::Union([Atom::String, Atom::Integer].into_iter().collect())
         );
-    }
-}
-
-/// Python's format styles (`FormatPreparer`): `brace` (`str.format`) or `%`.
-pub struct Python {
-    brace: bool,
-}
-
-/// `str.format`'s preparer.
-pub const BRACE: Python = Python { brace: true };
-/// `%`'s preparer.
-pub const PERCENT: Python = Python { brace: false };
-
-impl super::FormatPreparer for Python {
-    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
-        prepare(format, env, self.brace)
-    }
-    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
-        prepare(format, env, self.brace)
-    }
-    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
-        prepare(format, env, self.brace)
     }
 }

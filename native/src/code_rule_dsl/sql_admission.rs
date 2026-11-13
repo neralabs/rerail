@@ -174,7 +174,7 @@ impl Ledger {
         if reserved || recovery && s.stopped {
             return s.used + s.reserved <= limit;
         }
-        if !s.stopped && s.used + s.reserved + s.recovery + 1 <= limit {
+        if !s.stopped && s.used + s.reserved + s.recovery < limit {
             true
         } else {
             s.stopped = true;

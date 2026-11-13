@@ -115,11 +115,10 @@ impl operator::Operator {
             return Ok(false);
         }
         for (step, query) in emitted.program.steps.iter().zip(&emitted.queries) {
-            if !empty.contains(&step.output) {
-                if let Some(query) = query {
+            if !empty.contains(&step.output)
+                && let Some(query) = query {
                     protected.extend(query.reads().iter().filter_map(|r| read(r)));
                 }
-            }
         }
         for name in &empty {
             if let Some(state) = self.run.reductions.as_ref().and_then(|s| s.get(name)) {

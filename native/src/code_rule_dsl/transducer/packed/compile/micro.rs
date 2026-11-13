@@ -438,7 +438,7 @@ impl Micro {
         };
         let mut steps = 0_u32;
         let mut fired = 0_u64;
-        let limit = self::steps(tape.transducer_len() as usize, self.words.len());
+        let limit = self::steps(tape.transducer_len(), self.words.len());
         loop {
             // The path from `state` until it ends.
             loop {

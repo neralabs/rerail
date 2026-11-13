@@ -215,7 +215,7 @@ impl Interner {
     /// held twice is refused as corrupt.
     fn add_segment(&mut self, first: Sym, ends: &[u8], bytes: &[u8]) -> StoreResult<()> {
         let corrupt = |what: &str| StoreError::Corrupt(format!("atom segment {first}: {what}"));
-        if ends.len() % 4 != 0 {
+        if !ends.len().is_multiple_of(4) {
             return Err(corrupt("its end offsets are not u32s"));
         }
         let n = ends.len() / 4;

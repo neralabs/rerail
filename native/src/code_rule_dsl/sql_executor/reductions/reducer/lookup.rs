@@ -34,7 +34,7 @@ impl Reducer {
                             // A missing left-join row represents an empty bag. Do not
                             // pass NULL to the exact integer range-check function.
                             E::Call {
-                                name: "coalesce".into(),
+                                name: "coalesce",
                                 arguments: vec![projected, integer(0)],
                             }
                         } else {

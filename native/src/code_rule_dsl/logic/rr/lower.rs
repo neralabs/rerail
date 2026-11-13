@@ -1730,7 +1730,7 @@ impl Lowerer {
         let [c, f, r, o, STerm::Var(input), STerm::Var(targets), STerm::Str(context), STerm::Str(member)] = args.as_slice() else { return false };
         let cols = [c, f, r, o];
         let distinct: BTreeSet<_> = cols.iter().filter_map(|t| if let STerm::Var(x) = t { Some(x) } else { None }).collect();
-        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols.into_iter()) || self.prog.natives.contains_key(&h.rel) {
+        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols) || self.prog.natives.contains_key(&h.rel) {
             return false;
         }
         if !crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS.contains(&context.as_str()) {
@@ -2257,7 +2257,7 @@ impl Lowerer {
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
                 if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
-                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                    if self.prog.decls.get(name).is_none_or(|cols| cols.len() != 1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {

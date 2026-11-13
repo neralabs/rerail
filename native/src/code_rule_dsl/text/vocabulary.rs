@@ -371,7 +371,7 @@ pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreR
         let mut register = db.prepare_cached("INSERT INTO text_matcher(lang,key,plan,upto) VALUES (?1,?2,?3,?4) ON CONFLICT(lang,key) DO UPDATE SET upto=excluded.upto")?;
         // Keys group by where they start reading: a new key reads every term; a known key the log
         // past its place (terms still in the vocabulary).
-        let mut starts = upto.iter().copied().collect::<Vec<_>>();
+        let mut starts = upto.to_vec();
         starts.sort_unstable();
         starts.dedup();
         for from in starts {

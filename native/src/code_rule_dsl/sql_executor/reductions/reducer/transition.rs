@@ -135,11 +135,10 @@ pub fn prepare(
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
 ) -> Result<Prepared> {
-    if r.combined.as_ref().is_some_and(|s| s.owner) && r.pool_consumers > 1 {
-        if let Some(result) = super::super::pool::recalled(w, &r.groups)? {
+    if r.combined.as_ref().is_some_and(|s| s.owner) && r.pool_consumers > 1
+        && let Some(result) = super::super::pool::recalled(w, &r.groups)? {
             return Ok(Prepared::Reused(result));
         }
-    }
     let Some(before) = cursor(r, w, changes) else {
         return Ok(Prepared::Evaluate(None));
     };

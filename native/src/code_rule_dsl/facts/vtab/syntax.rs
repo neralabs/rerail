@@ -487,7 +487,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
                         _ => {
-                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel).into());
+                            wide = Some(format!("{}, reading text({v}, …)", rule.head.rel));
                             read = None
                         }
                     },
@@ -604,12 +604,9 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         let mut kinds: Vec<(String, String)> = Vec::new();
         let mut grounded: BTreeSet<String> = BTreeSet::new();
         for l in &r.body {
-            match l {
-                Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => {
-                    edges.push((a.clone(), b.clone()));
-                    edges.push((b.clone(), a.clone()));
-                }
-                _ => {}
+            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = l {
+                edges.push((a.clone(), b.clone()));
+                edges.push((b.clone(), a.clone()));
             }
             let Some(a) = l.atom().filter(|a| !a.neg) else { continue };
             let rel = a.rel.as_str();
@@ -3331,11 +3328,10 @@ pub fn with_matchers(
         relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
     out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
-    if !matchers.is_empty() {
-        if let Some(wave) = &matchers.0 {
+    if !matchers.is_empty()
+        && let Some(wave) = &matchers.0 {
             out.extend(wave.matched(&batch, &tapes, binding, &store.atoms_handle())?);
         }
-    }
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());

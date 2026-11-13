@@ -911,11 +911,10 @@ fn build(f: &mut Facts) -> Built {
                     if f.kind[p as usize] == k_ident && f.text[p as usize] != NONE {
                         bound.insert((v, f.text[p as usize]));
                     }
-                    if let Some(&i) = f.kids(p).first() {
-                        if f.kind[i as usize] == k_ident && f.text[i as usize] != NONE {
+                    if let Some(&i) = f.kids(p).first()
+                        && f.kind[i as usize] == k_ident && f.text[i as usize] != NONE {
                             bound.insert((v, f.text[i as usize]));
                         }
-                    }
                 }
             }
         }
@@ -990,12 +989,11 @@ fn build(f: &mut Facts) -> Built {
         } else if kd == k_ident {
             cv_seed[vi] = Cv::Top;
         }
-        if kd == k_paren {
-            if let Some(&c) = f.kids(v).first() {
+        if kd == k_paren
+            && let Some(&c) = f.kids(v).first() {
                 ty_edges.push((c, v));
                 cv_edges.push((c, v));
             }
-        }
         if kd == k_call {
             for fnode in f.field(v, f_function).collect::<Vec<_>>() {
                 let fi = fnode as usize;
@@ -1025,11 +1023,10 @@ fn build(f: &mut Facts) -> Built {
         }
         if kd == k_ret {
             let fs = anc[vi];
-            if fs != NONE && f.kind[fs as usize] == k_fn {
-                if let Some(&e) = f.kids(v).first() {
+            if fs != NONE && f.kind[fs as usize] == k_fn
+                && let Some(&e) = f.kids(v).first() {
                     ty_edges.push((e, retslot[fs as usize]));
                 }
-            }
         }
         // W4b seeds and binary transfers.
         let is_const_kind = kd == k_int || kd == k_ident || kd == k_binop || kd == k_paren;
@@ -1096,11 +1093,10 @@ fn cv_rows(f: &Facts, vals: &[Cv]) -> Vec<String> {
     let (ki, kb) = (f.sy.get("identifier"), f.sy.get("binary_operator"));
     let mut out = Vec::new();
     for v in 0..f.n {
-        if let Cv::C(x) = vals[v] {
-            if f.kind[v] == ki || f.kind[v] == kb {
+        if let Cv::C(x) = vals[v]
+            && (f.kind[v] == ki || f.kind[v] == kb) {
                 out.push(format!("{v}\t{x}"));
             }
-        }
     }
     out.sort();
     out

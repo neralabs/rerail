@@ -505,7 +505,7 @@ impl ContentStore {
     /// The store's current generation (collection advances it): a source created before it and
     /// held by nothing is collectable.
     pub fn facts_generation(&self) -> StoreResult<i64> {
-        self.immediate_transaction(|transaction| generation(transaction))
+        self.immediate_transaction(generation)
     }
 
     fn plan_set(
@@ -666,7 +666,7 @@ fn decode(codec: i64, raw_length: i64, frame: &[u8]) -> StoreResult<Vec<u8>> {
     if codec != CODEC_ZSTD {
         return Err(StoreError::Corrupt(format!("unsupported facts memo codec {codec}")));
     }
-    let bytes = super::decompress(&frame, 0)?;
+    let bytes = super::decompress(frame, 0)?;
     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
         return Err(StoreError::Corrupt(
             "facts memo length does not match metadata".to_owned(),

@@ -199,11 +199,10 @@ fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan:
     let mut into = 1.0;
     for step in &plan.steps {
         let rel = step.literal.split('(').next().unwrap_or("").trim();
-        if super::front::is_transduced(rel) && (step.access.starts_with("lookup on (n") || step.access.starts_with("membership on (n")) {
-            if let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(&db, rel) {
+        if super::front::is_transduced(rel) && (step.access.starts_with("lookup on (n") || step.access.starts_with("membership on (n"))
+            && let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(&db, rel) {
                 source.expect_lookups(0, into);
             }
-        }
         into = step.rows;
     }
 }
@@ -1408,7 +1407,7 @@ impl Model {
         PLANS.with(|p| {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
-                p.lock().insert(key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None));
+                p.lock().insert(key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None));
             }
         });
         remember(&key, &got);
@@ -1787,9 +1786,8 @@ impl Model {
         };
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
-            if first.is_some_and(|f| body[f].atom().is_some_and(|d| std::ptr::eq(d, a))) {
-                if let Some(n) = delta_size && n.max(0.01) < rows { rows = n.max(0.01); basis.set("delta size"); }
-            }
+            if first.is_some_and(|f| body[f].atom().is_some_and(|d| std::ptr::eq(d, a)))
+                && let Some(n) = delta_size && n.max(0.01) < rows { rows = n.max(0.01); basis.set("delta size"); }
             // A cross product never filters a binding: each one reads every matching row, and a relation empty
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
@@ -2214,11 +2212,10 @@ impl Model {
         };
         let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r.split(',').any(|name| name == head.rel));
         for mask in (0..cells.len() as u64).filter(|&m| cells[m as usize].is_some()) {
-            if mask == full_mask || (explain && mask.count_ones() == 2) {
-                if let Some(b) = rebuild(mask) {
+            if (mask == full_mask || (explain && mask.count_ones() == 2))
+                && let Some(b) = rebuild(mask) {
                     best_of.insert(mask, b);
                 }
-            }
         }
         subsets_reached = cells.iter().filter(|c| c.is_some()).count() as u64;
         }
@@ -5369,7 +5366,7 @@ impl<'a> Run<'a, '_> {
         // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
         let first_missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> Option<usize> {
             let bare = Atom { rel: h.rel.clone(), args: Vec::new(), neg: false, gated: false };
-            (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
+            (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, native_rels).is_none())
         };
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
             match first_missing(this, h, order, at) {
@@ -5398,7 +5395,7 @@ impl<'a> Run<'a, '_> {
             if let Some(x) = &x {
                 shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
             }
-            let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
+            let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                     self.materialize(&reads)?;
@@ -5472,7 +5469,7 @@ impl<'a> Run<'a, '_> {
                     shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
+                let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, native_rels) else {
                     if answering {
                         let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
@@ -5503,7 +5500,7 @@ impl<'a> Run<'a, '_> {
                 }
                 let whole = whole_plan.as_ref().expect("planned");
                 let wspec = if whole[0].at != ai && !small_batches(&a.rel) {
-                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, whole, None, &ri, scc, &native_rels)).clone()
+                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, whole, None, &ri, scc, native_rels)).clone()
                 } else {
                     None
                 };
@@ -5655,7 +5652,7 @@ impl<'a> Run<'a, '_> {
             }
             // Requests, where they are posted (decision 0114 §3): the stratum suspends with its tickets.
             if f.last() == Some(&"2") && self.asking.is_some() && self.model.inputs.atoms.is_some() {
-                let asked = super::native::component::pending(&self.db, &name)?;
+                let asked = super::native::component::pending(self.db, &name)?;
                 let asking = self.asking.as_deref_mut().expect("checked");
                 let tickets = asked.iter().map(|(rel, rows)| asking.post(rel, rows)).collect::<Result<Vec<u64>>>()?;
                 ANSWER_CALLS.fetch_add(tickets.len() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -5722,7 +5719,7 @@ impl<'a> Run<'a, '_> {
                         None => {
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -5754,7 +5751,7 @@ impl<'a> Run<'a, '_> {
                 e.2 = x.map(|x| delta_sources(x, &new, at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
-                    .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
+                    .whole_join_spec(&r.head, &new, Some(at), &ri, scc, native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
                 self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
                 // The counts so far are the old order's: kept with it, and the new order's counted from nothing. Summed
@@ -7005,7 +7002,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         Arc::make_mut(&mut run.views).insert(rel);
     }
     for name in old_views.keys() {
-        db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(&name)))?;
+        db.execute_batch(&format!("DROP VIEW IF EXISTS temp.{}", crate::code_rule_dsl::logic::sql::ident(name)))?;
     }
     // The last run's views read in place are not this one's.
     crate::code_rule_dsl::facts::vtab::forget_views(db);
@@ -7943,7 +7940,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
     super::lanes::prof::level(None);
-    if let Some(ks) = strata_kept.as_deref_mut() {
+    if let Some(ks) = strata_kept {
         for k in std::mem::take(&mut evaluated) {
             let reads = with_answers(prog, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
             kept_strata_ran(ks, db, &run, &sccs[k], reads.as_ref(), &mut fresh);

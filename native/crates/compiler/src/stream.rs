@@ -88,7 +88,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for s in program.switches.iter().filter(|s| !s.words.is_empty()) {
         let in_order = s.words.windows(2).all(|w| w[0].0 < w[1].0);
         let named = s.words.iter().all(|&(w, _)| usize::from(w) < program.strings.len());
-        if s.offset != 0 || !in_order || !named || !records.is_some_and(|r| r.words == program.strings) {
+        if s.offset != 0 || !in_order || !named || records.is_none_or(|r| r.words != program.strings) {
             return Err(Error::InvalidTarget(0));
         }
     }

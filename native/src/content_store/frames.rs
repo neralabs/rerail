@@ -542,6 +542,11 @@ fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
     out
 }
 
+/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
+pub fn forget_snapshot(path: &str) {
+    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,9 +890,4 @@ mod tests {
         assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-/// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
-pub fn forget_snapshot(path: &str) {
-    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

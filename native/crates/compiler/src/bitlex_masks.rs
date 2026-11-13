@@ -1818,7 +1818,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The rows each state can meet, by the modes its tokens are read in (`row_modes`): tier 2
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin
     // with one byte. A first lowering finds them; their masks follow the marks'.
-    let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
+    let meets = row_modes(low, token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
     let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules)?.tested;

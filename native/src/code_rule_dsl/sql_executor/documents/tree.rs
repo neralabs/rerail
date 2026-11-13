@@ -227,7 +227,7 @@ pub mod tests {
         for step in 0..1500 {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             let key = (seed % 137) as i32;
-            let value = if seed % 5 == 0 {
+            let value = if seed.is_multiple_of(5) {
                 None
             } else {
                 Some(Number(step))

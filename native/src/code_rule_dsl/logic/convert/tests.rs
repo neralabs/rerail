@@ -1946,12 +1946,9 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
         extra.sort();
         for c in extra {
             // Repository inputs are read (`corpus::inputs`), `input_error` rows included.
-            match hand_written(&c.replace('-', "_"), false) {
-                Some(t) => {
-                    println!("HAND {c} (no converted rule)");
-                    texts.push(t);
-                }
-                None => {}
+            if let Some(t) = hand_written(&c.replace('-', "_"), false) {
+                println!("HAND {c} (no converted rule)");
+                texts.push(t);
             }
         }
     }

@@ -410,7 +410,7 @@ impl ContentStore {
                                 *store.holder.lock() = holder.clone();
                                 bytes += *b;
                                 let c0 = thread_cpu();
-                                let _span = super::hazards::span(*what);
+                                let _span = super::hazards::span(what);
                                 outcomes.push(
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                         .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),

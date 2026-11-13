@@ -505,11 +505,10 @@ impl PlaneFormulas {
     fn push(&mut self, inst: BlockInst) -> u16 {
         // A carry is its group's own value, never another's, however alike their starts.
         let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
-        if pure {
-            if let Some(&i) = self.shared.get(&inst) {
+        if pure
+            && let Some(&i) = self.shared.get(&inst) {
                 return i;
             }
-        }
         let i = self.insts.len() as u16;
         self.insts.push(inst);
         if pure {

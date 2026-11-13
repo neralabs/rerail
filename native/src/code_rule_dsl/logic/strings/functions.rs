@@ -539,24 +539,6 @@ pub(in crate::code_rule_dsl) fn substr(s: &str, i: i64, n: i64) -> String {
     chars[a as usize..b as usize].iter().collect()
 }
 
-#[cfg(test)]
-pub mod substr_tests {
-    /// `substr` gives what SQLite's `substr(s, i + 1, n)` does, over the corners: starts before, at and past the
-    /// text, negative and zero lengths, and characters of more than one byte.
-    #[test]
-    fn substr_is_sqlites() {
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        for s in ["", "a", "a.b.c", "pkg.mod.name", "é.ü.x"] {
-            for i in -7..8 {
-                for n in -7..8 {
-                    let want: String = db.query_row("SELECT substr(?1, ?2 + 1, ?3)", rusqlite::params![s, i, n], |r| r.get(0)).unwrap();
-                    assert_eq!(super::substr(s, i, n), want, "substr({s:?}, {i}, {n})");
-                }
-            }
-        }
-    }
-}
-
 pub fn slice(s: &str, start: i64, end: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len() as i64;
@@ -634,4 +616,22 @@ pub fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+pub mod substr_tests {
+    /// `substr` gives what SQLite's `substr(s, i + 1, n)` does, over the corners: starts before, at and past the
+    /// text, negative and zero lengths, and characters of more than one byte.
+    #[test]
+    fn substr_is_sqlites() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for s in ["", "a", "a.b.c", "pkg.mod.name", "é.ü.x"] {
+            for i in -7..8 {
+                for n in -7..8 {
+                    let want: String = db.query_row("SELECT substr(?1, ?2 + 1, ?3)", rusqlite::params![s, i, n], |r| r.get(0)).unwrap();
+                    assert_eq!(super::substr(s, i, n), want, "substr({s:?}, {i}, {n})");
+                }
+            }
+        }
+    }
 }

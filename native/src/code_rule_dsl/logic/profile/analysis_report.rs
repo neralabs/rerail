@@ -56,8 +56,8 @@ fn input(state: &State) -> Input {
             "candidate spike rewrite" => i.late_candidate_rewrite = true,
             "composed input work" => {
                 let w: Vec<_> = text.split_whitespace().collect();
-                if w.len() == 10 {
-                    if let (Ok(filters), Ok(batches), Ok(rows)) = (
+                if w.len() == 10
+                    && let (Ok(filters), Ok(batches), Ok(rows)) = (
                         w[1].parse::<u64>(),
                         w[3].parse::<u64>(),
                         w[5].parse::<u64>(),
@@ -76,7 +76,6 @@ fn input(state: &State) -> Input {
                             });
                         }
                     }
-                }
             }
             "projection demand" => {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {

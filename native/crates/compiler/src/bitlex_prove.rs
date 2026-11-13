@@ -546,11 +546,10 @@ impl Induction {
         }
         let root = u.op(v, 0);
         u.clauses.push(vec![root]);
-        if bounded {
-            if let Some(&b) = u.before.get(&(reach + 1)) {
+        if bounded
+            && let Some(&b) = u.before.get(&(reach + 1)) {
                 u.clauses.push(vec![b]);
             }
-        }
         // The position's byte is none of `exclude`'s: each group of them left out (a group is
         // one way of its readers, so all its bytes are or none).
         let has = |set: &ByteSet, b: u8| set[usize::from(b / 64)] >> (b % 64) & 1 == 1;
@@ -771,11 +770,10 @@ impl Unrolled<'_> {
         };
         let yes: Vec<Lit> = self.groups[&lag].iter().filter(|&&(b, _)| member(self.tables, b)).map(|&(_, l)| l).collect();
         let mut yes = yes;
-        if zero_before && member(self.tables, 0) {
-            if let Some(&b) = self.before.get(&lag) {
+        if zero_before && member(self.tables, 0)
+            && let Some(&b) = self.before.get(&lag) {
                 yes.push(b);
             }
-        }
         let x = self.fresh();
         let mut c = vec![-x];
         c.extend(&yes);

@@ -112,9 +112,7 @@ impl Imports {
                     Some(_name) => {
                         // `import a.b` binds a to a, not to a.b.
                         let Some(head) = item
-                            .children()
-                            .filter(named)
-                            .next()
+                            .children().find(named)
                             .and_then(|head| identifier(&head))
                         else {
                             self.opaque = true;

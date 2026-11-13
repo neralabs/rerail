@@ -148,9 +148,9 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
     let mut at = f.parent(call);
     while let Some(owner) = at {
         let role = g.role(f, owner);
-        if matches!(role, Role::Function | Role::Class | Role::Lambda) {
-            if let Some(body) = field(f, owner, g.body) {
-                if body <= call && call < f.subtree_end[body as usize] {
+        if matches!(role, Role::Function | Role::Class | Role::Lambda)
+            && let Some(body) = field(f, owner, g.body)
+                && body <= call && call < f.subtree_end[body as usize] {
                     let kind = match role {
                         Role::Class => 3,
                         Role::Lambda => 4,
@@ -159,8 +159,6 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
                     };
                     return (owner, kind);
                 }
-            }
-        }
         at = f.parent(owner);
     }
     (NONE, 0)
@@ -181,11 +179,10 @@ fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
         out.call.push([call, callee]);
         out.site.push([report, call, reference]);
         out.context.push([call, owner, kind]);
-        if g.role(f, report) == Role::Attribute {
-            if let (Some(object), Some(name)) = (field(f, report, g.object), field(f, report, g.attribute)) {
+        if g.role(f, report) == Role::Attribute
+            && let (Some(object), Some(name)) = (field(f, report, g.object), field(f, report, g.attribute)) {
                 out.attribute.push([report, object, name]);
             }
-        }
         if with_arguments { append_arguments(g,f,call,&mut out); }
     }
     out

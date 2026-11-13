@@ -956,7 +956,7 @@ impl BlockProgram {
                 BlockOp::Escaped(a) => carried(one(a), &first, 0u64, |x, _, c| carry::escaped(x, c)),
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
-                    carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
+                    carried(pairs, &first, 0u64, carry::fill)
                 }
                 // Last block to first, the carry zero at each file's last block.
                 BlockOp::BackFill(a, b) => {
@@ -1268,7 +1268,7 @@ pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
 /// Clear the bits past `len` bytes.
 pub fn mask_tail(words: &mut [u64], len: usize) {
     if let Some(last) = words.last_mut()
-        && len % 64 != 0
+        && !len.is_multiple_of(64)
     {
         *last &= (1u64 << (len % 64)) - 1;
     }

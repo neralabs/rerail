@@ -472,7 +472,7 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
             reads.entry(rel.to_owned()).or_default().push((ri, li, filters));
         }
     }
-    for (_, rs) in &reads {
+    for rs in reads.values() {
         for (_, _, fs) in rs {
             for f in fs {
                 if let Filter::Key(k, _) = f {

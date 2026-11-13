@@ -2096,7 +2096,7 @@ fn o148_plans_and_their_work() {
     use std::sync::Mutex;
     static COSTS: Mutex<Vec<(String, u64, u64)>> = Mutex::new(Vec::new());
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+        if event == ffi::SQLITE_TRACE_PROFILE {
             let stmt = p.cast::<ffi::sqlite3_stmt>();
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
             let (ns, vm, text) = unsafe {
@@ -2115,7 +2115,7 @@ fn o148_plans_and_their_work() {
         db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())]).unwrap();
         db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;").unwrap();
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
-        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
         let got = super::run(&program(name), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {

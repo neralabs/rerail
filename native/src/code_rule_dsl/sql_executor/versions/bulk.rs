@@ -259,12 +259,11 @@ impl Store {
             if cancel.len() == 0 && input.same(keep) {
                 continue;
             }
-            if keep.len() == 0 && cancel.len() == 0 {
-                if let Some(shared) = keep.scratch_copy(input) {
+            if keep.len() == 0 && cancel.len() == 0
+                && let Some(shared) = keep.scratch_copy(input) {
                     *keep = shared;
                     continue;
                 }
-            }
             // Journals contain complete tuples. Compose dense transitions as sets,
             // then build each root once instead of hashing every persistent path.
             if keep.schema.keys == keep.schema.columns.len()

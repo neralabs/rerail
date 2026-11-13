@@ -3167,8 +3167,7 @@ pub fn execute_batch_packed_with_work_limit(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
-        spans
+    let task_outputs = spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
                 // The queue uses tombstones within a task. Keeping a full
@@ -3229,8 +3228,7 @@ pub fn execute_batch_packed_with_work_limit(
                     },
                 })
             }).collect::<Result<Vec<_>, Error>>())
-            .collect::<Result<Vec<Vec<_>>, Error>>()
-    })()?
+            .collect::<Result<Vec<Vec<_>>, Error>>()?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

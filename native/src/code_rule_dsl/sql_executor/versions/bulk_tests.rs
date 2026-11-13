@@ -426,14 +426,13 @@ fn sparse_patches_match_complete_rebuilds_and_preserve_all_index_rows() {
                 .enumerate()
                 .rev()
                 .filter_map(|(i, pk)| {
-                    if (i + edit as usize) % 4 == 0 {
+                    if (i + edit as usize).is_multiple_of(4) {
                         return None;
                     }
-                    if i % 3 == 0 {
-                        if let Some(old) = Node::get(&before.primary, pk) {
+                    if i % 3 == 0
+                        && let Some(old) = Node::get(&before.primary, pk) {
                             return Some(old.values.to_vec());
                         }
-                    }
                     Some(vec![
                         pk[0],
                         pk[1],

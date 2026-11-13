@@ -34,7 +34,7 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
 fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
     for pattern in ["[", "(?<![A-Za-z_é])str"] {
         let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
-        let error = parse(&rule).err().expect("unsupported regex must fail, never report a clean source").to_string();
+        let error = parse(&rule).expect_err("unsupported regex must fail, never report a clean source").to_string();
         assert!(error.contains("regex"), "{error}");
         assert!(!error.contains("named groups"), "lookbehind is not a capture: {error}");
     }
@@ -504,9 +504,8 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
 /// finding).
 #[test]
 fn unlowered_constructs_are_named() {
-    for (src, what) in [
-        (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
-    ] {
+    {
+        let (src, what) = (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean");
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
     }

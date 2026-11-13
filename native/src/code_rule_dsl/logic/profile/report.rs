@@ -530,7 +530,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             warned += 1;
         }
     }
-    for ((topic, text), _) in &state.decisions {
+    for (topic, text) in state.decisions.keys() {
         if topic == "fallback" {
             let _ = writeln!(r, "- fallback: {text}");
             warned += 1;

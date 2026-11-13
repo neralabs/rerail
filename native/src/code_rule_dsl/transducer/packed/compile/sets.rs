@@ -337,7 +337,7 @@ impl Reader<'_> {
         match set {
             Set::All => {
                 let mut bits = vec![u64::MAX; words];
-                if len % 64 != 0
+                if !len.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last = (1 << (len % 64)) - 1;

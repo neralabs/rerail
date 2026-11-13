@@ -162,8 +162,7 @@ fn is_container_owner(kind: &str) -> bool {
 /// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
 /// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
 pub fn kind_flags(kind: &str) -> u8 {
-    u8::from(is_def(kind)) * DEF | u8::from(is_wrapper(kind)) * WRAPPER | u8::from(is_body(kind)) * BODY
-        | u8::from(is_container_owner(kind)) * OWNER
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER)
 }
 pub const DEF: u8 = 1;
 pub const WRAPPER: u8 = 2;
@@ -244,12 +243,11 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
                 start[l] = Some(Start::Stmt);
             }
             // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is(l, WRAPPER) {
-                if let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
+            if start[l].is_some() && is(l, WRAPPER)
+                && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
                 }
-            }
             if claimed[l] {
                 start[l] = None;
             }

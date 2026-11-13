@@ -182,9 +182,9 @@ const LO: [u8; 16] = {
     let mut t = [0u8; 16];
     let mut l = 0;
     while l < 16 {
-        let mut c = C_LETTER_1 * (l >= 1) as u8 | C_LETTER_2 * (l <= 10) as u8 | C_DIGIT * (l <= 9) as u8;
-        c |= C_SPACE * (l == 0) as u8 | C_CONTROL * matches!(l, 9 | 10 | 12 | 13) as u8 | C_UNDERSCORE * (l == 15) as u8;
-        c |= C_QUOTE_HASH_SLASH * matches!(l, 2 | 3 | 15) as u8 | C_BACKTICK * (l == 0) as u8;
+        let mut c = (C_LETTER_1 * (l >= 1) as u8) | (C_LETTER_2 * (l <= 10) as u8) | (C_DIGIT * (l <= 9) as u8);
+        c |= (C_SPACE * (l == 0) as u8) | (C_CONTROL * matches!(l, 9 | 10 | 12 | 13) as u8) | (C_UNDERSCORE * (l == 15) as u8);
+        c |= (C_QUOTE_HASH_SLASH * matches!(l, 2 | 3 | 15) as u8) | (C_BACKTICK * (l == 0) as u8);
         t[l] = c;
         l += 1;
     }

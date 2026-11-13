@@ -169,7 +169,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         return None;
     }
     let rest = JoinRule {
-        steps: rest.iter().map(|s| s.clone()).collect(),
+        steps: rest.to_vec(),
         out: vec![Term::Slot(z)],
         nslots: j.nslots,
         multi: Vec::new(),

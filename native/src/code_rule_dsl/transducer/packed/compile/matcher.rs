@@ -740,8 +740,8 @@ impl LoweredWave {
             // A label in no step (none is expected) keeps its own.
             for local in 0..labels.defs.len() {
                 let id = LABEL_BASE + labels.offset + local as u16;
-                if !map.contains_key(&id) {
-                    map.insert(id, fresh(&mut next)?);
+                if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
+                    e.insert(fresh(&mut next)?);
                 }
             }
             let rename = |label: u16| map.get(&label).copied().unwrap_or(label);

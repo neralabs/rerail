@@ -113,11 +113,9 @@ fn collect_shaped(
                     if f.children(function)
                         .iter()
                         .any(|&c| g.role(f, c) == Role::Async)
-                    {
-                        if let Some(body) = field(f, function, g.body) {
+                        && let Some(body) = field(f, function, g.body) {
                             ranges.push((body, f.subtree_end[body as usize]));
                         }
-                    }
                 }
             }
             ranges.sort_unstable();
