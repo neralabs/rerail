@@ -1041,9 +1041,20 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     ]);
   });
 
-  it("leaves the edit unchecked when the file no longer holds the diff's lines where the diff places them", async () => {
-    // Changed again after the tool wrote it: what the diff rebuilt would credit that change to the edit.
+  it("leaves the edit unchecked when the file no longer holds the diff's lines and the result gives no text it replaced", async () => {
+    // Changed again after the tool wrote it, and `originalFile` is null: nothing says what the file held.
     expect(await lateEdit("one\ntwo\n", "one\nTWO, then changed\n", editResult([" one", "-two", "+TWO"]))).toEqual([]);
+  });
+
+  // Changed again after the tool wrote it (a formatter, another edit): the diff no longer fits, so the edit is read
+  // against the text the result gives, as an edit whose call came on time is read against its capture whatever wrote
+  // the file since. That text takes the file's CRLF line endings where it has none of its own.
+  it.each([
+    { endings: "LF", before: "one\ntwo\n", after: "one\nTWO, then changed\n" },
+    { endings: "CRLF", before: "one\r\ntwo\r\n", after: "one\r\nTWO, then changed\r\n" },
+  ])("reads the edit against the text the result gives where the $endings file no longer holds the diff's lines", async ({ before, after }) => {
+    const output = (path: string) => ({ ...editResult([" one", "-two", "+TWO"])(path), originalFile: "one\ntwo\n" });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
   });
 
   it("leaves the edit unchecked when the result names another file", async () => {
@@ -1077,6 +1088,24 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
       { path: "src/a.py", language: "python", previousText: "one\n", generatedText: "one\nTWO\n" },
     ]);
+  });
+
+  // The result of a Write that left the file as it was may give the text it replaced without the file's byte order
+  // mark, or with LF where the file has CRLF: that difference is no edit.
+  it.each([
+    { differs: "CRLF line endings", file: "one\r\ntwo\r\n" },
+    { differs: "byte order mark", file: "\uFEFFone\ntwo\n" },
+  ])("finds no edit where a Write left the file as it was and its result gives the text without the file's $differs", async ({ file }) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, file);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("write-1", "Write", { file_path: path, content: file });
+    await writeFile(path, file);
+    const output = { type: "update", filePath: path, content: file, structuredPatch: [], originalFile: "one\ntwo\n" };
+    await bridge.finish("write-1", false, { reported: claudeCodeReportedPreimage(output) });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
   });
 });
 

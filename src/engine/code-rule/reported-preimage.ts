@@ -16,12 +16,17 @@ export interface ReportedHunk {
 /**
  * What a tool's result says the file it wrote (`path`, as the result names it) held: nothing, as the tool made it
  * (`created`), its whole text (`text`), or the line diff the tool made (`diff`), which rebuilds that text from the file
- * as the tool left it.
+ * as the tool left it, with the whole text too where the result gives both.
  */
 export type ReportedPreimage =
   | { readonly kind: "created"; readonly path: string }
   | { readonly kind: "text"; readonly path: string; readonly text: string }
-  | { readonly kind: "diff"; readonly path: string; readonly hunks: readonly ReportedHunk[] };
+  | { readonly kind: "diff"; readonly path: string; readonly hunks: readonly ReportedHunk[]; readonly text?: string };
+
+/** A preimage the result gives text or a line diff for. */
+type ReportedEdit = Exclude<ReportedPreimage, { readonly kind: "created" }>;
+
+const BYTE_ORDER_MARK = "\uFEFF";
 
 /** The fields of a Claude Code Write or Edit result that say what the file it names (`filePath`) held. */
 interface ClaudeCodeEditResult {
@@ -40,10 +45,15 @@ interface ClaudeCodeEditResult {
 export function claudeCodeReportedPreimage(output: unknown): ReportedPreimage | undefined {
   const result = claudeCodeEditResult(output);
   if (result === undefined) return undefined;
-  if (result.type === "create") return { kind: "created", path: result.filePath };
-  const hunks = reportedHunks(result.structuredPatch);
-  if (hunks !== undefined) return { kind: "diff", path: result.filePath, hunks };
-  return typeof result.originalFile === "string" ? { kind: "text", path: result.filePath, text: result.originalFile } : undefined;
+  return result.type === "create" ? { kind: "created", path: result.filePath } : claudeCodeReportedEdit(result);
+}
+
+/** What the result of an Edit, or of a Write that replaced the file, gives: the line diff, the text it replaced, or both. */
+function claudeCodeReportedEdit({ filePath: path, structuredPatch, originalFile }: ClaudeCodeEditResult): ReportedEdit | undefined {
+  const hunks = reportedHunks(structuredPatch);
+  const text = typeof originalFile === "string" ? originalFile : undefined;
+  if (hunks === undefined) return text === undefined ? undefined : { kind: "text", path, text };
+  return text === undefined ? { kind: "diff", path, hunks } : { kind: "diff", path, hunks, text };
 }
 
 /** `output`'s fields as a Write or Edit result's; undefined unless it names a file. */
@@ -75,14 +85,35 @@ function isLineList(value: unknown): value is readonly string[] {
 
 /**
  * What the file held before the tool as `reported` says, given `after`, its text as the tool left it: no text for a
- * file the tool made, the text given, or the text the line diff rebuilds from `after`. Undefined when `after` does not
- * hold the diff's lines where the diff places them, as when the file changed again after the tool wrote it.
+ * file the tool made, the text the line diff rebuilds from `after`, or else the text given. Undefined when there is no
+ * text given and `after` does not hold the diff's lines where the diff places them, as when the file changed again
+ * after the tool wrote it.
  */
 export function reportedText(reported: ReportedPreimage, after: string | undefined): { readonly text?: string } | undefined {
   if (reported.kind === "created") return {};
-  if (reported.kind === "text") return { text: reported.text };
-  const text = after === undefined ? undefined : unpatched(after, reported.hunks);
+  const text = rebuiltText(reported, after) ?? givenText(reported, after);
   return text === undefined ? undefined : { text };
+}
+
+/** The text a line diff rebuilds from `after`; undefined without a line diff, or where `after` does not fit it. */
+function rebuiltText(reported: ReportedEdit, after: string | undefined): string | undefined {
+  return reported.kind === "diff" && after !== undefined ? unpatched(after, reported.hunks) : undefined;
+}
+
+/** The text the result gives, in the form of `after` where there is one (`inFileForm`). */
+function givenText(reported: ReportedEdit, after: string | undefined): string | undefined {
+  return reported.text === undefined || after === undefined ? reported.text : inFileForm(reported.text, after);
+}
+
+/**
+ * `text` with the byte order mark of `after`, and with its CRLF line endings where `text` has none of its own. A result
+ * may give the text a tool replaced without the mark, or with LF where the file has CRLF; read as it is, an edit
+ * against it would count those lines as changed, and a Write that left the file as it was would be an edit.
+ */
+function inFileForm(text: string, after: string): string {
+  const unmarked = text.startsWith(BYTE_ORDER_MARK) ? text.slice(1) : text;
+  const ended = lineEnding(after) === "\r\n" && !unmarked.includes("\r\n") ? unmarked.replace(/\n/gu, "\r\n") : unmarked;
+  return after.startsWith(BYTE_ORDER_MARK) ? `${BYTE_ORDER_MARK}${ended}` : ended;
 }
 
 /**
