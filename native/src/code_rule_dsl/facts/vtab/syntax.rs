@@ -33,7 +33,7 @@ use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 pub mod within;
@@ -364,11 +364,21 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
         }
     }
     // A rule (by head relation) that reads `v`'s long text by `@rr_node_text(v)`: its twin (`long_text_twins`).
-    let twinned = |head: &str, v: &str| {
-        program.rules.iter().filter(|r| r.head.rel == head).any(|r| {
-            r.body.iter().any(|l| matches!(l, Literal::Cmp { r: Term::Call(f, args), .. } if f == "rr_node_text" && matches!(args.first(), Some(Term::Var(x)) if x == v)))
+    // Found in one pass: each (head, variable) a rule reads so.
+    let twins: HashSet<(&str, &str)> = program
+        .rules
+        .iter()
+        .flat_map(|r| {
+            r.body.iter().filter_map(move |l| match l {
+                Literal::Cmp { r: Term::Call(f, args), .. } if f == "rr_node_text" => match args.first() {
+                    Some(Term::Var(x)) => Some((r.head.rel.as_str(), x.as_str())),
+                    _ => None,
+                },
+                _ => None,
+            })
         })
-    };
+        .collect();
+    let twinned = |head: &str, v: &str| twins.contains(&(head, v));
     // Whether `v` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
     let span = |body: &[Literal], v: &str| {
         body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "text").any(|a| {

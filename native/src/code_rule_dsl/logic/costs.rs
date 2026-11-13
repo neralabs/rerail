@@ -168,20 +168,38 @@ fn read() {
     if !path.exists() {
         return;
     }
-    let r = (|| -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
+    let r = (|| -> rusqlite::Result<(Vec<rerail_accel::score::Sample>, Option<(i64, f64)>)> {
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         if let Err(e) = sql_plans::read(&db, &machine(), rerail_accel::exec::threads() as i64) {
             eprintln!("rerail: SQL planning observations not read from {}: {e}", path.display());
         }
-        read_samples(&db, READ)
+        // The saved model's age, and the samples written since it was trained (no `models` table: none).
+        let saved = db
+            .query_row(
+                "SELECT (SELECT count(*) FROM samples s WHERE s.machine = m.machine AND s.at > m.at), m.at FROM models m WHERE m.machine = ?1",
+                [machine()],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)),
+            )
+            .ok();
+        Ok((read_samples(&db, READ)?, saved))
     })();
     match r {
-        Ok(samples) => {
+        Ok((samples, saved)) => {
             let fitted = rerail_accel::price::learn_from(&samples);
             *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
             {
-                train(path, samples, true);
+                // A process trains as a running one does (`maybe_retrain`): once `RETRAIN_AFTER` samples were written
+                // since the saved model, and it is `RETRAIN_EVERY` old. Else the saved model is put in place, and the
+                // samples since it count toward the next training (training in every process was 0.3 s of an edit).
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+                let due = saved.is_none_or(|(since, at)| since as usize >= RETRAIN_AFTER && now - at >= RETRAIN_EVERY.as_secs_f64());
+                if let Some((since, at)) = saved.filter(|_| !due) {
+                    WRITTEN.store(since as usize, std::sync::atomic::Ordering::Relaxed);
+                    let age = std::time::Duration::from_secs_f64((now - at).max(0.0));
+                    *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now().checked_sub(age).or_else(|| Some(std::time::Instant::now()));
+                }
+                train(path, samples, true, due);
             }
         }
         Err(e) => {
@@ -207,7 +225,7 @@ fn model_state(s: String) {
 /// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (the training
 /// thread's: a new binary compiles them in seconds).
 #[cfg(target_os = "macos")]
-fn load_saved(path: &PathBuf) {
+fn load_saved(path: &PathBuf, fit: bool) {
     let Ok(db) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return };
     let saved: rusqlite::Result<(Vec<u8>, i64)> = db.query_row("SELECT model, trained_on FROM models WHERE machine = ?1", [machine()], |r| Ok((r.get(0)?, r.get(1)?)));
     // No `models` table yet (a store from before it) reads as no model.
@@ -220,7 +238,8 @@ fn load_saved(path: &PathBuf) {
                 return;
             }
             rerail_accel::cost_model::install(Some(std::sync::Arc::new(m)));
-            model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; training a new one", t.elapsed().as_secs_f64()));
+            let next = if fit { "training a new one" } else { "no training due" };
+            model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; {next}", t.elapsed().as_secs_f64()));
         }
         Err(e) => model_state(format!("the saved model does not read ({e}); training a new one")),
     }
@@ -231,18 +250,25 @@ fn load_saved(path: &PathBuf) {
 /// place first ([`load_saved`]). A model that wins is put in place and saved; else the model in place, and the
 /// saved one, are taken out.
 #[cfg(target_os = "macos")]
-fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool) {
+/// Without `fit`, only the saved model is put in place: no training is due.
+fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool, fit: bool) {
     use std::sync::atomic::Ordering;
     if TRAINING.swap(true, Ordering::AcqRel) {
         return;
     }
-    WRITTEN.store(0, Ordering::Relaxed);
-    *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
+    if fit {
+        WRITTEN.store(0, Ordering::Relaxed);
+        *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
+    }
     let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
         if saved {
-            load_saved(&path);
+            load_saved(&path, fit);
+        }
+        if !fit {
+            TRAINING.store(false, Ordering::Release);
+            return;
         }
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
@@ -315,7 +341,7 @@ fn maybe_retrain() {
         let Some(path) = path() else { return };
         let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ));
         if let Ok(samples) = r {
-            train(path, samples, false);
+            train(path, samples, false, true);
         }
     }
 }
@@ -399,7 +425,7 @@ pub mod tests {
         db.execute("DELETE FROM models", []).unwrap();
         let samples = super::read_samples(&db, super::READ).unwrap();
         let t = std::time::Instant::now();
-        super::train(path.clone(), samples, false);
+        super::train(path.clone(), samples, false, true);
         while super::TRAINING.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -411,7 +437,7 @@ pub mod tests {
         assert_eq!(bytes, installed.to_bytes());
         eprintln!("saved: {} bytes", bytes.len());
         rerail_accel::cost_model::install(None);
-        super::load_saved(&path);
+        super::load_saved(&path, false);
         let loaded = rerail_accel::cost_model::current().expect("the saved model in place");
         assert_eq!(loaded.to_bytes(), bytes);
     }

@@ -50,9 +50,9 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
-    // The frames' own bookkeeping (decision 0117): those found unchanged under new reads, kept as the frames are.
+    // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
-    // And each run's use of a space (decision 0117 step 5): one row a run, which the frames' sweep reads.
+    "frame_part_used",
     "frame_used",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
@@ -161,24 +161,13 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
-/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take. Lowered to 61 by the
-/// merge of the planning trees (2026-11-12).
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
+/// merge took one out (2026-11-12).
 const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
-    // A job's own plans (decision 0113): read before the run's `PLANS` and taken into them as the job ends.
-    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
-    // The profile's account of the planning budget's misses (decision 0122): where a plan is made, and what was.
-    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
-    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
-    // A switch read once (the greedy probe's), and that probe's measurement of bulk planning's sharing.
-    ("code_rule_dsl/logic/plan.rs", "PROBE"),
-    ("code_rule_dsl/logic/plan.rs", "SEEN"),
-    ("code_rule_dsl/logic/plan.rs", "SUMS"),
-    // A job's own observations (decision 0113): added to the run's `OBSERVED_AT` once, as the job ends.
-    ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
     ("code_rule_dsl/logic/device.rs", "SOLVER"),
     ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
@@ -322,27 +311,30 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
-    // With them, as the frames are: each space's confirmations (`frame_confirmed`, decision 0117 step 5), and the memo
-    // entries each space has admitted this process (read once a space, decision 0104).
-    ("content_store/frames.rs", "CONFIRMS"),
-    ("content_store/frames.rs", "ADMITTED"),
-    // Registries: which stores have a table made when first needed, the journal's open streams, and each device's
-    // volume, asked of the system once.
-    ("content_store/frames.rs", "KNOWN"),
-    ("content_store/journal.rs", "LIVE"),
-    ("content_store/journal.rs", "BY_DEV"),
     // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A run's record under way: the plans of the runs nested in it, for its manifest.
     ("code_rule_dsl/logic/plan/corpus.rs", "INNER_PLANS"),
-    ("code_rule_dsl/logic/plan/corpus.rs", "NESTED_PLANS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
     ("content_store/observe.rs", "OBSERVERS"),
+    // The journal's open streams, one a root (decision 0105): open things.
+    ("content_store/journal.rs", "LIVE"),
+    // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
+    // state on the job's thread, gone with it.
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
+    // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
+    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
+    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
+    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.
+    ("code_rule_dsl/logic/plan.rs", "PROBE"),
+    ("code_rule_dsl/logic/plan.rs", "SEEN"),
+    ("code_rule_dsl/logic/plan.rs", "SUMS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),

@@ -219,13 +219,13 @@ pub(in crate::code_rule_dsl) struct One<'m> {
     pub(in crate::code_rule_dsl) has_old: &'m dyn Fn(&str) -> bool,
 }
 
-pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
-    rewrite_with(cut, kept, cross, given, None)
+/// `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
+pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
+    rewrite_with(cut, kept, cross, sccs, given, None)
 }
 
-pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Maintained> {
+pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Maintained> {
     let mut part = cut.program(cross);
-    let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
