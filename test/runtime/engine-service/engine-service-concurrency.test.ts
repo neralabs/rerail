@@ -95,9 +95,10 @@ describe("engine service session concurrency", () => {
     try {
       const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
       await held.ending;
-      // A stop or a restart that arrives while the end runs.
+      // A stop or a restart that arrives while the end runs, which holds on past the close's first look for stalled
+      // requests (1 s in), so the hook waits through it with its request complete.
       const closing = held.service.close();
-      await sleep(100);
+      await sleep(1_500);
       held.release();
       await closing;
       // The block or steer in that answer reaches the agent only if the hook gets it.
@@ -119,7 +120,9 @@ describe("engine service session concurrency", () => {
       // The server takes the waiting hook's request in before the close begins.
       await sleep(250);
       const closing = held.service.close();
-      await sleep(100);
+      // The end holds on past the close's first look for stalled requests (1 s in), so both hooks wait through it with
+      // their requests complete.
+      await sleep(1_500);
       held.release();
       await closing;
       expect({ end: await end, restart: await restart }).toEqual({ end: "answered", restart: "answered" });
