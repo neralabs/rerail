@@ -760,7 +760,7 @@ export function autostartOff(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.RERAIL_AUTOSTART === "0" || env.RERAIL_AUTOSTART === "false";
 }
 
-/** No daemon is running, and `RERAIL_AUTOSTART=0` kept the caller from starting one. */
+/** No daemon is running, and `RERAIL_AUTOSTART` (`0` or `false`) kept the caller from starting one. */
 export class AutostartOffError extends Error {
   override readonly name = "AutostartOffError";
 }
@@ -793,7 +793,10 @@ export async function daemonEngineEndpoint(
   const daemon = autostartOff(machine.env)
     ? await runningDaemon(control.home, deadline, machine)
     : await startedDaemon(control, replaceOtherPackage, deadline, machine);
-  if (daemon === undefined) throw new AutostartOffError("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+  // Only the lookup an off autostart makes finds none, so the setting is spelled as the person set it, `0` or `false`.
+  if (daemon === undefined) {
+    throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+  }
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }

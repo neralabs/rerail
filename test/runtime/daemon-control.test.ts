@@ -440,6 +440,8 @@ describe("RERAIL_AUTOSTART", () => {
       // No state file, so no daemon runs; the fake machine's spawns fail the test, so a start would show.
       const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting } });
       await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toBeInstanceOf(AutostartOffError);
+      // It names the setting as the person spelled it, wherever the error shows.
+      await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(`RERAIL_AUTOSTART=${setting} requires a running daemon`);
     } finally {
       await removeFolder(home);
     }
