@@ -139,6 +139,10 @@ Settled (2026-11-13): acceptable where needed. CPU and GPU diverge as little as 
 
 The target: tier 1 on the CPU within 1.5 times the lean lexer, about 200M instructions.
 
+Step 1, measured (2026-11-13). Tier 1 on the CPU is one forward pass: 630.0M instructions
+ahead of time, from 700.4M. Pass 0's rounds and stores went; its masks are still made, in
+the one pass, since the later pass read most of them. Decision 0139 records how it was built.
+
 Every step keeps:
 
 - the tapes the engine's over the corpus, and the lean parser's byte for byte;

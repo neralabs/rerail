@@ -384,7 +384,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         carried[x] = match *inst {
             BlockInst::And(a, b) => carried[usize::from(a)] || carried[usize::from(b)],
             BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) => carried[usize::from(a)],
-            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_)) || grouped[x],
+            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
         };
     }
     let mut region_of: Vec<Option<usize>> = vec![None; n];
