@@ -15,12 +15,13 @@ def cases(_module):
     seed=0x123456789abcdef
     for _ in range(64):
         seed=(seed*6364136223846793005+1442695040888963407)&((1<<64)-1);bits.append(f'{seed:016x}')
-    return [dict(kind='values',id='float-bits',bits=bits),dict(kind='values',id='nested-keys'),dict(kind='values',id='unrelated-family')]
+    return [dict(kind='values',id='float-bits',bits=bits),dict(kind='values',id='nested-keys'),dict(kind='values',id='unrelated-family'),
+        *[dict(kind='values',id='root-'+str(i),root=root)for i,root in enumerate(['/','//','.','relative-root'])]]
 
 
 def exercise(module,case,scratch):
     try:
-        root=scratch/'repo';root.mkdir()
+        physical=scratch/'repo';physical.mkdir();root=Path(case.get('root',physical.as_posix()))
         if case['id']=='float-bits':value=[struct.unpack('>d',bytes.fromhex(bits))[0]for bits in case['bits']]
         else:value={1:'integer',None:'none',(1,'x'):[True,False,(),('é',)],1.5:{'\n':'"quote\''}}
         family=module.PLAN_SCOPE_SIDE_EFFECTS_EXTRACTOR.extractor_id
