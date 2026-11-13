@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
 import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -871,5 +872,20 @@ describe("packedFileFailures", () => {
       "divergences.json: validation material, never published",
       "upstream/tool/fixtures/a.py: validation material, never published",
     ]);
+  });
+});
+
+/** The pack that measures rather than ports a linter: it counts like lizard, so it claims no equivalence. */
+const MEASURE_PACK = "complexity";
+
+describe("a pack's covers line, the dashboard's description of it", () => {
+  const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+  const gated = Map.groupBy(gatedToolPacks(ROOT), ({ pack }) => pack);
+
+  it.each([...gated.keys()])("for %s names every tool version it matches, and opens with the equivalence it claims", pack => {
+    const covers = z.object({ covers: z.string() }).parse(JSON.parse(readFileSync(join(PACKS, pack, "pack.json"), "utf8"))).covers;
+    const versions = gated.get(pack)!.map(({ tool }) => readGatesManifest(ROOT, pack, tool).upstream.version);
+    expect(versions.filter(version => !covers.includes(version)), covers).toEqual([]);
+    expect(covers.startsWith("Linter-equivalent to ")).toBe(pack !== MEASURE_PACK);
   });
 });

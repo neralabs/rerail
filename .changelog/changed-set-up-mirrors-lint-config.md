@@ -1,0 +1,1 @@
+Set-up now makes rule packs run the same rules as the repository's own linters: a rule its lint config turns on starts on, one it turns off or leaves off starts off. It reads ESLint (with common shared configs), oxlint, Biome, Ruff, Bandit, Clippy, PHPStan, Psalm, PHP_CodeSniffer and SQLFluff configs, as data, never run.

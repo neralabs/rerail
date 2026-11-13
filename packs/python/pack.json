@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "Ruff and Bandit rules for correct, clean and secure Python.",
+  "covers": "Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4, for correct, clean and secure Python.",
   "reason": "matches Python",
   "match": {
     "any": [

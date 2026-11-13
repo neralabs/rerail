@@ -1,5 +1,7 @@
 # Rerail rule pack: Python
 
+**Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 537 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with

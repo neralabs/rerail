@@ -3,7 +3,7 @@
   "id": "complexity",
   "name": "Function complexity",
   "category": "language",
-  "covers": "Keeps functions small enough to read, test and change: flags any function with more than 6 paths through it (cyclomatic complexity, counted as lizard does). For Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue.",
+  "covers": "Keeps functions small enough to read, test and change: flags any function with more than 6 paths through it (cyclomatic complexity, counted as lizard 1.24.0 does). For Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue.",
   "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source",
   "match": {
     "any": [

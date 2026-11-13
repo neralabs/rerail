@@ -128,7 +128,7 @@ packs/<id>/
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "typescript-eslint and @vitest/eslint-plugin rules for safe, idiomatic TypeScript and Vitest tests.",
+  "covers": "Linter-equivalent to typescript-eslint 8.70.1 and @vitest/eslint-plugin 1.6.27, for safe, idiomatic TypeScript and Vitest tests.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -163,7 +163,9 @@ packs/<id>/
   this. A pack's README opens with `# Rerail rule pack: <name>`, and a published pack has a row in
   [the packs table](rule-packs.md#the-packs).
 - **`covers`** says what the rules are for and where they come from. It gives no rule counts and nothing on which
-  start on; the dashboard shows both beside it.
+  start on; the dashboard shows both beside it. A pack that ports linters opens with
+  `Linter-equivalent to <Tool> <version>, for <purpose>.` ([linter-equivalent](rule-packs.md#linter-equivalent)). A
+  test checks that every pinned version (`upstream/<tool>/gates.yaml`) appears.
 - **`category`** drives the kind chips of the dashboard's rule pack catalog, which lists languages, then frameworks,
   then repository packs.
 - **`match` signals:**

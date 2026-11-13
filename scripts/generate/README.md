@@ -40,6 +40,11 @@ the UI files project.
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `src/engine/catalog/lint-config/generated/biome-rules.generated.ts` | `scripts/generate/lint-config/biome-rules.mjs` | `node scripts/generate/lint-config/biome-rules.mjs <biome>`, `<biome>` a checkout of biomejs/biome at `@biomejs/biome@2.5.15` |
+| `src/engine/catalog/lint-config/generated/eslint-presets.generated.ts` | `scripts/generate/lint-config/eslint-presets.mjs` | `node scripts/generate/lint-config/eslint-presets.mjs <tools>`, `<tools>` with the packs' pinned ESLint plugins installed (the generator's header lists them: typescript-eslint 8.70.1, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-unicorn 76.0.0, eslint-plugin-n 18.4.1, @next/eslint-plugin-next and eslint-config-next 16.3.8, eslint-plugin-vue 10.11.1, @vitest/eslint-plugin 1.6.27); fetches `@eslint/js` from the ESLint 10.11.0 commit, so needs the network |
+| `src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts` | `scripts/generate/lint-config/oxlint-rules.mjs` | `node scripts/generate/lint-config/oxlint-rules.mjs <tools>/node_modules/.bin/oxlint` (oxlint 1.88.0) |
+| `src/engine/catalog/lint-config/generated/phpcs-standards.generated.ts` | `scripts/generate/lint-config/phpcs-standards.ts` | `node --import tsx scripts/generate/lint-config/phpcs-standards.ts` (fetches PHP_CodeSniffer 4.0.4's rulesets at the commit `packs/php/upstream/phpcs/gates.yaml` pins; needs the network) |
+| `src/engine/catalog/lint-config/generated/ruff-rules.generated.ts` | `scripts/generate/lint-config/ruff-rules.mjs` | `node scripts/generate/lint-config/ruff-rules.mjs <ruff 0.16.9>` (the binary `uvx ruff@0.16.9` runs) |
 | `src/engine/catalog/pack-list.generated.ts` (packs without `"private": true`) | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |

@@ -36,8 +36,8 @@
  * How upstream tags a release is learnt from the pin itself: the first of `eslint.release.tag`'s form, `v<version>` and
  * `<version>` whose tag of the pinned release names the pinned commit. Every edit is checked by reading the file back,
  * so a pin in an unexpected shape stops the bump instead of being half-moved. Prose still naming the old release (READMEs,
- * comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not rewritten: the pull request's
- * reviewer decides it.
+ * `pack.json`'s `covers`, comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not
+ * rewritten: the pull request's reviewer decides it.
  *
  * Exit 0 when bumped or already at the release, 1 when the bump cannot be made, 2 on bad arguments.
  */
@@ -617,6 +617,7 @@ async function writeGatedBump(
     ...scripts.shared,
     ...handPins,
     conformancePath,
+    `packs/${pack}/pack.json`,
     `packs/${pack}/README.md`,
     `packs/${pack}/candidates/README.md`,
     ...recordFiles,
@@ -782,6 +783,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     common,
     ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith(".expected.json")),
     conformancePath,
+    "packs/rust/pack.json",
     "packs/rust/README.md",
     "packs/rust/candidates/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
