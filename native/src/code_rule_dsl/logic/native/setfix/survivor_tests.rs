@@ -8,7 +8,6 @@ use super::*;
 /// relation's size, not its delta's: 4.47 s of an edit's 12.85 s, against 0.76 s of joins. The kept rows are the
 /// start's own, shared, not copied.
 #[test]
-#[ignore = "smoking gun 8 open (t34): a maintained relation's start copies its kept rows and indexes"]
 fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     let path = crate::code_rule_dsl::fixtures::temp();
     drop(crate::code_rule_dsl::fixtures::open(&path));
@@ -34,5 +33,5 @@ fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     let store = comp.store.read().unwrap();
     let rel = &store.rels[0];
     assert_eq!(rel.n, old.n, "it starts as every kept row");
-    assert!(std::ptr::eq(rel.data.as_ptr(), old.rows.as_ptr()), "its rows are the kept relation's, not a copy of its {n} rows");
+    assert!(rel.data.shares(&old.rows), "its rows are the kept relation's, not a copy of its {n} rows");
 }
