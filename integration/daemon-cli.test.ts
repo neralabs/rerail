@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
@@ -107,7 +107,7 @@ describe("Rerail daemon CLI", () => {
 
   // A TLS key other users can read keeps the daemon from other machines, never from this one: hooks reach it on
   // loopback and keep recording, and the start, the log and the state file say why and how to fix the key.
-  test.skipIf(process.platform === "win32")("serves this computer alone, saying why, when other users can read its TLS key", async () => {
+  test("serves this computer alone, saying why, when other users can read its TLS key", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     const cli = join(process.cwd(), "dist", "cli", "cli.js");
     const env = { ...process.env, RERAIL_HOME: root };
@@ -116,14 +116,14 @@ describe("Rerail daemon CLI", () => {
       const { cert, key } = selfSignedCertificate();
       await writeFile(join(root, "cert.pem"), cert);
       await writeFile(keyFile, key);
-      await chmod(keyFile, 0o644);
+      const exposed = await letOthersRead(keyFile);
       const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
       const { stdout } = await promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
       expect(stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\//u);
-      const why = `${keyFile} is open to other users (mode 0644); a TLS private key must be readable by its owner only: chmod 600 "${keyFile}"`;
-      expect(stdout).toContain(`Other machines cannot reach this daemon, which serves this computer alone, on loopback, until its TLS key is fixed: ${why}`);
       const state = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown };
-      expect(state.remoteRefused).toBe(why);
+      const why = String(state.remoteRefused);
+      expect(why).toMatch(exposed);
+      expect(stdout).toContain(`Other machines cannot reach this daemon, which serves this computer alone, on loopback, until its TLS key is fixed: ${why}`);
       const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
       expect(health.status).toBe(200);
       expect(await readFile(join(root, "daemon.log"), "utf8")).toContain(`until its TLS key is fixed: ${why}`);
@@ -180,3 +180,21 @@ describe("Rerail daemon CLI", () => {
     }
   }, 15_000);
 });
+
+/**
+ * Lets other accounts read `keyFile`: mode 0644, or on Windows, which has no mode bits, read granted to BUILTIN\Users,
+ * as a key under C:\certs inherits. Returns the whole of the daemon's refusal of it, the command that fixes it included.
+ */
+async function letOthersRead(keyFile: string): Promise<RegExp> {
+  const literal = (text: string): string => text.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+  const path = literal(keyFile);
+  const owner = "; a TLS private key must be readable by its owner only: ";
+  if (process.platform !== "win32") {
+    await chmod(keyFile, 0o644);
+    return new RegExp(`^${path} is open to other users \\(mode 0644\\)${owner}chmod 600 "${path}"$`, "u");
+  }
+  await promisify(execFile)("icacls", [keyFile, "/grant", "*S-1-5-32-545:R"], { windowsHide: true });
+  // Its folder's ACL may let other accounts read it as well, as Authenticated Users may outside the profile.
+  const fix = `icacls "${path}" /inheritance:r /grant:r "${literal(userInfo().username)}:R"`;
+  return new RegExp(`^${path} can be read by other accounts \\((?:[^)]*, )?BU(?:, [^)]*)?\\)${owner}${fix}$`, "u");
+}
