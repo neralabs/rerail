@@ -307,8 +307,8 @@ def verify_engine_snapshot(root, source):
         if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)
                    for boundary in ENGINE_EXTENSION_BOUNDARIES):
             raise ValueError(f'{name}: outside the generic extension boundary')
-    changed = set(git(root, 'diff', '--name-only', upstream, '--', 'native', 'accel', 'Cargo.toml', 'Cargo.lock').splitlines())
-    changed.update(git(root, 'ls-files', '--others', '--exclude-standard', '--', 'native', 'accel').splitlines())
+    changed = set(git(root, 'diff', '--name-only', upstream, '--', *ENGINE_SOURCE_TREES).splitlines())
+    changed.update(git(root, 'ls-files', '--others', '--exclude-standard', '--', *ENGINE_SOURCE_TREES).splitlines())
     if changed != set(reviewed):
         raise ValueError('Unreviewed engine changes: ' + repr(sorted(changed ^ set(reviewed))))
     for name, digest in reviewed.items():
