@@ -95,7 +95,8 @@ by a library Rerail does not control for example, then shares the hidden console
   Node's spawn hands a child every inheritable handle in the parent, and a daemon started under `just` held the
   caller's output pipe open, so a captured `rerail setup` never finished.
 - It keeps the child's process handle. `detachedExitCode(pid)` reads the exit code from it, so a daemon that exits
-  during its 15 s start is reported with its code, even once Windows has given its pid to another process.
+  during its 15 s start is reported with its code, even once Windows has given its pid to another process. The module
+  closes the handle once it has given the code, and `launchDetached` keeps that first answer for every later ask.
 - The daemon runs in the Rerail home, never in the folder of the session that started it. Windows holds a process's
   current folder open, so a daemon started from a repository kept that checkout, and every folder above it, from
   being deleted or renamed. The repository reaches it as `--workspace-root`, and `searchGitFrom`
