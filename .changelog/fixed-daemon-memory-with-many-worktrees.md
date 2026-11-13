@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon no longer keeps what a session read of the other worktrees once the session ends. It kept a copy for each folder a session had closed in, for 15 minutes after, so its memory grew with each such folder: about 36 MB a folder with 190 worktrees of 500 files.
