@@ -2793,6 +2793,12 @@ impl Model {
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
         let jmask: Vec<u128> = joins.iter().map(|&j| body[j].vars().iter().filter_map(|v| var_ids.get(v)).fold(0u128, |m, &k| if k < 128 { m | 1u128 << k } else { m })).collect();
         let unsized_join = |i: usize| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str()));
+        // A join of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a guest
+        // round's do). Not the delta, whose rows are its wave's.
+        let no_rows_when_priced = |i: usize| {
+            first != Some(joins[i])
+                && (unsized_join(i) || matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && self.stats.card.get(a.rel.as_str()).is_some_and(|&n| n <= 0.0)))
+        };
         let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool {
             prev != 0 && jmask[i] & bound == 0 && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && jmask[j] & bound != 0 && (unsized_join(i) || unsized_join(j)))
         };
@@ -2853,6 +2859,9 @@ impl Model {
             prev: u64,
             last: usize,
             mode: Option<Mode>,
+            /// Its rows rest only on relations with no rows of their own when priced (empty, or unsized): a
+            /// cross product taken from it is priced from at least a search's rows (`SEARCH_WORK`), not theirs.
+            unfounded: bool,
         }
         let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
         let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
@@ -2969,7 +2978,7 @@ impl Model {
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, usize)> = vec![(0, 0); 1 << joins.len()];
-        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false });
         closed[0] = closure(0);
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
@@ -3008,13 +3017,21 @@ impl Model {
                     if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) || shape_waits(i, prev, &|v: &str| bound >> var_ids[v] & 1 == 1) || unfounded_cross(i, prev, *bound) {
                         continue;
                     }
-                    let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
+                    // Smoking gun 10's cold case (t34): `frag_str` planned before the guest round made `doc_role`'s
+                    // rows took `doc_role(d, 17505)` (empty, priced at one row) first, then `kind($s, 1255)` crossed
+                    // with it (7.1 M rows where 2,455 came), where `kind` first and `doc_role` probed by `@doc` was
+                    // as cheap as priced. A cross product multiplies rows no row of the relations it follows vouched
+                    // for: priced from a search's rows at least, it is taken only where it is cheap even so.
+                    let crossed = prev != 0 && jmask[i] & *bound == 0;
+                    let left = if crossed && from.unfounded { from.rows.max(SEARCH_WORK) } else { from.rows };
+                    let Some((w, mut out, mode)) = priced(price(i, *bound), left) else { continue };
+                    let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.
                     for _ in *h_prev..mine.1 {
                         out *= 0.5;
                     }
-                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode };
+                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode, unfounded };
                     if best.as_ref().is_none_or(|b| cand.work < b.work) {
                         best = Some(cand);
                     }

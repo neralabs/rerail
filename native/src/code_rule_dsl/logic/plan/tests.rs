@@ -2074,6 +2074,30 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
+/// Smoking gun 10's cold case (t34, 2026-11-13): with no kept plan, `frag_str` is planned before the guest round
+/// makes `doc_role`'s rows. Empty when priced, `doc_role(d, 7)` first looked as cheap as a row, and `ann_str`
+/// crossed with it read every string per role row (7.1 M rows, none kept). A cross product after relations that
+/// had no rows when priced is priced from a search's rows: `ann_str` leads, and `doc_role` is probed by `@doc`.
+#[test]
+fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
+    let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", 0.0, vec![0.0, 0.0])] {
+        model.stats.card.insert(rel.into(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.into(), c), n);
+            model.stats.fan.insert((rel.into(), c), 1.0);
+        }
+    }
+    model.stats.nodes = 300_000.0;
+    let r = &p.rules[0];
+    let (order, work, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
+    let lead = order[0].lit.atom().map(|a| a.rel.to_string());
+    assert_eq!(lead.as_deref(), Some("ann_str"), "`doc_role`, empty when planned, does not lead a cross product: {work} {:?}", order.iter().map(|s| s.lit.to_string()).collect::<Vec<_>>());
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
