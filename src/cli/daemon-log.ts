@@ -28,7 +28,9 @@ function writtenText(chunk: unknown, encoding: unknown): string | Uint8Array | u
 
 /** `text` with `stamp` after every newline that more text follows, and first when `atLineStart`. */
 function stampedString(text: string, stamp: string, atLineStart: boolean): string {
-  return `${atLineStart ? stamp : ""}${text.replace(/\n(?=[\s\S])/gu, `\n${stamp}`)}`;
+  const ended = text.endsWith("\n");
+  const inner = (ended ? text.slice(0, -1) : text).replaceAll("\n", `\n${stamp}`);
+  return `${atLineStart ? stamp : ""}${inner}${ended ? "\n" : ""}`;
 }
 
 /** `bytes` with `stamp` after every newline that more bytes follow, and first when `atLineStart`. */
