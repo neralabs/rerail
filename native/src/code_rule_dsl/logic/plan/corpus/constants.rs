@@ -213,7 +213,7 @@ fn record_key(key: &str) -> String {
 /// The constants kept under `key`, when what their run consulted is as it was.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
     let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
-    let consulted = super::reuse::decode_consulted(&consulted);
+    let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }

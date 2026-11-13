@@ -31,6 +31,9 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/plan.rs',
     # Folded filesystem symbols must survive the internal row transport unchanged.
     'native/src/code_rule_dsl/logic/plan/corpus/constants.rs',
+    # Cache dependency records must retain every filesystem path, including delimiters.
+    'native/src/code_rule_dsl/logic/plan/corpus/reuse.rs',
+    'native/src/code_rule_dsl/logic/plan/corpus/reuse/tests.rs',
     # Unconditional ground readers must seed a demanded producer.
     'native/src/code_rule_dsl/logic/plan/demand.rs',
     # External request names retain their handler identity during relation sharing.

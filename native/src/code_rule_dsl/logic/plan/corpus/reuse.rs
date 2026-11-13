@@ -103,17 +103,37 @@ pub fn rule_files(programs: &[String], options: &serde_json::Value) -> Result<Ve
     Ok(out)
 }
 
+/// Length-prefixed UTF-8 fields preserve arbitrary paths. The version rejects
+/// older line-delimited records, whose omitted reads cannot be recovered safely.
+const READS_VERSION: &str = "RRC2:";
+
 pub fn encode_consulted(consulted: &[(String, String, String)]) -> String {
-    consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
+    use std::fmt::Write;
+    let mut out = READS_VERSION.to_owned();
+    for (what, path, digest) in consulted {
+        for field in [what, path, digest] {
+            write!(out, "{}:", field.len()).expect("write to a String");
+            out.push_str(field);
+        }
+    }
+    out
 }
 
-pub fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.splitn(3, '\t');
-            Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
-        })
-        .collect()
+pub fn decode_consulted(text: &str) -> Option<Vec<(String, String, String)>> {
+    fn field<'a>(text: &mut &'a str) -> Option<&'a str> {
+        let (len, rest) = text.split_once(':')?;
+        if len.is_empty() || !len.bytes().all(|c| c.is_ascii_digit()) { return None; }
+        let len = len.parse::<usize>().ok()?;
+        let value = rest.get(..len)?;
+        *text = rest.get(len..)?;
+        Some(value)
+    }
+    let mut text = text.strip_prefix(READS_VERSION)?;
+    let mut reads = Vec::new();
+    while !text.is_empty() {
+        reads.push((field(&mut text)?.to_owned(), field(&mut text)?.to_owned(), field(&mut text)?.to_owned()));
+    }
+    Some(reads)
 }
 
 /// The outputs a run wrote: each `<rel>.csv` in `out`, as (name, bytes).
@@ -159,7 +179,10 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
         miss(&format!("no record under the run's key {} (programs {})", &key[..12], texts.len()));
         return Ok(None);
     };
-    let consulted = decode_consulted(&consulted);
+    let Some(consulted) = decode_consulted(&consulted) else {
+        miss("the record's consulted reads do not decode");
+        return Ok(None);
+    };
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);
@@ -247,6 +270,21 @@ mod consulted_transport_tests {
             ("file".into(), "名前\0:\r\ndoc\tinvented\t123".into(), "ghi".into()),
             ("refused".into(), "".into(), "".into()),
         ];
-        assert_eq!(super::decode_consulted(&super::encode_consulted(&reads)), reads);
+        assert_eq!(super::decode_consulted(&super::encode_consulted(&reads)), Some(reads));
+    }
+}
+
+#[cfg(test)]
+mod consulted_integrity_tests {
+    #[test]
+    fn malformed_or_legacy_reads_cannot_validate_a_partial_dependency_set() {
+        use super::{decode_consulted, encode_consulted};
+        let valid = encode_consulted(&[("dir".into(), "名前".into(), "hash".into())]);
+        for bad in ["dir\timpl/a\nhidden\thash", "RRC2:1:é", "RRC2:1:x", "RRC2:9999999999999999999999999999:x", "RRC2:-1:x"] {
+            assert!(decode_consulted(bad).is_none(), "{bad:?}");
+        }
+        for end in 6..valid.len() { assert!(decode_consulted(&valid[..valid.floor_char_boundary(end)]).is_none()); }
+        assert_eq!(decode_consulted("RRC2:"), Some(Vec::new()));
+        assert!(decode_consulted(&(valid + "garbage")).is_none());
     }
 }

@@ -100,5 +100,5 @@
         let files = vec![("a.csv".to_owned(), b"1\t2\n".to_vec()), ("b.csv".to_owned(), Vec::new())];
         assert_eq!(super::decode_outputs(&super::encode_outputs(&files)).unwrap(), files);
         let c = vec![("doc".to_owned(), "a.py".to_owned(), "ab".to_owned()), ("rule".to_owned(), "/x/core.rr".to_owned(), "cd".to_owned())];
-        assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), c);
+        assert_eq!(super::decode_consulted(&super::encode_consulted(&c)), Some(c));
     }
