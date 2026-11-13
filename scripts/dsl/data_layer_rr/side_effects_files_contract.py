@@ -1,5 +1,6 @@
 """Source-recorded public filesystem APIs, including ignored caller syntax and explicit scope."""
 import ast
+from contextlib import chdir
 from pathlib import Path
 from unittest.mock import patch
 from contract_runner import main
@@ -45,6 +46,17 @@ def cases(_module):
             ('decode',[dict(path='a.py',binary='ff')],'a.py','pass\n','pass\n'),
             ('syntax',[f('a.py','with open_write_plan(:\n pass\n')],'a.py',BAD,BAD)]:
         rows.append(dict(kind='content',id='content-'+name,files=files,path=path,source=text,tree=tree))
+    relative=[
+        dict(api='iter',id='relative-iter',files=[f('a.py')]),
+        dict(api='repo',id='relative-repo',files=[f('a.py')]),
+        dict(api='repo',id='relative-repo-mapped',files=[f('a.py'),f('repo/a.py')]),
+        dict(api='repo',id='relative-repo-directory-candidate',files=[f('dir.py/inside.py'),f('repo/dir.py')]),
+        dict(api='explicit',id='relative-explicit-prefixed',files=[f('a.py')],selected=['a.py']),
+        dict(api='explicit',id='relative-explicit-input',files=[f('a.py')],selected=['a.py'],relative_input=True),
+        dict(api='content',id='relative-content',files=[f('a.py')],path='a.py',source=BAD,tree=BAD),
+        dict(api='content',id='relative-content-mapped',files=[f('repo/a.py')],path='a.py',source='pass\n',tree='pass\n'),
+    ]
+    rows.extend(dict(kind='relative',relative_root=True,**r)for r in relative)
     return rows
 
 
@@ -57,10 +69,11 @@ def exercise(module,case,scratch):
                 p=directory/f['path'];p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(bytes.fromhex(f['binary']))
     if case.get('outside_link'):(root/'alias.py').symlink_to(outside/'outside.py')
     try:
-        with patch.object(module,'REPO_ROOT',root):
-            if case['kind']=='iter':value=module._iter_python_files(root)
-            elif case['kind']=='repo':value=module.scan_repo(root)
-            elif case['kind']=='explicit':
+        with chdir(scratch),patch.object(module,'REPO_ROOT',Path('repo')if case.get('relative_root')else root):
+            root=module.REPO_ROOT;kind=case.get('api',case['kind'])
+            if kind=='iter':value=module._iter_python_files(root)
+            elif kind=='repo':value=module.scan_repo(root)
+            elif kind=='explicit':
                 selected=[outside/p.removeprefix('$OUT/')if p.startswith('$OUT/')else Path(p)if case.get('relative_input')else root/p for p in case['selected']]
                 value=module._run_fact_engine_for_files(root,selected)
             else:value=module.scan_file_content(case['path'],case['source'],ast.parse(case['tree']))
