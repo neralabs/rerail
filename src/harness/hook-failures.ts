@@ -400,8 +400,9 @@ const RELISTING_PAUSES_MS = [1, 2, 4, 8, 16, 32, 64, 128];
  *
  * A give-back by copy moves lines, not a file. Between the removal of the taken name and the append to the live log the
  * lines are under no name, so a read in that moment misses them; a read that met the taken log, then a live log it had
- * not met that already holds the copy, counts them twice. Either is limited to the lines of the small log being given
- * back, for that status.
+ * not met that already holds the copy, counts them twice. Either is limited to the lines of the log being given back,
+ * for that status: a new log a hook took for full, which grows for as long as that hook is held up between its size
+ * check and its take, up to most of a part.
  */
 function readLogParts(home: string): LogPart[] {
   const parts = new Map<string, LogPart>();
