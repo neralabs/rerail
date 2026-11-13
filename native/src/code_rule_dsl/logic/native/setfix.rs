@@ -137,6 +137,7 @@ fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
         return Ok(Arc::clone(s));
     }
     let s = symbols_by_path(conn)?;
+    forgotten_on_close();
     SCOPE_SYMS.lock().unwrap().insert(at, Arc::clone(&s));
     Ok(s)
 }
@@ -152,6 +153,7 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
     // (`prime`): not kept, so the run's own lookup finds it.
     let Ok(sql) = conn.sql() else { return Arc::from("") };
     let p: Arc<str> = Arc::from(sql.path().unwrap_or_default());
+    forgotten_on_close();
     SCOPE_PATHS.lock().unwrap().insert(at, Arc::clone(&p));
     p
 }
@@ -950,6 +952,16 @@ pub fn scope(conn: &Connection) -> usize {
     crate::code_rule_dsl::facts::vtab::connection_scope(conn)
 }
 
+/// What the evaluator keeps for a connection is dropped when the connection closes (`forget_scope`, through
+/// `vtab::install_forget`), in every binary that runs it: installed here, before the first state is kept, as well as
+/// at the engine's load (`code_rule_dsl`'s installs). Without it the logic crate's own tests, which never load the
+/// engine, kept a closed connection's relations for the next connection at its address (a join over a test's
+/// `events` read the rows of another test's `events`).
+pub(crate) fn forgotten_on_close() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| crate::code_rule_dsl::facts::vtab::install_forget(crate::code_rule_dsl::facts::vtab::Forget { scope: forget_scope, engine: forget_engine }));
+}
+
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
 pub fn forget_scope(at: usize) {
     if let Ok(mut s) = SCOPE_SYMS.lock() {
@@ -1277,6 +1289,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     syms.check()?;
     drop(syms);
     let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
+    forgotten_on_close();
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (conn.at(), name.clone());
     reg.retain(|(k, _)| *k != key);
@@ -1304,6 +1317,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
 pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
     let conn = conn.db();
     let at_scope = conn.at();
+    forgotten_on_close();
     let mut reg = COMPONENTS.lock().unwrap();
     let Some(at) = reg.iter().position(|((s, n), _)| *s == at_scope && n == name) else { return Ok(()) };
     let (_, comp) = reg.remove(at);
@@ -1311,6 +1325,7 @@ pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
     let comp = comp.lock().unwrap();
     if comp.done {
         let rels = std::mem::take(&mut comp.store.write().unwrap().rels);
+        forgotten_on_close();
         let mut derived = DERIVED.lock().unwrap();
         for rel in rels {
             let moved = InRel::moved(rel);
@@ -2389,6 +2404,7 @@ impl Csr {
 /// and the indexes the waves kept are freed now, not when the run ends.
 pub fn release(conn: &Connection, tables: &[String]) {
     let at = conn.at();
+    forgotten_on_close();
     let mut derived = DERIVED.lock().unwrap();
     for t in tables {
         derived.remove(&(at, t.clone()));
@@ -2400,6 +2416,7 @@ pub fn release(conn: &Connection, tables: &[String]) {
 /// size. A relation shared with a reader still open keeps them.
 pub fn unindex(conn: &Connection, tables: &[String]) {
     let at = conn.at();
+    forgotten_on_close();
     let mut derived = DERIVED.lock().unwrap();
     for t in tables {
         if let Some(rel) = derived.get_mut(&(at, t.clone())).and_then(Arc::get_mut) {
@@ -2521,6 +2538,7 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
 pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
     let at = conn.at();
     let _ = rel.name.set(table.to_owned());
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((at, table.to_owned()), rel);
     ADOPTED.lock().unwrap().insert((at, table.to_owned()));
 }
@@ -2529,6 +2547,7 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
 /// relation is its kept one, unchanged (decision 0101 §1), shared with its indexes.
 pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
     let conn = conn.db();
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((conn.at(), table.to_owned()), rel);
 }
 
@@ -2541,6 +2560,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
     rows.dedup();
     let mut rel = InRel::flat(&rows, types);
     Arc::get_mut(&mut rel).unwrap().stored = 0;
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((conn.at(), table.to_owned()), rel);
     Ok(())
 }
@@ -2553,6 +2573,7 @@ pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule
     let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
     let rel = Arc::new(InRel { k, n: 0, rows: Rows::default(), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     let _ = rel.name.set(table.to_owned());
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((conn.at(), table.to_owned()), rel);
 }
 
@@ -2567,6 +2588,7 @@ pub fn held_source(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code
 /// stratum with nothing to run, which opens no component.
 pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
     let conn = conn.db();
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((conn.at(), table.to_owned()), InRel::flat(&[], types));
 }
 
@@ -2575,6 +2597,7 @@ pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
 pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>, n: usize) {
     let rel = InRel::kept(types, rows, n);
     let _ = rel.name.set(table.to_owned());
+    forgotten_on_close();
     DERIVED.lock().unwrap().insert((conn.at(), table.to_owned()), rel);
 }
 

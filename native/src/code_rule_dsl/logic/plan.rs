@@ -8143,6 +8143,7 @@ pub fn forget_connection(at: usize) {
 /// States that the runs on `db` have documents whose nodes are `d << 32 | index` (the corpus runner's): a range read
 /// computes a document's interval, so no table of them is written or read in the run's waves.
 pub fn docs_by_shift(db: &Connection) {
+    super::native::setfix::forgotten_on_close();
     TEMP_LEFT.lock().expect("temp_left").entry(super::native::setfix_scope(db)).or_default().by_shift = true;
 }
 
@@ -8162,6 +8163,7 @@ fn temp_in_memory(db: &Connection) -> Result<()> {
     }
     // Set when SQL first runs on the connection (`vtab::setup_now`): a run all native runs no statement.
     crate::code_rule_dsl::facts::vtab::defer_setup(db, "PRAGMA temp_store = MEMORY;");
+    super::native::setfix::forgotten_on_close();
     TEMP_LEFT.lock().expect("temp_left").entry(at).or_default().configured = true;
     Ok(())
 }
