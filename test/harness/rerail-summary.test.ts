@@ -38,3 +38,24 @@ describe("/rerail for a session Rerail has not read", () => {
     }
   });
 });
+
+describe("/rerail without a session", () => {
+  const headline = (repositoryState: RerailSummaryInput["repositoryState"]): string[] => renderRerailSummary({
+    presentation: null, repositoryState, ruleCount: 26, awaitingApproval: 2, rulesUrl: "http://127.0.0.1:4737/#rules", repositoryName: "acme-web", sigil: "/",
+  }).split("\n\n")[0]!.split("\n");
+
+  it("gives each repository state its own headline", () => {
+    expect(headline(null)).toEqual(["✕ Rerail is not running.", "  Start it with `rerail daemon start` in a terminal."]);
+    expect(headline("not-answering")[0]).toBe("● Rerail is running, but its daemon did not answer in time.");
+    expect(headline("not-set-up")).toEqual([
+      "○ Rerail is on in acme-web, which is not set up yet: no rules are checked.", "  Set it up with /rerail-start (rerail start).",
+    ]);
+    expect(headline("stopped")).toEqual(["○ Rerail is not on in acme-web.", "  Start it with /rerail-start."]);
+    expect(headline("started")).toEqual([
+      "● Rerail is on in this repo · acme-web",
+      "  26 rules",
+      "  2 to approve, running in Log → http://127.0.0.1:4737/#rules",
+      "  Manage rules → http://127.0.0.1:4737/#rules",
+    ]);
+  });
+});

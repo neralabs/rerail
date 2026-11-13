@@ -27,9 +27,6 @@ const NOT_ANSWERING: readonly string[] = [
   "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
 ];
 
-/** What `/rerail` says where no daemon answered as Rerail: none runs (null), or the live one gave no answer in time. */
-const SILENT_HEADLINES: ReadonlyMap<SummaryState, readonly string[]> = new Map([[null, NOT_RUNNING], ["not-answering", NOT_ANSWERING]]);
-
 const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
   [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];
 
@@ -48,15 +45,30 @@ function awaitingLines(awaiting: number | null, rulesUrl: string | null): string
 }
 
 /**
- * The headline without a session (Cursor, or OMP/Pi where none is attached): from the repository's state. With no
- * session to show, the link is to the rules this repository runs (design N8, Cursor).
+ * The headline without a session (Cursor, or OMP/Pi where none is attached): from the repository's state. Every state
+ * has its case, so a new one fails to compile until it has its lines.
  */
 function repositoryHeadline(input: RerailSummaryInput): readonly string[] {
-  const { repositoryState, ruleCount, rulesUrl } = input;
-  const silent = SILENT_HEADLINES.get(repositoryState);
-  if (silent !== undefined) return silent;
-  if (repositoryState === "not-set-up") return notSetUpLines(input);
-  if (repositoryState === "stopped") return notOnLines(input);
+  switch (input.repositoryState) {
+    case null:
+      return NOT_RUNNING;
+    case "not-answering":
+      return NOT_ANSWERING;
+    case "not-set-up":
+      return notSetUpLines(input);
+    case "stopped":
+      return notOnLines(input);
+    case "started":
+      return startedLines(input);
+  }
+}
+
+/**
+ * A started repository whose daemon answered. With no session to show, the link is to the rules this repository runs
+ * (design N8, Cursor).
+ */
+function startedLines(input: RerailSummaryInput): string[] {
+  const { ruleCount, rulesUrl } = input;
   const lines = [onLine(input)];
   if (ruleCount !== null) lines.push(`  ${plural(ruleCount, "rule")}`);
   lines.push(...awaitingLines(input.awaitingApproval, rulesUrl));
