@@ -12,6 +12,15 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 /** `text` as it stands inside a JSON string: a Windows path's backslashes are written twice there. */
 const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
 
+/**
+ * Why a check of a registration made for Linux skips on Windows: set-up writes that registration's paths by POSIX rules
+ * (`pathsOf`), and on a Windows computer a dry run for Linux plans its Claude Code and Cursor hooks again, so it never
+ * reads as connected there. test/setup/harness-registration.test.ts skips its checks of the Linux forms there too. The
+ * checks that register for `win32` run everywhere.
+ */
+const POSIX_SETUP = "checks a registration made off Windows; the checks that register for win32 run everywhere";
+const WINDOWS = process.platform === "win32";
+
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -241,7 +250,14 @@ describe("whether a coding agent can read Rerail's data", () => {
     return { connected: state.connected, access: state.rerailData.access };
   }
 
-  it("counts Claude Code as kept out only while its sandbox is on, in its user or managed settings", async () => {
+  /** A `.cursor/cli-config.json` in `home`, which the Cursor CLI reads and set-up adds its denies to. */
+  async function cursorCliConfig(home: string): Promise<void> {
+    await mkdir(join(home, ".cursor"));
+    await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
+  }
+
+  it("counts Claude Code as kept out only while its sandbox is on, in its user or managed settings", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { root, home, managed } = await connected(["claude-code"]);
     const settings = join(home, ".claude", "settings.json");
     const registered = JSON.parse(await readFile(settings, "utf8")) as { sandbox?: Record<string, unknown> };
@@ -252,12 +268,6 @@ describe("whether a coding agent can read Rerail's data", () => {
 
     await writeFile(settings, withSandbox(true));
     expect(await claude()).toEqual({ connected: true, access: "kept-out" });
-    // Native Windows has no Claude Code sandbox, whatever the setting says.
-    const windows = await connected(["claude-code"], async () => {}, "win32");
-    const windowsSettings = join(windows.home, ".claude", "settings.json");
-    await writeFile(windowsSettings, JSON.stringify({ ...JSON.parse(await readFile(windowsSettings, "utf8")), sandbox: { enabled: true } }));
-    expect(await stateOf(windows.root, windows.home, "claude-code", { platform: "win32", claudeManagedSettings: windows.managed }))
-      .toEqual({ connected: true, access: "file-tools" });
     // Managed settings win over the user's.
     await writeFile(managed, JSON.stringify({ sandbox: { enabled: false } }));
     expect(await claude()).toEqual({ connected: true, access: "file-tools" });
@@ -275,18 +285,25 @@ describe("whether a coding agent can read Rerail's data", () => {
     expect(await claude()).toEqual({ connected: false, access: "open" });
   });
 
-  it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async () => {
-    const cliConfig = async (home: string) => {
-      await mkdir(join(home, ".cursor"));
-      await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
-    };
-    const withConfig = await connected(["cursor"], cliConfig);
+  it("counts Claude Code on native Windows as keeping only its file tools out, whatever its sandbox setting says", async () => {
+    const { root, home, managed } = await connected(["claude-code"], async () => {}, "win32");
+    const settings = join(home, ".claude", "settings.json");
+    await writeFile(settings, JSON.stringify({ ...JSON.parse(await readFile(settings, "utf8")), sandbox: { enabled: true } }));
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: managed })).toEqual({ connected: true, access: "file-tools" });
+  });
+
+  it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const withConfig = await connected(["cursor"], cursorCliConfig);
     expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "file-tools" });
-    const onWindows = await connected(["cursor"], cliConfig, "win32");
-    expect(await stateOf(onWindows.root, onWindows.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
 
     const without = await connected(["cursor"]);
     expect(await stateOf(without.root, without.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "open" });
+  });
+
+  it("counts the Cursor CLI's file tools as kept out on Windows too where its cli-config.json held Rerail's denies", async () => {
+    const { root, home } = await connected(["cursor"], cursorCliConfig, "win32");
+    expect(await stateOf(root, home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
   });
 
   it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
