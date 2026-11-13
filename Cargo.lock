@@ -3170,6 +3170,7 @@ dependencies = [
  "libc",
  "rayon",
  "rerail-compiler",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4147,6 +4148,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4167,6 +4169,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-metal",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "sha2 0.10.9",
 ]
 
@@ -4338,6 +4341,9 @@ dependencies = [
 [[package]]
 name = "rerail-tape-format"
 version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "rerail-transducer"
@@ -4745,6 +4751,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+ "sha2-asm",
 ]
 
 [[package]]
@@ -4756,6 +4763,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
