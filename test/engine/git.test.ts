@@ -251,6 +251,36 @@ describe("GitReads", () => {
   });
 });
 
+/**
+ * Lists the changed files of a repository whose clean filter leaves a process that holds Git's stderr after Git exits,
+ * so the read's output stays open, and answers what the read answered within `waitMs`, or that it was still waiting.
+ * `whileReading` runs once the read has started.
+ */
+async function heldListing(waitMs: number, whileReading: () => void = () => undefined): Promise<unknown> {
+  const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
+  const held = join(root, ".git", "held");
+  // Git runs the clean filter to compare a.py, changed on disk, with the index. The loop the filter leaves behind holds
+  // Git's stderr, outside the repository, while `held` is there: this removes it, and so does removing the repository.
+  git(root, "config", "filter.held.clean", `(cd / && while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null & cat`);
+  await writeFile(held, "");
+  await writeFile(join(root, "a.py"), "print(2)\n");
+  let late: NodeJS.Timeout | undefined;
+  try {
+    const read = gitModifiedOrUntrackedPaths(root);
+    whileReading();
+    return await Promise.race([read, new Promise(settle => { late = setTimeout(settle, waitMs, `still waiting at ${waitMs / 1000} s`); })]);
+  } finally {
+    clearTimeout(late);
+    await rm(held, { force: true });
+  }
+}
+
+/** From now on `performance.now()` answers `ms` later than it would: the clock a read finds after stalls its ticks did not count. */
+function clockAhead(ms: number): void {
+  const now = performance.now.bind(performance);
+  vi.spyOn(performance, "now").mockImplementation(() => now() + ms);
+}
+
 describe("Git reads and their time limit", () => {
   it("answers with what Git printed when the event loop stalls past the time limit after Git finished", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
@@ -266,21 +296,32 @@ describe("Git reads and their time limit", () => {
   }, 30_000);
 
   it("ends a read at the time limit when Git has exited but a process it started keeps the output open", async () => {
-    const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
-    const held = join(root, ".git", "held");
-    // Git runs the clean filter to compare a.py, changed on disk, with the index. The loop the filter leaves behind holds
-    // Git's stderr, outside the repository, while `held` is there: the test removes it, and so does removing the repository.
-    git(root, "config", "filter.held.clean", `(cd / && while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null & cat`);
-    await writeFile(held, "");
-    await writeFile(join(root, "a.py"), "print(2)\n");
-    let late: NodeJS.Timeout | undefined;
+    await expect(heldListing(20_000)).resolves.toBeUndefined();
+  }, 30_000);
+
+  it("ends a read Git does not finish one tick after it has run three times the time limit on the clock, however few ticks it counted", async () => {
     try {
-      const read = gitModifiedOrUntrackedPaths(root);
-      const waited = new Promise(settle => { late = setTimeout(settle, 20_000, "still waiting at 20 s"); });
-      await expect(Promise.race([read, waited])).resolves.toBeUndefined();
+      // As if the event loop had stalled for 31 s between the read's first ticks: they count 2 s when the read ends.
+      await expect(heldListing(5_000, () => clockAhead(31_000))).resolves.toBeUndefined();
     } finally {
-      clearTimeout(late);
-      await rm(held, { force: true });
+      vi.restoreAllMocks();
+    }
+  }, 30_000);
+
+  it("answers with what Git printed when the stall that took the read past three times the limit on the clock ended after Git finished", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    const head = git(root, "rev-parse", "HEAD").trim();
+    vi.mocked(endProcessTree).mockClear();
+    try {
+      const read = gitHead(root);
+      clockAhead(31_000);
+      // Git finishes during the stall. The read's tick runs first after it and finds the read past the limit on the clock,
+      // before the event loop handles Git's exit.
+      setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000));
+      await expect(read).resolves.toBe(head);
+      expect(endProcessTree).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
     }
   }, 30_000);
 });

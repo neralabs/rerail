@@ -728,6 +728,30 @@ const EXIT_DRAIN_MS = 500;
  */
 const TIME_LIMIT_TICK_MS = 1_000;
 
+/**
+ * How many times its time limit a Git read may run on the clock, however few of its ticks a stalling event loop runs:
+ * a Git that hangs while the loop stalls again and again is ended then, not ten stalls later.
+ */
+const CLOCK_LIMIT_FACTOR = 3;
+
+/**
+ * A Git read's time limit, asked at each of its ticks: whether the read is past it. It is once the ticks count `limitMs`,
+ * each counting `tickMs` however late it runs, or at the first tick after one that found the read past
+ * {@link CLOCK_LIMIT_FACTOR} times `limitMs` on the clock. Not at that tick itself: it may run right after a stall,
+ * before the loop handles the exit of a Git that finished during it, and the loop handles that exit before the next.
+ */
+function timeLimit(limitMs: number, tickMs: number): () => boolean {
+  const startedAt = performance.now();
+  let counted = 0;
+  let pastClockLimit = false;
+  return () => {
+    counted += tickMs;
+    if (counted >= limitMs || pastClockLimit) return true;
+    pastClockLimit = performance.now() - startedAt >= limitMs * CLOCK_LIMIT_FACTOR;
+    return false;
+  };
+}
+
 /** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
 interface ReadLimits {
   readonly timeoutMs: number;
@@ -742,8 +766,8 @@ interface ReadLimits {
  * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
  * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
  * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
- * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time
- * ({@link TIME_LIMIT_TICK_MS}). `settle` is told whether `timeoutMs` or `signal` ended the read.
+ * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time, within
+ * a ceiling on the clock ({@link timeLimit}). `settle` is told whether `timeoutMs` or `signal` ended the read.
  */
 function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
@@ -766,10 +790,9 @@ function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, {
     else drain();
   };
   const tick = Math.min(TIME_LIMIT_TICK_MS, timeoutMs);
-  let counted = 0;
+  const pastLimit = timeLimit(timeoutMs, tick);
   const ticks = setInterval(() => {
-    counted += tick;
-    if (counted >= timeoutMs) end();
+    if (pastLimit()) end();
   }, tick);
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
