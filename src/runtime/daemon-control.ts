@@ -415,15 +415,22 @@ export async function readDaemonState(stateFile: string, platform: NodeJS.Platfo
   }
 }
 
+/** How {@link probeDaemon} asks the daemon. */
+export interface DaemonProbeOptions {
+  /** Another transport than the daemon's own (`daemonFetch`), as the MCP bridge's tests pass. */
+  readonly fetchImpl?: DaemonFetch | undefined;
+  /** How long it waits for the answer; a caller that can wait out a busy daemon passes more. */
+  readonly timeoutMs?: number;
+}
+
 /**
  * What the daemon `state` records answers on `/healthz`, with the capability it records, over its own transport
- * (`daemonFetch`) unless `fetchImpl` names another, as the MCP bridge's tests do. A `401` is a refusal, kept apart from
- * silence: the daemon is up, and "not answering" would send the person after the wrong cause.
+ * unless `fetchImpl` names another. A `401` is a refusal, kept apart from silence: the daemon is up, and "not
+ * answering" would send the person after the wrong cause.
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
-  fetchImpl?: DaemonFetch,
-  timeoutMs: number = PROBE_TIMEOUT_MS,
+  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS }: DaemonProbeOptions = {},
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
@@ -628,7 +635,7 @@ export async function lookupDaemon(
 
 /** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
 async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: number): Promise<DaemonLookup> {
-  const probe = await probeDaemon(state, undefined, timeoutMs);
+  const probe = await probeDaemon(state, { timeoutMs });
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {

@@ -99,7 +99,7 @@ class DaemonLocator {
     if (state === undefined || !(await recordedDaemonAlive(state))) throw new Error(DAEMON_NOT_RUNNING);
     if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
       this.#confirmed = undefined;
-      const probe = await probeDaemon(state, this.fetchImpl);
+      const probe = await probeDaemon(state, { fetchImpl: this.fetchImpl });
       if (probe.status === "refused") throw new Error(DAEMON_REFUSED);
       if (probe.status !== "ok" || probe.health.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
       this.#confirmed = state;
