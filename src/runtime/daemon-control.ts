@@ -435,13 +435,19 @@ export async function probeDaemon(
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
     const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 401) return { status: "refused" };
-    if (!response.ok) return { status: "unreachable" };
-    const body = await response.json() as DaemonHealth;
-    return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
+    // Awaited here, so a body that cannot be read is caught below as no answer.
+    return await probeAnswer(response);
   } catch {
     return { status: "unreachable" };
   }
+}
+
+/** What a daemon's answer on `/healthz` makes of it ({@link probeDaemon}); a body that cannot be read throws. */
+async function probeAnswer(response: Response): Promise<DaemonProbe> {
+  if (response.status === 401) return { status: "refused" };
+  if (!response.ok) return { status: "unreachable" };
+  const body = await response.json() as DaemonHealth;
+  return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
 }
 
 /** A process Node's spawn started, as daemon-control reads it: its pid, how it ended, and letting this process exit first. */
