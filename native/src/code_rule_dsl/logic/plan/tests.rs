@@ -4,6 +4,84 @@ use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
 
+/// Stable order keys have gaps at nested granules. A SQL descent follows the tree,
+/// includes a nested scope itself, and excludes the nodes inside that scope.
+#[test]
+fn sql_descendant_walks_cross_sparse_order_keys_and_stop_at_nested_scopes() {
+    let p = parse(
+        r#"
+.decl roots(f:node)
+roots(100). roots(102). roots(101). roots(105). roots(106).
+.decl targets(n:node)
+targets(103). targets(104). targets(107).
+.decl scope(k:symbol)
+scope("function_definition").
+.decl seen(f:node,n:node)
+seen(f,n) :- roots(f), nearest(n,f,scope).
+.decl wanted(f:node,n:node)
+wanted(f,n) :- roots(f), targets(n), nearest(n,f,scope).
+.output seen,wanted
+"#,
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        r#"
+CREATE TABLE roots(c0 INTEGER);
+INSERT INTO roots VALUES(100),(102),(101),(105),(106);
+CREATE TABLE targets(c0 INTEGER);
+INSERT INTO targets VALUES(103),(104),(107);
+CREATE TABLE node(n INTEGER PRIMARY KEY,kind TEXT);
+INSERT INTO node VALUES(100,'function_definition'),(101,'return_statement'),
+    (102,'function_definition'),(103,'return_statement'),(104,'return_statement'),
+    (105,'function_definition'),(106,'block'),(107,'return_statement');
+CREATE TABLE child(p INTEGER,c INTEGER,idx INTEGER);
+CREATE INDEX child_parent ON child(p);
+INSERT INTO child VALUES(100,101,0),(100,102,1),(102,103,0),(100,104,2),(106,107,0);
+CREATE TABLE tape(n INTEGER PRIMARY KEY,par INTEGER,size INTEGER,depth INTEGER);
+INSERT INTO tape VALUES(100,-1,4,0),(101,100,0,1),(102,100,1,1),(103,102,0,2),
+    (104,100,0,1),(105,-1,0,0),(106,-1,1,0),(107,106,0,1);
+CREATE TABLE node_order(n INTEGER PRIMARY KEY,k INTEGER UNIQUE);
+INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,524290),
+    (105,786432),(106,1048576),(107,1048577);
+"#,
+    )
+    .unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let model = make_plan(&p, &db, inputs).unwrap();
+    for (name, expected) in [
+        ("seen", vec![(100, 101), (100, 102), (100, 104), (102, 103)]),
+        ("wanted", vec![(100, 104), (102, 103)]),
+    ] {
+        let rule = p.rules.iter().find(|r| r.head.rel == name).unwrap();
+        let order = rule
+            .body
+            .iter()
+            .enumerate()
+            .map(|(at, lit)| Step {
+                at,
+                lit: lit.clone(),
+                mode: matches!(lit, Literal::Nearest { .. }).then_some(Mode::Descend),
+            })
+            .collect::<Vec<_>>();
+        let query = model
+            .checked_query(&p, &rule.head, &order, None, None)
+            .unwrap();
+        let sql = query.render();
+        let mut rows = db
+            .prepare(&sql)
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows.sort();
+        assert_eq!(rows, expected, "{sql}");
+    }
+}
+
 #[test]
 fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters() {
     let p=parse(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
