@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 // Each test writes patterns no other test writes: tests on other threads compile documents and
 // drop rules, and each compilation and each rule that drops sweeps the table.
 
-fn regex(pattern: &str) -> Arc<Regex> {
-    compile(pattern).expect("the pattern compiles")
+fn regex(pattern: &str) -> Arc<regex::Regex> {
+    Regex::new(pattern).expect("the pattern compiles").0
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn every_holder_of_a_pattern_holds_one_regex_until_a_sweep_finds_none() {
     let held = regex("^regexes-held$");
     assert!(Arc::ptr_eq(&held, &regex("^regexes-held$")));
     assert!(!Arc::ptr_eq(&held, &regex("^regexes-other$")));
-    assert!(compile("(").is_none() && compile("(").is_none());
+    assert!(Regex::new("(").is_err() && Regex::new("(").is_err());
     sweep();
     assert!(Arc::ptr_eq(&held, &regex("^regexes-held$")));
     let gone = Arc::downgrade(&held);
@@ -28,14 +28,14 @@ fn every_holder_of_a_pattern_holds_one_regex_until_a_sweep_finds_none() {
 }
 
 /// The regex of the first grammar's matcher, a rule of one `regex` term beside its `kind`.
-fn regex_of(rule: &CompiledCodeRuleDsl) -> Arc<Regex> {
+fn regex_of(rule: &CompiledCodeRuleDsl) -> Arc<regex::Regex> {
     let AstMatcher::All(terms) = &grammar_matchers(rule)[0].matcher else {
         panic!("a kind and a regex term");
     };
     terms
         .iter()
         .find_map(|term| match term {
-            AstMatcher::Regex(regex) => Some(Arc::clone(regex)),
+            AstMatcher::Regex(regex) => Some(Arc::clone(&regex.0)),
             _ => None,
         })
         .expect("a regex term")

@@ -201,7 +201,7 @@ impl Language<'_> {
             })
             .clone()?;
         Some(Table {
-            table: Arc::new(UtilTable::new(
+            table: Arc::new(UtilTable::sharing(
                 Arc::clone(&self.names),
                 Arc::clone(&self.framed),
                 origins,

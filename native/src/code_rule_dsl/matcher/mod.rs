@@ -29,6 +29,7 @@ mod value;
 
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+use crate::code_rule_dsl::regexes::Regex;
 pub(super) use analysis::RequiredText;
 pub(crate) use analysis::{calls_positive_only, reads_import_targets};
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
@@ -56,7 +57,6 @@ pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 pub(crate) use parse::{HostTest, ParseTest};
-use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(test)]
 pub(super) use relation::{set_answers_off, set_same_key_off};
@@ -241,7 +241,7 @@ pub(super) enum AstMatcher {
     Pattern(Pattern),
     Kind(KindMatcher),
     /// The node's text matches; the terms that write one pattern share its regex (`regexes`).
-    Regex(Arc<Regex>),
+    Regex(Regex),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
     Not(Box<AstMatcher>),

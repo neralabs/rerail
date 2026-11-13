@@ -5,11 +5,11 @@ use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter}
 use crate::code_rule_dsl::test_support::{Walk, record_walk};
 mod semantic;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::regexes::Regex;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};
 use ast_grep_core::source::SgNode;
 use ast_grep_core::{AstGrep, Doc, MatchStrictness, Node};
 use foldhash::{HashMap, HashMapExt, HashSet};
-use regex::Regex;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -125,7 +125,7 @@ enum Condition {
     Always,
     Pattern(Vec<Requirement>),
     Text {
-        regex: Arc<Regex>,
+        regex: Regex,
         probe: TextProbe,
     },
     All(Vec<AnchorPlan>),

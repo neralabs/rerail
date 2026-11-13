@@ -142,6 +142,16 @@ impl UtilTable {
     pub(crate) fn new(
         names: Arc<[String]>,
         framed: Arc<[bool]>,
+        origins: Vec<Option<UtilOrigin>>,
+    ) -> Self {
+        Self::sharing(names, framed, origins.into())
+    }
+
+    /// A table that shares its names, parameter flags and origins with the other shared tables
+    /// of its define (`compile::shared`).
+    pub(crate) fn sharing(
+        names: Arc<[String]>,
+        framed: Arc<[bool]>,
         origins: Arc<[Option<UtilOrigin>]>,
     ) -> Self {
         Self {
