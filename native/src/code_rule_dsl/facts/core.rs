@@ -452,6 +452,12 @@ pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Gra
     let mut f = empty(tag, Arc::clone(&source), lines, 0);
     let mut classes = Vec::new();
     let decode = crate::code_rule_dsl::logic::profile::span(|| "validated tape columns".into());
+    #[cfg(feature = "tape-reads")]
+    {
+        use crate::code_rule_dsl::tape::reads;
+        reads::hit(reads::part("facts docs"), 1);
+        reads::hit(reads::part("facts nodes"), image.node_count() as u64);
+    }
     crate::code_rule_dsl::tape::validated::visit(&source, grammar, image, &|| false, |node, memberships| {
         if node.id == 0 { f = empty(tag, Arc::clone(&f.source), Arc::clone(&f.lines), image.node_count()); }
         f.kind.push(kind_atom(tag, node.kind));

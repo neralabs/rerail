@@ -529,6 +529,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     impl Drop for Flush {
         fn drop(&mut self) {
             crate::code_rule_dsl::logic::costs::flush();
+            #[cfg(feature = "tape-reads")]
+            crate::code_rule_dsl::tape::reads::report();
         }
     }
     let _flush = Flush;

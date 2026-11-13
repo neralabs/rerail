@@ -1538,6 +1538,70 @@ impl TapeImage {
     }
 }
 
+/// E7 (draft decision 0156): how often readers take each part of a node, so format 16 knows which parts a
+/// reader needs decoded and which it may derive or leave compressed. Off unless the `tape-reads` feature is
+/// on; with it, a relaxed add per read and a table on stderr when a `rerail-engine` command ends.
+#[cfg(feature = "tape-reads")]
+pub mod reads {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    pub const PARTS: [&str; 15] = [
+        "kind", "field", "flags", "named", "span", "points", "parent", "children", "prev", "size", "classes",
+        "docs restored", "nodes restored", "facts docs", "facts nodes",
+    ];
+    static COUNTS: [AtomicU64; PARTS.len()] = [const { AtomicU64::new(0) }; PARTS.len()];
+
+    pub fn hit(part: usize, n: u64) {
+        COUNTS[part].fetch_add(n, Relaxed);
+    }
+
+    pub const fn part(name: &str) -> usize {
+        let mut i = 0;
+        while !eq(PARTS[i], name) {
+            i += 1;
+        }
+        i
+    }
+
+    const fn eq(a: &str, b: &str) -> bool {
+        let (a, b) = (a.as_bytes(), b.as_bytes());
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut i = 0;
+        while i < a.len() {
+            if a[i] != b[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    pub fn report() {
+        let nodes = COUNTS[part("nodes restored")].load(Relaxed).max(1) as f64;
+        eprintln!("tape reads (E7):");
+        for (name, count) in PARTS.iter().zip(&COUNTS) {
+            let count = count.load(Relaxed);
+            eprintln!("  {name:<16} {count:>14} {:>10.3} per restored node", count as f64 / nodes);
+        }
+    }
+}
+
+/// Counts a read of `$part` (`reads::PARTS`), `$n` times.
+macro_rules! read {
+    ($part:literal) => {
+        read!($part, 1)
+    };
+    ($part:literal, $n:expr) => {
+        #[cfg(feature = "tape-reads")]
+        {
+            const PART: usize = reads::part($part);
+            reads::hit(PART, $n as u64);
+        }
+    };
+}
+
 #[derive(Clone, Copy)]
 pub struct Rec {
     kind: u16,
@@ -1848,6 +1912,8 @@ impl TapeDoc {
         let mut nodes = Vec::new();
         let mut kind_overrides = Vec::new();
         let mut supertypes = Vec::new();
+        read!("docs restored");
+        read!("nodes restored", count);
         let digest = validated::visit(&source, &grammar, image, budget, |node, classes| {
             if node.id == 0 { nodes.reserve_exact(count); }
             if node.alias != SENTINEL { kind_overrides.push((node.id, node.alias)); }
@@ -2049,6 +2115,7 @@ impl TapeDoc {
     }
 
     pub fn transducer_kind(&self, node: u32) -> u16 {
+        read!("kind");
         self.data[node as usize].kind
     }
 
@@ -2060,6 +2127,7 @@ impl TapeDoc {
     }
 
     fn node_is_named(&self, node: u32) -> bool {
+        read!("named");
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
             |alias| alias.1,
@@ -2067,10 +2135,12 @@ impl TapeDoc {
     }
 
     pub fn transducer_field(&self, node: u32) -> u16 {
+        read!("field");
         self.data[node as usize].field
     }
 
     pub fn transducer_flags(&self, node: u32) -> u8 {
+        read!("flags");
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
             | (u8::from(rec.extra()) << 1)
@@ -2079,6 +2149,7 @@ impl TapeDoc {
     }
 
     pub fn transducer_span(&self, node: u32) -> Range<usize> {
+        read!("span");
         let rec = &self.data[node as usize];
         rec.start as usize..rec.end as usize
     }
@@ -2096,6 +2167,7 @@ impl TapeDoc {
     }
 
     pub fn transducer_parent(&self, node: u32) -> Option<u32> {
+        read!("parent");
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
@@ -2108,12 +2180,14 @@ impl TapeDoc {
                 return None;
             }
             let current = next;
+            read!("children");
             next = self.data[current as usize].next;
             Some(current)
         })
     }
 
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
+        read!("size");
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
@@ -2122,6 +2196,7 @@ impl TapeDoc {
     pub fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
+            read!("children");
             if !named || self.node_is_named(next) {
                 return Some(next);
             }
@@ -2177,6 +2252,7 @@ impl TapeDoc {
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
     pub fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
+        read!("classes", self.supertypes.len());
         self.supertypes.iter().copied()
     }
 
@@ -2195,6 +2271,7 @@ impl TapeDoc {
     // The packed runtime's class test (Phase 4).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
+        read!("classes");
         if kind >= DERIVED_CLASS_BASE {
             return self
                 .labels
@@ -2297,9 +2374,11 @@ impl<'a> TapeNode<'a> {
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub fn next_sibling(&self) -> Option<Self> {
+        read!("children");
         (self.rec().next != NONE).then(|| self.at(self.rec().next))
     }
     fn prev_sibling(&self) -> Option<Self> {
+        read!("prev");
         (self.rec().prev != NONE).then(|| self.at(self.rec().prev))
     }
     /// Where ast-grep's `next_all`/`prev_all` start: a cursor on the parent (the root for the
@@ -2345,6 +2424,7 @@ impl<'a> Iterator for Children<'a> {
             return None;
         }
         let index = self.next;
+        read!("children");
         self.next = self.node.nodes[index as usize].next;
         self.remaining -= 1;
         Some(self.node.at(index))
@@ -2357,6 +2437,7 @@ impl ExactSizeIterator for Children<'_> {}
 
 impl<'a> SgNode<'a> for TapeNode<'a> {
     fn parent(&self) -> Option<Self> {
+        read!("parent");
         (self.rec().parent != NONE).then(|| self.at(self.rec().parent))
     }
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
@@ -2376,6 +2457,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn dfs(&self) -> impl Iterator<Item = Self> {
         let start = self.index;
+        read!("size");
         let end = start + self.rec().size;
         (start..end).map(move |index| self.at(index))
     }
@@ -2415,6 +2497,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         })
     }
     fn kind(&self) -> Cow<'_, str> {
+        read!("kind");
         Cow::Borrowed(self.kind_alias().map_or_else(
             || {
                 self.grammar
@@ -2425,21 +2508,26 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         ))
     }
     fn kind_id(&self) -> u16 {
+        read!("kind");
         self.rec().kind
     }
     fn node_id(&self) -> usize {
         self.index as usize
     }
     fn range(&self) -> Range<usize> {
+        read!("span");
         self.rec().start as usize..self.rec().end as usize
     }
     fn start_pos(&self) -> Position {
+        read!("points");
         self.points.point(self.rec().start)
     }
     fn end_pos(&self) -> Position {
+        read!("points");
         self.points.point(self.rec().end)
     }
     fn is_named(&self) -> bool {
+        read!("named");
         self.kind_alias().map_or_else(
             || self.grammar.kind_is_named(self.rec().kind),
             |alias| alias.1,
@@ -2449,12 +2537,15 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.children().all(|child| !child.is_named())
     }
     fn is_extra(&self) -> bool {
+        read!("flags");
         self.rec().extra()
     }
     fn is_error(&self) -> bool {
+        read!("flags");
         self.rec().error()
     }
     fn is_missing(&self) -> bool {
+        read!("flags");
         self.rec().missing()
     }
     fn field(&self, name: &str) -> Option<Self> {
@@ -2463,6 +2554,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {
         self.children().filter(move |child| {
+            read!("field");
             field_id.is_some_and(|field| field != 0 && child.rec().field == field)
         })
     }
@@ -2477,6 +2569,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
                 {
                     examined += 1;
                 }
+                read!("field");
                 child.rec().field == field_id
             });
             #[cfg(feature = "code-rule-profile")]
