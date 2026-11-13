@@ -57,23 +57,22 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 }
 
 /**
- * The `GIT_*` variables a hook's Git may see and still answer as the daemon's Git does: those Rerail's Git sets itself;
- * the person's own Git settings (the config files Git reads, the folders it stops searching at), which a daemon started
- * from the person's environment holds as it holds their home folder; and those that only choose how Git deals with a
- * person (prompts, editors, pagers, SSH) or who a commit names. Coding agents and editors set several of the last for
- * the commands they run.
+ * The `GIT_*` variables that cannot change where Git finds a checkout or which remote it names: the two every Git
+ * process Rerail starts sets itself, and those that only choose how Git deals with a person (prompts, editors, pagers,
+ * SSH) or who a commit names. Coding agents and editors set several of them for the commands they run.
  */
 const LOOKUP_NEUTRAL_GIT_VARIABLES = new Set([
-  "GIT_OPTIONAL_LOCKS", "GIT_NO_LAZY_FETCH", "GIT_TERMINAL_PROMPT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-  "GIT_CONFIG_NOSYSTEM", "GIT_CEILING_DIRECTORIES", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER",
-  "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME",
-  "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+  "GIT_OPTIONAL_LOCKS", "GIT_NO_LAZY_FETCH", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+  "GIT_PAGER", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+  "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
 ]);
 
 /**
  * Whether the coding agent's environment, which Git started here inherits, holds a `GIT_*` variable that can move Git's
- * answer away from the daemon's, as one command's `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR` does, or one a later
- * Git adds. Names are compared in upper case, as Windows reads them.
+ * answer away from the daemon's: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, a config file of its own or
+ * none (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`; those files hold `safe.directory` and
+ * `url.*.insteadOf`), or one a later Git adds. The daemon's Git has the environment of whatever started it, which need
+ * not be this agent's. Names are compared in upper case, as Windows reads them.
  */
 function gitEnvironmentMovesLookup(environment: NodeJS.ProcessEnv): boolean {
   return Object.keys(environment).some(name => {

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -9,7 +9,7 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
-import { encodeRerailEventResult, type EngineEndpoint } from "../../src/runtime/index.js";
+import { encodeRerailEventResult, type EngineEndpoint, workspaceStartState } from "../../src/runtime/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -510,17 +510,27 @@ const hooksWhereRerailIsOff: Array<{ host: string; event: string; run: (cwd: str
   },
 ];
 
+/** What coding agents and editors set for the commands they run, Git's included; none of it moves where Git looks. */
+const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" };
+
 /**
- * What coding agents and editors set for the commands they run, and a person's own Git setting the daemon holds too;
- * none of it moves where Git looks away from where the daemon's Git looks.
+ * A coding agent's environment with no `GIT_*` variable but `AGENT_GIT_ENVIRONMENT`'s. Any other sends the hook's start
+ * check to the daemon: the test setup's `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`, and whatever the shell running
+ * the tests sets (a Git hook sets `GIT_DIR`). Git then reads the test home's `.gitconfig`, the file `GIT_CONFIG_GLOBAL`
+ * named, and the machine's system file, which none of these cases depends on.
  */
-const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" };
+function stubAgentGitEnvironment(): void {
+  for (const name of Object.keys(process.env)) {
+    if (name.toUpperCase().startsWith("GIT_")) vi.stubEnv(name, undefined);
+  }
+  for (const [name, value] of Object.entries(AGENT_GIT_ENVIRONMENT)) vi.stubEnv(name, value);
+}
 
 describe("hooks where Rerail does not run", () => {
   beforeEach(() => {
     // The hook takes CLAUDE_PROJECT_DIR over the event's folder; a test run from inside a Claude Code session has one.
     vi.stubEnv("CLAUDE_PROJECT_DIR", undefined);
-    for (const [name, value] of Object.entries(AGENT_GIT_ENVIRONMENT)) vi.stubEnv(name, value);
+    stubAgentGitEnvironment();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -581,6 +591,21 @@ function gitRepository(path: string): string {
 
 const REMOTE = "https://example.invalid/team/app.git";
 
+/** A started repository at `<root>/app` whose `origin` is `REMOTE`, recorded through this process's Git. */
+function startedApp(root: string): string {
+  const app = gitRepository(join(root, "app"));
+  git(app, "remote", "add", "origin", REMOTE);
+  startTestRepository(app);
+  return app;
+}
+
+/** A new clone at `<root>/clone` of `startedApp`'s repository, which Rerail finds by its remote alone. */
+function newClone(root: string): string {
+  const clone = gitRepository(join(root, "clone"));
+  git(clone, "remote", "add", "origin", REMOTE);
+  return clone;
+}
+
 /**
  * Folders of a started repository at `<root>/app` that Rerail finds without a row of their own, each through a Git read:
  * the top level `rev-parse` gives, the clone id in the common Git folder it names, or the remote `ls-remote` gives.
@@ -591,9 +616,50 @@ const foldersFoundThroughGit = [
     shape: "a linked worktree Rerail never recorded", silent: ["rev-parse"],
     make: (app: string, root: string) => { git(app, "worktree", "add", "-q", join(root, "worktree")); return join(root, "worktree"); },
   },
+  { shape: "a new clone of the repository", silent: ["ls-remote", "remote"], make: (_app: string, root: string) => newClone(root) },
+];
+
+/** A Git config file at `path` that gives every address under https://example.invalid/ another, as a mirror setting does. */
+function remoteRewrite(path: string): string {
+  writeFileSync(path, "[url \"https://mirror.invalid/\"]\n\tinsteadOf = https://example.invalid/\n");
+  return path;
+}
+
+/** A started repository and a new clone of it under `root`, with a config file named `file` that rewrites the remote. */
+function cloneWithRewrite(file: string): (root: string) => { workspace: string; value: string } {
+  return root => {
+    startedApp(root);
+    return { workspace: newClone(root), value: remoteRewrite(join(root, file)) };
+  };
+}
+
+/**
+ * A person's own Git settings, each set in the coding agent's environment and not in the daemon's, with a folder of a
+ * started repository that this process's Git then reads otherwise: a ceiling at the checkout's top hides the checkout
+ * from a folder inside it; a global or system file that rewrites the remote gives a new clone another address; and
+ * leaving out the system file the daemon's Git reads leaves the clone the address the repository was not recorded under.
+ * A test cannot write the machine's system file, so `GIT_CONFIG_SYSTEM` stands in for it while the repository is
+ * recorded.
+ */
+const personalGitSettings: Array<{ variable: string; arrange: (root: string) => { workspace: string; value: string } }> = [
   {
-    shape: "a new clone of the repository", silent: ["ls-remote", "remote"],
-    make: (_app: string, root: string) => { git(gitRepository(join(root, "clone")), "remote", "add", "origin", REMOTE); return join(root, "clone"); },
+    variable: "GIT_CEILING_DIRECTORIES",
+    arrange: root => {
+      const app = startedApp(root);
+      mkdirSync(join(app, "src"));
+      return { workspace: join(app, "src"), value: realpathSync.native(app) };
+    },
+  },
+  { variable: "GIT_CONFIG_GLOBAL", arrange: cloneWithRewrite("global.gitconfig") },
+  { variable: "GIT_CONFIG_SYSTEM", arrange: cloneWithRewrite("system.gitconfig") },
+  {
+    variable: "GIT_CONFIG_NOSYSTEM",
+    arrange: root => {
+      vi.stubEnv("GIT_CONFIG_SYSTEM", remoteRewrite(join(root, "system.gitconfig")));
+      startedApp(root);
+      vi.stubEnv("GIT_CONFIG_SYSTEM", undefined);
+      return { workspace: newClone(root), value: "1" };
+    },
   },
 ];
 
@@ -629,6 +695,13 @@ async function hookHostWithSilentGit(
 }
 
 describe("the hook start check", () => {
+  beforeEach(() => {
+    stubAgentGitEnvironment();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("reads the database, and asks a live daemon only where this process cannot read it", async () => {
     const root = await temporaryDirectory({ started: false });
     const home = process.env.RERAIL_HOME!;
@@ -677,10 +750,7 @@ describe("the hook start check", () => {
 
   it.each(unansweredFolders)("asks a live daemon where this process's Git gives no answer ($how), in $shape", async ({ silent, make, how }) => {
     const root = await temporaryDirectory({ started: false });
-    const app = gitRepository(join(root, "app"));
-    git(app, "remote", "add", "origin", REMOTE);
-    startTestRepository(app);
-    const workspace = make(app, root);
+    const workspace = make(startedApp(root), root);
     // The daemon keeps each folder's Git location for its life, and reads the folder as started.
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
     try {
@@ -711,6 +781,22 @@ describe("the hook start check", () => {
         .toEqual({ started: true, requests: ["/api/presentation"] });
     } finally {
       vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it.each(personalGitSettings)("asks a live daemon where the coding agent's environment sets $variable", async ({ variable, arrange }) => {
+    const root = await temporaryDirectory({ started: false });
+    const { workspace, value } = arrange(root);
+    // The daemon's Git, started from another environment, reads the folder as started.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    vi.stubEnv(variable, value);
+    try {
+      // This process's own read of the database, with the variable set, finds the folder stopped.
+      expect(workspaceStartState(workspace)).toBe("stopped");
+      expect({ started: await hookRerailStarted("claude-code", workspace), requests: daemon.requests })
+        .toEqual({ started: true, requests: ["/api/presentation"] });
+    } finally {
       await daemon.close();
     }
   });
