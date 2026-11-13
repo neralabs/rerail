@@ -32,6 +32,10 @@ pub struct Comparison {
     /// `tokens` only: binary operators whose operands compare in either order (ESLint
     /// no-dupe-else-if's `equal`); empty when none.
     pub commute: Vec<String>,
+    /// `tokens` only: the grammar of the tape's implied tokens (RER-131), which says which leaves
+    /// stand for a node whose tokens the tape left out (`[]`, `()`); set per grammar at compile
+    /// time, `None` for a parsed tree, which keeps its tokens.
+    pub(crate) implied: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,9 +158,9 @@ impl Comparison {
             }
             CompareText::Tokens => {
                 let equal = if self.commute.is_empty() {
-                    tokens(left) == tokens(right)
+                    tokens(left, self.implied.as_deref()) == tokens(right, self.implied.as_deref())
                 } else {
-                    commuted_equal(left, right, &self.commute)
+                    commuted_equal(left, right, &self.commute, self.implied.as_deref())
                 };
                 Some(if self.op == CompareOp::Ne {
                     !equal
@@ -379,7 +383,7 @@ fn listed_operands<'t, D: Doc>(
 /// ESLint no-dupe-else-if's `equal`: two binary expressions with the same listed operator are
 /// equal where their operands are, in order or swapped; anything else by its tokens. Each step
 /// spends one of the file's utility steps, so a pathological pair fails the clause, not the host.
-fn commuted_equal<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>, commute: &[String]) -> bool {
+fn commuted_equal<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>, commute: &[String], implied: Option<&crate::code_rule_dsl::tape::tokens::TokenGrammar>) -> bool {
     if !super::spend_util_step() {
         return false;
     }
@@ -389,23 +393,34 @@ fn commuted_equal<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>, commute: &[St
         listed_operands(&right, commute),
     ) {
         (Some((a, operator, b)), Some((c, other, d))) if operator == other => {
-            (commuted_equal(&a, &c, commute) && commuted_equal(&b, &d, commute))
-                || (commuted_equal(&a, &d, commute) && commuted_equal(&b, &c, commute))
+            (commuted_equal(&a, &c, commute, implied) && commuted_equal(&b, &d, commute, implied))
+                || (commuted_equal(&a, &d, commute, implied) && commuted_equal(&b, &c, commute, implied))
         }
-        _ => tokens(&left) == tokens(&right),
+        _ => tokens(&left, implied) == tokens(&right, implied),
     }
 }
 
-/// A node's leaf tokens: the text of every leaf that is not a comment, and any other text between
-/// leaves that is not white space. Comments and white space are not tokens.
-pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
+/// A node's leaf tokens: the text of every leaf that is not a comment, and the tokens of the text
+/// between leaves. Comments and white space are not tokens. A tape leaves out the tokens its
+/// grammar implies (`implied`, RER-131), so that text may hold several (`).` in `f(a)\n.p`, which
+/// a full tree holds as `)` and `.`): it is split at white space, then into runs of word
+/// characters and single other characters, the same way on both sides of a comparison. A leaf
+/// whose kind has children holds just the word its grammar implies (`[ ]`: `[`, `]`).
+pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>, implied: Option<&crate::code_rule_dsl::tape::tokens::TokenGrammar>) -> Vec<String> {
     let text = node.text();
     let start = node.range().start;
     let mut out = Vec::new();
     let mut at = 0;
     let gap = |from: usize, to: usize, out: &mut Vec<String>| {
-        if let Some(between) = text.get(from..to) {
-            out.extend(between.split_whitespace().map(str::to_owned));
+        let Some(between) = text.get(from..to) else { return };
+        let word = |char: char| char.is_alphanumeric() || char == '_' || char == '$';
+        for piece in between.split_whitespace() {
+            let mut rest = piece;
+            while let Some(first) = rest.chars().next() {
+                let end = if word(first) { rest.find(|char: char| !word(char)).unwrap_or(rest.len()) } else { first.len_utf8() };
+                out.push(rest[..end].to_owned());
+                rest = &rest[end..];
+            }
         }
     };
     for leaf in node.dfs() {
@@ -420,7 +435,14 @@ pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
         }
         gap(at, from, &mut out);
         if !comment && to > from {
-            out.push(text[from..to].to_owned());
+            let leaf_text = &text[from..to];
+            let word = implied.and_then(|grammar| crate::code_rule_dsl::tape::tokens::stored_gaps(grammar, &leaf)).map(|(_, gaps)| gaps.end).filter(|word| {
+                !word.is_empty() && word.iter().map(|token| token.0).collect::<String>() == leaf_text.split_whitespace().collect::<String>()
+            });
+            match word {
+                Some(word) => out.extend(word.iter().map(|token| token.0.to_owned())),
+                None => out.push(leaf_text.to_owned()),
+            }
         }
         at = to;
     }

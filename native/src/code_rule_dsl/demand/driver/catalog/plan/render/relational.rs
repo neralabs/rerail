@@ -3413,6 +3413,7 @@ impl Builder {
         let message_a = Self::template_is_var(output.violation.message_template.as_ref(), "A");
         let violation = &output.violation;
         let bounded_output = violation.node_regexes.is_empty()
+            && violation.gap_tests.is_empty()
             && violation.group_transform.is_none()
             && violation.project.is_empty();
         let basic_pattern = ir.operations()

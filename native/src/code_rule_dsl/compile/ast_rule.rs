@@ -877,6 +877,10 @@ pub fn compile_ast_rule(
                 utils,
             )?;
         }
+        // A tape leaves out the tokens its grammar implies; `tokens` reads them back from it.
+        if comparison.text == CompareText::Tokens {
+            comparison.implied = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language);
+        }
         // A transform variable is text: it compares as `source` or `unquoted` text only.
         if let Some(transform) = utils.transform.as_ref().filter(|transform| {
             transform.contains(&comparison.left) || transform.contains(&comparison.right)
@@ -1123,7 +1127,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
-    Some(GapTest { place, regex, grammar, dialect: language, past, token })
+    Some(GapTest { place, regex, grammar, dialect: language, past, token, stored: false })
 }
 
 /// A token's relation to a token regex beside it, under the same parent (`follows: {regex: "^,$",
@@ -1172,7 +1176,7 @@ pub(in crate::code_rule_dsl) fn gap_split(key: &str, relation: &Value, language:
         return None;
     }
     let token = vec![TokenCondition::Stored(place.clone())];
-    Some((crate::code_rule_dsl::matcher::gap::GapTest { place, regex, grammar, dialect: language, past: None, token }, nested.clone()))
+    Some((crate::code_rule_dsl::matcher::gap::GapTest { place, regex, grammar, dialect: language, past: None, token, stored: false }, nested.clone()))
 }
 
 /// A relation's term, or it or the gap test.
@@ -1181,6 +1185,12 @@ fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::Ga
     match (term, gap) {
         (term, None) => term,
         (AstMatcher::Never, Some(gap)) => AstMatcher::Semantic(Semantic::Gap(Box::new(gap))),
+        // A neighbour's own walk reads the next stored node, which on a full tree is the neighbour
+        // only where no implied token stands between.
+        (term, Some(gap)) if matches!(gap.place, crate::code_rule_dsl::matcher::gap::Place::Before | crate::code_rule_dsl::matcher::gap::Place::After) => {
+            let stored = crate::code_rule_dsl::matcher::gap::GapTest { stored: true, ..gap.clone() };
+            AstMatcher::Any(vec![AstMatcher::All(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(stored)))]), AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))])
+        }
         (term, Some(gap)) => AstMatcher::Any(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))]),
     }
 }

@@ -140,6 +140,10 @@ pub struct ViolationSpec {
     pub fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
     pub node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
+    /// Per dialect, the rule's gap tests on the witness whose token regex has named groups: each
+    /// group binds its part of the token the test finds beside or in the witness, an implied
+    /// token by its place in the source (`matcher::gap::GapTest::token`).
+    pub gap_tests: Vec<(GrammarDialect, Vec<crate::code_rule_dsl::matcher::gap::GapTest>)>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
     pub each: Option<String>,
     /// `fix.range`: the capture whose range the fix replaces, inside the witness; `None` replaces

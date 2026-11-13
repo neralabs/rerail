@@ -647,6 +647,10 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
             let (policy, compiled) = &policies[p];
             let clause = &compiled.inner.clauses[at];
             let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { return None };
+            // W's findings read the same-node regex groups (`findings::groups`), not a gap test's.
+            if !clause.violation.gap_tests.is_empty() {
+                return None;
+            }
             let mut python = matchers.iter().enumerate().filter(|(_, m)| m.language == GrammarDialect::Python);
             let (grammar_at, grammar) = python.next()?;
             let (tree, paths) = gated_match_tree(grammar).ok()?;
