@@ -7,20 +7,13 @@
  * process when that node started it, falling back to this node once that binary is gone. A version-manager upgrade
  * (nvm-windows, Volta, fnm) removes it and would otherwise break every hook until `rerail setup` runs again. The
  * recorded-first order keeps the shell launchers' version guarantee, so the hook still loads the SQLite binding built for
- * that node when a project pins an older node on PATH. Kept free of dependencies, Node's built-ins and Rerail's
- * child-process helper aside, so whatever node PATH supplies can run it.
+ * that node when a project pins an older node on PATH. Kept free of dependencies, Node's built-ins, Rerail's
+ * child-process helper and `same-file.ts` aside, so whatever node PATH supplies can run it.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "../engine/child-process.js";
-
-function sameFile(left: string, right: string): boolean {
-  try {
-    return realpathSync.native(left) === realpathSync.native(right);
-  } catch {
-    return false;
-  }
-}
+import { sameFile } from "./same-file.js";
 
 /**
  * A hook that could not run, or failed, answers nothing rather than failing: an agent shows a failed hook as an error
