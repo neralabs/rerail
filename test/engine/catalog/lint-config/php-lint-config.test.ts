@@ -1,7 +1,8 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
@@ -9,10 +10,11 @@ import { portsOf, type LinterNote, type LinterReader, type Port, type PortVerdic
 import { phpstanReader } from "../../../../src/engine/catalog/lint-config/phpstan-config.js";
 import { psalmReader } from "../../../../src/engine/catalog/lint-config/psalm-config.js";
 import { phpcsReader } from "../../../../src/engine/catalog/lint-config/phpcs-config.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** A repository with `files`; a name ending in `/` is an empty folder. */
@@ -30,7 +32,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../../packs/${id}`, import.meta.url).pathname);
+const packDirectory = (id: string): string => fileURLToPath(new URL(`../../../../packs/${id}`, import.meta.url));
 
 let ruleCatalog: RuleCatalog;
 let ports: Map<string, Port>;

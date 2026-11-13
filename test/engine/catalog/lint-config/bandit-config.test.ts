@@ -1,12 +1,14 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { banditReader } from "../../../../src/engine/catalog/lint-config/bandit-config.js";
 import { NOT_A_FILE, portsOf, settleVerdicts, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const ASSERT = "bandit-b101-assert-used";
 const MARSHAL = "bandit-b302-marshal";
@@ -15,7 +17,7 @@ const NO_SHELL = "bandit-b606-start-process-with-no-shell";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -31,7 +33,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
 let ruleCatalog: RuleCatalog;
 let ports: Map<string, Port>;
 beforeAll(() => {
-  ruleCatalog = readRuleCatalog([decodeURIComponent(new URL("../../../../packs/python", import.meta.url).pathname)]);
+  ruleCatalog = readRuleCatalog([fileURLToPath(new URL("../../../../packs/python", import.meta.url))]);
   ports = new Map(portsOf(ruleCatalog, ["python"]).map(port => [port.ruleId, port]));
 });
 

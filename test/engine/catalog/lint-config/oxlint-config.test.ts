@@ -1,5 +1,5 @@
 import { realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -7,10 +7,11 @@ import type { LinterNote, Port, PortVerdict } from "../../../../src/engine/catal
 import { oxlintReader } from "../../../../src/engine/catalog/lint-config/oxlint-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** A repository whose `.oxlintrc.json` holds `config`; without one where `config` is undefined. */

@@ -1,16 +1,19 @@
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { clippyReader } from "../../../../src/engine/catalog/lint-config/clippy-config.js";
 import { portsOf, type LinterNote, type Port, type PortDecision } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
+import { symlinkOrSkip } from "../../../support/platform/links.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -23,7 +26,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../../packs/${id}`, import.meta.url).pathname);
+const packDirectory = (id: string): string => fileURLToPath(new URL(`../../../../packs/${id}`, import.meta.url));
 
 let ruleCatalog: RuleCatalog;
 let ports: ReadonlyMap<string, Port>;
@@ -250,21 +253,24 @@ describe("clippyReader", () => {
     expect({ config, notes }).toEqual({ config: undefined, notes: [`Cargo.toml is not read: ${why}.`] });
   });
 
-  it("refuses a Cargo.toml or crate root that is not a regular file in the repository", async () => {
+  it("refuses a Cargo.toml or crate root that is not a regular file in the repository", async context => {
     const root = await repository({ "elsewhere/Cargo.toml": "[lints.clippy]\nall = \"allow\"\n" });
-    symlinkSync(join(root, "elsewhere", "Cargo.toml"), join(root, "Cargo.toml"));
+    symlinkOrSkip(context, join(root, "elsewhere", "Cargo.toml"), join(root, "Cargo.toml"));
     const notes: LinterNote[] = [];
     expect(clippyReader.read(root, notes)).toBeUndefined();
     expect(notes).toEqual([{ linter: "clippy", text: "Cargo.toml is not read: it is not a regular file of at most 1 MiB in the repository." }]);
-    const { decision, notes: rootNotes } = await read({ "Cargo.toml": "[lints.clippy]\npedantic = \"warn\"\n", "src/lib.rs": "#![allow(clippy::pedantic\n" });
-    expect(decision(UNNESTED_OR)).toEqual({ on: "unknown", because: "src/lib.rs is not read and may set it" });
-    expect(rootNotes).toEqual(["src/lib.rs: its lint attributes are not read: line 2: a ( is not closed."]);
     const linked = await repository({ "Cargo.toml": "[package]\nname = \"demo\"\n", "elsewhere/lib.rs": "#![allow(clippy::pedantic)]\n", "src/main.rs": "#![warn(clippy::pedantic)]\n" });
-    symlinkSync(join(linked, "elsewhere", "lib.rs"), join(linked, "src", "lib.rs"));
+    symlinkOrSkip(context, join(linked, "elsewhere", "lib.rs"), join(linked, "src", "lib.rs"));
     const linkedNotes: LinterNote[] = [];
     const config = clippyReader.read(linked, linkedNotes);
     expect(config?.verdict(port(UNNESTED_OR), ruleCatalog)?.decision).toEqual({ on: "unknown", because: "src/lib.rs is not read and may set it" });
     expect(linkedNotes).toEqual([{ linter: "clippy", text: "src/lib.rs: its lint attributes are not read: it is not a regular file of at most 1 MiB in the repository." }]);
+  });
+
+  it("leaves what a crate root it cannot parse may set unknown", async () => {
+    const { decision, notes } = await read({ "Cargo.toml": "[lints.clippy]\npedantic = \"warn\"\n", "src/lib.rs": "#![allow(clippy::pedantic\n" });
+    expect(decision(UNNESTED_OR)).toEqual({ on: "unknown", because: "src/lib.rs is not read and may set it" });
+    expect(notes).toEqual(["src/lib.rs: its lint attributes are not read: line 2: a ( is not closed."]);
   });
 
   it("notes the files beside Cargo.toml that may also set lints", async () => {
