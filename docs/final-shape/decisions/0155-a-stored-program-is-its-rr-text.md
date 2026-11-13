@@ -137,7 +137,18 @@ fresh store; the runs interleaved, at load 8 to 16.
 The warm run reads the programs in about the same time either way. On the main thread (inclusive samples, 1 ms):
 reading the rows in place took 462 samples, and parsing the text takes 480. Most of the parse is the rr lexer,
 which copies each identifier into its own `String` (`Parser::new`, 434 of the 480). Reading the text through the lean
-parser's tape and `from_tape::statements` instead was slower in a debug build (96 G against 91 G) and was dropped.
+parser's tape and `from_tape::statements` instead was slower, and is not the path. In release, over the 6.18 MB of
+program text a warm dl1 run reads, the lean parser makes its tape image in 458 M instructions, but decoding the
+image to nodes takes about 630 M more, and `from_tape` then indexes the nodes again and walks them to the same
+owned statements. The statement parser, after the lexer was fixed (below), does all of it in 1,174 M. The lean
+image is the cheap part; a reader that walks the image straight into a `front::Program`, with no nodes and no
+statements between, would be the fast route, and is not built.
+
+The lexer was the larger cost: in release, 1,591 M instructions of the parser's 2,577 M. Most of it was finding
+punctuation by trying each of `PUNCT`'s 31 entries with a byte compare (`memcmp` was 65% of its samples). It now
+dispatches on the token's first byte (`punct`, checked against the old scan for every pair of bytes), and its
+tokens borrow their text from the source (`Tok<'s>`): a string is copied only when it holds an escape, and a word
+once, into the statement made from it. Lexing went 1,591 M -> 221 M, lexing and parsing 2,577 M -> 1,174 M.
 What this change buys is the form: no row per node, the store and the first run's memory nearly halved, and a
 program kept as text a person can read.
 

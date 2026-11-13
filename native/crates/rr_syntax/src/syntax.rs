@@ -10,17 +10,19 @@ use crate::Error;
 use crate::tape::{self, Field, Kind, Tree};
 use std::cell::Cell;
 
+/// A token, its text borrowed from the source: a string is copied only when it holds an escape (`Str`), and the
+/// parser copies a token's text once, into the statement it makes.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Tok {
-    Id(String),
-    Str(String),
+pub enum Tok<'s> {
+    Id(&'s str),
+    Str(std::borrow::Cow<'s, str>),
     Num(i64),
     /// A decimal number, as written (`0.0`).
-    Float(String),
+    Float(&'s str),
     /// A backtick literal's content: a code pattern or a fix template.
-    Tick(String),
+    Tick(&'s str),
     /// `#include` and other `#` lines.
-    Hash(String),
+    Hash(&'s str),
     P(&'static str),
     /// What the lexer could not read (`lex`): only a taped parse sees one.
     Bad,
@@ -32,8 +34,28 @@ pub(crate) const PUNCT: [&str; 31] = [
     "/", "%", "~", "^", "&",
 ];
 
+/// The punctuation a token starting with bytes `c`, `d` is (`d` 0 at the end of the text), as the first entry of
+/// `PUNCT` it starts with: a two-byte one first. By the first byte, not by trying each entry (a byte compare apiece
+/// was most of the lexer's time).
+fn punct(c: u8, d: u8) -> Option<&'static str> {
+    let two = match (c, d) {
+        (b':', b'-') => 0,
+        (b'=', b'>') => 1,
+        (b'!', b'=') => 2,
+        (b'<', b'=') => 3,
+        (b'>', b'=') => 4,
+        (b'<', b':') => 5,
+        (b'-', b'>') => 6,
+        _ => match crate::lean_scalar::PUNCT1[c as usize] {
+            0 => return None,
+            k => k as usize - 1,
+        },
+    };
+    Some(PUNCT[two])
+}
+
 /// A token, and the byte range it spans.
-pub type Spanned = (Tok, usize, usize);
+pub type Spanned<'s> = (Tok<'s>, usize, usize);
 
 /// A string literal's escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}` and JSON's `\uXXXX`. Any other backslash is
 /// kept with the character after it, so a regex reads as written (`"\d+\.py"`).
@@ -110,13 +132,13 @@ pub fn quote(s: &str) -> String {
 
 /// What the lexer reads: the tokens, the comments' spans (a tape's extras), and the first error. A token the lexer
 /// cannot read is `Tok::Bad`; an unterminated string, backtick literal or comment is one `Bad` to the end of the file.
-pub struct Lexed {
-    pub toks: Vec<Spanned>,
+pub struct Lexed<'s> {
+    pub toks: Vec<Spanned<'s>>,
     pub comments: Vec<(usize, usize)>,
     pub error: Option<(usize, Error)>,
 }
 
-pub fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
+pub fn tokens(src: &str) -> Result<Vec<Spanned<'_>>, Error> {
     let lexed = lex(src);
     match lexed.error {
         Some((_, error)) => Err(error),
@@ -124,11 +146,11 @@ pub fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
     }
 }
 
-pub fn lex(src: &str) -> Lexed {
+pub fn lex(src: &str) -> Lexed<'_> {
     let bytes = src.as_bytes();
     let (mut pos, mut out, mut comments, mut error) = (0, Vec::new(), Vec::new(), None);
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let mut bad = |out: &mut Vec<Spanned>, start: usize, end: usize, what: &str| {
+    let mut bad = |out: &mut Vec<Spanned<'_>>, start: usize, end: usize, what: &str| {
         out.push((Tok::Bad, start, end));
         if error.is_none() {
             error = Some((start, Error::Syntax(format!("{what} at line {}", line_of(src, start)))));
@@ -143,12 +165,13 @@ pub fn lex(src: &str) -> Lexed {
         }
         let start = pos;
         let rest = &src[pos..];
-        if rest.starts_with("//") {
+        let (c, d) = (bytes[pos], bytes.get(pos + 1).copied().unwrap_or(0));
+        if c == b'/' && d == b'/' {
             pos += rest.find('\n').unwrap_or(rest.len());
             comments.push((start, pos));
             continue;
         }
-        if rest.starts_with("/*") {
+        if c == b'/' && d == b'*' {
             match rest.find("*/") {
                 Some(e) => {
                     pos += e + 2;
@@ -161,7 +184,6 @@ pub fn lex(src: &str) -> Lexed {
                 }
             }
         }
-        let c = bytes[pos];
         if c == b'"' {
             let mut end = pos + 1;
             while end < bytes.len() && bytes[end] != b'"' {
@@ -171,7 +193,10 @@ pub fn lex(src: &str) -> Lexed {
                 bad(&mut out, start, src.len(), "unterminated string");
                 break;
             }
-            match unescape(&src[pos + 1..end]) {
+            let body = &src[pos + 1..end];
+            // Borrowed unless it holds an escape.
+            let value = if body.contains('\\') { unescape(body).map(std::borrow::Cow::Owned) } else { Ok(std::borrow::Cow::Borrowed(body)) };
+            match value {
                 Ok(value) => out.push((Tok::Str(value), start, end + 1)),
                 Err(e) => bad(&mut out, start, end + 1, &e),
             }
@@ -184,7 +209,7 @@ pub fn lex(src: &str) -> Lexed {
             let close = match src[body_start..].find(fence) {
                 Some(c) => c + body_start,
                 None if n == 2 => {
-                    out.push((Tok::Tick(String::new()), start, pos + 2));
+                    out.push((Tok::Tick(""), start, pos + 2));
                     pos += 2;
                     continue;
                 }
@@ -198,14 +223,14 @@ pub fn lex(src: &str) -> Lexed {
                 body = body.strip_prefix(' ').unwrap_or(body);
                 body = body.strip_suffix(' ').unwrap_or(body);
             }
-            out.push((Tok::Tick(body.to_owned()), start, close + n));
+            out.push((Tok::Tick(body), start, close + n));
             pos = close + n;
         } else if c.is_ascii_digit() {
             let end = pos + bytes[pos..].iter().take_while(|b| b.is_ascii_digit()).count();
             // `1.5`: a `.` between digits; `0.` ends a clause.
             if bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
                 let end = end + 1 + bytes[end + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
-                out.push((Tok::Float(src[pos..end].to_owned()), start, end));
+                out.push((Tok::Float(&src[pos..end]), start, end));
                 pos = end;
                 continue;
             }
@@ -216,14 +241,14 @@ pub fn lex(src: &str) -> Lexed {
             pos = end;
         } else if c == b'#' {
             let end = pos + 1 + bytes[pos + 1..].iter().take_while(|&&b| ident(b)).count();
-            out.push((Tok::Hash(src[pos + 1..end].to_owned()), start, end));
+            out.push((Tok::Hash(&src[pos + 1..end]), start, end));
             pos = end;
-        } else if let Some(p) = PUNCT.iter().find(|p| rest.starts_with(**p)) {
+        } else if let Some(p) = punct(c, d) {
             out.push((Tok::P(p), start, pos + p.len()));
             pos += p.len();
         } else if c.is_ascii_alphabetic() || c == b'_' {
             let end = pos + bytes[pos..].iter().take_while(|&&b| ident(b)).count();
-            out.push((Tok::Id(src[pos..end].to_owned()), start, end));
+            out.push((Tok::Id(&src[pos..end]), start, end));
             pos = end;
         } else {
             let end = pos + rest.chars().next().map_or(1, char::len_utf8);
@@ -363,7 +388,7 @@ pub type Statement = (Item, usize);
 pub struct Parser<'s> {
     src: &'s str,
     lines: Lines,
-    toks: Vec<Spanned>,
+    toks: Vec<Spanned<'s>>,
     i: usize,
     /// Inside an aggregate's value or key, where `x :` ends the term (`agg_part`).
     no_named: bool,
@@ -408,11 +433,11 @@ impl<'s> Parser<'s> {
         (nodes, self.error)
     }
 
-    fn peek(&self) -> &Tok {
+    fn peek(&self) -> &Tok<'s> {
         self.peek_at(0)
     }
 
-    fn peek_at(&self, k: usize) -> &Tok {
+    fn peek_at(&self, k: usize) -> &Tok<'s> {
         self.toks.get(self.i + k).map_or(&Tok::Eof, |t| &t.0)
     }
 
@@ -425,7 +450,7 @@ impl<'s> Parser<'s> {
     }
 
     fn is_id(&self, id: &str) -> bool {
-        matches!(self.peek(), Tok::Id(s) if s == id)
+        matches!(self.peek(), Tok::Id(s) if *s == id)
     }
 
     fn start(&self) -> usize {
@@ -583,7 +608,7 @@ impl<'s> Parser<'s> {
         match self.peek().clone() {
             Tok::Id(s) => {
                 self.bump_as(Kind::Identifier);
-                Ok(s)
+                Ok(s.to_owned())
             }
             _ => self.fail("an identifier"),
         }
@@ -593,7 +618,7 @@ impl<'s> Parser<'s> {
         match self.peek().clone() {
             Tok::Str(s) => {
                 self.bump_as(Kind::String);
-                Ok(s)
+                Ok(s.into_owned())
             }
             _ => self.fail("a string"),
         }
@@ -719,10 +744,10 @@ impl<'s> Parser<'s> {
         let mut out = Vec::new();
         while !matches!(self.peek(), Tok::Eof) && self.line() == line {
             out.push(match self.peek() {
-                Tok::Id(s) => s.clone(),
+                Tok::Id(s) => (*s).to_owned(),
                 Tok::Num(n) => n.to_string(),
-                Tok::Float(f) => f.clone(),
-                Tok::Str(s) => s.clone(),
+                Tok::Float(f) => (*f).to_owned(),
+                Tok::Str(s) => s.to_string(),
                 Tok::P(p) => (*p).to_owned(),
                 other => format!("{other:?}"),
             });
@@ -796,15 +821,15 @@ impl<'s> Parser<'s> {
             self.field(Field::Path);
             self.close();
             Ok(Item::Include(path))
-        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if *d == "test" || *d == "fixtures") {
             self.test()
-        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if *d == "end") {
             self.fail("a `.test` or `.fixtures` before its `.end`")
         } else if self.is_p(".")
             && let Tok::Id(d) = self.peek_at(1).clone()
         {
             let policy = d == "policy" && self.is_p_at(2, "{");
-            let kind = match d.as_str() {
+            let kind = match d {
                 "decl" => Kind::Declaration,
                 "edit" => Kind::EditDeclaration,
                 "functor" => Kind::FunctorDeclaration,
@@ -839,7 +864,7 @@ impl<'s> Parser<'s> {
                     self.field(Field::Name);
                 }
             }
-            let item = self.directive(line, d)?;
+            let item = self.directive(line, d.to_owned())?;
             self.close();
             Ok(item)
         } else {
@@ -850,7 +875,7 @@ impl<'s> Parser<'s> {
     /// `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end` (decision 0130). The kind
     /// implies `.test` (`.fixtures`), `uses`, its commas and `.end`.
     fn test(&mut self) -> Result<Item, Error> {
-        let test = matches!(self.peek_at(1), Tok::Id(d) if d == "test");
+        let test = matches!(self.peek_at(1), Tok::Id(d) if *d == "test");
         self.open(if test { Kind::TestBlock } else { Kind::FixturesBlock });
         self.implied();
         self.implied();
@@ -877,12 +902,12 @@ impl<'s> Parser<'s> {
             if *self.peek() == Tok::Eof {
                 return self.fail("`.end`");
             }
-            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if *d == "end") {
                 self.implied();
                 self.implied();
                 break;
             }
-            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if *d == "test" || *d == "fixtures") {
                 return self.fail("`.end` (tests and fixtures do not nest)");
             }
             let line = self.line();
@@ -1128,7 +1153,7 @@ impl<'s> Parser<'s> {
             let Tok::Id(modal) = self.peek().clone() else { unreachable!() };
             self.anon();
             self.field(Field::Modal);
-            Some(modal)
+            Some(modal.to_owned())
         } else {
             None
         };
@@ -1234,7 +1259,7 @@ impl<'s> Parser<'s> {
             self.field(Field::Subject);
             self.implied();
             let pattern = match self.peek().clone() {
-                Tok::Tick(t) => t,
+                Tok::Tick(t) => t.to_owned(),
                 _ => return self.fail("a backtick pattern"),
             };
             self.bump_as(Kind::CodeLiteral);
@@ -1373,9 +1398,9 @@ impl<'s> Parser<'s> {
     fn primary(&mut self) -> Result<Term, Error> {
         let (t, kind) = match self.peek().clone() {
             Tok::Num(n) => (Term::Num(n), Kind::Number),
-            Tok::Float(f) => (Term::Float(f), Kind::Float),
-            Tok::Str(s) => (Term::Str(s), Kind::String),
-            Tok::Tick(t) => (Term::Tick(t), Kind::CodeLiteral),
+            Tok::Float(f) => (Term::Float(f.to_owned()), Kind::Float),
+            Tok::Str(s) => (Term::Str(s.into_owned()), Kind::String),
+            Tok::Tick(t) => (Term::Tick(t.to_owned()), Kind::CodeLiteral),
             // A negative literal is one token: `-1` is a `number` that spans the sign.
             Tok::P("-") if matches!(self.peek_at(1), Tok::Num(_) | Tok::Float(_)) => {
                 let from = self.i;
@@ -1419,20 +1444,20 @@ impl<'s> Parser<'s> {
                 return Ok(Term::Call { name, functor: true, args });
             }
             Tok::Id(s) if s == "_" => (Term::Wild, Kind::Wildcard),
-            Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s),
+            Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s.to_owned()),
             // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "product" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s),
+            Tok::Id(s) if matches!(s, "min" | "max" | "sum" | "product" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s.to_owned()),
             // `sum x : {…}`, `sum strlen(x) - strlen(a) : {…}`, `join x by k sep "," : {…}`: an aggregate over a term,
             // when a `:`, `by` or `sep` follows it; otherwise a variable named like an aggregate.
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "product" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
+            Tok::Id(s) if matches!(s, "min" | "max" | "sum" | "product" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
                 let save = self.save();
                 self.i += 1;
                 let aggregate = self.agg_part().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep"));
                 self.restore(save);
                 if aggregate {
-                    return self.aggregate(s);
+                    return self.aggregate(s.to_owned());
                 }
-                (Term::Var(s), Kind::Variable)
+                (Term::Var(s.to_owned()), Kind::Variable)
             }
             Tok::Id(s) if self.is_p_at(1, "(") => {
                 self.open(Kind::Call);
@@ -1440,7 +1465,7 @@ impl<'s> Parser<'s> {
                 self.field(Field::Function);
                 let args = self.arguments()?;
                 self.close();
-                return Ok(Term::Call { name: s, functor: false, args });
+                return Ok(Term::Call { name: s.to_owned(), functor: false, args });
             }
             Tok::Id(s) if self.is_p_at(1, ":") && !self.no_named => {
                 self.open(Kind::NamedArgument);
@@ -1450,9 +1475,9 @@ impl<'s> Parser<'s> {
                 let value = self.term()?;
                 self.field(Field::Value);
                 self.close();
-                return Ok(Term::Named(s, Box::new(value)));
+                return Ok(Term::Named(s.to_owned(), Box::new(value)));
             }
-            Tok::Id(s) => (Term::Var(s), Kind::Variable),
+            Tok::Id(s) => (Term::Var(s.to_owned()), Kind::Variable),
             _ => return self.fail("a term"),
         };
         self.bump_as(kind);
@@ -1570,4 +1595,20 @@ pub fn tick_vars(t: &str) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod punct_tests {
+    /// Punctuation by its first bytes is the first entry of `PUNCT` the text starts with, for every pair of bytes.
+    #[test]
+    fn punctuation_by_byte_is_the_first_entry_it_starts_with() {
+        for c in 1..=255u8 {
+            for d in 0..=255u8 {
+                let text = [c, d];
+                let text = if d == 0 { &text[..1] } else { &text[..] };
+                let scan = super::PUNCT.iter().copied().find(|p| text.starts_with(p.as_bytes()));
+                assert_eq!(super::punct(c, d), scan, "{text:?}");
+            }
+        }
+    }
 }
