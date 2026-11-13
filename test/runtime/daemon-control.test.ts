@@ -1,13 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
+import { DAEMON_PORT_FILE, defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
   type DaemonMachine,
   type DaemonState,
@@ -67,6 +68,50 @@ function stateFor(overrides: Partial<DaemonState>): DaemonState {
     packageRoot: "/nowhere/rerail",
     ...overrides,
   };
+}
+
+/** Waits until `holds` is true, polling, for at most `ms`. */
+async function until(holds: () => boolean, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!holds()) {
+    if (Date.now() > deadline) throw new Error(`still not true after ${ms} ms`);
+    await delay(20);
+  }
+}
+
+/** A loopback port free at the moment of asking. */
+async function freePort(): Promise<number> {
+  const server = createServer().listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.close();
+  await once(server, "close");
+  return port;
+}
+
+/**
+ * The environment of a daemon whose event loop a test can hold: once the file `busy` appears, holding a number of
+ * milliseconds, the daemon process removes it, makes `<busy>.held`, and spins that long without returning to its event
+ * loop, then removes `<busy>.held`. Only the daemon's own process does this, not a Node process it starts.
+ */
+function busyDaemonEnvironment(home: string, busy: string): NodeJS.ProcessEnv {
+  const script = join(home, "busy.cjs");
+  writeFileSync(script, `const fs = require("node:fs");
+const file = ${JSON.stringify(busy)};
+if (/daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
+  setInterval(() => {
+    if (!fs.existsSync(file)) return;
+    const ms = Number(fs.readFileSync(file, "utf8"));
+    fs.rmSync(file, { force: true });
+    fs.writeFileSync(file + ".held", "");
+    const end = Date.now() + ms;
+    while (Date.now() < end);
+    fs.rmSync(file + ".held", { force: true });
+  }, 20).unref();
+}
+`);
+  const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
+  return { ...process.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, preload].filter(Boolean).join(" ") };
 }
 
 describe("engine service IPC endpoints", () => {
@@ -254,6 +299,38 @@ describe("Rerail daemon control", () => {
     expect(await findRunningDaemon(home)).toBeUndefined();
   });
 
+  it("writes its record back when it is removed or names another process, and removes it for good when it closes", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const recorded = (): number | undefined => {
+      try {
+        return (JSON.parse(readFileSync(stateFile, "utf8")) as { pid?: number }).pid;
+      } catch {
+        return undefined;
+      }
+    };
+    const daemon = await RerailDaemon.start({
+      version: "0.0.0-test",
+      databasePath: join(home, "rerail.sqlite"),
+      workspaceRoot: home,
+      port: 0,
+      stateFile,
+      recordCheckMs: 20,
+      nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+    });
+    try {
+      await rm(stateFile);
+      await until(() => recorded() === process.pid);
+      expect(await readDaemonState(stateFile)).toEqual(daemon.state());
+      await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID })));
+      await until(() => recorded() === process.pid);
+    } finally {
+      await daemon.close();
+    }
+    expect(existsSync(stateFile)).toBe(false);
+    await delay(100);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const repaired: string[] = [];
@@ -320,6 +397,56 @@ describe("Rerail daemon control", () => {
       blocker.close();
     }
   });
+
+  it("leaves a daemon started beside a busy one to exit, and keeps the record and the port with the busy one", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    // The port both daemons prefer, as 4737 is on a person's machine: the one the home remembers.
+    const port = await freePort();
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port }));
+    const busy = join(home, "busy");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const first = (await startDaemon(control, { dev: true, env: busyDaemonEnvironment(home, busy) })).daemon.state;
+    let second: ChildProcess | undefined;
+    try {
+      expect(first.port).toBe(port);
+      // The first daemon's event loop is held for 8 s, as a long check holds a busy daemon's; its socket and port stay
+      // bound, so a connection waits unanswered.
+      await writeFile(busy, "8000");
+      await until(() => existsSync(`${busy}.held`));
+      // A second daemon process in the same home, as a start whose wait for a slow daemon ran out launches one.
+      second = spawn(process.execPath, [join(packageRoot, "dist", "cli", "daemon-entry.js"), "--state-file", join(home, DAEMON_STATE_FILE), "--dev"], {
+        cwd: home, env: { ...process.env, RERAIL_HOME: home }, stdio: "ignore",
+      });
+      const ended = await Promise.race([once(second, "exit").then(([code]) => `exited ${String(code)}`), delay(7_000).then(() => "still running")]);
+      expect(ended).toMatch(/^exited [1-9]/u);
+      expect((await readDaemonState(join(home, DAEMON_STATE_FILE)))?.pid).toBe(first.pid);
+      await until(() => !existsSync(`${busy}.held`));
+      const running = await findRunningDaemon(home);
+      expect(running?.state).toMatchObject({ pid: first.pid, port });
+    } finally {
+      if (second?.exitCode === null && second.signalCode === null) second.kill("SIGKILL");
+      await stopDaemon(home).catch(() => undefined);
+      if (processAlive(first.pid)) process.kill(first.pid, "SIGKILL");
+    }
+  }, 60_000);
+
+  it("takes over a running daemon whose record went missing, where a second daemon would refuse to start beside it", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const first = (await startDaemon(control, { dev: true, port: 0 })).daemon.state;
+    try {
+      await rm(join(home, DAEMON_STATE_FILE));
+      const again = await startDaemon(control, { dev: true, port: 0 });
+      expect(again.started).toBe(false);
+      expect(again.daemon.state).toMatchObject({ pid: first.pid, url: first.url, kernelSocketPath: first.kernelSocketPath });
+      // `rerail daemon stop` finds it the same way.
+      await rm(join(home, DAEMON_STATE_FILE));
+      expect(await stopDaemon(home)).toBe("stopped");
+      expect(processAlive(first.pid)).toBe(false);
+    } finally {
+      if (processAlive(first.pid)) process.kill(first.pid, "SIGKILL");
+    }
+  }, 60_000);
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -944,6 +1071,7 @@ describe("autostartDaemon", () => {
          holdsCapability: async () => false,
          forgetMainInstanceHolder: () => undefined,
          mainInstanceLockHeld: () => undefined,
+         homeDaemonLockHeld: () => undefined,
          nodeExecutable: () => process.execPath,
          spawnDetached: () => { launches += 1; return { pid: launcher }; },
          spawn: started,

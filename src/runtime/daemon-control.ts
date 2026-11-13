@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
+import { homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -496,6 +497,11 @@ export interface DaemonMachine {
    * binding does not load.
    */
   mainInstanceLockHeld(directory: string): boolean | undefined;
+  /**
+   * Whether a daemon holds the Rerail home `home` (`homeDaemonLockHeld`), its daemon.json or not; undefined when the
+   * native binding does not load.
+   */
+  homeDaemonLockHeld(home: string): boolean | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -522,6 +528,7 @@ const THIS_MACHINE: DaemonMachine = {
   capabilityProof: async (socketPath, accessToken, timeoutMs) => await engineCapabilityProof(socketPath, accessToken, timeoutMs),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
+  homeDaemonLockHeld: home => homeDaemonLockHeld(home),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -716,13 +723,36 @@ async function startUnderLock(home: string, start: () => Promise<StartDaemonResu
   }
 }
 
+/**
+ * The daemon a start or a stop acts on in `home`: the one daemon.json records, else the one that holds the home
+ * (`homeDaemonLockHeld`) once it has recorded itself again. The daemon of a home writes daemon.json back within a
+ * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
+ * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
+ */
+async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<DaemonLookup> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  for (;;) {
+    const lookup = await lookupDaemon(home, machine);
+    if (lookup.status !== "absent" || machine.homeDaemonLockHeld(home) !== true) return lookup;
+    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
+/** What to tell the person when a daemon holds `home` and never records itself: which process to end. */
+function unrecordedDaemonProblem(home: string): string {
+  const pid = homeDaemonHolder(home);
+  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} holds ${home} but has not written ${DAEMON_STATE_FILE} `
+    + `within ${START_TIMEOUT_MS / 1_000}s; end that process, then run rerail daemon start.`;
+}
+
 export async function startDaemon(
   control: DaemonControl,
   options: DaemonLaunchOptions,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home, machine);
+    const lookup = await lookupHomeDaemon(control.home, machine);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -740,7 +770,7 @@ export async function startDaemonForPackage(
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home, machine);
+    const lookup = await lookupHomeDaemon(control.home, machine);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -1213,7 +1243,7 @@ async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
  * {@link STOP_TIMEOUT_MS} is killed.
  */
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
-  const lookup = await lookupDaemon(home, machine);
+  const lookup = await lookupHomeDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
   await stopFoundDaemon(home, lookup, machine);
   return "stopped";

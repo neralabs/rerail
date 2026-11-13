@@ -523,6 +523,12 @@ lock however the daemon ends, `kill -9` included, so there is never a stale lock
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
 `rerail daemon start` prints its exit message from `daemon.log`.
 
+Within one Rerail home every build, a checkout's included, runs one daemon. The daemon holds `locks/daemon.lock` in the
+home the same way, before it opens the database or binds a port, and a second daemon started there exits with
+`Another Rerail daemon (pid …) runs in …`. The daemon checks every second that `daemon.json` names it and writes the file
+again when it is gone or names another process, so a start or a stop that finds the lock held and no `daemon.json`
+waits for it and then uses or stops that daemon, instead of starting another.
+
 </details>
 
 <details>
