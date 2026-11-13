@@ -216,14 +216,14 @@ test("a small capture without reconciled origin evidence cannot satisfy the engi
 
 
 // P's SQL anchor engine is test-only here (open items O20, O84): CI runs the gate with RERAIL_RELATIONAL_TESTS=1, as
-// vitest.config.ts runs P's relational suites.
+// vitest.config.ts runs P's relational suites, in the Rust tests leg that runs the profiling labs (`matrix.profiling`).
 test("CI keeps the 100-submission gate, with P's relational suites, when its workload or regression tests change", () => {
   const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
   const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? []);
   const gate = steps.find(step => step.run?.includes("npm run test:sql-execution-budget"));
   assert.ok(gate, "CI must execute the real complete-job budget workload");
   assert.equal(gate["continue-on-error"] ?? false, false);
-  assert.equal(gate.if, "matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'");
+  assert.equal(gate.if, "matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'");
   assert.ok(gate.env.RERAIL_ENGINE_PATH);
   assert.ok(steps.some(step => step.run?.includes("cargo build") && step.run.includes("--features code-rule-profile")));
   const scripts = JSON.parse(readFileSync("package.json")).scripts;
