@@ -1229,7 +1229,7 @@ fn same_relations(prog: &mut front::Program) {
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("merge the relations that are one ({} rules)", prog.rules.len()));
     let rules = prog.rules.len();
-    let (merged, shared, repeated) = merge_to_fixpoint(prog);
+    let (merged, shared, repeated) = merge_and_drop_repeats(prog);
     if merged > 0 || repeated > 0 {
         crate::code_rule_dsl::logic::profile::decision("merged after hiding and combining", || {
             format!("{merged} relations merged into an identical one ({shared} classes shared across programs), {repeated} rules that repeat another dropped; {} rules of {rules} left", prog.rules.len())
@@ -1237,25 +1237,16 @@ fn same_relations(prog: &mut front::Program) {
     }
 }
 
-/// `simplify::merge_identical` and `drop_repeated_rules` until neither changes anything: each enables the other, as a
-/// repeated rule keeps a relation's rules apart from its twin's (they are compared as lists), and a merge renames
-/// atoms, which can make two rules one. The relations merged, the classes shared across programs, the rules dropped.
-pub fn merge_to_fixpoint(prog: &mut front::Program) -> (usize, usize, usize) {
-    // Another merge is wanted only when the last one made rules repeat: a merge alone finds every class at once (its
-    // congruence is the greatest), and one that renames a class of outputs reports a merge each time (a loop on `m`
-    // never ended on `libraries_are_held_once_and_equal_requests_share_one_cone`).
+/// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across
+/// programs, the rules dropped.
+pub fn merge_and_drop_repeats(prog: &mut front::Program) -> (usize, usize, usize) {
+    // One merge finds every class at once: its congruence is the greatest, and it compares a relation's rules as a
+    // set, so a repeated rule does not keep a relation from its twin. The merge's renaming can make rules repeat;
+    // they are dropped after it, and make nothing more mergeable. (A loop of merges until no rule repeated was 2-3
+    // congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
     let mut repeated = drop_repeated_rules(prog);
-    let (mut merged, mut shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-    for _ in 0..16 {
-        let r = drop_repeated_rules(prog);
-        if r == 0 {
-            break;
-        }
-        repeated += r;
-        let (m, s) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-        merged += m;
-        shared += s;
-    }
+    let (merged, shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
+    repeated += drop_repeated_rules(prog);
     (merged, shared, repeated)
 }
 
@@ -2476,7 +2467,7 @@ fn run_observed(
         let folded = hiding::fold_own(&mut prog, label, bound);
         if folded > 0 {
             let rules = prog.rules.len();
-            let (merged, _, repeated) = merge_to_fixpoint(&mut prog);
+            let (merged, _, repeated) = merge_and_drop_repeats(&mut prog);
             crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
         }
     }
@@ -2548,11 +2539,13 @@ fn run_observed(
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
         memo::named_source(store, text, false, &late_sources);
+        // And its program's text (decision 0155), a source of its own.
+        combined::name_program(store, &texts, &late_sources);
         program_plans.push(plan);
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, &late_sources);
@@ -2690,7 +2683,7 @@ fn run_observed(
             let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
                 crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program)
             } else {
-                let (m, s, _) = merge_to_fixpoint(&mut lowered.program);
+                let (m, s, _) = merge_and_drop_repeats(&mut lowered.program);
                 (m, s)
             };
             drop(_step);

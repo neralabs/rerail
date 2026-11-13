@@ -22,6 +22,19 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+/// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
+/// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
+pub(super) trait RowData {
+    fn row(&self, id: u32, k: usize) -> &[i64];
+}
+
+impl RowData for [i64] {
+    #[inline]
+    fn row(&self, id: u32, k: usize) -> &[i64] {
+        &self[id as usize * k..][..k]
+    }
+}
+
 /// Ids between fences.
 const FENCE: usize = 64;
 
@@ -108,19 +121,19 @@ impl Clone for Index {
 
 /// Rows `a` and `b` in the order on `cols` (`cmp_vals`), then by id (so a sort is the same whatever order it came in).
 #[inline]
-fn cmp_rows(data: &[i64], k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
-    let (ra, rb) = (&data[a as usize * k..][..k], &data[b as usize * k..][..k]);
+fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: u32) -> Ordering {
+    let (ra, rb) = (data.row(a, k), data.row(b, k));
     cmp_vals(cols, tagged(cols, k), ra, rb).then_with(|| a.cmp(&b))
 }
 
 impl Run {
-    fn fenced(data: &[i64], k: usize, cols: &[usize], ids: Vec<u32>) -> Run {
+    fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Vec<u32>) -> Run {
         if tagged(cols, k) {
-            let tags = ids.iter().map(|&id| tag(data[id as usize * k + cols[0]])).collect();
+            let tags = ids.iter().map(|&id| tag(data.row(id, k)[cols[0]])).collect();
             return Run { ids, fences: Vec::new(), tags };
         }
         let fences = match cols.first() {
-            Some(&lead) => ids.iter().step_by(FENCE).map(|&id| data[id as usize * k + lead]).collect(),
+            Some(&lead) => ids.iter().step_by(FENCE).map(|&id| data.row(id, k)[lead]).collect(),
             None => Vec::new(),
         };
         Run { ids, fences, tags: Vec::new() }
@@ -128,9 +141,9 @@ impl Run {
 
     /// The ids of `ids` sorted by `cols` (then id), with their tag and first two values held beside them while
     /// they sort (`sort_keyed`).
-    fn of(data: &[i64], k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
+    fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
         let tagged = tagged(cols, k);
-        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data[id as usize * k + cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
+        let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.row(id, k)[cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
         if tagged {
             return Run { ids, fences: Vec::new(), tags };
         }
@@ -139,11 +152,11 @@ impl Run {
 
     /// The ids whose first `key.len()` columns of `cols` hold `key`.
     #[inline]
-    fn find(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64]) -> &[u32] {
+    fn find<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], key: &[i64]) -> &[u32] {
         // No columns: every row (a relation of no columns holds one row at most).
         let Some(&lead) = key.first() else { return &self.ids };
         let cmp = |id: u32| -> Ordering {
-            let r = &data[id as usize * k..][..k];
+            let r = data.row(id, k);
             cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let window = if !self.tags.is_empty() {
@@ -166,11 +179,11 @@ impl Run {
     /// ids): the tags or fences are searched galloping from there, either way, so a key near the last one (a sorted
     /// batch of keys, decision 0112) reads only what is near, and a far one costs about a search from scratch.
     #[inline]
-    fn find_at(&self, data: &[i64], k: usize, cols: &[usize], key: &[i64], hint: &mut u32) -> &[u32] {
+    fn find_at<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], key: &[i64], hint: &mut u32) -> &[u32] {
         let Some(&lead) = key.first() else { return &self.ids };
         let n = self.ids.len();
         let cmp = |id: u32| -> Ordering {
-            let r = &data[id as usize * k..][..k];
+            let r = data.row(id, k);
             cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
         let (lo, hi) = if !self.tags.is_empty() {
@@ -193,7 +206,7 @@ impl Run {
     /// distinct rows sorted as this run is (`cmp_vals`), so each row's search starts where the last one's ended. Its
     /// block is found by the fences (leading values, inline), or in a tagged run its tag's span by the tags; within it
     /// the search gallops, so rows near each other in the order read few rows of `data`.
-    fn held_sorted(&self, data: &[i64], k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
+    fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
             // No columns: one row at most, held when a live id is.
@@ -212,7 +225,7 @@ impl Run {
                 continue;
             }
             let row = &rows[q as usize * k..][..k];
-            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, &data[id as usize * k..][..k], row) };
+            let cmp = |id: u32| -> Ordering { cmp_vals(cols, tagged, data.row(id, k), row) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
                 let (s, e) = tag_span(&self.tags, tag(row[lead]), at, false);
@@ -239,7 +252,7 @@ impl Run {
     }
 
     /// Two runs as one.
-    fn merge(data: &[i64], k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
+    fn merge<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
         let mut ids = Vec::with_capacity(a.ids.len() + b.ids.len());
         let tagged = !a.tags.is_empty() && !b.tags.is_empty();
         let mut tags = Vec::with_capacity(if tagged { ids.capacity() } else { 0 });
@@ -268,8 +281,8 @@ impl Run {
     }
 
     /// Calls `f` on each group of ids equal on the first `m` columns of `cols`, in order.
-    fn each_group(&self, data: &[i64], k: usize, cols: &[usize], m: usize, mut f: impl FnMut(&[u32])) {
-        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data[a as usize * k + c] == data[b as usize * k + c]);
+    fn each_group<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], m: usize, mut f: impl FnMut(&[u32])) {
+        let same = |a: u32, b: u32| cols[..m].iter().all(|&c| data.row(a, k)[c] == data.row(b, k)[c]);
         let mut at = 0;
         while at < self.ids.len() {
             let mut end = at + 1;
@@ -388,7 +401,7 @@ impl Index {
     }
 
     /// The rows `lo..hi` as a new run of wave `wave` (dead rows are indexed as any; readers skip them).
-    pub(super) fn add_run(&mut self, data: &[i64], k: usize, lo: usize, hi: usize, wave: u32) {
+    pub(super) fn add_run<D: RowData + ?Sized>(&mut self, data: &D, k: usize, lo: usize, hi: usize, wave: u32) {
         if lo < hi {
             self.runs.push((Arc::new(Run::of(data, k, &self.cols, (lo as u32..hi as u32).collect())), wave));
         }
@@ -396,7 +409,7 @@ impl Index {
 
     /// At a wave's start (before its run is added): merges the runs older than wave `wave` into one when the rent
     /// probes paid since the last merge (runs read past the first) passes what the merge costs.
-    pub(super) fn settle(&mut self, data: &[i64], k: usize, wave: u32) {
+    pub(super) fn settle<D: RowData + ?Sized>(&mut self, data: &D, k: usize, wave: u32) {
         let old = self.runs.iter().take_while(|(_, w)| *w < wave).count();
         if old < 2 {
             return;
@@ -414,7 +427,7 @@ impl Index {
     }
 
     /// The first `n` runs merged into one.
-    fn merged_of(&self, data: &[i64], k: usize, n: usize) -> Run {
+    fn merged_of<D: RowData + ?Sized>(&self, data: &D, k: usize, n: usize) -> Run {
         // Pairwise, smallest first: each id is copied about log(n) times.
         let mut parts: Vec<Arc<Run>> = self.runs[..n].iter().map(|(r, _)| Arc::clone(r)).collect();
         while parts.len() > 1 {
@@ -428,7 +441,7 @@ impl Index {
 
     /// At most `max` runs, the two smallest merged at a time (a relation's frozen order: its probes cannot merge it
     /// later, and a large run is left alone while the small ones grow to its size).
-    pub(super) fn tier(&mut self, data: &[i64], k: usize, max: usize) {
+    pub(super) fn tier<D: RowData + ?Sized>(&mut self, data: &D, k: usize, max: usize) {
         while self.runs.len() > max.max(1) {
             let mut by: Vec<usize> = (0..self.runs.len()).collect();
             by.sort_by_key(|&i| self.runs[i].0.ids.len());
@@ -440,7 +453,7 @@ impl Index {
     }
 
     /// The same rows ordered by `cols` instead, each run re-sorted (its wave kept).
-    pub(super) fn reorder(&mut self, data: &[i64], k: usize, cols: Vec<usize>) {
+    pub(super) fn reorder<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: Vec<usize>) {
         if cols == self.cols {
             return;
         }
@@ -460,7 +473,7 @@ impl Index {
     /// The ids whose first `key.len()` columns of this order hold `key` (in this order's column order): over every
     /// run, or only those of wave `wave` (the delta).
     #[inline]
-    pub(super) fn find<'a>(&'a self, data: &[i64], k: usize, key: &[i64], delta: Option<u32>) -> Found<'a> {
+    pub(super) fn find<'a, D: RowData + ?Sized>(&'a self, data: &D, k: usize, key: &[i64], delta: Option<u32>) -> Found<'a> {
         let mut found = Found::default();
         let mut read = 0u64;
         for (run, w) in &self.runs {
@@ -482,7 +495,7 @@ impl Index {
     /// `find`, each run searched from where this sequence of probes last was in it (`hints`, one a run, set past this
     /// key's ids): a sorted batch of keys reads each run once, in order.
     #[inline]
-    pub(super) fn find_at<'a>(&'a self, data: &[i64], k: usize, key: &[i64], delta: Option<u32>, hints: &mut [u32; HINTS]) -> Found<'a> {
+    pub(super) fn find_at<'a, D: RowData + ?Sized>(&'a self, data: &D, k: usize, key: &[i64], delta: Option<u32>, hints: &mut [u32; HINTS]) -> Found<'a> {
         let mut found = Found::default();
         let mut read = 0u64;
         for (r, (run, w)) in self.runs.iter().enumerate() {
@@ -509,7 +522,7 @@ impl Index {
     /// Sets `held[i]` when a live id (`live`) of this order holds row `order[i]` of `rows` (flat, `k` columns each):
     /// `order` lists distinct rows sorted by this order's columns, which are every column (the first order, the dedup
     /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
-    pub(super) fn held_sorted(&self, data: &[i64], k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
+    pub(super) fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
         debug_assert_eq!(self.cols.len(), k, "the dedup test is the order on every column");
         for (run, _) in &self.runs {
             run.held_sorted(data, k, &self.cols, rows, order, &live, held);
@@ -531,7 +544,7 @@ impl Index {
 
     /// Calls `f` on each group of ids equal on the first `m` columns, over every run, in order (the runs merged for
     /// it when there are several; the index is not changed).
-    pub(super) fn each_group(&self, data: &[i64], k: usize, m: usize, f: impl FnMut(&[u32])) {
+    pub(super) fn each_group<D: RowData + ?Sized>(&self, data: &D, k: usize, m: usize, f: impl FnMut(&[u32])) {
         match self.runs.as_slice() {
             [] => {}
             [(r, _)] => r.each_group(data, k, &self.cols, m, f),

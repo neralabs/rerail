@@ -12,24 +12,26 @@
 //!   (`rr::recording`). A run takes the entry only when each file still reads as recorded: an edited library file, or
 //!   a file appearing where an include looked and found none, combines again.
 //!
-//! The entry is the program as facts (`program_facts`), encoded, with the read record as rows of `read_file`. The
-//! run's manifest names the source and the plan (`named`), so collection keeps the entry while it keeps the run.
+//! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rr`
+//! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
+//! keeps the entry while it keeps the run.
 
 use crate::code_rule_dsl::logic::front::{Program, Value};
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
+use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
-/// The entry's schema: bumped when its encoding or meaning changes.
-const SCHEMA: u32 = 104;
+/// The entry's schema: bumped when its encoding or meaning changes (105: the program as its text, decision 0155).
+const SCHEMA: u32 = 105;
 
 /// The path a lookup names. The entry reads no path (`path_dependent: false`).
 const PATH: &str = "rerail/combined";
 
-/// The program's name in the entry's facts.
-const P: &str = "combined";
+/// The relation holding the program's text's digest (sha256 hex).
+const PROGRAM: &str = "rr_combined_program";
 
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
@@ -63,9 +65,7 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
     let set = plan();
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    // Read in place (`decode_view`): the program off the encoding's rows, the files it read copied out (a few).
-    let Ok(view) = program_facts::decode_view(&result.entry) else { return Ok(None) };
-    let facts = view.owned(|r| r == READ_FILE);
+    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
         [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path), sha256: unhex(digest) }),
         _ => None,
@@ -76,7 +76,9 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
             _ => return Ok(None),
         }
     }
-    Ok(program_facts::Grouped::of_views(std::slice::from_ref(&view)).program(P).ok())
+    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(Vec::as_slice) else { return Ok(None) };
+    let Some(digest) = unhex(digest) else { return Ok(None) };
+    Ok(program_text::load(store, &digest)?.map(|(program, _)| program))
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -93,13 +95,10 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// Keeps `program`, combined from texts `key` after reading library files `read`, in the store. A program that does
 /// not read back as written is not kept.
 pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program) -> StoreResult<bool> {
+    // A program that does not read back the same from its text is not kept: the next run combines it again.
+    let Some((digest, _)) = program_text::store(store, program)? else { return Ok(false) };
     let mut facts = Facts::new();
-    program_facts::write(&mut facts, P, program);
-    // A program that does not read back the same is not kept: the next run combines it again.
-    let back = program_facts::program(&facts, P);
-    if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
-        return Ok(false);
-    }
+    facts.insert(PROGRAM.to_owned(), vec![vec![Value::Str(hex(&digest))]]);
     let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let text = source_text(key);
@@ -112,6 +111,29 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     let entry = program_facts::encode(&facts);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
     Ok(true)
+}
+
+/// Names the program text of texts `key`'s entry, when the store keeps it, among the run's late sources (the
+/// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
+/// write when this process queued one.
+pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
+    let (key, late) = (*key, std::sync::Arc::clone(late));
+    cache.write_back(
+        "the combined program's text, named",
+        0,
+        Vec::new(),
+        Box::new(move |store| {
+            let Some(source) = store.held_source_by_hash(HashKey::sha256(source_text(&key).as_bytes()))? else { return Ok(()) };
+            let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
+            let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(()) };
+            let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(()) };
+            let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(Vec::as_slice) else { return Ok(()) };
+            let Some(digest) = unhex(digest) else { return Ok(()) };
+            let found = store.held_source_by_hash(HashKey::from_sha256_digest(digest))?;
+            late.lock().expect("the late sources").extend(found);
+            Ok(())
+        }),
+    );
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).
