@@ -168,7 +168,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 });
 
 describe("which work is theirs", { timeout: 30_000 }, () => {
-  it("is one peer per branch: a pull request and its remote-tracking branch are one conflict, whose id and dismissal hold when gh fails", async () => {
+  it("is one peer per branch: a pull request, its worktree and remote-tracking branches are one conflict, whose id and dismissal hold when gh fails", async () => {
     const { ws, theirs } = await overlapping({ remote: "https://github.com/acme/app.git" });
     ws.push(theirs, "jbarnes-model");
     const pull: PullRequestSummary = {
@@ -257,46 +257,62 @@ describe("which work is theirs", { timeout: 30_000 }, () => {
 });
 
 describe("which work is still in flight", { timeout: 30_000 }, () => {
-  const REMOTE = "https://github.com/acme/app.git";
+  const GITHUB = "https://github.com/acme/app.git";
   const DAY = 24 * 60 * 60 * 1000;
   const pullOf = (number: number, head: string): PullRequestSummary => ({
     number, title: "Share compiled matchers", url: `https://github.com/acme/app/pull/${number}`, headRefName: "jbarnes-model", headCommit: head,
     baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
   });
-
-  it("leaves out a branch whose pull request was closed without merging, until it gains a commit", async () => {
-    const { ws, theirs } = await overlapping({ remote: REMOTE });
+  /** Their branch pushed, then its worktree removed: a local branch no worktree has checked out, and its remote-tracking copy. */
+  const pushedOnly = async (remote?: string): Promise<Workspace> => {
+    const { ws, theirs } = await overlapping(remote === undefined ? {} : { remote });
     ws.push(theirs, "jbarnes-model");
-    const github = new FakeGithub({ closedPullRequests: [pullOf(11, git(theirs, "rev-parse", "HEAD"))] });
-    const service = ws.service({ github });
-    await service.setEnabled(ws.repo, true);
-    expect((await service.scan(ws.repo)).conflicts).toEqual([]);
-
-    commit(theirs, { "src/api/other.ts": "export {};\n" }, "Picked up again");
-    expect((await service.scan(ws.repo)).conflicts.map(conflict => conflict.theirs.label)).toEqual(["jbarnes-model", "jbarnes-model"]);
-  });
-
-  it("compares every branch when the closed pull requests could not be listed, and says so", async () => {
-    const { ws, theirs } = await overlapping({ remote: REMOTE });
-    const github = new FakeGithub({ closedPullRequests: [pullOf(11, git(theirs, "rev-parse", "HEAD"))], closedError: true });
-    const service = ws.service({ github });
+    git(ws.repo, "worktree", "remove", "--force", theirs);
+    return ws;
+  };
+  const labels = async (ws: Workspace, github?: FakeGithub): Promise<{ labels: string[]; problems: string[] }> => {
+    const service = ws.service(github === undefined ? {} : { github });
     await service.setEnabled(ws.repo, true);
     const status = await service.scan(ws.repo);
-    expect(status.conflicts).toHaveLength(2);
-    expect(status.lastScan?.problems).toEqual([expect.stringContaining("could not list closed pull requests")]);
+    return { labels: status.conflicts.map(conflict => conflict.theirs.label), problems: status.lastScan?.problems ?? [] };
+  };
+
+  it("compares branches checked out in another worktree, and no other local or remote-tracking branch, when pull requests were read", async () => {
+    expect(await labels(await pushedOnly(GITHUB), new FakeGithub())).toEqual({ labels: [], problems: [] });
   });
 
-  it("leaves out a branch last committed over 30 days ago, unless it has an open pull request", async () => {
-    const { ws, theirs } = await overlapping({ remote: REMOTE });
-    const later = Date.now() + 31 * DAY;
-    const github = new FakeGithub();
-    const service = ws.service({ github, now: () => later });
-    await service.setEnabled(ws.repo, true);
-    expect((await service.scan(ws.repo)).conflicts).toEqual([]);
-    // Within 30 days it is compared.
-    expect((await ws.service({ github, now: () => Date.now() + 29 * DAY }).scan(ws.repo)).conflicts).toHaveLength(2);
+  it("compares recent remote-tracking branches instead when pull requests could not be read, and says why", async () => {
+    const signedOut = new FakeGithub({ readiness: { state: "signed-out", login: null, repository: "acme/app" } });
+    expect(await labels(await pushedOnly(GITHUB), signedOut)).toEqual({
+      labels: ["origin/jbarnes-model", "origin/jbarnes-model"],
+      problems: [expect.stringContaining("gh is not signed in to GitHub, so remote-tracking branches committed in the last 14 days were compared")],
+    });
+    expect(await labels(await pushedOnly(GITHUB), new FakeGithub({ pullsError: true }))).toEqual({
+      labels: ["origin/jbarnes-model", "origin/jbarnes-model"],
+      problems: [expect.stringContaining("Rerail could not list open pull requests (HTTP 502)")],
+    });
+    // Off GitHub, remote-tracking branches are how it always reads: no problem.
+    expect(await labels(await pushedOnly())).toEqual({ labels: ["origin/jbarnes-model", "origin/jbarnes-model"], problems: [] });
+  });
 
+  it("never compares a local branch no worktree has checked out", async () => {
+    const { ws, theirs } = await overlapping();
+    git(ws.repo, "worktree", "remove", "--force", theirs);
+    expect((await labels(ws)).labels).toEqual([]);
+  });
+
+  it("leaves out a branch last committed over 14 days ago, unless it has an open pull request", async () => {
+    const { ws, theirs } = await overlapping({ remote: GITHUB });
+    const github = new FakeGithub();
+    const later = (days: number) => ws.service({ github, now: () => Date.now() + days * DAY });
+    const scan = async (days: number): Promise<string[]> => {
+      const service = later(days);
+      await service.setEnabled(ws.repo, true);
+      return (await service.scan(ws.repo)).conflicts.filter(conflict => conflict.status === "open").map(conflict => conflict.theirs.label);
+    };
+    expect(await scan(15)).toEqual([]);
+    expect(await scan(13)).toEqual(["jbarnes-model", "jbarnes-model"]);
     github.options.pullRequests = [pullOf(12, git(theirs, "rev-parse", "HEAD"))];
-    expect((await service.scan(ws.repo)).conflicts.map(conflict => conflict.theirs.label)).toEqual(["PR #12", "PR #12"]);
+    expect(await scan(15)).toEqual(["PR #12", "PR #12"]);
   });
 });

@@ -322,23 +322,4 @@ describe("openPullRequests", () => {
     const gh = fakeGh(() => ({ stdout: "{\"message\":\"nope\"}" }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY)).rejects.toMatchObject({ reason: "invalid-response" });
   });
-
-  it("lists pull requests closed without merging, validated as the open ones, and never a merged one", async () => {
-    const entries = [
-      { ...real, mergedAt: null },
-      { ...real, number: 390, url: "https://github.com/neralabs/rerail/pull/390", mergedAt: "2026-11-02T20:09:43Z" },
-      { ...real, number: 391, url: "https://github.com/neralabs/rerail/pull/391" },
-      { ...real, number: 392, url: "https://github.com/neralabs/rerail/pull/392", headRefOid: "main", mergedAt: null },
-    ];
-    const gh = fakeGh(() => ({ stdout: JSON.stringify(entries) }));
-    const { pulls, truncated } = await createGithubClient({ env, spawn: gh.spawn }).closedPullRequests(REPOSITORY);
-    expect(truncated).toBe(false);
-    expect(pulls.map(pull => pull.number)).toEqual([389]);
-    expect(gh.calls[0]?.args).toEqual([
-      "pr", "list", "--repo=github.com/neralabs/rerail", "--state", "closed", "--search", "is:unmerged", "--limit", "200", "--json", `${PR_FIELDS},mergedAt`,
-    ]);
-    const failing = fakeGh(() => ({ code: 1, stderr: "HTTP 502\n" }));
-    await expect(createGithubClient({ env, spawn: failing.spawn }).closedPullRequests(REPOSITORY))
-      .rejects.toMatchObject({ reason: "failed", message: expect.stringContaining("could not list closed pull requests") });
-  });
 });

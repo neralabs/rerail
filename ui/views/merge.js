@@ -338,7 +338,7 @@ function renderOff(status) {
     return !show ? null : h("div.list.mconsent", null,
       h("h3", null, "What turning it on does"),
       h("ul.mbul", null,
-        h("li", null, "Rerail reads your other local branches, and open pull requests through ", h("code", null, "gh"), " with your sign-in, read-only."),
+        h("li", null, "Rerail reads open pull requests through ", h("code", null, "gh"), " with your sign-in, read-only, and branches checked out in your other worktrees here. It reads remote branches only when it can’t read pull requests."),
         h("li", null, "You and your coding agent are told about each conflict, unless only lockfiles, changelogs, generated output or docs overlap. Rerail never picks a side, and never writes to your branches or to GitHub.")),
       h("h3", null, "What Rerail found"),
       h("ul.mchecks", null, checks.map(check => h(`li.${check.ok ? "mready" : "mnotready"}`, { "data-check": check.key },
@@ -477,7 +477,7 @@ const emptyBlock = empty => h("div.list", null, h("div.empty", null, h("h3", nul
 function conflictsEmpty(status, dismissed) {
   const scan = status.lastScan;
   const lines = [scan === null
-    ? "Rerail looks for conflicts on every scan and after your coding agent’s edits: work on your other local branches and open pull requests that overlaps yours."
+    ? "Rerail looks for conflicts on every scan and after your coding agent’s edits: work in open pull requests and in your other worktrees that overlaps yours."
     : `Rerail compared this branch with ${scannedWhat(scan)} ${ago(Date.parse(scan.at))} and found nothing that collides with it.`];
   lines.push("When work overlaps, it shows here with whose it is, so you can talk it over with them.");
   if (dismissed > 0) lines.push("Earlier ones are under Dismissed.");

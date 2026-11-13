@@ -176,19 +176,19 @@ export function githubText(github) {
   }
 }
 
-/** "3 local branches and 2 open pull requests"; "no other branches" when there were none. */
+/** "3 branches and 2 open pull requests"; "no other branches" when there were none. */
 export function scannedWhat(lastScan) {
   const { branches, pullRequests } = lastScan.peers;
   const parts = [];
-  if (branches > 0) parts.push(`${fmt(branches)} local ${plural(branches, "branch", "branches")}`);
+  if (branches > 0) parts.push(`${fmt(branches)} ${plural(branches, "branch", "branches")}`);
   if (pullRequests > 0) parts.push(`${fmt(pullRequests)} open ${plural(pullRequests, "pull request")}`);
   return parts.length === 0 ? "no other branches" : parts.join(" and ");
 }
 
 /**
  * After Scan now, for its toast: what the scan read and how many open conflicts it found that the page did not show
- * before (`before`, the status at the click, or `null`), not the totals. "Scanned 3 local branches. New: 2 conflicts."
- * or "Scanned 3 local branches: nothing new." While another process's scan runs, the request started none, and the
+ * before (`before`, the status at the click, or `null`), not the totals. "Scanned 3 branches. New: 2 conflicts."
+ * or "Scanned 3 branches: nothing new." While another process's scan runs, the request started none, and the
  * status holds the last results.
  */
 export function scanSummary(before, after) {
@@ -213,15 +213,15 @@ export function readinessChecks({ github }) {
     case "signed-in":
       return [{ key: "github", ok: true, text: [{ code: "gh" }, ` is signed in${github.login ? ` as ${github.login}` : ""}. Open pull requests are read with your sign-in.`] }];
     case "signed-out":
-      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not signed in, so only local branches are read. Run ", { code: "gh auth login" }, " to read open pull requests."] }];
+      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not signed in, so recent remote branches stand in for pull requests. Run ", { code: "gh auth login" }, " to read open pull requests."] }];
     case "missing":
-      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not installed, so only local branches are read."] }];
+      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not installed, so recent remote branches stand in for pull requests."] }];
     case "unavailable":
-      return [{ key: "github", ok: false, text: ["Rerail couldn’t read ", { code: "gh" }, "’s sign-in, so only local branches are read until it can."] }];
+      return [{ key: "github", ok: false, text: ["Rerail couldn’t read ", { code: "gh" }, "’s sign-in, so recent remote branches stand in for pull requests until it can."] }];
     case "unchecked":
       return [{ key: "github", ok: false, text: ["Rerail checks ", { code: "gh" }, "’s sign-in when you turn Merge Assist on, to read open pull requests; until then it runs no ", { code: "gh" }, "."] }];
     default:
-      return [{ key: "github", ok: false, text: ["This repository is not on GitHub, so only local branches are read."] }];
+      return [{ key: "github", ok: false, text: ["This repository is not on GitHub, so recent remote branches stand in for pull requests."] }];
   }
 }
 

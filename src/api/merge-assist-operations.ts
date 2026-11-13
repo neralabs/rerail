@@ -88,7 +88,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_scan",
     method: "POST",
     path: "/api/merge-assist/scan",
-    summary: internalTesting("Find the checkout's in-flight conflicts now: overlapping changes with other local and remote-tracking branches and open pull requests. Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout."),
+    summary: internalTesting("Find the checkout's in-flight conflicts now: overlapping changes with open pull requests and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout."),
     body: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

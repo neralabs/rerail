@@ -167,11 +167,11 @@ export function formatConflicts(status: MergeAssistStatus, name: string, dashboa
 
 /** What `gh`'s readiness means for a scan, but signed in. */
 const GITHUB_LINES: Record<Exclude<GithubState, "signed-in">, string> = {
-  "signed-out": "gh is not signed in, so open pull requests are not read. Sign in with gh auth login.",
-  missing: "gh is not installed, so open pull requests are not read.",
-  "not-github": "the repository's remote is not on GitHub, so only local branches are read.",
+  "signed-out": "gh is not signed in, so open pull requests are not read and recent remote branches stand in. Sign in with gh auth login.",
+  missing: "gh is not installed, so open pull requests are not read and recent remote branches stand in.",
+  "not-github": "the repository's remote is not on GitHub, so recent remote branches stand in for pull requests.",
   unchecked: "not checked: Rerail runs gh only once Merge Assist is on.",
-  unavailable: "gh did not say whether it is signed in (it did not answer in time or failed), so open pull requests are not read this time.",
+  unavailable: "gh did not say whether it is signed in (it did not answer in time or failed), so recent remote branches stand in for open pull requests this time.",
 };
 
 function githubLine(status: MergeAssistStatus): string {
@@ -197,8 +197,9 @@ function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] 
 /** What turning Merge Assist on means, before a person does it (docs/merge-assist-v1-build.md). */
 const TURNING_ON = [
   "  Turning it on means:",
-  "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
-  "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
+  "    Rerail compares your work here with open pull requests, which it reads through gh with your sign-in, read-only, and",
+  "    with branches checked out in your other worktrees; with remote branches only when it cannot read pull requests.",
+  "    It writes no file and never merges, commits or pushes.",
   "    When your work overlaps someone else's, it tells you and your coding agent, unless only lockfiles, changelogs, generated output or docs overlap.",
   "  Turn it on with rerail merge-assist on.",
 ];
@@ -217,7 +218,7 @@ export function formatMergeAssistStatus(status: MergeAssistStatus, name: string,
     githubLine(status),
     ...scanLines(status, scanRequested),
     ...conflictSections(status, false),
-    ...(empty ? ["  No conflicts. When your work here overlaps a live branch or an open pull request, Rerail lists it."] : []),
+    ...(empty ? ["  No conflicts. When your work here overlaps an open pull request or a branch in another worktree, Rerail lists it."] : []),
     ...page,
   ].join("\n");
 }

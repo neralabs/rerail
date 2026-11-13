@@ -35,15 +35,16 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
 - **Mine** is the checkout's work, committed and not, against the merge base of HEAD with the base branch
   (`origin/HEAD`, else `main` or `master`). With no base branch, or one that shares no history with HEAD, the scan
   says so and finds nothing.
-- **Theirs** are the live branches the repository already holds: local branches, remote-tracking branches, and open
-  pull requests whose head it holds. Each branch counts once however it arrives (a pull request, its local branch and
-  `origin/<branch>` are one peer, shown as the pull request). Left out: this checkout's own branch, its local and
-  remote copies and its upstream, its own pull request, the branch being rebased, and branches the base or HEAD
-  already contains. Also left out, unless the branch has an open pull request: a branch whose pull request was closed
-  without merging and that has had no commit since (its tip is still that pull request's head), and a branch whose tip
-  was committed more than 30 days ago (`STALE_BRANCH_DAYS`). Pull requests are listed through `gh`, read-only and with
-  the person's own sign-in: afresh by a scan, else at most every five minutes, the 200 newest open ones and the 200
-  newest closed without merging; when more are open, the scan says so.
+- **Theirs** is the work in flight: open pull requests whose head the repository holds, and branches checked out in
+  another worktree of this repository. Other local branches and remote-tracking branches are not compared, except as a
+  fallback: when open pull requests cannot be read (the repository is not on GitHub, or `gh` is missing, signed out,
+  unreadable or its listing failed), remote-tracking branches stand in for them, and the scan says so unless the
+  repository is not on GitHub. A branch (not an open pull request) whose tip was committed more than 14 days ago
+  (`STALE_BRANCH_DAYS`) is left out. Each branch counts once however it arrives (a pull request, its worktree branch
+  and `origin/<branch>` are one peer, shown as the pull request). Also left out: this checkout's own branch, its local
+  and remote copies and its upstream, its own pull request, the branch being rebased, and branches the base or HEAD
+  already contains. Pull requests are listed through `gh`, read-only and with the person's own sign-in: afresh by a
+  scan, else at most every five minutes, the 200 newest open ones; when more are open, the scan says so.
 - A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
@@ -51,7 +52,7 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   both sides is not a conflict. Each (their branch, overlap) is one conflict.
 
 A scan records when it ran, how many branches and pull requests it compared, and what it could not read, including a
-`gh` whose sign-in could not be read, and closed pull requests it could not list (their branches are then compared).
+`gh` whose sign-in or pull requests could not be read (remote-tracking branches then stood in).
 
 **The id** is `conflict:<question>:<8 hex of their branch>`. Their branch is its head branch name with any remote
 prefix dropped, `<owner>:<branch>` for a pull request from a fork, so the id holds when the same branch is found
@@ -180,4 +181,4 @@ agent's provider, and what Rerail keeps; Rerail makes no network request with cr
 ## Open questions
 
 - Should a dismissal be shared with the other side's author, or stay local to this checkout?
-- Should live sessions on this machine, including uncommitted work in other checkouts, count as live refs?
+- Should uncommitted work in other worktrees on this machine count, not only what their branches have committed?

@@ -1,12 +1,12 @@
 /**
  * Detecting the checkout's in-flight conflicts (docs/merge-assist-v1-build.md). Mine is this checkout's working
- * changes, committed and not, against the merge base of HEAD with the base branch. Theirs are the live branches: local
- * branches, remote-tracking branches, and open pull requests whose head this repository holds, less this branch's own
- * (its local and remote-tracking copies, its upstream, its pull request; the branch being rebased while HEAD is
- * detached), work the base branch already holds, and branches no longer in flight: one whose pull request was closed
- * without merging and that has no commit since, or one last committed over {@link STALE_BRANCH_DAYS} days ago, unless
- * it has an open pull request. A branch is one peer however it arrives (a pull request, a local or
- * a remote-tracking branch of the same name), so its conflicts keep their ids. An overlap is one conflict per (their
+ * changes, committed and not, against the merge base of HEAD with the base branch. Theirs are the work in flight: open
+ * pull requests whose head this repository holds, and branches checked out in another worktree of this repository; when
+ * the open pull requests could not be read (no GitHub remote, no `gh`, signed out, a failed listing), remote-tracking
+ * branches stand in for them. A branch (not a pull request) last committed over {@link STALE_BRANCH_DAYS} days ago is
+ * left out, as are this branch's own (its local and remote-tracking copies, its upstream, its pull request; the branch
+ * being rebased while HEAD is detached) and work the base branch already holds. A branch is one peer however it arrives
+ * (a pull request, a local or a remote-tracking branch of the same name), so its conflicts keep their ids. An overlap is one conflict per (their
  * branch, file); one whose every file is a lockfile, a changelog, generated output or under `docs/` is quiet. Reads Git
  * only, without blocking, a few processes at a time; writes no file; never merges.
  */
@@ -45,7 +45,7 @@ export function noSharedHistoryProblem(base: string): string {
  * A branch whose tip commit is older than this many days, by its committer date, is not compared unless it has an open
  * pull request: work left behind, not in flight.
  */
-export const STALE_BRANCH_DAYS = 30;
+export const STALE_BRANCH_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** How many Git processes a detection pass runs at once. */
@@ -56,10 +56,8 @@ export interface DetectContext {
   readonly database: RerailDatabase;
   readonly checkout: CheckoutContext;
   readonly now: () => number;
-  /** The open pull requests, as last listed; none without `gh`. */
-  readonly pulls: readonly PullRequestSummary[];
-  /** The pull requests closed without merging, as last listed; none without `gh` or when they could not be listed. */
-  readonly closedPulls: readonly PullRequestSummary[];
+  /** The open pull requests, as last listed; null when they could not be read, and remote-tracking branches stand in. */
+  readonly pulls: readonly PullRequestSummary[] | null;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -151,61 +149,50 @@ async function pullRefs(root: string, view: MineView, pulls: readonly PullReques
   }));
 }
 
-/** Local and remote-tracking branches with work of their own: neither this branch nor the base branch holds their tip. */
-async function branchRefs(root: string, view: MineView): Promise<LiveRef[]> {
-  const listed = await gitReadAsync(root, [
-    "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)%00%(committerdate:unix)", `--no-merged=${view.baseTip}`, `--no-merged=${view.head}`, "refs/heads", "refs/remotes",
-  ], LIST_OPTIONS);
-  return (listed ?? "").split("\n").flatMap(line => {
-    const [name = "", sha = "", symref = "", committed = ""] = line.split("\0");
-    if (name === "" || sha === "" || symref !== "") return [];
-    const label = name.replace(/^refs\/(?:heads|remotes)\//u, "");
-    const committedAt = /^\d+$/u.test(committed) ? Number(committed) * 1000 : null;
-    return [{ ref: label, key: branchKey(name), label, sha, author: null, url: null, title: null, committedAt }];
-  });
+/** Whether a listed ref is a branch compared: a local branch another worktree has checked out, or a remote-tracking one. */
+function comparedBranch(name: string, symref: string, worktree: string): boolean {
+  return symref === "" && (name.startsWith("refs/remotes/") || worktree !== "");
 }
 
-/** What leaves a branch out as work no longer in flight. */
-interface Settled {
-  /** The branches with an open pull request: always compared. */
-  readonly open: ReadonlySet<string>;
-  /** The head commits of each branch's pull requests closed without merging. */
-  readonly closedHeads: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Tips committed before this (ms) are stale. */
-  readonly staleBefore: number;
-}
-
-function settledBy(context: DetectContext): Settled {
-  const closedHeads = new Map<string, Set<string>>();
-  for (const pull of context.closedPulls) {
-    const key = pullKey(pull);
-    closedHeads.set(key, (closedHeads.get(key) ?? new Set()).add(pull.headCommit));
-  }
-  return { open: new Set(context.pulls.map(pullKey)), closedHeads, staleBefore: context.now() - STALE_BRANCH_DAYS * DAY_MS };
+/** One `for-each-ref` line of {@link branchRefs} as a live ref, or none. */
+function branchRef([name = "", sha = "", symref = "", committed = "", worktree = ""]: readonly string[]): LiveRef[] {
+  if (name === "" || sha === "" || !comparedBranch(name, symref, worktree)) return [];
+  const label = name.replace(/^refs\/(?:heads|remotes)\//u, "");
+  const committedAt = /^\d+$/u.test(committed) ? Number(committed) * 1000 : null;
+  return [{ ref: label, key: branchKey(name), label, sha, author: null, url: null, title: null, committedAt }];
 }
 
 /**
- * Whether a branch is work no longer in flight, unless it has an open pull request: its pull request was closed
- * without merging and it has no commit since (its tip is still that pull request's head), or its tip was committed
- * more than {@link STALE_BRANCH_DAYS} days ago.
+ * The branches compared beside open pull requests, with work of their own (neither this branch nor the base branch
+ * holds their tip): local branches checked out in a worktree (this checkout's own is left out later), and, with
+ * `remotes`, remote-tracking branches. One `for-each-ref`, which also gives each tip's commit time.
  */
-function settled(ref: LiveRef, by: Settled): boolean {
-  if (by.open.has(ref.key)) return false;
-  if (by.closedHeads.get(ref.key)?.has(ref.sha) === true) return true;
-  return ref.committedAt !== null && ref.committedAt < by.staleBefore;
+async function branchRefs(root: string, view: MineView, remotes: boolean): Promise<LiveRef[]> {
+  const listed = await gitReadAsync(root, [
+    "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)%00%(committerdate:unix)%00%(worktreepath)",
+    `--no-merged=${view.baseTip}`, `--no-merged=${view.head}`, "refs/heads", ...(remotes ? ["refs/remotes"] : []),
+  ], LIST_OPTIONS);
+  return (listed ?? "").split("\n").flatMap(line => branchRef(line.split("\0")));
+}
+
+/** Whether a branch was last committed over {@link STALE_BRANCH_DAYS} days before `now`; one with an open pull request never is. */
+function stale(ref: LiveRef, open: ReadonlySet<string>, now: number): boolean {
+  return !open.has(ref.key) && ref.committedAt !== null && ref.committedAt < now - STALE_BRANCH_DAYS * DAY_MS;
 }
 
 /**
- * The live refs this checkout's work is compared with, open pull requests first, then local, then remote-tracking
- * branches: none of this branch's own, none no longer in flight ({@link settled}), and each branch and each commit once,
- * the first way it arrived.
+ * The live refs this checkout's work is compared with, open pull requests first, then branches checked out in another
+ * worktree, then (open pull requests unread) remote-tracking branches: none of this branch's own, none {@link stale},
+ * and each branch and each commit once, the first way it arrived.
  */
 async function liveRefs(root: string, view: MineView, context: DetectContext): Promise<{ pulls: LiveRef[]; branches: LiveRef[] }> {
-  const by = settledBy(context);
-  const [open, branches] = await Promise.all([pullRefs(root, view, context.pulls), branchRefs(root, view)]);
+  const pulls = context.pulls ?? [];
+  const open = new Set(pulls.map(pullKey));
+  const now = context.now();
+  const [opened, branches] = await Promise.all([pullRefs(root, view, pulls), branchRefs(root, view, context.pulls === null)]);
   const keys = new Set(view.own);
   const shas = new Set<string>();
-  const kept = [...open, ...branches.filter(ref => !settled(ref, by))].filter(ref => {
+  const kept = [...opened, ...branches.filter(ref => !stale(ref, open, now))].filter(ref => {
     if (keys.has(ref.key) || shas.has(ref.sha)) return false;
     keys.add(ref.key);
     shas.add(ref.sha);

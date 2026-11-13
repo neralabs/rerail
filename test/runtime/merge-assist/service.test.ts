@@ -189,10 +189,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(status.lastScan).toEqual({ at: "2026-11-03T14:00:00Z", peers: { branches: 1, pullRequests: 1 }, problems: [] });
     expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jbarnes" }) })]);
 
-    // gh failing leaves the branches compared, and says why the pull requests are not.
+    // gh failing leaves the worktrees' branches compared (remote-tracking ones too), and says why the pull requests are not.
     const failed = await ws.service({ github: new FakeGithub({ pullsError: true }), now: () => now }).scan(ws.repo);
     expect(failed.lastScan).toEqual({
-      at: "2026-11-03T14:00:00Z", peers: { branches: 2, pullRequests: 0 }, problems: ["Rerail could not list open pull requests: HTTP 502"],
+      at: "2026-11-03T14:00:00Z", peers: { branches: 2, pullRequests: 0 }, problems: ["Rerail could not list open pull requests (HTTP 502), so remote-tracking branches committed in the last 14 days were compared instead of open pull requests."],
     });
   });
 

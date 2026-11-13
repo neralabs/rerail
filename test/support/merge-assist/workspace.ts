@@ -44,10 +44,6 @@ export interface FakeGithubOptions {
   truncated?: boolean;
   /** `gh pr list` fails: `openPullRequests` throws. */
   pullsError?: boolean;
-  /** Pull requests closed without merging. */
-  closedPullRequests?: PullRequestSummary[];
-  /** `gh pr list --state closed` fails: `closedPullRequests` throws. */
-  closedError?: boolean;
 }
 
 /** `gh` as a scan sees it, from fixed answers a test may change between scans; it counts readiness reads. */
@@ -66,11 +62,6 @@ export class FakeGithub implements GithubClient {
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
     if (this.options.pullsError === true) throw new GithubError("failed", "HTTP 502");
     return { pulls: this.options.pullRequests ?? [], truncated: this.options.truncated ?? false };
-  }
-
-  async closedPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
-    if (this.options.closedError === true) throw new GithubError("failed", "HTTP 502");
-    return { pulls: this.options.closedPullRequests ?? [], truncated: false };
   }
 }
 

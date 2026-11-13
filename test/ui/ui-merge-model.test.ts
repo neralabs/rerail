@@ -10,7 +10,7 @@ import { conflict, dismissed } from "./support/merge-conflicts.js";
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
 
-/** Merge Assist on, its last scan four minutes ago over 3 local branches and 2 open pull requests. */
+/** Merge Assist on, its last scan four minutes ago over 3 branches and 2 open pull requests. */
 const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus =>
   sampleStatus("/work/storefront", { lastScan: { at: at(4), peers: { branches: 3, pullRequests: 2 }, problems: [] }, ...over });
 
@@ -62,19 +62,19 @@ describe("the status strip", () => {
   });
 
   it("says what a scan read", () => {
-    expect(scannedWhat({ at: at(1), peers: { branches: 1, pullRequests: 2 }, problems: [] })).toBe("1 local branch and 2 open pull requests");
+    expect(scannedWhat({ at: at(1), peers: { branches: 1, pullRequests: 2 }, problems: [] })).toBe("1 branch and 2 open pull requests");
     expect(scannedWhat({ at: at(1), peers: { branches: 0, pullRequests: 0 }, problems: [] })).toBe("no other branches");
   });
 
   it("sums up the open conflicts a scan found that the page did not show before, not the totals", () => {
     const conflicts = [conflict("a"), conflict("b"), dismissed("c", at(3))];
-    expect(scanSummary(null, status({ conflicts }))).toBe("Scanned 3 local branches and 2 open pull requests. New: 2 conflicts.");
+    expect(scanSummary(null, status({ conflicts }))).toBe("Scanned 3 branches and 2 open pull requests. New: 2 conflicts.");
     // Nothing changed: the conflicts that are still open are not news.
-    expect(scanSummary(status({ conflicts }), status({ conflicts }))).toBe("Scanned 3 local branches and 2 open pull requests: nothing new.");
+    expect(scanSummary(status({ conflicts }), status({ conflicts }))).toBe("Scanned 3 branches and 2 open pull requests: nothing new.");
     expect(scanSummary(status({ conflicts }), status({ conflicts: [...conflicts, conflict("d")] })))
-      .toBe("Scanned 3 local branches and 2 open pull requests. New: 1 conflict.");
+      .toBe("Scanned 3 branches and 2 open pull requests. New: 1 conflict.");
     expect(scanSummary(null, status({ lastScan: { at: at(0), peers: { branches: 1, pullRequests: 0 }, problems: ["gh: rate limited"] } })))
-      .toBe("Scanned 1 local branch: nothing new. 1 thing could not be read; see Last scan.");
+      .toBe("Scanned 1 branch: nothing new. 1 thing could not be read; see Last scan.");
   });
 
   it("says a scan request found another scan running, and that the results are the last ones", () => {

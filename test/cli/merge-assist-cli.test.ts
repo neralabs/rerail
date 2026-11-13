@@ -116,8 +116,9 @@ describe("rerail merge-assist", () => {
       "● Merge Assist is off in app (detached HEAD).",
       "  GitHub: not checked: Rerail runs gh only once Merge Assist is on.",
       "  Turning it on means:",
-      "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
-      "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
+      "    Rerail compares your work here with open pull requests, which it reads through gh with your sign-in, read-only, and",
+      "    with branches checked out in your other worktrees; with remote branches only when it cannot read pull requests.",
+      "    It writes no file and never merges, commits or pushes.",
       "    When your work overlaps someone else's, it tells you and your coding agent, unless only lockfiles, changelogs, generated output or docs overlap.",
       "  Turn it on with rerail merge-assist on.",
       "",
@@ -127,9 +128,9 @@ describe("rerail merge-assist", () => {
   it("says how a conflict appears when there is none yet", async () => {
     status = path => sampleStatus(path, { lastScan: null, scanning: true, readiness: { ...sampleStatus(path).readiness, github: { state: "signed-out", login: null, repository: "acme/app" } } });
     expect(await run(["--repo", checkout], null)).toBe(0);
-    expect(stdout).toContain("  GitHub: gh is not signed in, so open pull requests are not read. Sign in with gh auth login.\n");
+    expect(stdout).toContain("  GitHub: gh is not signed in, so open pull requests are not read and recent remote branches stand in. Sign in with gh auth login.\n");
     expect(stdout).toContain("  A scan is running.\n");
-    expect(stdout).toContain("  No conflicts. When your work here overlaps a live branch or an open pull request, Rerail lists it.\n");
+    expect(stdout).toContain("  No conflicts. When your work here overlaps an open pull request or a branch in another worktree, Rerail lists it.\n");
     expect(stdout).not.toContain("No scan yet");
   });
 
@@ -238,7 +239,7 @@ describe("rerail merge-assist", () => {
   it("says when gh could not tell whether it is signed in", async () => {
     status = path => sampleStatus(path, { readiness: { github: { state: "unavailable", login: null, repository: "acme/app" } } });
     expect(await run(["--repo", checkout], null)).toBe(0);
-    expect(stdout).toContain("  GitHub: gh did not say whether it is signed in (it did not answer in time or failed), so open pull requests are not read this time.\n");
+    expect(stdout).toContain("  GitHub: gh did not say whether it is signed in (it did not answer in time or failed), so recent remote branches stand in for open pull requests this time.\n");
   });
 
   it("shows the person's settings, and changes the hook command", async () => {
