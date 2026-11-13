@@ -14,8 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
+import { HELD_OFF_SINCE } from "../../../src/engine/index.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -840,6 +841,30 @@ describe("validatePack", () => {
         "no-debugger (fixtures): 0 TP and no examples in pack.json; nothing shows it catches anything",
       ],
     });
+  });
+});
+
+// The Release pull request bumps core to the release that reads heldOff; from then a pack holding a rule off must leave
+// older cores out, or they drop it whole as invalid. Before then this checkout's core has to keep loading it.
+describe("heldOffRangeFailure", () => {
+  const held = ["ruff-b009-get-attr-with-constant"];
+
+  it.each([
+    ["a core before the release that reads heldOff passes the old range", ">=0.1.0-0", held, "0.1.4", false],
+    ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", held, HELD_OFF_SINCE, true],
+    ["a prerelease of it fails it too", ">=0.1.0-0", held, `${HELD_OFF_SINCE}-next.0`, true],
+    ["a later release fails it too", ">=0.1.0-0", held, "1.0.0", true],
+    ["a range starting at its prereleases passes", `>=${HELD_OFF_SINCE}-0`, held, HELD_OFF_SINCE, false],
+    ["a range starting at the release passes", `>=${HELD_OFF_SINCE}`, held, HELD_OFF_SINCE, false],
+    ["a pack holding no rule off passes", ">=0.1.0-0", [], HELD_OFF_SINCE, false],
+  ])("%s", (_, range, heldOff, core, fails) => {
+    expect(heldOffRangeFailure(range, heldOff, core) !== undefined).toBe(fails);
+  });
+
+  it("names the held-off rules and the range to raise to", () => {
+    expect(heldOffRangeFailure(">=0.1.0-0", held, HELD_OFF_SINCE)).toBe(
+      `package.json: the core range >=0.1.0-0 admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (ruff-b009-get-attr-with-constant); raise it to >=${HELD_OFF_SINCE}-0`,
+    );
   });
 });
 

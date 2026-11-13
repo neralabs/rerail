@@ -6,8 +6,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, join, matchesGlob, posix, relative, resolve, sep } from "node:path";
+import semver from "semver";
 import { z } from "zod";
 import {
+  HELD_OFF_SINCE,
   languageFor,
   languageNotSupportedOf,
   codeRuleSchema,
@@ -477,9 +479,24 @@ function ruleDetailHeadings(path: string): { heading: string; names: string[] }[
   return headings;
 }
 
+/** The root package.json, for the repository every pack is published from and core's version. */
+const rootPackage = (): { repository: { url: string }; version: string } =>
+  z.object({ repository: z.object({ url: z.string() }), version: z.string() }).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "package.json"), "utf8")));
+
 /** The repository every pack is published from, as the root package.json names it: npm's trusted publishing checks it. */
-const repositoryUrl = (): string =>
-  z.object({ repository: z.object({ url: z.string() }) }).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "package.json"), "utf8"))).repository.url;
+const repositoryUrl = (): string => rootPackage().repository.url;
+
+/**
+ * Why a pack's core range `range` admits a core that refuses its pack.json, or undefined. Once core is at
+ * `HELD_OFF_SINCE` (`coreVersion`, the Release pull request's bump), a pack holding rules off (`heldOff`) must leave out
+ * every older core, which refuses the field and would drop the whole pack as invalid; before then the range stays, so
+ * this checkout's core still loads the pack.
+ */
+export function heldOffRangeFailure(range: string, heldOff: readonly string[], coreVersion: string): string | undefined {
+  const floor = `${HELD_OFF_SINCE}-0`;
+  if (heldOff.length === 0 || semver.lt(coreVersion, floor) || !semver.intersects(range, `<${floor}`, { includePrerelease: true })) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (${heldOff.join(", ")}); raise it to >=${floor}`;
+}
 
 /** The SPDX ids an SPDX expression names. */
 const spdxIds = (expression: string): string[] =>
@@ -964,6 +981,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       }
       const failure = packageLicenceFailure(manifest.license, sources.recorded);
       if (failure !== undefined) fail("package", failure);
+      const heldOff = (pack?.rules ?? []).filter(rule => rule.heldOff !== undefined).map(rule => rule.id);
+      const range = heldOffRangeFailure(manifest.peerDependencies["@neralabs/rerail"], heldOff, rootPackage().version);
+      if (range !== undefined) fail("package", range);
     }
   }
   // README.md is published; candidates/README.md, which holds the candidates' rule details, is not. A rule's details

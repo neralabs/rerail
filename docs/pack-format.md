@@ -194,7 +194,9 @@ packs/<id>/
   - `heldOff` is one line saying why a reviewer holds the rule off though upstream turns it on: its steer would do
     harm. It needs `"on": false`. Set-up never turns a held-off rule on from the repository's lint config, by a
     linter's defaults, a preset, a prefix, a group or the rule's own name; it notes what would have, with the reason
-    ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on.
+    ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on. Cores
+    before 0.1.5 refuse the field, so once core is at 0.1.5 the pack validation fails a pack using it whose core range
+    admits an older core: the Release pull request that bumps core raises the range to `>=0.1.5-0`.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.

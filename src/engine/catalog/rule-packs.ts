@@ -67,6 +67,12 @@ export const RULE_PACK_RULE_ID = /^[a-z0-9][a-z0-9-]*$/u;
  */
 const documentPathSchema = z.string().regex(/^rules\/[a-z0-9][a-z0-9-]*\.json$/u, "must be rules/<id>.json");
 
+/**
+ * The first core release that reads a rule's `heldOff`: an older core refuses a `pack.json` naming it, so a pack holding
+ * a rule off has to leave those cores out of its core range once this one ships (the pack validation's check 5).
+ */
+export const HELD_OFF_SINCE = "0.1.5";
+
 const packRuleFields = {
   id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
   title: nonEmpty,
