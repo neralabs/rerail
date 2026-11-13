@@ -426,6 +426,15 @@ describe("rerail support-bundle", () => {
     expect(bundle.problems).toEqual([]);
   });
 
+  it("names the install problem of a package folder it cannot read, though RERAIL_CONTENT_STORE_PATH names a store", async () => {
+    const world = await fixture();
+    process.env.RERAIL_CONTENT_STORE_PATH = join(world.root, "content.sqlite");
+    // Gone since the command started, so its real path cannot be read, as a folder this user may not read cannot.
+    const { bundle } = await runFrom(world, join(world.root, "gone", "node_modules", "@neralabs", "rerail"));
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([expect.stringMatching(/^install: ENOENT: /u)]);
+  });
+
   // Only the main daemon opens a store in the machine-wide folder; every other process's audits fail there.
   it.each([
     { build: "a package outside the home's versions", at: (world: Fixture) => join(world.root, "install", "node_modules", "@neralabs", "rerail"), managed: false },

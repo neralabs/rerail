@@ -30,10 +30,14 @@ function managedBuild(
   return { kind: "main", home, version, packageRoot: realPackageRoot };
 }
 
+/** What {@link resolveRerailBuild} throws for a package that is neither main nor dev, so has no content store of its own. */
+export class NoContentStoreError extends Error {}
+
 /**
  * Classifies the package at `packageRoot`. Main iff its real path is a version directory of the managed
  * Rerail home (`RERAIL_HOME`, default `~/.rerail`); otherwise dev iff it lives in a Git checkout (the nearest
- * ancestor holding `.git`, a directory or a worktree's file). Anything else has no content store of its own.
+ * ancestor holding `.git`, a directory or a worktree's file). Anything else has no content store of its own
+ * ({@link NoContentStoreError}); a folder that cannot be read throws its own error.
  */
 export function resolveRerailBuild(packageRoot: string, environment: NodeJS.ProcessEnv = process.env): RerailBuild {
   const realPackageRoot = realpathSync(packageRoot);
@@ -43,7 +47,7 @@ export function resolveRerailBuild(packageRoot: string, environment: NodeJS.Proc
     if (existsSync(join(directory, ".git"))) return { kind: "dev", packageRoot: realPackageRoot, checkout: directory };
     if (dirname(directory) === directory) break;
   }
-  throw new Error(
+  throw new NoContentStoreError(
     `Rerail at ${realPackageRoot} is neither the managed installation under ` +
       `${join(defaultRerailHome(environment), VERSIONS_DIR)} nor in a Git checkout, so it has no content store`,
   );

@@ -33,6 +33,7 @@ import {
   contentStoreOverride,
   isInMainContentStoreDirectory,
   mainContentStoreDirectory,
+  NoContentStoreError,
   type RerailBuild,
   resolveRerailBuild,
 } from "../engine/native/rerail-build.js";
@@ -639,6 +640,7 @@ function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["da
  * point at a checkout or another package, and one that is neither has no store of its own. `RERAIL_CONTENT_STORE_PATH`
  * names a store for any build, as `contentStorePath` takes it first, except a file in the machine-wide store directory:
  * `assertContentStoreOwner` lets only the main daemon open that, so there it counts for the managed installation alone.
+ * A package folder that cannot be read is an error with or without that store.
  */
 function installBuild(packageRoot: string, home: string): RerailBuild | undefined {
   const override = contentStoreOverride();
@@ -646,7 +648,7 @@ function installBuild(packageRoot: string, home: string): RerailBuild | undefine
   try {
     build = resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
   } catch (error) {
-    if (override === undefined) throw error;
+    if (override === undefined || !(error instanceof NoContentStoreError)) throw error;
   }
   if (override === undefined || build?.kind === "main" || !isInMainContentStoreDirectory(override)) return build;
   throw new Error(
