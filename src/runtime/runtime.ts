@@ -1379,9 +1379,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * receiving `deliverBackground` pushes. Unknown or closed sessions have nothing pending. The findings held for the
    * yield digest are not among them.
    */
-  async collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
-    const state = this.#sessions.get(sessionId);
-    return state === undefined || this.#stopped() ? [] : this.#collectPendingSteers(state);
+  collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
+    // In the session's lane, as `yieldDeliveries`: one answer at a time takes what the session owes.
+    return this.#ingestLanes.run(sessionId, async () => {
+      const state = this.#sessions.get(sessionId);
+      return state === undefined || this.#stopped() ? [] : await this.#collectPendingSteers(state);
+    });
   }
 
   /**
@@ -1422,16 +1425,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * The steers the session owed its agent when it last closed, recorded as delivered, for the answer collecting them;
    * one that no longer speaks for its files is dropped (`#stillOwed`). Its held findings join the evaluator's once it is
-   * open, checked the same way. The ledger's entry is written again with what is still owed.
+   * open, checked the same way. The ledger's entry is written again with what is still owed. They are taken only once
+   * checked: a close meanwhile, as the runtime's own, finds them still owed and keeps them for the session's next open.
    */
   async #takeOwed(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
-    const steers = state.owed.steers.splice(0);
-    const findings = state.codeRuleReady ? state.owed.findings.splice(0) : [];
+    const steers = [...state.owed.steers];
+    const findings = state.codeRuleReady ? [...state.owed.findings] : [];
     if (steers.length + findings.length === 0) return [];
-    state.missedFindings.unshift(...await this.#stillOwedOf(state, findings));
+    const [heldSteers, heldFindings] = await Promise.all([this.#stillOwedOf(state, steers), this.#stillOwedOf(state, findings)]);
+    if (state.closed) return [];
+    state.owed.steers = state.owed.steers.filter(steer => !steers.includes(steer));
+    state.owed.findings = state.owed.findings.filter(finding => !findings.includes(finding));
+    state.missedFindings.unshift(...heldFindings);
     await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
     const deliveries: AdapterDelivery[] = [];
-    for (const steer of await this.#stillOwedOf(state, steers)) deliveries.push(await this.#recordedDelivery(steer.delivery));
+    for (const steer of heldSteers) deliveries.push(await this.#recordedDelivery(steer.delivery));
     return deliveries;
   }
 
