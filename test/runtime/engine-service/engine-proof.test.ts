@@ -3,10 +3,12 @@ import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
 import { engineCapabilityProof } from "../../../src/runtime/engine-proof.js";
@@ -25,6 +27,13 @@ const server = require("node:net").createServer(() => {});
 server.listen(process.argv[1], () => {
   process.stdout.write("listening\\n", () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120000));
 });`;
+
+/** A process that asks the engine on a pipe for one proof with a 1 s limit, prints the answer, and ends by itself. */
+const PROBER = `
+const { engineCapabilityProof } = await import(process.argv[1]);
+process.stdout.write(JSON.stringify({ answer: await engineCapabilityProof(process.argv[2], "capability", 1000) }) + "\\n");`;
+const PROOF_MODULE = new URL("../../../src/runtime/engine-proof.ts", import.meta.url).href;
+const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 const children: ChildProcess[] = [];
 const sockets: Socket[] = [];
@@ -118,6 +127,25 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     const ms = Date.now() - began;
     expect({ lookup, kept: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ lookup: { status: "unresponsive", state }, kept: true });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
+  }, 45_000);
+
+  // A connect that waits for a free instance runs in a thread that closing the socket does not stop, and it keeps the
+  // process alive for up to 30 s after the answer: a command or hook that asked would end that much later.
+  it("leaves its process free to end once it has answered, also when the engine's pipe has no free instance", async () => {
+    const path = pipePath("exit");
+    await stuckListener(path);
+    expect(await takeEveryInstance(path)).toBeGreaterThan(0);
+    const prober = spawn(process.execPath, ["--import", TSX, "--input-type=module", "-e", PROBER, PROOF_MODULE, path], {
+      stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
+    });
+    children.push(prober);
+    const closed = once(prober, "close");
+    const [line] = await once(prober.stdout!, "data") as [Buffer];
+    const answeredAt = Date.now();
+    await closed;
+    const lingered = Date.now() - answeredAt;
+    expect(JSON.parse(String(line)), `the process ended ${lingered} ms after its answer`).toEqual({ answer: "silent" });
+    expect(lingered).toBeLessThan(SLACK_MS);
   }, 45_000);
 });
 
