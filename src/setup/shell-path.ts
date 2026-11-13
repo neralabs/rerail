@@ -109,25 +109,40 @@ function onRunningPath(binDir: string, env: NodeJS.ProcessEnv, platform: NodeJS.
 export async function addLauncherToPath(options: LauncherPathOptions): Promise<LauncherPathChange> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
-  if (env.RERAIL_MODIFY_PATH === "0" || (options.handledBefore === true && onRunningPath(options.binDir, env, platform))) return { status: "skipped" };
+  if (leftToPerson(options, env, platform)) return { status: "skipped" };
   try {
     if (platform === "win32") return windowsUserPath(options.binDir, options.dryRun === true ? "check" : "add", env, options.home);
-    const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
-    const changed: string[] = [];
-    for (const file of files) {
-      const existing = await readText(file.path);
-      const text = addBlock(existing?.text ?? "", file.block(options.binDir));
-      if (text === (existing?.text ?? "")) continue;
-      changed.push(file.path);
-      if (options.dryRun !== true) {
-        if (existing !== undefined) await backUp(file.path);
-        await writeTextFile(file.path, text, existing ?? { exists: false, mode: 0o644 }, false);
-      }
-    }
-    return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+    return await addToStartupFiles(options, env);
   } catch (error) {
     return { status: "failed", reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** `RERAIL_MODIFY_PATH=0`, or a set-up recorded PATH and the running PATH has the directory already. */
+function leftToPerson(options: LauncherPathOptions, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  return env.RERAIL_MODIFY_PATH === "0" || (options.handledBefore === true && onRunningPath(options.binDir, env, platform));
+}
+
+/** Put the block in each startup file the login shell reads. Throws on a file it cannot read or write. */
+async function addToStartupFiles(options: LauncherPathOptions, env: NodeJS.ProcessEnv): Promise<LauncherPathChange> {
+  const files = startupFiles(options.home, env, options.loginShell === undefined ? accountLoginShell() : options.loginShell);
+  const changed: string[] = [];
+  for (const file of files) {
+    if (await addBlockToFile(file.path, file.block(options.binDir), options.dryRun === true)) changed.push(file.path);
+  }
+  return changed.length === 0 ? { status: "unchanged", locations: files.map(file => file.path) } : { status: "changed", locations: changed };
+}
+
+/** Whether `path` needs `block`; writes it, backing up the file first, unless `dryRun`. */
+async function addBlockToFile(path: string, block: string, dryRun: boolean): Promise<boolean> {
+  const existing = await readText(path);
+  const text = addBlock(existing?.text ?? "", block);
+  if (text === (existing?.text ?? "")) return false;
+  if (!dryRun) {
+    if (existing !== undefined) await backUp(path);
+    await writeTextFile(path, text, existing ?? { exists: false, mode: 0o644 }, false);
+  }
+  return true;
 }
 
 /** Take out what `addLauncherToPath` wrote, from every startup file it may have used. Never throws. */
