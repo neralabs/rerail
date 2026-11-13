@@ -4237,7 +4237,7 @@ keeping it there was measured to gain nothing, O-store-single-program), decoding
 store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
 many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
 
-**Batch as one pack (2026-11-13, decision 0167).** `run-policies` now runs a batch's policies of one grammar as
+**Batch as one pack (2026-11-13, decision 0168).** `run-policies` now runs a batch's policies of one grammar as
 one pack, so the typing program, its setup and every library are read, combined, hidden and planned once for the
 batch, not per policy. dl1 147.9 → 137.5 G cold without a store, 89.5 → 71.1 G warm, findings unchanged. What is
 left is the pack's own passes (O-pack-passes).
@@ -4307,7 +4307,7 @@ samples) and 3.3% without a store; of the warm 216, 127 are the typing program's
 hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
 not built. Open at that size.
 
-**A batch is one pack (2026-11-13, decision 0167).** The library's analysis is now made once a batch, over the
+**A batch is one pack (2026-11-13, decision 0168).** The library's analysis is now made once a batch, over the
 pack's program: hiding the combined program was 0.46 s of the dl1 pack (4,287 rules), against each policy hiding
 its own. The analysis kept per library module is still open, for packs whose programs change.
 
@@ -4882,7 +4882,7 @@ on the 84-file Jedi recording, which is not on this machine (a 40-file subset is
 
 ## O-pack-passes. A pack's passes cost more per rule than one policy's
 
-**Seen (2026-11-13, decision 0167).** The dl1 batch as one pack has 4,287 rules, against about 30,000 with the
+**Seen (2026-11-13, decision 0168).** The dl1 batch as one pack has 4,287 rules, against about 30,000 with the
 libraries pasted into each policy, yet costs 134 G against 148 G. In the pack:
 - `combine` is 46 G: parsing 2.9 s (each of 44 programs lowered 0.95 s), and merging the programs 1.4 s (hiding the
   combined program 0.46 s, fact spaces 0.41 s, merging identical relations 0.39 s);

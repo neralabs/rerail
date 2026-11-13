@@ -301,7 +301,7 @@ fn python_and_rr_policies_run_over_one_repository() {
     assert!(files[0].ends_with("x.py") && files[1].ends_with("a.rr"), "{files:?}");
 }
 
-/// O-batch-setup (decision 0167): a batch's policies of one language run as one pack (decisions 0051, 0089): their
+/// O-batch-setup (decision 0168): a batch's policies of one language run as one pack (decisions 0051, 0089): their
 /// libraries read, lowered, hidden and evaluated once, not once a policy. Each policy's findings are its own, in
 /// its own `out/<k>`, and the same as its run alone; a policy of another language runs in its own group.
 #[test]

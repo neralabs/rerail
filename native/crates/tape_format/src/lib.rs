@@ -705,3 +705,134 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, String> {
     }
     Ok(out)
 }
+
+/// An image read in place: each node's key, subtree size and span, straight from the columns, with nothing decoded
+/// ahead (`decode` makes every node at once). A node's children are the nodes after it, each the next one's
+/// predecessor by its size (`children`).
+#[derive(Clone)]
+pub struct View<'a> {
+    n: usize,
+    code: &'a [u8],
+    size: &'a [u8],
+    base: &'a [u8],
+    off: &'a [u8],
+    tail: &'a [u8],
+    widths: [u8; 3],
+    from_start: bool,
+    /// Each code's key, by id.
+    keys: Vec<u32>,
+}
+
+impl<'a> View<'a> {
+    /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
+    /// each code id and size in range.
+    pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
+        let u64_at = |at: usize| -> Result<usize, String> {
+            let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
+            usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
+        };
+        if bytes.len() < HEADER_BYTES || &bytes[..8] != MAGIC {
+            return Err("not a tape image".into());
+        }
+        if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("4 bytes")) != FORMAT_VERSION {
+            return Err("a tape of another format".into());
+        }
+        let widths = [bytes[header::WIDTHS], bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2] & !TAIL_FROM_START];
+        if widths.iter().any(|&w| w != 2 && w != 4) {
+            return Err("a tape column of another width".into());
+        }
+        let from_start = bytes[header::WIDTHS + 2] & TAIL_FROM_START != 0;
+        let (n, code_count) = (u64_at(header::NODES)?, u64_at(header::CODES)?);
+        let mut at = HEADER_BYTES;
+        let mut column = |width: usize, count: usize| -> Result<&'a [u8], String> {
+            let c = bytes.get(at..at + width * count).ok_or("a short tape column")?;
+            at = padded(at + width * count);
+            Ok(c)
+        };
+        let w = widths.map(usize::from);
+        let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
+        let mut keys = Vec::with_capacity(code_count);
+        let mut c = at;
+        for _ in 0..code_count {
+            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+            c += 6 + 2 * usize::from(entry[5]);
+        }
+        let view = View { n, code, size, base, off, tail, widths, from_start, keys };
+        for i in 0..n {
+            if usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]])) >= code_count {
+                return Err("a node's code is not in the table".into());
+            }
+            if i + view.size(i).max(1) > n {
+                return Err("a node's size runs past the tape".into());
+            }
+        }
+        Ok(view)
+    }
+
+    #[inline(always)]
+    fn cell(column: &[u8], width: u8, i: usize) -> u32 {
+        if width == 2 { u32::from(u16::from_le_bytes([column[2 * i], column[2 * i + 1]])) } else { u32::from_le_bytes(column[4 * i..4 * i + 4].try_into().expect("4 bytes")) }
+    }
+
+    /// The nodes.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// Node `i`'s key: `kf | flags << 16`, as `Writer::push` took it.
+    #[inline(always)]
+    pub fn key(&self, i: usize) -> u32 {
+        self.keys[usize::from(u16::from_le_bytes([self.code[2 * i], self.code[2 * i + 1]]))]
+    }
+
+    /// Node `i`'s subtree, itself counted (at least 1).
+    #[inline(always)]
+    pub fn size(&self, i: usize) -> usize {
+        (Self::cell(self.size, self.widths[0], i) as usize).max(1)
+    }
+
+    #[inline(always)]
+    pub fn start(&self, i: usize) -> u32 {
+        Self::cell(self.base, 4, i / CHECKPOINT_STRIDE).wrapping_add(Self::cell(self.off, self.widths[1], i))
+    }
+
+    #[inline(always)]
+    pub fn end(&self, i: usize) -> u32 {
+        let from = if self.from_start { self.start(i) } else { self.start(i + self.size(i) - 1) };
+        from.wrapping_add(Self::cell(self.tail, self.widths[2], i))
+    }
+
+    /// Node `i`'s children, in order: from `i + 1`, each the one after the last one's subtree.
+    #[inline]
+    pub fn children(&self, i: usize) -> Children<'_, 'a> {
+        Children { view: self, at: i + 1, end: i + self.size(i) }
+    }
+}
+
+/// A node's children (`View::children`).
+pub struct Children<'v, 'a> {
+    view: &'v View<'a>,
+    at: usize,
+    end: usize,
+}
+
+impl Iterator for Children<'_, '_> {
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<usize> {
+        if self.at >= self.end {
+            return None;
+        }
+        let c = self.at;
+        self.at += self.view.size(c);
+        Some(c)
+    }
+}

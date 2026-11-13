@@ -8308,7 +8308,7 @@ impl CorpusFiles {
 /// The language a corpus run reads: the one its program names (`.language`: any dialect of the registry this build
 /// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
 /// The grammar a run of `prog` reads (`corpus_language`, as `run_observed` picks it): its `.language`'s, else the
-/// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0167).
+/// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0168).
 pub fn run_language(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<&'static str> {
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     if let Some(label) = language.as_deref().and_then(crate::code_rule_dsl::language::label_named) {

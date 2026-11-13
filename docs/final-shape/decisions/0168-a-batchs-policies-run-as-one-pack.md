@@ -1,7 +1,8 @@
-# 0167. A batch's policies of one grammar run as one pack
+# 0168. A batch's policies of one grammar run as one pack
 
 Status: built (2026-11-13). Applies decisions 0051 and 0089 to `run-policies`. Narrows O-batch-typing-once,
-O-combine-hiding-single and O-prepared-decode to what is left of them.
+O-combine-hiding-single and O-prepared-decode to what is left of them. Numbered 0167 when first written;
+0167 is django-bugs' record.
 
 ## Intro
 

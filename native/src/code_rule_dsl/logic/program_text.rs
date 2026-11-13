@@ -1,8 +1,8 @@
-//! A `front::Program` as `.rr` text, and that text read back as the same program (decision 0155).
+//! A `front::Program` as `.rr` text, and that text read back as the same program (decisions 0155, 0162).
 //!
 //! This is how a run keeps what it compiled (a prepared program, a plan choice, a combined program): the program's
-//! own rules as text, read back by the rr parser into the program's parts in one walk over its statements, with
-//! nothing lowered and nothing joined. `rr::print` is another thing: it prints a program as source to lower again.
+//! own rules as text, read back into the program's parts by one walk over the lean parser's tape image
+//! (`from_tape`), with nothing lowered and nothing joined. `rr::print` is another thing: it prints a program as source to lower again.
 //!
 //! The text, in order:
 //!
@@ -26,7 +26,7 @@
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
 use super::program_facts::{self, Facts};
-use rerail_rr_syntax::syntax::{self, Item, Lit, Term as STerm, quote};
+use rerail_rr_syntax::syntax::quote;
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
@@ -34,11 +34,9 @@ use std::fmt::Write as _;
 /// The program the `.about` rows are written as (`program_facts`).
 const ABOUT: &str = "a";
 
-/// The variables the parser reads as words.
-const VAR_WORDS: [&str; 10] = ["top", "count", "min", "max", "sum", "product", "mean", "join", "by", "sep"];
+pub mod from_tape;
 
-/// The relations named as this text's literals.
-const REL_WORDS: [&str; 2] = ["nearest", "ast"];
+use from_tape::{Parts, REL_WORDS, VAR_WORDS};
 
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program text: {what}")
@@ -55,13 +53,6 @@ fn escape(name: &str, words: &[&str]) -> Result<String, String> {
         return Err(bad(format!("{name:?} is no identifier")));
     }
     Ok(if words.contains(&name.trim_end_matches('_')) { format!("{name}_") } else { name.to_owned() })
-}
-
-fn unescape(name: &str, words: &[&str]) -> String {
-    match name.strip_suffix('_') {
-        Some(stripped) if words.contains(&name.trim_end_matches('_')) => stripped.to_owned(),
-        _ => name.to_owned(),
-    }
 }
 
 fn var(v: &str) -> Result<String, String> {
@@ -247,127 +238,14 @@ pub fn print(prog: &Program) -> Result<String, String> {
     Ok(out)
 }
 
-/// Which part of the text a statement is in.
-#[derive(Clone, Copy, PartialEq)]
-enum Part {
-    Facts,
-    Rules,
-    About,
-}
-
-fn read_int(t: &STerm) -> Result<i64, String> {
-    match t {
-        STerm::Num(n) => Ok(*n),
-        STerm::Bin { op: "-", l, r } => read_int(l)?.checked_sub(read_int(r)?).ok_or_else(|| bad("a number out of range")),
-        other => Err(bad(format!("{other:?} where a number goes"))),
-    }
-}
-
-fn read_value(t: &STerm) -> Result<Value, String> {
-    match t {
-        STerm::Str(s) => Ok(Value::Str(s.clone())),
-        t => read_int(t).map(Value::Int),
-    }
-}
-
-fn read_var(t: &STerm) -> Result<String, String> {
-    match t {
-        STerm::Var(v) if v != "top" => Ok(unescape(v, &VAR_WORDS)),
-        other => Err(bad(format!("{other:?} where a variable goes"))),
-    }
-}
-
-fn read_str(t: &STerm) -> Result<String, String> {
-    match t {
-        STerm::Str(s) => Ok(s.clone()),
-        other => Err(bad(format!("{other:?} where a string goes"))),
-    }
-}
-
-fn read_term(t: &STerm) -> Result<Term, String> {
-    Ok(match t {
-        STerm::Var(v) if v == "top" => Term::Top,
-        STerm::Var(v) => Term::Var(unescape(v, &VAR_WORDS)),
-        STerm::Wild => Term::Wild,
-        STerm::Str(s) => Term::Str(s.clone()),
-        STerm::Call { name, functor: true, args } => Term::Call(name.clone(), args.iter().map(read_term).collect::<Result<_, _>>()?),
-        t => Term::Int(read_int(t)?),
-    })
-}
-
-fn read_atom(rel: &str, args: &[STerm], neg: bool) -> Result<Atom, String> {
-    Ok(Atom { rel: unescape(rel, &REL_WORDS).into(), args: args.iter().map(read_term).collect::<Result<_, _>>()?, neg, gated: false })
-}
-
-fn read_literal(l: &Lit) -> Result<Literal, String> {
-    Ok(match l {
-        Lit::Atom { rel, args, neg: false } if rel == "nearest" => match args.as_slice() {
-            [n, a, set] => Literal::Nearest { n: read_var(n)?, a: read_var(a)?, kindset: read_str(set)? },
-            _ => return Err(bad("nearest of other than three arguments")),
-        },
-        Lit::Atom { rel, args, neg: false } if rel == "ast" => {
-            let [document, node, matcher, captures @ ..] = args.as_slice() else { return Err(bad("ast of under three arguments")) };
-            if captures.len() % 2 != 0 {
-                return Err(bad("an ast capture without its variable"));
-            }
-            let captures = captures.chunks(2).map(|c| Ok((read_str(&c[0])?, read_var(&c[1])?))).collect::<Result<_, String>>()?;
-            Literal::Ast { document: read_var(document)?, node: read_var(node)?, matcher: read_str(matcher)?, captures }
-        }
-        Lit::Atom { rel, args, neg } => Literal::Atom(read_atom(rel, args, *neg)?),
-        Lit::Cmp { l: STerm::Var(v), op: "=", r: STerm::Agg { op, over, by, sep, body } } => {
-            let [Lit::Atom { rel, args, neg }] = body.as_slice() else { return Err(bad("an aggregate over other than one atom")) };
-            let over = match over.as_deref() {
-                None | Some(STerm::Wild) => None,
-                Some(o) => Some(read_var(o)?),
-            };
-            let op = match op.as_str() {
-                "count" => AggOp::Count,
-                "min" => AggOp::Min,
-                "max" => AggOp::Max,
-                "sum" => AggOp::Sum,
-                "product" => AggOp::Product,
-                "join" => AggOp::Join { by: by.iter().map(read_var).collect::<Result<_, _>>()?, sep: sep.clone().ok_or_else(|| bad("a join without its separator"))? },
-                other => return Err(bad(format!("aggregate {other:?}"))),
-            };
-            Literal::Agg { var: unescape(v, &VAR_WORDS), op, over, atom: read_atom(rel, args, *neg)? }
-        }
-        Lit::Cmp { l, op, r } => Literal::Cmp { l: read_term(l)?, op, r: read_term(r)? },
-        other => return Err(bad(format!("literal {other:?}"))),
-    })
-}
-
-/// The program `text` (`print`) holds.
+/// The program `text` (`print`) holds: its tape image (the lean parser's) walked straight into the program's parts.
 pub fn read(text: &str) -> Result<Program, String> {
-    let statements = syntax::Parser::new(text).and_then(|mut p| p.statements()).map_err(|e| bad(format!("{e:?}")))?;
-    let mut part = Part::Facts;
-    let (mut decls, mut inputs, mut outputs) = (std::collections::BTreeMap::new(), Vec::new(), Vec::new());
-    let mut facts = Facts::new();
-    let mut rules = Vec::with_capacity(statements.len());
-    let mut about = Facts::new();
-    for (item, line) in &statements {
-        match item {
-            Item::Setting { key, .. } if key == "rules" => part = Part::Rules,
-            Item::Setting { key, .. } if key == "about" => part = Part::About,
-            Item::Decl { name, cols, .. } => {
-                decls.insert(unescape(name, &REL_WORDS), cols.clone());
-            }
-            Item::Io { output, names, .. } => (if *output { &mut outputs } else { &mut inputs }).extend(names.iter().map(|n| unescape(n, &REL_WORDS))),
-            Item::Clause { heads, body, edits } if heads.len() == 1 && edits.is_empty() && heads[0].modal.is_none() => {
-                let head = &heads[0];
-                if part == Part::Rules {
-                    let head = read_atom(&head.rel, &head.args, false)?;
-                    rules.push(Rule { head, body: body.iter().map(read_literal).collect::<Result<_, _>>()? });
-                } else if body.is_empty() {
-                    let row = head.args.iter().map(read_value).collect::<Result<Vec<_>, _>>()?;
-                    let into = if part == Part::About { &mut about } else { &mut facts };
-                    into.entry(unescape(&head.rel, &REL_WORDS)).or_default().push(row);
-                } else {
-                    return Err(bad(format!("line {line}: a rule before .rules")));
-                }
-            }
-            other => return Err(bad(format!("line {line}: {other:?}"))),
-        }
-    }
+    assemble(from_tape::parts(text, &rerail_rr_syntax::tape(text))?)
+}
+
+/// The program of `parts`: the gated atoms marked, the rest of it read from the `.about` rows.
+fn assemble(parts: Parts) -> Result<Program, String> {
+    let Parts { decls, inputs, outputs, facts, mut rules, mut about } = parts;
     let gated = about.remove("gated").unwrap_or_default();
     let mut prog = program_facts::program(&about, ABOUT)?;
     for row in gated {

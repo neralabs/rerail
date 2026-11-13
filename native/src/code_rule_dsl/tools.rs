@@ -370,7 +370,7 @@ pub fn run_policies(
     }
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
-    // The policies of one language run as one pack (decision 0167): libraries read, lowered, hidden and evaluated once
+    // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
     // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
     let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
@@ -408,7 +408,7 @@ struct PolicyGroup {
 }
 
 /// The batch's policies (`texts`, as `program_texts` reads them) grouped by the grammar each run reads (decision
-/// 0167, `corpus::run_language`: its `.language`'s, else the tree's), each read for its header only (`rr::Text::header`:
+/// 0168, `corpus::run_language`: its `.language`'s, else the tree's), each read for its header only (`rr::Text::header`:
 /// its directives and declarations, no clause), which is all a group needs before its run.
 /// Findings are told apart by their policy's `.policy` id, so a group holds each id once (one policy of none). A
 /// policy whose header does not read, has an id another of its grammar has, declares no findings, or names a
@@ -464,7 +464,7 @@ fn run_pack(
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
     let dir = out.join(format!("pack-{}", group.members[0]));
-    crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0167)", || {
+    crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
     let Ok(report) = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) else {
