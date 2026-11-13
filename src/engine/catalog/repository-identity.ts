@@ -299,9 +299,15 @@ function gitAnswered(result: GitRun): boolean {
   return result.error === undefined && result.status !== null && OWN_GIT_EXITS.has(result.status);
 }
 
+/**
+ * How long a reader with another answer to turn to waits for each of its Git reads: 2 s, as long as a hook waits for the
+ * daemon's answer, where `runGit` waits 10 s. A Git that hangs then costs the hook 2 s before it asks the daemon.
+ */
+const ANSWER_WAIT_MS = 2_000;
+
 /** `gitText` that throws GitDidNotAnswerError where Git gave no answer, where `gitText` gives undefined. */
 function answeredGitText(cwd: string, args: readonly string[]): string | undefined {
-  const result = runGit(cwd, args);
+  const result = runGit(cwd, args, { timeout: ANSWER_WAIT_MS });
   if (!gitAnswered(result)) throw new GitDidNotAnswerError(cwd, result);
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
@@ -309,13 +315,13 @@ function answeredGitText(cwd: string, args: readonly string[]): string | undefin
 const LOCATE_ARGUMENTS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
 
 /**
- * {@link repositoryIdentityLocation} for a reader with another answer to turn to: Git's own answers only. It throws
- * GitUnavailableError where Git is not installed and GitDidNotAnswerError where Git gave no answer, both of which
- * `repositoryIdentityLocation` reads as a folder outside Git.
+ * {@link repositoryIdentityLocation} for a reader with another answer to turn to: Git's own answers only, given within
+ * {@link ANSWER_WAIT_MS}. It throws GitUnavailableError where Git is not installed and GitDidNotAnswerError where Git
+ * gave no answer, both of which `repositoryIdentityLocation` reads as a folder outside Git.
  */
 export function answeredIdentityLocation(workspace: string): RepositoryIdentityLocation {
   const requested = resolve(workspace);
-  const result = runGit(requested, LOCATE_ARGUMENTS);
+  const result = runGit(requested, LOCATE_ARGUMENTS, { timeout: ANSWER_WAIT_MS });
   if (!gitAnswered(result)) throw new GitDidNotAnswerError(requested, result);
   return result.status === 0 ? gitLocation(requested, result.stdout) : nonGitLocation(requested);
 }

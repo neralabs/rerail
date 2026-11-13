@@ -743,6 +743,25 @@ describe("the hook start check", () => {
     }
   });
 
+  it("gives each of its own Git reads 2 s, where a live daemon is recorded", async () => {
+    const root = await temporaryDirectory({ started: false });
+    startedApp(root);
+    const workspace = newClone(root);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    const ran: Array<{ command: string; limit: number | undefined }> = [];
+    const recorded = await hookHostWithSilentGit([], UNANSWERED_GIT["timed out"], ran);
+    try {
+      // `rev-parse` finds the clone, and `ls-remote` its remote, which names the started repository.
+      expect({ started: await recorded.hookRerailStarted("claude-code", workspace), ran, requests: daemon.requests }).toEqual({
+        started: true, ran: [{ command: "rev-parse", limit: 2_000 }, { command: "ls-remote", limit: 2_000 }], requests: [],
+      });
+    } finally {
+      vi.doUnmock("../../src/engine/git.js");
+      vi.resetModules();
+      await daemon.close();
+    }
+  });
+
   it("asks a live daemon where this process finds no Git to resolve the checkout with", async () => {
     const root = await temporaryDirectory({ started: false });
     const elsewhere = join(root, "elsewhere");
