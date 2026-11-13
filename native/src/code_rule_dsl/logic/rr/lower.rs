@@ -533,7 +533,7 @@ fn widen_cyclic_contexts(program: &mut Program) {
                 }
                 let types: std::collections::BTreeMap<String, String> =
                     program.decls.get(rule.head.rel.as_str()).into_iter().flatten().zip(&rule.head.args).filter_map(|((_, t), a)| match a {
-                        Term::Var(v) => Some((v.clone(), t.clone())),
+                        Term::Var(v) => Some((v.to_string(), t.to_string())),
                         _ => None,
                     }).collect();
                 let mut ok = true;
@@ -543,14 +543,14 @@ fn widen_cyclic_contexts(program: &mut Program) {
                     }
                     if types.get(&v).is_some_and(|t| t == "node") && program.decls.contains_key("node") {
                         let wild = Term::Wild;
-                        body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![wild.clone(), Term::Var(v.clone()), wild.clone(), wild.clone(), wild], neg: false, gated: false }));
+                        body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![wild.clone(), Term::Var(v.clone().into()), wild.clone(), wild.clone(), wild].into(), neg: false, gated: false }));
                         bound.insert(v);
                     } else {
                         ok = false;
                     }
                 }
                 if ok {
-                    rule.body = body;
+                    rule.body = body.into();
                     changed = true;
                 }
             }
@@ -855,7 +855,7 @@ impl Lowerer {
         // A program that derives `violation` itself, in the older five columns, is read at column 0.
         for r in &mut self.prog.rules {
             if r.head.rel == "violation" && r.head.args.len() == 5 {
-                r.head.args.make_mut().push(Term::Int(0));
+                r.head.args.push(Term::Int(0));
             }
         }
         // Where it is already (a printed program's `.output`), else last.
@@ -903,7 +903,7 @@ impl Lowerer {
                 let mut args = vec![v("rr_p"), v("rr_l")];
                 args.extend(cols.into_iter().skip(1));
                 let mut head = head;
-                head.args[5] = Term::Int(0);
+                head.args.make_mut()[5] = Term::Int(0);
                 self.prog.rules.push(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
             }
         }

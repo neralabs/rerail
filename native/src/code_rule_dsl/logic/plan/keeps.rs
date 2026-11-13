@@ -1750,7 +1750,7 @@ pub mod tests {
         .unwrap();
         // w's n is each node an `ast` match of document d finds: many a document, though a has 5 rows.
         let w = prog.rules.iter_mut().find(|r| r.head.rel == "w").unwrap();
-        w.body[1] = Literal::Ast { document: "d".to_owned(), node: "n".to_owned(), matcher: "call".to_owned(), captures: Vec::new() };
+        w.body.make_mut()[1] = Literal::Ast { document: "d".into(), node: "n".into(), matcher: "call".into(), captures: Default::default() };
         let model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[10.0, 1_000.0]), ("c", 1_000_000.0, &[1_000.0, 50.0])]);
         let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
         for r in &prog.rules {

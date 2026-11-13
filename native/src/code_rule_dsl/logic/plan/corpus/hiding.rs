@@ -229,7 +229,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         drop(by_head);
         for (i, k, edit) in edits {
-            match (&mut prog.rules[i].body[k], edit) {
+            match (&mut prog.rules[i].body.make_mut()[k], edit) {
                 (Literal::Nearest { kindset, .. }, Edit::Kindset(name)) => *kindset = name,
                 (Literal::Atom(a) | Literal::Agg { atom: a, .. }, Edit::Rel(name)) => a.rel = name.into(),
                 _ => unreachable!("an edit is of the literal it was recorded for"),
@@ -365,7 +365,7 @@ fn asking(prog: &Program) -> BTreeSet<String> {
                 let mut readers = prog.rules.iter().filter(|x| x.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == r.as_str()))).peekable();
                 readers.peek().is_some() && readers.all(|x| asking.contains(x.head.rel.as_str()))
             })
-            .cloned()
+            .map(|r| r.to_string())
             .collect();
         if more.is_empty() {
             return asking;
@@ -536,7 +536,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
     let mut carried: HashMap<Name, Vec<Fact>> = HashMap::default();
     for r in &prog.rules {
         if !carried.contains_key(r.head.rel.as_str()) && !view(&r.head.rel) {
-            let n = prog.decls.get(r.head.rel.as_str()).map_or(0, Vec::len);
+            let n = prog.decls.get(r.head.rel.as_str()).map_or(0, |c| c.len());
             carried.insert(r.head.rel.clone(), vec![Fact::default(); n]);
         }
     }
@@ -624,7 +624,7 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
         let fact = Fact { scoped: true, grammar, definite: true };
         for &c in cols.iter().chain(tape.iter()) {
             if let Some(v) = var(a.args.get(c)) {
-                facts.entry(v.to_string()).or_default().join(&fact);
+                facts.entry(v).or_default().join(&fact);
             }
         }
     }
@@ -633,7 +633,7 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
         if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
-                    facts.entry(v.to_string()).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
+                    facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
                 }
             }
         }
