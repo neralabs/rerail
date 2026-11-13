@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
+import { linkFolder } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
@@ -29,7 +31,7 @@ afterEach(async () => {
   erase.failure = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryRoot(): Promise<string> {
@@ -149,7 +151,7 @@ describe("rerail scrub", () => {
     mkdirSync(checkout);
     // A Git checkout keeps its identity in .git, so the planted .rerail link is only where its ledgers would be.
     spawnSync("git", ["init", "-q", checkout]);
-    symlinkSync(elsewhere, join(checkout, ".rerail"));
+    linkFolder(elsewhere, join(checkout, ".rerail"));
     const database = openRerailDatabase(join(home, "rerail.sqlite"));
     try {
       recordCheckout(database, checkout);

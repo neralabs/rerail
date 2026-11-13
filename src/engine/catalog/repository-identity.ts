@@ -8,7 +8,6 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
   readSync,
@@ -17,6 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath } from "./checkout-control.js";
+import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -164,7 +164,7 @@ const MAX_IDENTITY_BYTES = 128;
 function readIdentityFile(identityPath: string): string | undefined {
   let descriptor: number;
   try {
-    descriptor = openSync(identityPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    descriptor = openNoFollowSync(identityPath, fsConstants.O_RDONLY);
   } catch (error) {
     if (errorCode(error) === "ENOENT") return undefined;
     throw new Error(`Rerail repository identity at ${identityPath} is not a regular file`);

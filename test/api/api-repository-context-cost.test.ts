@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -24,6 +24,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { checkouts, recordCheckout, repositories } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Statements run on any connection while `counting` is on, prepared once or for one run. */
 const statements = { counting: false, run: 0 };
@@ -51,7 +52,7 @@ afterEach(async () => {
  */
 async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string, root: string) => string; readonly started: boolean | null }>) {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-context-cost-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   const main = join(root, "factory");
   mkdirSync(main, { recursive: true });
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: main });

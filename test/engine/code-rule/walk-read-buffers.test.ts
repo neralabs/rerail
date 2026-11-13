@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WalkReadBuffers } from "../../../src/engine/code-rule/walk-read-buffers.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 let folder: string;
 
@@ -10,7 +11,7 @@ beforeEach(async () => {
   folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-walk-read-buffers-")));
 });
 afterEach(async () => {
-  await rm(folder, { recursive: true, force: true });
+  await removeFolder(folder);
 });
 
 async function file(name: string, contents: string): Promise<string> {

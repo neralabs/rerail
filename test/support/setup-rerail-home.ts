@@ -1,16 +1,37 @@
 import { afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { removeFolder } from "./platform/remove-folder.js";
+import { watchRealAgentSettings } from "./user-home.js";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
+const priorUserHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+const priorGitConfig = { GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL };
+// The person's own agent settings, watched for this file's whole run: a test that writes a temp folder into them
+// fails the run rather than leaving the person's coding agents pointing at a folder that is about to be deleted.
+const realSettingsLeaks = watchRealAgentSettings(homedir(), tmpdir());
 const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
 const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
+const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
+// Every test file gets a user home of its own, so code that falls back to os.homedir() (harness registration, the
+// Claude status store, git's global config) never reaches the person's profile. os.homedir() reads HOME on POSIX and
+// USERPROFILE on Windows, so both are set; a test that moves the home uses stubUserHome, which moves both.
+process.env.HOME = userHome;
+process.env.USERPROFILE = userHome;
+// Git, in a test and in the Rerail code it runs, reads no settings of the machine's or the person's: Git for Windows'
+// installer sets core.autocrlf=true for the whole machine, which wrote a test repository's LF files with CRLF. Its
+// global file is the test home's own, holding only an identity, so a commit needs no `-c user.name` and no machine's
+// name for one; a test that writes global settings changes only that file. Rerail itself honours the person's settings.
+const gitConfig = join(userHome, ".gitconfig");
+writeFileSync(gitConfig, "[user]\n\tname = Rerail test\n\temail = test@rerail.invalid\n");
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+process.env.GIT_CONFIG_GLOBAL = gitConfig;
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
@@ -54,6 +75,10 @@ async function stopProcess(pid: number): Promise<void> {
 
 afterAll(async () => {
   try {
+    const leaked = realSettingsLeaks();
+    if (leaked.length > 0) {
+      throw new Error(`A test wrote temp folders into the real coding agent settings: ${leaked.join(", ")}. Restore them with rerail install --refresh, and move the test's home with stubUserHome.`);
+    }
     const stranded = strandedDaemons();
     if (stranded.length > 0) {
       for (const daemon of stranded) await stopProcess(daemon.pid);
@@ -64,7 +89,17 @@ afterAll(async () => {
     else process.env.RERAIL_HOME = priorRerailHome;
     if (priorContentStorePath === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = priorContentStorePath;
-    rmSync(rerailHome, { recursive: true, force: true });
-    rmSync(contentStoreDirectory, { recursive: true, force: true });
+    for (const [name, value] of Object.entries({ ...priorUserHome, ...priorGitConfig })) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await removeFolders([rerailHome, contentStoreDirectory, userHome]);
   }
 });
+
+/** Removes every one of `folders`, each tried whatever happens to the others; fails naming each that stays. */
+async function removeFolders(folders: readonly string[]): Promise<void> {
+  const outcomes = await Promise.allSettled(folders.map(async folder => await removeFolder(folder)));
+  const failures: unknown[] = outcomes.flatMap(outcome => (outcome.status === "rejected" ? [outcome.reason] : []));
+  if (failures.length > 0) throw new AggregateError(failures, `This test file's own folders were not all removed: ${failures.map(String).join("; ")}`);
+}

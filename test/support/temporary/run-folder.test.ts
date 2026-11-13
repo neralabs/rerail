@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { MODULE_COPIES_LINE, OWNER_FILE, thisPlace } from "./run-folder.js";
+import { removeFolder } from "../platform/remove-folder.js";
 
 /** This checkout, whose vitest.config.ts every run below uses. */
 const CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -104,7 +105,7 @@ afterEach(async () => {
     await run.ended.catch(() => undefined);
   }
   for (const root of scratches) await releaseHeld(join(root, "tests"));
-  await Promise.all(scratches.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(scratches.splice(0).map(path => removeFolder(path)));
 });
 
 /** A folder for one case: `temp` is the empty temp folder its runs get, `tests/<name>/` holds each of TEST_FILES. */

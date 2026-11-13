@@ -1,18 +1,23 @@
-import { createHash, randomBytes, X509Certificate } from "node:crypto";
+import { randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
-import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
+import { readFile, stat, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Server as NetServer } from "node:net";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { replaceFile } from "../engine/file-replace.js";
+import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { daemonExit } from "./daemon-exit.js";
+import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
@@ -27,6 +32,7 @@ import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -87,6 +93,11 @@ export interface RerailDaemonOptions {
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
+  /**
+   * The platform whose default engine endpoint the daemon takes when `kernelSocketPath` names none
+   * (`defaultEngineSocketPath`): a named pipe on Windows, a Unix socket elsewhere. Tests take Windows' on any OS.
+   */
+  enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
   /**
@@ -94,6 +105,11 @@ export interface RerailDaemonOptions {
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
   tls?: DaemonTlsMaterial;
+  /**
+   * Called when a Rerail process asks the daemon to stop (`POST /native/shutdown`, which `rerail daemon stop` sends on
+   * Windows, where no signal reaches a handler). Omitted, the daemon serves no such request.
+   */
+  onShutdownRequest?: () => void;
 }
 
 /** What `--tls-cert` and `--tls-key` name, read: PEM text. */
@@ -148,10 +164,9 @@ export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const identity = createHash("sha256").update(resolve(databasePath)).digest("hex").slice(0, 24);
   return platform === "win32"
-    ? String.raw`\\.\pipe\rerail-${identity}`
-    : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
+    ? enginePipeName(databasePath)
+    : join(tmpdir(), `rerail-${process.getuid!()}`, `${engineIdentity(databasePath)}.sock`);
 }
 
 /** The listener the daemon serves on: `node:http`'s, or `node:https`'s when it has a certificate. */
@@ -196,23 +211,12 @@ async function readRememberedPort(portFile: string): Promise<number | undefined>
   }
 }
 
-/** `content` as the whole of `file`, readable by its owner only, through a temporary file renamed over it. */
-async function writePrivateFile(file: string, content: string): Promise<void> {
-  const temporaryFile = `${file}.${process.pid}.tmp`;
-  try {
-    await writeFile(temporaryFile, content, { mode: 0o600 });
-    await rename(temporaryFile, file);
-  } finally {
-    await rm(temporaryFile, { force: true });
-  }
-}
-
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
   try {
-    await writePrivateFile(portFile, `${JSON.stringify({ port })}\n`);
+    await replaceFile(portFile, `${JSON.stringify({ port })}\n`, { mode: 0o600 });
   } catch (error) {
     process.stderr.write(`rerail daemon: could not remember port ${port} in ${portFile}: ${errorText(error)}\n`);
   }
@@ -241,7 +245,7 @@ async function persistentAccessToken(file: string): Promise<string> {
   }
   const token = newAccessToken();
   try {
-    await writePrivateFile(file, `${token}\n`);
+    await replaceFile(file, `${token}\n`, { mode: 0o600 });
   } catch (error) {
     process.stderr.write(`rerail daemon: could not keep the access capability in ${file}: ${errorText(error)}\n`);
   }
@@ -300,6 +304,20 @@ function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, ses
   app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
   app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
   app.get("/healthz", context => context.json(health()));
+  const requestShutdown = options.onShutdownRequest;
+  if (requestShutdown !== undefined) {
+    // The stop Windows has no signal for. The native token is in daemon.json alone, which only this user reads, so a
+    // page holding the dashboard's capability cannot stop the daemon; a browser always sends Origin.
+    app.post("/native/shutdown", (context) => {
+      if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+      if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
+        return context.json({ error: "native-authorization-invalid" }, 403);
+      }
+      // After the answer is on its way: closing the server ends this connection too.
+      setImmediate(requestShutdown);
+      return context.json({ stopping: true }, 202);
+    });
+  }
 
   app.post("/native/session", async (context) => {
     // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
@@ -459,7 +477,7 @@ export class RerailDaemon {
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
     // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by
     // computing it. A socket path the caller named is used or refused, never replaced.
-    const defaultSocketPath = defaultEngineSocketPath(databasePath);
+    const defaultSocketPath = defaultEngineSocketPath(databasePath, options.enginePlatform);
     const kernelSocketPath = options.kernelSocketPath
       ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
@@ -482,6 +500,10 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        // On Windows any local user can create the default pipe first; the engine then listens on a random name.
+        ...(options.kernelSocketPath === undefined
+          ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
+          : {}),
       });
       started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
@@ -493,7 +515,7 @@ export class RerailDaemon {
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
-        server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
+        server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       await daemon.#announce(remembered);
@@ -507,7 +529,7 @@ export class RerailDaemon {
   /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
-    if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`);
+    if (options.stateFile !== undefined) await replaceFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`, { mode: 0o600 });
     // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
     if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
@@ -649,6 +671,8 @@ interface DaemonArguments {
   port?: number;
   dev: boolean;
   stateFile?: string;
+  /** The checkout native sessions address (`--workspace-root`); the folder it runs in when absent. */
+  workspaceRoot?: string;
   tls?: DaemonTlsFiles;
 }
 
@@ -686,6 +710,7 @@ export function parseDaemonTransport(
   arguments_: ParsedArguments,
   host: string,
   publicHosts: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): Pick<DaemonLaunchOptions, "tls" | "insecureHttp"> {
   const certFile = arguments_.options.get("--tls-cert");
   const keyFile = arguments_.options.get("--tls-key");
@@ -705,25 +730,45 @@ export function parseDaemonTransport(
     + "and over plain http its access capability, sent with every request, would cross the network in clear. "
     + "Pass --tls-cert <cert.pem> --tls-key <key.pem> to serve https; a self-signed certificate works "
     + "(openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -subj /CN=rerail "
-    + "-keyout key.pem -out cert.pem, then chmod 600 key.pem). Pass --insecure-http instead only when the network in "
+    + `-keyout key.pem -out cert.pem, then ${privateKeyHint(platform)}). Pass --insecure-http instead only when the network in `
     + "between is already trusted, such as a container port published on the host's loopback.",
   );
 }
 
 /**
- * The PEM files `tls` names, read once at start. The private key must be its owner's alone: a key other users can read
- * lets any of them impersonate the daemon, so a key with any group or other permission is refused, as ssh refuses
- * one. Windows has no mode bits to check.
+ * How to keep a new private key its owner's alone: mode bits elsewhere, and on Windows, which has none and no `chmod`,
+ * an ACL that grants only the person's account, named as it is so the command runs in cmd and PowerShell alike.
  */
-export async function loadDaemonTls(tls: DaemonTlsFiles): Promise<DaemonTlsMaterial> {
-  if (process.platform !== "win32") {
-    const mode = (await stat(tls.keyFile)).mode & 0o777;
-    if ((mode & 0o077) !== 0) {
-      throw new Error(
-        `${tls.keyFile} is open to other users (mode ${mode.toString(8).padStart(4, "0")}); a TLS private key must be `
-        + `readable by its owner only: chmod 600 ${tls.keyFile}`,
-      );
-    }
+function privateKeyHint(platform: NodeJS.Platform): string {
+  if (platform !== "win32") return "chmod 600 key.pem";
+  let account = "<your account>";
+  try {
+    account = userInfo().username;
+  } catch {
+    // No user database entry: the placeholder stays.
+  }
+  return `icacls key.pem /inheritance:r /grant:r "${account}:R"`;
+}
+
+/**
+ * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
+ * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
+ * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
+ * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
+ * `C:\certs` say, inherits an ACL that lets every local user read it. `access` is for tests.
+ */
+export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
+  let others: string | undefined;
+  try {
+    others = await openToOthers(tls.keyFile, access);
+  } catch (error) {
+    // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
+    throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
+  }
+  if (others !== undefined) {
+    // A function, so a `$` in the key's path is never read as a replacement pattern.
+    const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
+    throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
@@ -741,7 +786,7 @@ function certificateFingerprint(pem: string): string {
 function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { flags, options } = parseArguments(
     argv,
-    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
+    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--workspace-root", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     (argument) => `Unknown daemon argument: ${argument}`,
   );
   const host = options.get("--host") ?? DEFAULT_DAEMON_HOST;
@@ -750,12 +795,14 @@ function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { tls } = parseDaemonTransport({ flags, options }, host, publicHosts);
   const port = options.get("--port");
   const stateFile = options.get("--state-file");
+  const workspaceRoot = options.get("--workspace-root");
   return {
     host,
     publicHosts,
     ...(port === undefined ? {} : { port: parsePort(port) }),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
+    ...(workspaceRoot === undefined ? {} : { workspaceRoot: resolve(workspaceRoot) }),
     ...(tls === undefined ? {} : { tls }),
   };
 }
@@ -777,6 +824,10 @@ export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
+  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
+  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
+  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
+  searchGitFrom(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
@@ -788,9 +839,12 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   if (!existsSync(join(uiRoot, "index.html"))) {
     throw new Error(`Rerail page is missing at ${uiRoot}; run npm run build:ui.`);
   }
-  const workspaceRoot = process.cwd();
   const databasePath = defaultRerailDatabasePath();
+  // A signal (macOS, Linux) or a shutdown request (Windows, where `process.kill` ends a process without running any
+  // handler) closes the daemon. `rerail daemon stop` kills a daemon that has not stopped within its wait.
+  let shutdown = (): void => undefined;
   const daemon = await RerailDaemon.start({
+    onShutdownRequest: () => shutdown(),
     version: await packageVersion(),
     databasePath,
     workspaceRoot,
@@ -824,18 +878,23 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
-  const shutdown = (): void => {
-    daemon.close().then(
-      () => {
-        mainInstance?.release();
-        process.exit(0);
-      },
-      (error) => {
-        process.stderr.write(`rerail daemon: shutdown failed: ${(error as Error).message}\n`);
-        process.exit(1);
-      },
-    );
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  const way = daemonExit({
+    close: async () => await daemon.close(),
+    release: () => mainInstance?.release(),
+    // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
+    relaunch: () => {
+      relaunchDaemon(process.argv.slice(1), join(defaultRerailHome(), DAEMON_LOG_FILE));
+    },
+    exit: code => process.exit(code),
+    log: line => process.stderr.write(line),
+  });
+  shutdown = way.stop;
+  process.once("SIGTERM", way.stop);
+  process.once("SIGINT", way.stop);
+  watchHeap({
+    onCeiling: ({ used, limit }) => {
+      process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
+      way.restart();
+    },
+  });
 }

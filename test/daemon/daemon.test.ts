@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -26,6 +26,8 @@ import {
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { openRerailDatabase, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { linkFolder } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
 
@@ -95,7 +97,7 @@ describe("Rerail daemon", () => {
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   /** `fetch` refuses a caller-supplied `Host`; only a raw request can imitate a rebinding page or a port mapping. */
@@ -181,6 +183,28 @@ describe("Rerail daemon", () => {
     expect((await getJson(daemon, "/healthz")).body).not.toHaveProperty("nativeToken");
   });
 
+  it("stops on a shutdown request that carries the native token, the stop Windows has no signal for", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const requested = Promise.withResolvers<void>();
+    const onShutdownRequest = vi.fn(() => requested.resolve());
+    const daemon = await start({ onShutdownRequest });
+    const request = (headers: Record<string, string> = {}) => fetch(new URL("/native/shutdown", daemon.url), { method: "POST", headers });
+    const authorization = `Bearer ${daemon.state().nativeToken!}`;
+    expect((await request()).status).toBe(403);
+    expect((await request({ authorization: "Bearer invalid" })).status).toBe(403);
+    // A page holding the dashboard's capability cannot stop the daemon: a browser always sends Origin.
+    expect((await request({ authorization, origin: "http://attacker.test" })).status).toBe(403);
+    expect((await globalThis.fetch(new URL("/native/shutdown", daemon.url), { method: "POST", headers: { authorization } })).status).toBe(401);
+    expect(onShutdownRequest).not.toHaveBeenCalled();
+    const accepted = await request({ authorization });
+    expect(accepted.status).toBe(202);
+    await requested.promise;
+    expect(onShutdownRequest).toHaveBeenCalledTimes(1);
+    // A daemon embedded without a stop handler serves no such request.
+    const embedded = await start({ databasePath: join(root, "embedded.sqlite") });
+    expect((await fetch(new URL("/native/shutdown", embedded.url), { method: "POST", headers: { authorization: `Bearer ${embedded.state().nativeToken!}` } })).status).toBe(405);
+  });
+
   it("serves sessions and paged events read from the session store", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
@@ -248,7 +272,7 @@ describe("Rerail daemon", () => {
   it("resolves canonical presentation overrides in precedence order and falls through after deletion", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const alias = join(root, "alias");
-    await symlink(root, alias);
+    linkFolder(root, alias);
     const daemon = await start();
     const repository = await realpath(root);
     const query = new URLSearchParams({ repository: alias, host: "omp" });
@@ -544,17 +568,21 @@ describe("Rerail daemon", () => {
 
   it("queries one full audit per historically audited repository", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    // Absolute on this platform, as every session's folder is: the audit control resolves the folder it is given.
+    const repoA = resolve("/workspace/repo-a");
+    const repoB = resolve("/workspace/repo-b");
+    const repoC = resolve("/workspace/repo-c");
     const path = join(root, "rerail.sqlite");
     const sessionStore = new SqliteSessionStore(path, { repositoryId: "test-repository" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-a-session", cwd: "/workspace/repo-a" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-b-session", cwd: "/workspace/repo-b" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-c-session", cwd: "/workspace/repo-c" });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-a-session", cwd: repoA });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-b-session", cwd: repoB });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-c-session", cwd: repoC });
     const controls = new SqliteAuditControlStore(path);
-    expect(controls.claimRepositoryAudit("repo-a-session", "/workspace/repo-a")).toBe(true);
+    expect(controls.claimRepositoryAudit("repo-a-session", repoA)).toBe(true);
     const audits = new SqliteAuditStore(path);
     const repositoryAuditId = audits.start({
       sessionId: "repo-a-session",
-      workspaceRoot: "/workspace/repo-a",
+      workspaceRoot: repoA,
       scope: "repository",
       mode: "log",
       revision: 1,
@@ -598,10 +626,10 @@ describe("Rerail daemon", () => {
       // The run had 30 more failures than it lists; the repository listing counts them.
       unlistedFailureCount: 30,
     });
-    controls.finishRepositoryAudit("repo-a-session", "/workspace/repo-a", repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
+    controls.finishRepositoryAudit("repo-a-session", repoA, repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
     const historicalAuditId = audits.start({
       sessionId: "repo-b-session",
-      workspaceRoot: "/workspace/repo-b",
+      workspaceRoot: repoB,
       scope: "repository",
       mode: "steer",
       revision: 1,
@@ -612,7 +640,7 @@ describe("Rerail daemon", () => {
     audits.finish(historicalAuditId, { status: "completed" });
     const touchedAuditId = audits.start({
       sessionId: "repo-c-session",
-      workspaceRoot: "/workspace/repo-c",
+      workspaceRoot: repoC,
       scope: "touched-files",
       mode: "log",
       revision: 1,
@@ -629,7 +657,7 @@ describe("Rerail daemon", () => {
       body: {
         repositories: [
           {
-            workspaceRoot: "/workspace/repo-a",
+            workspaceRoot: repoA,
             repositoryAudit: {
               sessionId: "repo-a-session",
               auditId: repositoryAuditId,
@@ -653,12 +681,12 @@ describe("Rerail daemon", () => {
             },
           },
           {
-            workspaceRoot: "/workspace/repo-b",
+            workspaceRoot: repoB,
             repositoryAudit: null,
             audit: null,
           },
           {
-            workspaceRoot: "/workspace/repo-c",
+            workspaceRoot: repoC,
             repositoryAudit: null,
             audit: null,
           },
@@ -780,6 +808,28 @@ describe("Rerail daemon", () => {
     expect(daemon.port).not.toBe(1);
   });
 
+  it("records the engine pipe it listens on when another process holds the default one", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const held = defaultEngineSocketPath(databasePath, "win32");
+    // Off Windows the pipe name is a relative path: a Unix socket in the current folder, held as a pipe would be.
+    const previousFolder = process.cwd();
+    process.chdir(root);
+    const squatter = createServer((_request, response) => response.writeHead(400).end("{}"));
+    await new Promise<void>((resolveListening) => squatter.listen(held, () => resolveListening()));
+    try {
+      const daemon = await start({ databasePath, enginePlatform: "win32", stateFile: join(root, "daemon.json") });
+      const recorded = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as DaemonState;
+      expect(recorded.kernelSocketPath).not.toBe(held);
+      expect(recorded.kernelSocketPath.startsWith(`${held}-`)).toBe(true);
+      expect(daemon.state().kernelSocketPath).toBe(recorded.kernelSocketPath);
+      await daemon.close();
+    } finally {
+      await new Promise<void>((resolveClosed) => squatter.close(() => resolveClosed()));
+      process.chdir(previousFolder);
+    }
+  });
+
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
   it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
@@ -788,7 +838,8 @@ describe("Rerail daemon", () => {
     await mkdir(stateFile);
     const close = vi.spyOn(NativeSessionServer.prototype, "close").mockRejectedValueOnce(new Error("close failed"));
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    await expect(start({ stateFile })).rejects.toThrow(/EISDIR|illegal operation on a directory/u);
+    // Windows refuses to rename the state file over a folder with EPERM; elsewhere the rename fails with EISDIR.
+    await expect(start({ stateFile })).rejects.toThrow(process.platform === "win32" ? /EPERM/u : /EISDIR|illegal operation on a directory/u);
     expect(close).toHaveBeenCalledTimes(1);
     expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
     // Review of #49 (N5): the failed close is on record.

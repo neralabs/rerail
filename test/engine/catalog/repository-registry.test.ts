@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, sep } from "node:path";
 import { and, eq, ne } from "drizzle-orm";
@@ -22,12 +22,14 @@ import {
 } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
+import { shortSpelling } from "../support/short-path.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
 afterEach(async () => {
   for (const database of openDatabases.splice(0)) database.$client.close();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporary(prefix: string): Promise<string> {
@@ -54,7 +56,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
@@ -333,7 +335,7 @@ describe("the repository registry", () => {
     const path = gitRepository(join(root, "checkout"));
     const before = recordCheckout(database, path);
     checkoutSetting(database, path);
-    rmSync(path, { recursive: true, force: true });
+    removeFolderSync(path);
     gitRepository(path, "https://github.com/acme/web.git");
     const after = recordCheckout(database, path);
     expect(after.cloneId).not.toBe(before.cloneId);
@@ -552,6 +554,29 @@ describe("the repository registry", () => {
     const recorded = recordCheckout(database, checkout);
     mkdirSync(join(checkout, "src"));
     expect(lookupCheckout(database, join(checkout, "src"))).toEqual(recorded);
+  });
+
+  it("records and finds one checkout under one key, whatever spelling of its folder a caller passes", async () => {
+    const root = await temporary("rerail-registry-spellings-");
+    const database = open(join(root, "rerail.sqlite"));
+    const checkout = gitRepository(join(root, "checkout folder"));
+    // The key every spelling must come to: each name's long form, as stored, through any link.
+    const key = realpathSync.native(checkout);
+    const linked = join(root, "linked");
+    symlinkSync(checkout, linked, "junction");
+    const spellings = [checkout, linked, `${checkout}${sep}.`, checkout.split(sep).join("/")];
+    if (process.platform === "win32") {
+      spellings.push(checkout.replace(/^[A-Z]:/u, drive => drive.toLowerCase()));
+      const short = shortSpelling(checkout);
+      if (short !== undefined) spellings.push(short);
+    }
+    const recorded = recordCheckout(database, checkout);
+    expect(recorded.checkoutPath).toBe(key);
+    for (const spelling of spellings) {
+      expect(recordCheckout(database, spelling), spelling).toEqual(recorded);
+      expect(lookupCheckout(database, spelling), spelling).toEqual(recorded);
+    }
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([key]);
   });
 
   it("finds a fresh clone without an id file by its remote, with no clone id, and records it under that repository", async () => {

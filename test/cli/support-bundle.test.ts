@@ -1,15 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer as createHttpServer } from "node:http";
-import { createServer as createSocketServer, type AddressInfo, type Server } from "node:net";
+import { mkdtemp } from "node:fs/promises";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import type { AddressInfo, Server } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 const daemons: Array<() => Promise<void>> = [];
@@ -22,7 +24,7 @@ afterEach(async () => {
   if (fileContentStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
   else process.env.RERAIL_CONTENT_STORE_PATH = fileContentStore;
   await Promise.all(daemons.splice(0).map(close => close()));
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 const SESSION = "session-under-report";
@@ -210,16 +212,26 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
   // A live daemon holds its engine socket; Rerail may check that it is there before it probes the daemon. One per
   // port, so a second daemon can replace the first in one home; as short as `engine.sock`, for macOS's 103 bytes.
   const kernelSocketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-bundle-test-${process.pid}-${port}` : join(home, `e${port}.sock`);
-  const engine = createSocketServer(socket => socket.destroy());
+  // On Windows a lookup sends a recorded daemon's engine a challenge, and only an engine that holds the daemon's
+  // capability answers it (src/runtime/engine-proof.ts, which tests outside the runtime cannot import): this one does,
+  // as a daemon busy in HTTP still does from its engine.
+  const accessToken = "fake-daemon-capability-0123456789";
+  const engine = createHttpServer((request, response) => {
+    const challenge = request.headers["x-rerail-challenge"];
+    if (request.url !== "/proof" || typeof challenge !== "string" || !/^[0-9a-f]{64}$/u.test(challenge)) return void response.writeHead(404).end();
+    const proof = createHmac("sha256", accessToken).update(`rerail-engine-proof\n${challenge}`).digest("hex");
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ proof }));
+  });
   await new Promise<void>(resolve => engine.listen(kernelSocketPath, () => resolve()));
   writeFileSync(join(home, "daemon.json"), JSON.stringify({
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "9.9.9", databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken: "fake-daemon-capability-0123456789",
+    kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken,
   }));
-  const closed = async (server: Server): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
+  const closed = async (server: Server | HttpServer): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
   return {
     close: async () => {
       http.closeAllConnections();
+      engine.closeAllConnections();
       await Promise.all([closed(http), closed(engine)]);
     },
   };
@@ -227,8 +239,8 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
 
 /**
  * Known values taken out of `text` one at a time, as Rerail's scrub did before one pattern found them: each form of each
- * value in turn, longest first, over the whole text. Then the secret patterns, which `scrubText` with no known values
- * applies alone.
+ * value in turn, longest first, over the whole text, a Windows path in any case. Then the secret patterns, which
+ * `scrubText` with no known values applies alone.
  */
 function scrubValueByValue(text: string, knownValues: readonly KnownValue[]): string {
   const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -242,9 +254,10 @@ function scrubValueByValue(text: string, knownValues: readonly KnownValue[]): st
   const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
   for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
     if (value.length < 2) continue;
-    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escape(value)}(?![\\w-])`, "gu"), () => label);
-    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escape(value)}(?![\\w-])`, "gu"), () => label);
-    else scrubbed = scrubbed.replaceAll(value, () => label);
+    const flags = /^[A-Za-z]:[\\/]/u.test(value) ? "giu" : "gu";
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escape(value)}(?![\\w-])`, flags), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escape(value)}(?![\\w-])`, flags), () => label);
+    else scrubbed = scrubbed.replace(new RegExp(escape(value), flags), () => label);
   }
   return scrubText(scrubbed, { knownValues: [] });
 }
@@ -421,7 +434,8 @@ describe("rerail support-bundle", () => {
   ])("counts a RERAIL_CONTENT_STORE_PATH in the machine-wide store folder as a store for the managed install alone: $build", async ({ at, managed }) => {
     const world = await fixture();
     // The machine-wide store folder, as the engine's mainContentStoreDirectory names it.
-    process.env.RERAIL_CONTENT_STORE_PATH = join(homedir(), ".cache", "rerail", "content.sqlite");
+    const store = process.platform === "win32" ? join(homedir(), "AppData", "Local", "rerail") : join(homedir(), ".cache", "rerail");
+    process.env.RERAIL_CONTENT_STORE_PATH = join(store, "content.sqlite");
     const current = activate(world, packageAt(at(world)));
     const { bundle } = await runFrom(world, current);
     expect(bundle.rerail.managedInstall).toBe(managed);
@@ -554,7 +568,8 @@ describe("rerail support-bundle", () => {
     expect(bundle.problems).toEqual([expect.stringContaining("steered 1 time")]);
   });
 
-  it("writes the file for the person's user only", async () => {
+  it("writes the file for the person's user only", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
     const world = await reportedWorld();
     await run(world);
     expect(statSync(world.output).mode & 0o777).toBe(0o600);
@@ -575,6 +590,13 @@ describe("rerail support-bundle", () => {
 
 describe("scrubText", () => {
   const scrub = (text: string): string => scrubText(text, { knownValues: [] });
+
+  it("takes out a known Windows path whatever case a log spells it in", () => {
+    const knownValues = [{ value: String.raw`D:\src\client-x`, label: "<checkout>" }];
+    expect(scrubText(String.raw`d:\src\client-x\a.ts and D:/SRC/Client-X/b.ts`, { knownValues })).toBe(String.raw`<checkout>\a.ts and <checkout>/b.ts`);
+    // A POSIX path keeps its case: another case is another folder there.
+    expect(scrubText("/src/Client-X/a.ts", { knownValues: [{ value: "/src/client-x", label: "<checkout>" }] })).toBe("/src/Client-X/a.ts");
+  });
 
   it.each([
     ["a GitHub token", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"],
@@ -640,9 +662,9 @@ describe("scrubText", () => {
   });
 
   it.each([
-    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\x.ts`],
-    ["with forward slashes", "C:/Users/somebody/src/acme-app/x.ts"],
-    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\x.ts`],
+    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\index.ts`],
+    ["with forward slashes", "C:/Users/somebody/src/acme-app/index.ts"],
+    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\index.ts`],
   ])("replaces a Windows checkout path written %s", (_name, text) => {
     const knownValues = [{ value: String.raw`C:\Users\somebody\src\acme-app`, label: "<checkout>" }];
     expect(scrubText(text, { knownValues })).not.toContain("acme-app");
@@ -687,13 +709,14 @@ describe("scrubText", () => {
     [String.raw`{"cwd":"\/home\/alice\/secret-proj-wt2"}`, String.raw`{"cwd":"~"}`],
     [String.raw`open C:\Users\alice\secret-proj-wt2\a.ts`, String.raw`open ~\a.ts`],
     ["git -C C:/Users/alice/secret-proj-wt2 status", "git -C ~ status"],
+    [String.raw`open c:\users\ALICE\SRC\Secret-Proj\a.ts`, String.raw`open <checkout>\a.ts`],
   ])("takes the repository's name out of a folder under the home that starts with it: %s", (text, expected) => {
     expect(scrubText(text, { knownValues: overlapping })).toBe(expected);
   });
 
   it("takes out all that a scrub of one value at a time takes out, wherever known values overlap", () => {
-    const homes = ["/home/alice", String.raw`C:\Users\alice`, "C:/Users/alice", String.raw`C:\\Users\\alice`, String.raw`\/home\/alice`, "c:/users/alice"];
-    const folders = ["secret-proj", "secret-proj-old", "secret-proj-wt2", "src/secret-proj", "src/secret-proj-2", "alice/secret-proj", "other"];
+    const homes = ["/home/alice", String.raw`C:\Users\alice`, "C:/Users/alice", String.raw`C:\\Users\\alice`, String.raw`\/home\/alice`, "c:/users/alice", String.raw`C:\USERS\Alice`];
+    const folders = ["secret-proj", "secret-proj-old", "secret-proj-wt2", "src/secret-proj", "SRC/Secret-Proj", "src/secret-proj-2", "alice/secret-proj", "other"];
     const texts = ["open ", "git -C ", '{"cwd":"', "at github.com/", ""].flatMap(before => homes.flatMap(home => ["/", "\\", "\\/"].flatMap(separator =>
       folders.flatMap(folder => ["/notes.md failed", String.raw`\a.ts`, '"}', ""].map(after => `${before}${home}${separator}${folder}${after}`)))));
     const differing = texts.filter(text => scrubText(text, { knownValues: overlapping }) !== scrubValueByValue(text, overlapping));

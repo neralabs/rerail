@@ -10,7 +10,8 @@
  * file before attaching it. The command only writes a local file; nothing here touches the network.
  */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import { replaceFileSync } from "../engine/file-replace.js";
 import { arch, homedir, hostname, platform, release, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -236,18 +237,22 @@ function pathForms(value: string): string[] {
   return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
 }
 
+/** Windows paths ignore case, and a host can spell one with another drive letter case than Git does (VS Code's `d:\`). */
+const WINDOWS_PATH = /^[A-Za-z]:[\\/]/u;
+
 /** One spelling of a known value ({@link pathForms}), as the scrub replaces it. */
 interface KnownForm extends KnownValue {
-  /** How it is found when not as it is spelled: a user name only as a whole word, or only inside a path. */
+  /** How it is found when not as it is spelled: a Windows path in any case, a user name only as a whole word, or only inside a path. */
   pattern: RegExp | undefined;
   /** Its place in the order forms are replaced in: longest first, so a path goes before a folder inside it. */
   rank: number;
 }
 
 function knownPattern({ value, word, pathOnly }: KnownValue): RegExp | undefined {
-  if (pathOnly === true) return new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu");
-  if (word === true) return new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu");
-  return undefined;
+  const flags = WINDOWS_PATH.test(value) ? "giu" : "gu";
+  if (pathOnly === true) return new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, flags);
+  if (word === true) return new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, flags);
+  return flags === "gu" ? undefined : new RegExp(escapeRegExp(value), flags);
 }
 
 function knownForms(knownValues: readonly KnownValue[]): KnownForm[] {
@@ -264,23 +269,41 @@ function replaceForm(text: string, { value, label, pattern }: KnownForm): string
 }
 
 /**
+ * How a group of forms is found in a text: the flags of the pattern that finds them, and a key that two spellings of
+ * one form found at the same place share, one character of key for each character of text.
+ */
+interface Spelling {
+  flags: string;
+  key: (text: string) => string;
+}
+
+const AS_SPELLED: Spelling = { flags: "gu", key: text => text };
+
+/**
+ * A Windows path, in any case. Its key gives a printable ASCII character its lower case, and gives every other
+ * character, and `k` and `s` (which the Kelvin sign and the long s match in any case), one shared mark: two characters
+ * that match in any case get the same key, and so do some that do not, which only adds forms that then replace nothing.
+ */
+const IN_ANY_CASE: Spelling = { flags: "giu", key: text => text.replace(/[^\x20-\x7e]|[KSks]/gu, "\uffff").toLowerCase() };
+
+/**
  * The forms a replacement can bring into a text that did not hold them. A replacement leaves the text's own characters
  * and the characters of labels, which are never empty, and a label's inner characters touch only labels' characters.
  * So a form that a replacement brings in holds the first or last character of a label, or is made of labels'
- * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`).
+ * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`). Both are judged by `key`.
  */
-function formsLabelsCanMake(forms: readonly KnownForm[]): KnownForm[] {
-  const labels = [...new Set(forms.map(form => form.label))];
+function formsLabelsCanMake(forms: readonly KnownForm[], key: Spelling["key"]): KnownForm[] {
+  const labels = [...new Set(forms.map(form => key(form.label)))];
   if (labels.includes("")) return [...forms];
   const edges = new Set(labels.map(label => [...label]).flatMap(characters => [characters[0], characters.at(-1)]));
   const inLabels = new Set(labels.join(""));
-  return forms.filter(({ value }) => [...value].some(character => edges.has(character)) || [...value].every(character => inLabels.has(character)));
+  return forms.filter(({ value }) => [...key(value)].some(character => edges.has(character)) || [...key(value)].every(character => inLabels.has(character)));
 }
 
-/** The forms that `found` starts with, itself included. */
-function formsStarting(found: string, byValue: ReadonlyMap<string, readonly KnownForm[]>): KnownForm[] {
+/** The forms whose key `found` starts with, its own included. */
+function formsStarting(found: string, byKey: ReadonlyMap<string, readonly KnownForm[]>): KnownForm[] {
   const starting: KnownForm[] = [];
-  for (let length = 1; length <= found.length; length += 1) starting.push(...(byValue.get(found.slice(0, length)) ?? []));
+  for (let length = 1; length <= found.length; length += 1) starting.push(...(byKey.get(found.slice(0, length)) ?? []));
   return starting;
 }
 
@@ -290,41 +313,46 @@ function nextPlace(text: string, index: number): number {
 }
 
 /**
- * The forms a text holds, in the order they are replaced in. One pattern of every form, longest first, is tried at each
- * place in the text, inside a form it found too, and finds the longest form there; the shorter forms found at the same
- * place are the ones that form starts with. Forms a replacement can bring in ({@link formsLabelsCanMake}) are always in.
+ * The forms of a group a text holds. One pattern of every form, longest first, is tried at each place in the text,
+ * inside a form it found too, and finds the longest form there; the shorter forms found at the same place are the ones
+ * whose key that form's key starts with. Forms a replacement can bring in ({@link formsLabelsCanMake}) are always in.
  */
-function formFinder(forms: readonly KnownForm[]): (text: string) => KnownForm[] {
-  const byValue = Map.groupBy(forms, form => form.value);
-  if (byValue.size === 0) return () => [];
-  const anywhere = new RegExp([...byValue.keys()].map(escapeRegExp).join("|"), "gu");
-  const always = formsLabelsCanMake(forms);
+function formFinder(forms: readonly KnownForm[], { flags, key }: Spelling): (text: string) => KnownForm[] {
+  const byKey = Map.groupBy(forms, form => key(form.value));
+  if (byKey.size === 0) return () => [];
+  const anywhere = new RegExp([...new Set(forms.map(form => form.value))].map(escapeRegExp).join("|"), flags);
+  const always = formsLabelsCanMake(forms, key);
   const startingWith = new Map<string, KnownForm[]>();
   return text => {
     const found = new Set(always);
     anywhere.lastIndex = 0;
     for (let match = anywhere.exec(text); match !== null; match = anywhere.exec(text)) {
-      const starting = startingWith.get(match[0]) ?? formsStarting(match[0], byValue);
+      const starting = startingWith.get(match[0]) ?? formsStarting(key(match[0]), byKey);
       startingWith.set(match[0], starting);
       for (const form of starting) found.add(form);
       anywhere.lastIndex = nextPlace(text, match.index);
     }
-    return [...found].sort((left, right) => left.rank - right.rank);
+    return [...found];
   };
 }
 
 /**
  * The scrub of `knownValues`, built once for every text it is given. It replaces as a scrub of one value at a time
  * does: each form of each value in turn, longest first, over the whole text, so a path goes before a folder inside it
- * and a value that overlaps another still goes. But a text gets only the forms it holds, which one pattern finds in one
- * read: a bundle holds thousands of texts, and a database can record hundreds of checkouts. Then what looks like a
- * secret goes.
+ * and a value that overlaps another still goes. But a text gets only the forms it holds, which one pattern per group
+ * finds in one read (Windows paths in any case, the rest as spelled): a bundle holds thousands of texts, and a database
+ * can record hundreds of checkouts. Then what looks like a secret goes.
  */
 function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
-  const formsIn = formFinder(knownForms(knownValues));
+  const forms = knownForms(knownValues);
+  const finders = [
+    formFinder(forms.filter(form => WINDOWS_PATH.test(form.value)), IN_ANY_CASE),
+    formFinder(forms.filter(form => !WINDOWS_PATH.test(form.value)), AS_SPELLED),
+  ];
   return text => {
     let scrubbed = text;
-    for (const form of formsIn(text)) scrubbed = replaceForm(scrubbed, form);
+    const found = finders.flatMap(formsIn => formsIn(text)).sort((left, right) => left.rank - right.rank);
+    for (const form of found) scrubbed = replaceForm(scrubbed, form);
     for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
     return scrubbed;
   };
@@ -574,7 +602,8 @@ async function patientDaemon(home: string, busyWaitMs: number, whileWaiting: (fi
   const first = await readDaemon(lookupDaemon(home), started, problems);
   if (first.status !== "unresponsive") return first;
   whileWaiting(first);
-  return await readDaemon(lookupDaemon(home, busyWaitMs), started, problems);
+  // `undefined`: this machine, lookupDaemon's own default.
+  return await readDaemon(lookupDaemon(home, undefined, busyWaitMs), started, problems);
 }
 
 /** The daemon section from one lookup started at `started`; one that fails gives `unknown` and says why in `problems`. */
@@ -823,14 +852,8 @@ function waitingText(output: string): string {
 }
 
 function writeBundle(output: string, bundle: SupportBundle): void {
-  const staging = `${output}.${process.pid}.tmp`;
   mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
-  try {
-    writeFileSync(staging, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
-    renameSync(staging, output);
-  } finally {
-    rmSync(staging, { force: true });
-  }
+  replaceFileSync(output, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
 }
 
 export interface SupportBundleCommandIo {

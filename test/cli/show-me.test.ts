@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkoutStatus,
@@ -29,6 +29,8 @@ import {
 } from "../../src/cli/show-me.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;
@@ -36,7 +38,7 @@ const fileRerailHome = process.env.RERAIL_HOME;
 afterEach(async () => {
   if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = fileRerailHome;
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 /** A git repository, with a Rerail home of its own: the library is per machine, so each test starts with an empty one. */
@@ -118,7 +120,7 @@ describe("rerail show-me", () => {
     expect(exit).toBe(0);
     const start = JSON.parse(stdout) as ShowMeStart;
     expect(start).toMatchObject({ ruleId: SHOW_ME_RULE_ID, path: SHOW_ME_FILE, violating: SHOW_ME_VIOLATING, fixed: SHOW_ME_FIXED });
-    expect(start.file.endsWith(`/${SHOW_ME_FILE}`)).toBe(true);
+    expect(start.file.endsWith(`${sep}${SHOW_ME_FILE}`)).toBe(true);
     expect(existsSync(start.file)).toBe(false);
     expect(rulesOf(repo)).toEqual({ library: [SHOW_ME_RULE_ID, OTHER_RULE.id].sort(), setUp: true, repository: [SHOW_ME_RULE_ID, OTHER_RULE.id].sort() });
   });
@@ -164,11 +166,11 @@ describe("rerail show-me", () => {
     expect(readFileSync(file, "utf8")).toBe("export const mine = 1;\n");
   });
 
-  it("never writes through a dangling symlink at the demo path", async () => {
+  it("never writes through a dangling symlink at the demo path", async context => {
     const repo = await repository();
     setUpTestRepository(repo);
     const file = join(repo, SHOW_ME_FILE);
-    symlinkSync(join(dirname(repo), "outside.js"), file);
+    symlinkOrSkip(context, join(dirname(repo), "outside.js"), file, "file");
 
     const start = run(["--repo", repo]);
     expect(start.exit).toBe(1);

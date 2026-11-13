@@ -1,0 +1,1 @@
+Rules that resolve imports and requires, such as the node pack's `n-no-missing-import`, read the files and installed packages on disk below the checkout on Windows, and in a checkout at `/workspace`. They read only the files a scan held there, so they reported an import of any other file, or of an installed package, as missing.

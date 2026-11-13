@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,8 @@ import {
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules, and show the typescript pack's
 // with option values set.
@@ -36,7 +38,7 @@ beforeAll(() => { loadRuleCatalog(); });
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 async function repository(files: Record<string, string> = {}): Promise<string> {
@@ -501,15 +503,15 @@ describe("rerail rules test", () => {
     expect(report.repository).toMatchObject({ matches: [{ path: "app.json" }, { path: "local.json" }], leftOut: 6 });
   });
 
-  it("never follows a symlink out of the checkout, to a file or a folder", async () => {
+  it("never follows a symlink out of the checkout, to a file or a folder", async context => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-rule-draft-outside-"));
     directories.push(outside);
     mkdirSync(join(outside, "folder"));
     writeFileSync(join(outside, "secret.ts"), "console.log('outside');\n");
     writeFileSync(join(outside, "folder", "b.ts"), "console.log('outside folder');\n");
     const repo = await repository({ "src/a.ts": "console.log('inside');\n" });
-    symlinkSync(join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
-    symlinkSync(join(outside, "folder"), join(repo, "src", "linked"), "dir");
+    symlinkOrSkip(context, join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
+    linkFolder(join(outside, "folder"), join(repo, "src", "linked"));
     const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
 
     const { exit, report } = await testReport(file, repo);
