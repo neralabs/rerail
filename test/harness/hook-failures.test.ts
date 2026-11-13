@@ -331,6 +331,28 @@ describe("the hook failure log", () => {
     expect(reasonsAfterTheFullLog(rerailHome)).toEqual(["the daemon did not answer", "began the next part", "began a live log", "held up"]);
   });
 
+  // A hook gives the full log back while another program holds `.1`, and a program that holds the log without delete
+  // sharing refuses the removal of the hook's own name: the log is the live one under two names. The next hook takes
+  // the live name, cannot move it to `.1` either, and finds a live log another hook began since its take, so it gives
+  // the lines back by copy. They are still under the first hook's name, where status counts them.
+  it("counts once the lines of a log another name still holds when a hook gives it back by copy", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const refuse = (call: string): string => `throw Object.assign(new Error("EPERM: operation not permitted, ${call}"), { code: "EPERM" });`;
+    await recordWithWrapped(rerailHome, 2, {
+      renameSync: `rename => (from, to) => { if (!to.endsWith(".1")) return rename(from, to); ${refuse("rename")} }`,
+      unlinkSync: `unlink => path => { if (!path.endsWith(".old")) return unlink(path); ${refuse("unlink")} }`,
+    });
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)]);
+    await recordWithRename(rerailHome, 4, `rename => (from, to) => {
+      if (!to.endsWith(".1")) return rename(from, to);
+      fs.appendFileSync(${JSON.stringify(join(rerailHome, HOOK_FAILURES_FILE))}, ${lineSource(3, "began a live log")});
+      ${refuse("rename")}
+    }`);
+    expect(reasonsAfterTheFullLog(rerailHome)).toEqual(["the daemon did not answer", "began a live log", "the daemon did not answer"]);
+    expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 3);
+  });
+
   // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
   // writes its own, then one more, so every read must count one of those two.
   it("counts every failure once when status reads the log while a hook moves it aside", async () => {
@@ -419,10 +441,14 @@ async function stopHookProcesses(hooks: readonly HookProcess[]): Promise<void> {
  * process wrote to its standard output, once it has ended.
  */
 async function recordWithRename(rerailHome: string, at: number | undefined, wrapRename: string, wrapAppend = "append => append"): Promise<string> {
+  return await recordWithWrapped(rerailHome, at, { renameSync: wrapRename, appendFileSync: wrapAppend });
+}
+
+/** {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it. */
+async function recordWithWrapped(rerailHome: string, at: number | undefined, wraps: Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync", string>>): Promise<string> {
   const program = `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-fs.renameSync = (${wrapRename})(fs.renameSync);
-fs.appendFileSync = (${wrapAppend})(fs.appendFileSync);
+${Object.entries(wraps).map(([name, wrap]) => `fs.${name} = (${wrap})(fs.${name});`).join("\n")}
 syncBuiltinESMExports();
 const { recordHookFailure } = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
 recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: ${JSON.stringify(rerailHome)}, now: ${at}, env: {} });

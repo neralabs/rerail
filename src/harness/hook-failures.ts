@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, fstatSync, linkSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { processState } from "../engine/process-liveness.js";
@@ -152,7 +152,8 @@ function giveBack(taken: string, path: string): void {
     unlinkSync(taken);
   } catch {
     // Moved on by another hook, which moves it aside or, finding it is the live log, removes only its own name. Refused
-    // for another reason: status counts the file once under both names, and a later move removes this one.
+    // for another reason: status counts the file once under both names, a hook that takes the live name and gives its
+    // lines back by copy leaves them here (`heldElsewhere`), and a later move removes this name.
   }
 }
 
@@ -178,15 +179,13 @@ function copyBack(taken: string, path: string): void {
 
 /** {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading. */
 function copyLines(descriptor: number, taken: string, path: string): void {
-  // Already the live log under a second name, as when another hook gave it back while this one moved it on: only this
-  // name goes, as the lines are there.
-  if (isLiveLog(descriptor, taken, path)) {
-    unlinkSync(taken);
-    return;
-  }
-  const lines = readFrom(descriptor, 0);
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
   unlinkSync(taken);
+  // Still under another name, as when another hook gave it back while this one moved it on, or a hook's removal of its
+  // own name was refused: the lines are there, and status counts them under that name. Copied as well, they would count
+  // twice.
+  if (heldElsewhere(descriptor, taken, path)) return;
+  const lines = readFrom(descriptor, 0);
   appendFileSync(path, lines, { mode: 0o600 });
   // A hook that opened the log to append before this one took it can write after the read above: that goes back too.
   // One that writes later still, after this read, loses its line.
@@ -194,12 +193,24 @@ function copyLines(descriptor: number, taken: string, path: string): void {
   if (later.length > 0) appendFileSync(path, later, { mode: 0o600 });
 }
 
-/** Whether the live log at `path` is the file open as `descriptor`, the log taken as `taken`. */
-function isLiveLog(descriptor: number, taken: string, path: string): boolean {
+/**
+ * Whether a name of the log other than `taken` holds the file open as `descriptor`: the live log at `path`, `.1`, or a
+ * log another hook took. On a file system with no file numbers each name counts as a file of its own ({@link fileId}),
+ * so none does.
+ */
+function heldElsewhere(descriptor: number, taken: string, path: string): boolean {
+  const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
+  const home = dirname(path);
+  const names = [path, join(home, MOVED_ASIDE_FILE), ...takenLogs(home).map(({ name }) => join(home, name))];
+  return names.some(name => name !== taken && fileIdAt(name) === id);
+}
+
+/** The {@link fileId} of the file named `name`; undefined when it is missing or cannot be read. */
+function fileIdAt(name: string): string | undefined {
   try {
-    return fileId(statSync(path, { bigint: true }), path) === fileId(fstatSync(descriptor, { bigint: true }), taken);
+    return fileId(statSync(name, { bigint: true }), name);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
