@@ -747,7 +747,7 @@ pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> 
     }
     if COMPILING.lock().ok()?.insert(key) {
         let (source, name) = (source.to_owned(), name.to_owned());
-        let spawned = std::thread::Builder::new().name("rerail-msl-compile".into()).spawn(move || {
+        let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
             let _ = pipeline_named(&source, &name);
             if let Ok(mut compiling) = COMPILING.lock() {
                 compiling.remove(&key);
