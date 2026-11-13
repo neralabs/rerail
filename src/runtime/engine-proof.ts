@@ -1,11 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { close, open, write } from "node:fs";
+import { once } from "node:events";
 import { request, type RequestOptions } from "node:http";
-import { Socket } from "node:net";
-import { Duplex } from "node:stream";
-import { setTimeout as sleep } from "node:timers/promises";
-import { promisify } from "node:util";
-import { isNamedPipe } from "./engine-pipe.js";
+import { connect, type Socket } from "node:net";
+import { isNamedPipe, pipeListed, pipeNameOf } from "./engine-pipe.js";
 
 /**
  * How a process asks whether the engine on a socket or pipe is this Rerail home's without presenting the home's access
@@ -21,9 +18,6 @@ const CHALLENGE = /^[0-9a-f]{64}$/u;
 const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
-/** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
-const PIPE_RETRY_MS = 50;
-const openFile = promisify(open);
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -63,102 +57,62 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 export type EngineProofAnswer = "proved" | "refused" | "silent";
 
 /**
- * The Windows named pipe `path` opened as a file, its descriptor: an open that finds every instance of the pipe taken
- * fails at once with `EBUSY`, and is tried again every {@link PIPE_RETRY_MS} until `deadline` (epoch ms), when the
- * `EBUSY` is thrown. Node's own connect waits up to 30 s for a free instance, in a thread that closing the socket does
- * not stop, and that thread keeps the process alive after the proof has answered.
+ * The Windows named pipe `path` spelled `\\?\pipe\<name>`, which `CreateFile` opens as the same pipe. Node's connect
+ * opens it for overlapped I/O, so closing the socket cancels a read or a write in flight, whatever the holder does: a
+ * pipe opened as a file is synchronous, and a write that its holder never reads cannot be stopped. When every instance
+ * is taken, Node waits for a free one with `WaitNamedPipe`, up to 30 s in a thread that closing the socket does not
+ * stop and that keeps the process alive; `WaitNamedPipe` takes only `\\.\pipe\` names, so for this spelling that
+ * wait fails at once, with `ENOENT`.
  */
-async function openPipe(path: string, deadline: number): Promise<number> {
-  for (;;) {
-    try {
-      return await openFile(path, "r+");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EBUSY" || Date.now() >= deadline) throw error;
-    }
-    await sleep(PIPE_RETRY_MS);
-  }
+function pipeConnectPath(path: string): string {
+  return String.raw`\\?\pipe` + "\\" + pipeNameOf(path);
 }
 
-/**
- * The stream a proof's request runs over on a pipe {@link openPipe} opened. A pipe opened as a file is synchronous: a
- * read waiting for data holds it, and a write waits behind that read, so the request would never leave. The request is
- * written with `fs.write` first, and only then does a socket on the descriptor start reading the answer. Closing that
- * socket stops its waiting read, so nothing keeps the process alive.
- */
-class PipeExchange extends Duplex {
-  readonly #fd: number;
-  #socket: Socket | undefined;
-
-  constructor(fd: number) {
-    super();
-    this.#fd = fd;
-  }
-
-  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
-    write(this.#fd, chunk, (error) => {
-      if (error === null) this.#startReading();
-      callback(error);
-    });
-  }
-
-  override _read(): void {
-    this.#socket?.resume();
-  }
-
-  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
-    if (this.#socket === undefined) {
-      close(this.#fd, () => callback(error));
-      return;
-    }
-    this.#socket.destroy();
-    callback(error);
-  }
-
-  #startReading(): void {
-    // A proof ended while its request was being written has closed the descriptor, which the OS may since have reused.
-    if (this.#socket !== undefined || this.destroyed) return;
-    const socket = new Socket({ fd: this.#fd, readable: true, writable: false });
-    socket.on("data", (chunk: Buffer) => {
-      if (!this.push(chunk)) socket.pause();
-    });
-    socket.on("end", () => this.push(null));
-    socket.on("error", error => this.destroy(error));
-    this.#socket = socket;
-  }
+/** Whether a connect to the pipe `path` failed with `error` only because every instance was taken: the pipe is listed. */
+function pipeBusy(error: unknown, path: string): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT" && pipeListed(path);
 }
 
-/**
- * How a proof's request reaches the listener on `socketPath`: a Windows pipe opened by {@link openPipe} before the
- * request and written then read through {@link PipeExchange}, a Unix socket by its path. Only Windows has named pipes:
- * on macOS and Linux a path spelled like one is a Unix socket's. A pipe that is not opened by `deadline` is the verdict:
- * every instance still taken is no answer (`silent`); a pipe that is gone, or that this user may not open, is `refused`.
- */
-async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
-  if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
+/** Whether `socket` connected; the error it failed with when it did not. */
+async function connected(socket: Socket): Promise<true | { error: unknown }> {
   try {
-    const exchange = new PipeExchange(await openPipe(socketPath, deadline));
-    return { createConnection: () => exchange };
+    await once(socket, "connect");
+    return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EBUSY" ? "silent" : "refused";
+    return { error };
   }
 }
 
 /**
- * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
- * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process. The answer comes within `timeoutMs` of the ask, whatever the listener does, and nothing of the ask outlives
- * it: the connect is bounded ({@link proofRoute}), and the limit is a timer of its own, since a request's timeout
- * starts only once its socket has connected and restarts at each byte read.
+ * A socket connected to the Windows named pipe `path` ({@link pipeConnectPath}), or the verdict when there is none: a
+ * pipe whose instances are all taken is no answer (`silent`); a pipe that is gone, or that this user may not open, is
+ * `refused`.
  */
-export async function engineCapabilityProof(
-  socketPath: string,
-  accessToken: string,
-  timeoutMs = 2_000,
-  challenge: string = randomBytes(32).toString("hex"),
-): Promise<EngineProofAnswer> {
-  const deadline = Date.now() + timeoutMs;
-  const route = await proofRoute(socketPath, deadline);
-  if (typeof route === "string") return route;
+async function connectPipe(path: string): Promise<Socket | EngineProofAnswer> {
+  const socket = connect(pipeConnectPath(path));
+  const outcome = await connected(socket);
+  if (outcome === true) return socket;
+  socket.destroy();
+  return pipeBusy(outcome.error, path) ? "silent" : "refused";
+}
+
+/**
+ * How a proof's request reaches the listener on `socketPath`: a Windows pipe connected by {@link connectPipe} before the
+ * request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux a path spelled like one is a Unix
+ * socket's. A pipe with no connection is the verdict.
+ */
+async function proofRoute(socketPath: string): Promise<RequestOptions | EngineProofAnswer> {
+  if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
+  const socket = await connectPipe(socketPath);
+  return typeof socket === "string" ? socket : { createConnection: () => socket };
+}
+
+/**
+ * What the listener `route` reaches answers `challenge` with, by `answerBy` (epoch ms). The limit is a timer of its own,
+ * since a request's timeout starts only once its socket has connected and restarts at each byte read. Once there is a
+ * verdict the request is destroyed with its socket, so a listener that keeps the connection open holds nothing here.
+ */
+async function askForProof(route: RequestOptions, accessToken: string, challenge: string, answerBy: number): Promise<EngineProofAnswer> {
   const expected = engineProof(accessToken, challenge);
   const { promise, resolve } = Promise.withResolvers<EngineProofAnswer>();
   let answered = false;
@@ -184,7 +138,7 @@ export async function engineCapabilityProof(
   const limit = setTimeout(() => {
     resolve("silent");
     outgoing.destroy(new Error("Engine proof timed out"));
-  }, Math.max(0, deadline - Date.now()));
+  }, Math.max(0, answerBy - Date.now()));
   outgoing.on("error", () => resolve("refused"));
   // Node can close the request before the response's `end`; only a request that never got a response is a refusal here.
   outgoing.on("close", () => {
@@ -195,7 +149,25 @@ export async function engineCapabilityProof(
     return await promise;
   } finally {
     clearTimeout(limit);
+    outgoing.destroy();
   }
+}
+
+/**
+ * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
+ * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
+ * process. The answer comes within `timeoutMs` of the ask, whatever the listener does, and nothing of the ask outlives
+ * it: the connect is bounded ({@link proofRoute}), and so is the exchange ({@link askForProof}).
+ */
+export async function engineCapabilityProof(
+  socketPath: string,
+  accessToken: string,
+  timeoutMs = 2_000,
+  challenge: string = randomBytes(32).toString("hex"),
+): Promise<EngineProofAnswer> {
+  const deadline = Date.now() + timeoutMs;
+  const route = await proofRoute(socketPath);
+  return typeof route === "string" ? route : await askForProof(route, accessToken, challenge, deadline);
 }
 
 /**
