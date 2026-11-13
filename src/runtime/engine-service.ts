@@ -444,9 +444,10 @@ function cutStalledRequests(connections: ReadonlyMap<Socket, IncomingMessage | u
 
 /**
  * Each open connection of `server`, with the request it carries once that request's headers have arrived, the latest
- * one on a connection that carries several (`cutStalledRequests` reads it).
+ * one on a connection that carries several (`cutStalledRequests` reads it). A connection leaves it when it closes, so
+ * a daemon does not keep every hook's socket for its life.
  */
-function trackConnections(server: Server): ReadonlyMap<Socket, IncomingMessage | undefined> {
+export function trackConnections(server: Server): ReadonlyMap<Socket, IncomingMessage | undefined> {
   const connections = new Map<Socket, IncomingMessage | undefined>();
   server.on("connection", (socket: Socket) => {
     connections.set(socket, undefined);

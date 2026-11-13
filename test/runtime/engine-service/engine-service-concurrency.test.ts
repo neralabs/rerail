@@ -1,12 +1,13 @@
 import { once } from "node:events";
 import { mkdtemp } from "node:fs/promises";
+import { createServer } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../../../src/engine/index.js";
-import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { ingestEngineEvent, startEngineService, trackConnections, type EngineService } from "../../../src/runtime/engine-service.js";
 import { decodeRerailEventResult } from "../../../src/runtime/event-protocol.js";
 import { SqliteSessionReader } from "../../../src/runtime/session-store.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -247,6 +248,40 @@ describe("engine service session concurrency", () => {
       expect(recorded(held.databasePath)).toContain("late");
     } finally {
       held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
+  it("keeps only open connections in the list the close reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const socketPath = testEngineEndpoint(root);
+    const server = createServer((incoming, response) => {
+      incoming.resume();
+      response.end("{}");
+    });
+    const connections = trackConnections(server);
+    const size = async (expected: number): Promise<void> => {
+      await vi.waitFor(() => expect(connections.size).toBe(expected), { timeout: 5_000, interval: 20 });
+    };
+    try {
+      await new Promise<void>(done => server.listen(socketPath, done));
+      // A hook that gets its answer, then one that connects and goes away without a request: a daemon serves
+      // thousands of each, and the list must not keep their sockets. The first holds its body back until the list
+      // shows it.
+      const answered = await handHook(socketPath, "{}", 0);
+      await size(1);
+      answered.finish();
+      expect(await answered.answer()).toContain("HTTP/1.1 200");
+      await size(0);
+      const silent = connect(socketPath);
+      silent.on("error", () => undefined);
+      await once(silent, "connect");
+      await size(1);
+      silent.destroy();
+      await size(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(done => server.close(() => done()));
       await removeFolder(root);
     }
   }, 20_000);
