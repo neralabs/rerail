@@ -254,25 +254,36 @@ export function resolveImport(repo, fromFile, specifier) {
 
 const COMMAND_ENDS = new Set(["\n", ";", "&", "|"]);
 const REDIRECTS = new Set([">", "<"]);
+/** The characters a backslash escapes inside double quotes. Before any other character the backslash stays. */
+const DOUBLE_QUOTE_ESCAPES = new Set(["$", "`", '"', "\\", "\n"]);
 
 /** A character outside any quote: what it does to the tokens and commands so far, and the index of the last character it takes. */
 function scanShellChar(script, i, parser) {
   const char = script[i];
-  if (isLineContinuation(script, i)) return i + 1;
+  if (char === "\\") return escapeEnd(script, i, parser);
   if (char === "#" && !parser.inToken) return commentEnd(script, i);
   if (COMMAND_ENDS.has(char)) {
     parser.endCommand();
     return commandEnd(script, i);
   }
   if (REDIRECTS.has(char)) {
-    parser.endToken();
-    return redirectEnd(script, i);
+    parser.startRedirect();
+    return redirectOperatorEnd(script, i);
   }
   parser.wordChar(char);
   return i;
 }
 
-const isLineContinuation = (script, i) => script[i] === "\\" && script[i + 1] === "\n";
+/**
+ * The last character of the backslash escape at `i`, outside quotes. A backslash and the newline after it are both
+ * removed (a line continuation); before any other character the backslash is removed and that character is taken
+ * literally.
+ */
+function escapeEnd(script, i, parser) {
+  const next = script[i + 1];
+  if (next !== undefined && next !== "\n") parser.literalChar(next);
+  return i + 1;
+}
 
 /** The last character of the separator at `i`: `&&` and `||` are one. */
 function commandEnd(script, i) {
@@ -287,11 +298,10 @@ function commentEnd(script, i) {
   return end;
 }
 
-/** The last character of a redirect's target: the target is skipped. */
-function redirectEnd(script, i) {
+/** The last character of the redirection operator that starts at `i` (`>`, `>>`, `>&`, `>|`, `<`, `<<`, `<<<`, `<&`, `<>`). */
+function redirectOperatorEnd(script, i) {
   let end = i;
-  while (script[end + 1] === ">" || script[end + 1] === "&" || script[end + 1] === " ") end += 1;
-  while (end + 1 < script.length && !/[\s;&|]/.test(script[end + 1])) end += 1;
+  while (/[<>&|]/.test(script[end + 1] ?? "")) end += 1;
   return end;
 }
 
@@ -299,8 +309,8 @@ function redirectEnd(script, i) {
 function scanQuotedChar(script, i, parser) {
   const char = script[i];
   if (char === parser.quote) parser.quote = null;
-  else if (char === "\\" && parser.quote === '"' && i + 1 < script.length) {
-    parser.token += script[i + 1];
+  else if (char === "\\" && parser.quote === '"' && DOUBLE_QUOTE_ESCAPES.has(script[i + 1])) {
+    if (script[i + 1] !== "\n") parser.token += script[i + 1];
     return i + 1;
   } else parser.token += char;
   return i;
@@ -314,19 +324,41 @@ function shellParser() {
     token: "",
     quote: null,
     inToken: false,
+    /** Whether a quote or a backslash made part of the current token. */
+    quoted: false,
+    /** Whether the next token is a redirection's target, which is not part of the command. */
+    redirectTarget: false,
     endToken() {
-      if (parser.inToken) parser.tokens.push(parser.token);
+      if (parser.inToken) {
+        if (!parser.redirectTarget) parser.tokens.push(parser.token);
+        parser.redirectTarget = false;
+      }
       parser.token = "";
       parser.inToken = false;
+      parser.quoted = false;
     },
     endCommand() {
       parser.endToken();
+      parser.redirectTarget = false;
       if (parser.tokens.length > 0) parser.commands.push(parser.tokens);
       parser.tokens = [];
     },
+    startRedirect() {
+      // An unquoted number right before the operator is the file descriptor it redirects (`2>&1`), not a word.
+      if (parser.inToken && !parser.quoted && /^\d+$/.test(parser.token)) parser.inToken = false;
+      parser.endToken();
+      parser.redirectTarget = true;
+    },
+    literalChar(char) {
+      parser.token += char;
+      parser.inToken = true;
+      parser.quoted = true;
+    },
     wordChar(char) {
-      if (char === '"' || char === "'") parser.quote = char;
-      else if (char === " " || char === "\t") {
+      if (char === '"' || char === "'") {
+        parser.quote = char;
+        parser.quoted = true;
+      } else if (char === " " || char === "\t") {
         parser.endToken();
         return;
       } else parser.token += char;
@@ -343,7 +375,10 @@ function withoutAssignments(command) {
   return command.slice(start);
 }
 
-/** Shell command lines split into simple commands (on `&&`, `||`, `;`, `|`, `&`, newlines), tokenised. */
+/**
+ * Shell command lines split into simple commands (on `&&`, `||`, `;`, `|`, `&`, newlines), tokenised as a shell reads
+ * them, redirections left out.
+ */
 export function shellCommands(script) {
   const parser = shellParser();
   for (let i = 0; i < script.length; i += 1) i = parser.quote ? scanQuotedChar(script, i, parser) : scanShellChar(script, i, parser);

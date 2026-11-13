@@ -5,6 +5,7 @@ use super::reclamation::{
 };
 use super::rows::hash_params;
 use super::schema::SCHEMA_VERSION;
+use super::test_support::TemporaryDatabase;
 use super::*;
 use rusqlite::limits::Limit;
 use rusqlite::params;
@@ -13,23 +14,50 @@ use std::fs;
 use std::io::Cursor;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-fn temporary_database(label: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "rerail-content-store-{label}-{}-{nonce}.sqlite",
-        std::process::id()
-    ))
+fn temporary_database(label: &str) -> TemporaryDatabase {
+    TemporaryDatabase::new(&format!("rerail-content-store-{label}"))
 }
 
-pub(super) fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
+/// A store on a fresh temporary database. Bind the path to a name (`_path`, never `_`): dropping
+/// it removes the database.
+pub(super) fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
+}
+
+/// A test's store keeps its database in a folder of its own, and the folder is gone once the
+/// test's bindings drop, with the WAL and shared-memory files its thread's connection holds open.
+#[test]
+fn a_test_store_leaves_no_files_behind() {
+    let folder = {
+        let (path, store) = store("leaves-no-files");
+        store.put_source(b"written", &[]).unwrap();
+        let folder = path.parent().unwrap().to_path_buf();
+        let files: Vec<_> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        // The database, its WAL and its shared-memory file.
+        assert_eq!(files.len(), 3, "{files:?}");
+        folder
+    };
+    // Windows cannot remove a file this process holds open, so there the folder stays when the
+    // guard leaves a connection open. Linux removes open files, and CI runs these tests on Linux:
+    // check here that the guard closed every descriptor into the folder.
+    #[cfg(target_os = "linux")]
+    {
+        let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+        let open: Vec<_> = fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| fs::read_link(entry.unwrap().path()).ok())
+            .filter(|target| target.to_string_lossy().contains(&name))
+            .collect();
+        assert!(open.is_empty(), "still open: {open:?}");
+    }
+    assert!(!folder.exists(), "left behind: {}", folder.display());
 }
 
 pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
@@ -287,7 +315,7 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
 
 #[test]
 fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
-    let (_, store) = store("bulk-tapes");
+    let (_path, store) = store("bulk-tapes");
     let source = store.put_source(b"source", &[]).unwrap();
     let first = store.put_tape(source, 1, 1, 1, b"first tape").unwrap();
     let second = store.put_tape(source, 2, 1, 1, b"second tape").unwrap();
@@ -304,7 +332,7 @@ fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
 
 #[test]
 fn selector_fts_presence_is_revision_scoped_and_syntax_aware() {
-    let (_, store) = store("search-fts");
+    let (_path, store) = store("search-fts");
     let source = store.put_source(b"execute commit", &[]).unwrap();
     let first = store.put_tape(source, 1, 1, 1, b"first tape").unwrap();
     let stale = store.put_tape(source, 2, 1, 1, b"second tape").unwrap();
@@ -353,7 +381,7 @@ fn selector_fts_presence_is_revision_scoped_and_syntax_aware() {
 
 #[test]
 fn search_index_backlog_uses_a_tape_id_keyset_seek() {
-    let (_, store) = store("search-index-keyset");
+    let (_path, store) = store("search-index-keyset");
     let source = store.put_source(b"source", &[]).unwrap();
     for index in 0..128 {
         store
@@ -386,7 +414,7 @@ fn search_index_backlog_uses_a_tape_id_keyset_seek() {
 
 #[test]
 fn bulk_removal_is_scoped_and_idempotent() {
-    let (_, store) = store("bulk-removal");
+    let (_path, store) = store("bulk-removal");
     let snapshot = store
         .put_snapshot(
             published_tree(&store, HashKey::git_sha1([71; 20])),
@@ -438,7 +466,7 @@ fn capacity_thresholds_are_exact() {
 
 #[test]
 fn release_memory_drops_process_local_read_caches() {
-    let (_, store) = store("release-memory");
+    let (_path, store) = store("release-memory");
     let source = store.put_source(b"source", &[]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
     assert_eq!(&*store.get_source(source).unwrap(), b"source");
@@ -1011,8 +1039,9 @@ fn reconciliation_reprepares_source_collected_after_the_read() {
     let (workspace, catalog) = local_result_workspace(&store, "publication-reprepare");
     store.put_source(b"pass\n", &[]).unwrap();
     ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
+    let copy = path.to_path_buf();
     AFTER_PUBLICATION_READ_HOOK.set(Some(Box::new(move || {
-        ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
+        ContentStore::open(&copy).unwrap().collect(0, 100).unwrap();
     })));
     let polls = AtomicUsize::new(0);
     let result = store.publish_overlay_files_cancellable(
@@ -1050,8 +1079,9 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
         raw_length: 6,
         frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
     };
+    let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        ContentStore::open(&path).unwrap().collect(0, 100).unwrap();
+        ContentStore::open(&copy).unwrap().collect(0, 100).unwrap();
     })));
     let stored = store
         .publish_overlay_file(
@@ -1084,8 +1114,9 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
 fn reconciliation_revalidates_path_collected_before_relationship_write() {
     let (path, store) = store("publication-revalidate-path");
     let (workspace, catalog) = local_result_workspace(&store, "publication-revalidate-path");
+    let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        let connection = Connection::open(path).unwrap();
+        let connection = Connection::open(copy).unwrap();
         connection
             .execute(
                 "DELETE FROM paths WHERE path_id=(SELECT p.path_id FROM paths p \
@@ -1213,8 +1244,9 @@ fn overlay_publication_reports_busy_retries() {
     };
     let (holders, held) = std::sync::mpsc::channel();
     holders.send(hold(&path)).unwrap();
+    let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        holders.send(hold(&path)).unwrap();
+        holders.send(hold(&copy)).unwrap();
     })));
     let result = store
         .publish_overlay_files(
@@ -1314,7 +1346,7 @@ fn one_operation_deadline_bounds_the_wait_across_publication_passes() {
     // takes the store for the relationship pass and keeps it.
     let seen = spend_deadline_per_attempt(hold_writer(&path));
     let (holders, held) = std::sync::mpsc::channel();
-    let second_path = path.clone();
+    let second_path = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
         holders.send(hold_writer(&second_path)).unwrap();
     })));
@@ -1477,7 +1509,7 @@ fn snapshot_publication_waits_one_deadline_across_its_transactions() {
     let trees = [three_hundred_entry_tree(61), three_hundred_entry_tree(62)];
     let seen = spend_deadline_per_attempt(hold_writer(&path));
     let (holders, held) = std::sync::mpsc::channel();
-    let second_path = path.clone();
+    let second_path = path.to_path_buf();
     AFTER_GIT_TREE_TRANSACTION.set(Some(Box::new(move || {
         // Runs once: only the first batch commits before the store is held again.
         holders.send(hold_writer(&second_path)).unwrap();
@@ -1728,7 +1760,7 @@ fn multiple_processes_converge_while_publishing() {
                     "content_store::tests::multiprocess_publish_helper",
                     "--nocapture",
                 ])
-                .env("RERAIL_MULTIPROCESS_STORE", &path)
+                .env("RERAIL_MULTIPROCESS_STORE", path.as_os_str())
                 .env("RERAIL_MULTIPROCESS_WORKSPACE", workspace.0.to_string())
                 .env("RERAIL_MULTIPROCESS_INDEX", index.to_string())
                 .spawn()
@@ -1844,7 +1876,7 @@ fn concurrent_open_serializes_schema_creation() {
     let barrier = Arc::new(std::sync::Barrier::new(2));
     let handles = (0..2)
         .map(|_| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
@@ -2778,7 +2810,7 @@ fn set_mode(path: &std::path::Path, mode: u32) {
 #[cfg(unix)]
 #[test]
 fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
-    let root = temporary_database("private-new").with_extension("d");
+    let root = test_support::TemporaryFolder::new("rerail-content-store-private-new");
     let folder = root.join("cache");
     let path = folder.join(STORE_FILE_NAME);
     drop(ContentStore::open(&path).unwrap());
@@ -2792,29 +2824,25 @@ fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
     let mut wal = path.as_os_str().to_owned();
     wal.push("-wal");
     assert_eq!(mode_of(std::path::Path::new(&wal)), 0o600);
-    drop(writer);
-    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 fn opening_a_store_others_can_read_takes_their_access_away() {
-    let folder = temporary_database("private-existing").with_extension("d");
+    let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
     let path = folder.join(STORE_FILE_NAME);
     drop(ContentStore::open(&path).unwrap());
     set_mode(&folder, 0o755);
     set_mode(&path, 0o644);
-    let store = ContentStore::open(&path).unwrap();
+    let _store = ContentStore::open(&path).unwrap();
     assert_eq!(mode_of(&folder), 0o700);
     assert_eq!(mode_of(&path), 0o600);
-    drop(store);
-    std::fs::remove_dir_all(&folder).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
-    let root = temporary_database("private-symlink").with_extension("d");
+    let root = test_support::TemporaryFolder::new("rerail-content-store-private-symlink");
     let elsewhere = root.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     set_mode(&elsewhere, 0o755);
@@ -2823,5 +2851,4 @@ fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
     drop(ContentStore::open(&linked.join(STORE_FILE_NAME)).unwrap());
     assert_eq!(mode_of(&elsewhere), 0o755);
     assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
-    std::fs::remove_dir_all(&root).unwrap();
 }

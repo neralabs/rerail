@@ -57,6 +57,8 @@ mod tree_pages;
 #[allow(dead_code)]
 mod tree_result_segments;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests;
 mod workspaces;
 pub mod working_set;
