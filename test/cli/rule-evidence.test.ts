@@ -352,35 +352,38 @@ describe("rerail rules evidence", () => {
   });
 
   it("reads every event of a session that started in the window, whatever time the clock gave it", async () => {
-    /** A 1-day window over one session that started at `startedAt`: its task, a force push and a correction, stamped `at`. */
-    const evidenceStamped = async (startedAt: number, at: { task: number; push: number; correction: number }) => {
-      const repo = await repository();
-      const { databasePath, store } = await sessionDatabase(repo);
-      try {
-        store.openSession({ host: "claude-code", sessionId: "s1", cwd: repo }, startedAt);
-        store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: at.task });
-        store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at.push });
-        store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Don't force push, never do that" }, observedAt: at.correction });
-      } finally {
-        store.close();
-      }
-      return collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
-    };
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
     const windowStart = NOW - DAY;
-    // After the session opened, the clock went back past the window's start (an NTP step of a fast clock, a manual
-    // change) for its task, for its call, or for all three: each gives the answer of the session stamped in the window.
+    // Each session opens in a 1-day window and writes a task, a force push and a correction. In all but the first, the
+    // clock then went back past the window's start (an NTP step of a fast clock, a manual change) for its task, for its
+    // call, or for all three: each gives the answer of the session stamped in the window.
     const stamped = {
-      inWindow: await evidenceStamped(windowStart + MINUTE, { task: windowStart + 2 * MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR }),
-      taskBefore: await evidenceStamped(windowStart + MINUTE, { task: windowStart - MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR }),
-      callBefore: await evidenceStamped(windowStart + MINUTE, { task: windowStart + 2 * MINUTE, push: windowStart - MINUTE, correction: NOW - HOUR }),
-      allBefore: await evidenceStamped(NOW - HOUR, { task: NOW - 2 * DAY, push: NOW - 2 * DAY, correction: NOW - 2 * DAY }),
+      inWindow: { startedAt: windowStart + MINUTE, task: windowStart + 2 * MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR },
+      taskBefore: { startedAt: windowStart + MINUTE, task: windowStart - MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR },
+      callBefore: { startedAt: windowStart + MINUTE, task: windowStart + 2 * MINUTE, push: windowStart - MINUTE, correction: NOW - HOUR },
+      allBefore: { startedAt: NOW - HOUR, task: NOW - 2 * DAY, push: NOW - 2 * DAY, correction: NOW - 2 * DAY },
     };
-    for (const [stamps, evidence] of Object.entries(stamped)) {
-      expect.soft(evidence.window, stamps).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 2 });
-      expect.soft(evidence.corrections.map(({ text, before }) => ({ text, before })), stamps)
-        .toEqual([{ text: "Don't force push, never do that", before: ["Bash git push --force origin main"] }]);
-      expect.soft(evidence.riskyCommands, stamps).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    try {
+      for (const [sessionId, at] of Object.entries(stamped)) {
+        store.openSession({ host: "claude-code", sessionId, cwd: repo }, at.startedAt);
+        store.append({ sessionId, kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: at.task });
+        store.append({ sessionId, kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at.push });
+        store.append({ sessionId, kind: "user-prompt", payload: { text: "Don't force push, never do that" }, observedAt: at.correction });
+      }
+    } finally {
+      store.close();
     }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect({
+      window: evidence.window,
+      before: Object.fromEntries(evidence.corrections.map(correction => [correction.sessionId, correction.before])),
+      riskyCommands: evidence.riskyCommands,
+    }).toEqual({
+      window: { days: 1, sessions: 4, hosts: { "claude-code": 4 }, prompts: 8 },
+      before: Object.fromEntries(Object.keys(stamped).map(sessionId => [sessionId, ["Bash git push --force origin main"]])),
+      riskyCommands: [{ label: "force push", count: 4, example: "git push --force origin main" }],
+    });
   });
 
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {
