@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='plan_scope_side_effects' and entry=='_pse_plugin_select':
+        return 'plan-scope-side-effects-select.rr'
     if check=='plan_scope_side_effects' and entry in {'_pse_plugin_metadata','_pse_plugin_report'}:
         return 'plan-scope-side-effects-plugin.rr'
     if check=='plan_scope_side_effects' and entry=='_pse_plugin_roots':

@@ -10,12 +10,34 @@ def install(backend,module):
     rows=backend.native(CHECK,'_pse_plugin_metadata',[])
     if len(rows)!=1 or rows[0]['code']!='PSE_PLUGIN_META':raise ValueError('One native plugin descriptor required')
     meta=rows[0]['parameters']
+    fields=meta['value_fields'].split(',');severity=meta['severity_field'];missing=object()
+    def shape(value):return 'dict'if isinstance(value,dict)else 'list'if isinstance(value,list)else type(value).__name__
     def private(root,scope):
         def report(view):
-            # Only the fact families in this plugin's declared demand cross the
-            # boundary. Preserve values and insertion positions without coercion.
-            wanted={module.PLAN_SCOPE_SIDE_EFFECTS_EXTRACTOR.extractor_id}
-            values=[dict(path=b.path.as_posix(),facts={k:v for k,v in b.facts.items()if k in wanted})for b in view.files.values()]
+            # Capture the selector's declared columns first. Do not traverse
+            # unused descendants or rows before the native demand selects them.
+            family=module.PLAN_SCOPE_SIDE_EFFECTS_EXTRACTOR.extractor_id
+            bundles=list(view.files.values());headers=[];sources=[]
+            for b in bundles:
+                value=b.facts.get(family,[]);sources.append(value);items=[]
+                if isinstance(value,list):
+                    for row in value:
+                        header=dict(kind=shape(row))
+                        if isinstance(row,dict):
+                            observed=row.get(severity,missing)
+                            if observed is not missing:header['severity']=observed
+                        items.append(header)
+                headers.append(dict(container=shape(value),rows=items))
+            selected=backend.native(CHECK,'_pse_plugin_select',[],columns(headers))
+            if any(r['code']!='PSE_PLUGIN_ROW'for r in selected):raise ValueError('Unexpected native row demand')
+            if not selected:return []
+            demands={}
+            for row in selected:
+                p=row['parameters'];demands.setdefault(p['bundle'],[]).append(p['ordinal'])
+            values=[]
+            for b,ordinals in sorted(demands.items()):
+                projected=[{key:sources[b][i][key]for key in fields if key in sources[b][i]}for i in sorted(ordinals)]
+                values.append(dict(path=bundles[b].path.as_posix(),facts={family:projected}))
             rows=backend.native(CHECK,'_pse_plugin_report',[],dict(columns(values),psePluginRoot=root.as_posix()))
             if any(r['code']!='PSE_PLUGIN_FINDING'for r in rows):raise ValueError('Unexpected native plugin report')
             values=sorted((r['parameters']for r in rows),key=lambda p:(p['path_key'],p['line_sign'],p['line_length'],p['line_digits'],p['source_code'],p['bundle'],p['ordinal']))

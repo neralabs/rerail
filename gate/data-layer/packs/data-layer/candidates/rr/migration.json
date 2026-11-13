@@ -3493,7 +3493,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/side-effects-plugin.rr",
-      "sha256": "f37c30ab8e4afa8f8adce0e72661421f384cfaf5cad54bf0c8bc17a16de1ca5e",
+      "sha256": "54cfdb0eddca5b9420bbe3a217e107c8458fd27d6b86fb625046907cfe645602",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
@@ -3508,6 +3508,20 @@
     {
       "destination": "docs/rule-syntax/lib/python/paths.rr",
       "sha256": "d43046456bb09306155fb5dea0c58c217ff836e68188657c31006c561fae646f",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-select.rr",
+      "sha256": "d3cf6dceec283ac042e6684581789a73de363a81f25b8fc5bd566d2ca742f209",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-select.rr",
+      "sha256": "cb925a1a596b040c6f5857812da02a53f9dc86994e792b306f6ba5ce58d69d01",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"

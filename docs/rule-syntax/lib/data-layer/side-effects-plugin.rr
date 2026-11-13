@@ -35,5 +35,5 @@ psp_line_key(v,1,strlen(v),v) :- psp_line(_,v,_),!prefix("-",v).
 psp_line_key(v,0,0-strlen(v),d) :- psp_line(_,v,_),prefix("-",v),d=join s by i sep "":{psp_digit(v,i,s)}.
 .violation SideEffectsPluginFinding(at:span,bundle:number,ordinal:number,source_code:symbol,path:symbol,line_json:symbol,source_message:symbol,path_key:symbol,line_sign:number,line_length:number,line_digits:symbol) code "PSE_PLUGIN_FINDING" "{source_message}"
 SideEffectsPluginFinding(@place("",0),b,i,c,p,j,m,p,sign,len,digits) :- option("entryPoint","_pse_plugin_report"),psp_active(b,i,n),psp_value(n,"code",c),psp_value(n,"message",m),pyp_path(n,p),psp_line(n,l,j),psp_line_key(l,sign,len,digits).
-.violation SideEffectsPluginMetadata(at:span,name:symbol,enforcement:symbol,description:symbol) code "PSE_PLUGIN_META" "Plugin metadata"
-SideEffectsPluginMetadata(@place("",0),"plan_scope_side_effects","hard-fail","Plan scopes contain only declarative planning work") :- option("entryPoint","_pse_plugin_metadata").
+.violation SideEffectsPluginMetadata(at:span,name:symbol,enforcement:symbol,description:symbol,severity_field:symbol,value_fields:symbol) code "PSE_PLUGIN_META" "Plugin metadata"
+SideEffectsPluginMetadata(@place("",0),"plan_scope_side_effects","hard-fail","Plan scopes contain only declarative planning work","severity","file_path,line_number,code,message") :- option("entryPoint","_pse_plugin_metadata").

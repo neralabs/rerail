@@ -1,0 +1,11 @@
+// The first batch captures row shapes and severity values only. Formatting
+// severity never depends on the selected rows, so this demand is stratified.
+#include "python/values.rr"
+.decl psh_row(bundle:number,ordinal:number,row:number)
+psh_row(b,i,n) :- pv_child(0,_,b,header),pv_member(header,"container",container),pv_text(container,"list"),pv_member(header,"rows",rows),pv_child(rows,_,i,n),pv_member(n,"kind",kind),pv_text(kind,"dict").
+pv_need(v) :- psh_row(_,_,n),pv_member(n,"severity",v).
+.decl psh_severity(row:number,text:symbol)
+psh_severity(n,s) :- psh_row(_,_,n),pv_member(n,"severity",v),pv_str(v,s).
+psh_severity(n,"error") :- psh_row(_,_,n),!pv_member(n,"severity",_).
+.violation SideEffectsSelectedRow(at:span,bundle:number,ordinal:number) code "PSE_PLUGIN_ROW" "Demand fields from this row"
+SideEffectsSelectedRow(@place("",0),b,i) :- option("entryPoint","_pse_plugin_select"),psh_row(b,i,n),psh_severity(n,"error").
