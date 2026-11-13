@@ -781,12 +781,21 @@ fn fold_constants(rule: &mut Rule) -> usize {
     }
 }
 
+// Request names select external handlers, not just sets of keys. Keep the
+// contracts even before the request cone has registered its answer edges.
+fn external(prog: &Program, rel: &str) -> bool {
+    prog.answers.contains_key(rel)
+        || prog.answers.values().flatten().any(|answer| answer == rel)
+        || super::rr::WORLD.iter().any(|(answer, request)| *answer == rel || *request == rel)
+        || matches!(rel, "load" | "loaded")
+}
+
 /// Whether a relation's rules may not change: outputs, inputs, lattices, relations with facts, demanded relations and
 /// gates.
 /// A relation the merge leaves as it is: an input, a lattice, demanded, a gate. (An output merges, and keeps its name
 /// as a copy of its class.)
 fn fixed(prog: &Program, rel: &str) -> bool {
-    prog.inputs.iter().any(|i| i == rel)
+    external(prog, rel) || prog.inputs.iter().any(|i| i == rel)
         || prog.natives.contains_key(rel)
         || prog.lattice.contains_key(rel)
         || prog.demand.iter().any(|d| d == rel)
@@ -796,7 +805,7 @@ fn fixed(prog: &Program, rel: &str) -> bool {
 }
 
 fn kept(prog: &Program, rel: &str) -> bool {
-    prog.outputs.iter().any(|o| o == rel)
+    external(prog, rel) || prog.outputs.iter().any(|o| o == rel)
         || prog.inputs.iter().any(|i| i == rel)
         || prog.lattice.contains_key(rel)
         || prog.natives.contains_key(rel)
