@@ -118,7 +118,7 @@ Rerail uses the machine's npm configuration and authentication. Agents call the 
 rerail update check
 rerail update
 rerail update status
-rerail events          # internal testing
+rerail events          # internal testing; experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1
 ```
 
 Hooks, the daemon and `rerail events` never contact a registry. A new version arrives only via `rerail update`, and applies to newly started sessions.
@@ -182,7 +182,7 @@ An update:
 
 Activation binds an install to one customer deployment via a signed entitlement.
 
-Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. See the README's [Internal testing](../README.md#internal-testing) section.
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. They are experimental: each refuses, and no stored profile restricts `rerail update`, unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. See [Internal testing](internal-testing.md).
 
 Package access authorizes download; the entitlement authorizes execution.
 

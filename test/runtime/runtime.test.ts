@@ -19,6 +19,9 @@ import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { steerLatitude } from "../support/steers.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -814,6 +817,48 @@ describe("Rerail session restore", () => {
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],
       })]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("checks no conversation rule while conversation rules are off, though the repository stores one", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const root = await mkdtemp(join(tmpdir(), "rerail-tool-steer-off-"));
+    directories.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    setUpTestRepository(root, {
+      library: [{
+        kind: "conversation",
+        rule: {
+          id: "acme:no-force-push",
+          mode: "steer",
+          match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+          sample: { source: "tool:Bash", boundary: "tool-call" },
+          action: { content: "Ask before force-pushing." },
+          repeat: { mode: "always" },
+        },
+      }],
+    }, databasePath);
+    const runtime = new RerailRuntime({
+      autostart: false,
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      modelPath: resolve("model"),
+      databasePath,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => false,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "tool", cwd: root } });
+      expect(await runtime.ingest({
+        kind: "call", eventId: "push", sessionId: "tool", toolCallId: "push", toolName: "Bash", input: { command: "git push --force origin main" },
+      })).toEqual([]);
+      await expect(runtime.manageRules("tool", { action: "list" })).rejects.toThrow("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
     } finally {
       await runtime.dispose();
     }

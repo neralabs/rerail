@@ -22,7 +22,7 @@ import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
-import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
 import { mergeAssistOperations } from "./merge-assist-operations.js";
 import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
@@ -488,7 +488,8 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_create",
     method: "POST",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("Queue an explicit audit for one session. Touched-file audits require paths."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Queue an explicit audit for one session. Touched-file audits require paths.")),
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
@@ -502,7 +503,8 @@ export const operations: readonly Operation[] = [
     id: "audit_requests_list",
     method: "GET",
     path: "/api/sessions/{sessionId}/audit-requests",
-    summary: internalTesting("List explicit audit requests and the ids of the audits each one produced for one session."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List explicit audit requests and the ids of the audits each one produced for one session.")),
     params: sessionId,
     output: z.object({ auditRequests: z.array(auditRequestSchema) }),
     handler: (stores, input, caller) => {
@@ -514,7 +516,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audits_list",
     method: "GET",
     path: "/api/repository-audits",
-    summary: internalTesting("List one full repository audit baseline per historically scanned repository."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "List one full repository audit baseline per historically scanned repository.")),
     query: repositoryAuditQuerySchema.extend(repositoryFilter),
     output: z.object({
       repositories: z.array(repositoryAuditSummarySchema),
@@ -526,7 +529,8 @@ export const operations: readonly Operation[] = [
     id: "repository_audit_entries_list",
     method: "GET",
     path: "/api/repository-audits/{auditId}/entries",
-    summary: internalTesting("Query paginated violations and failures from one repository audit baseline."),
+    experiment: "REPOSITORY_SCAN",
+    summary: internalTesting(experimentalSummary("REPOSITORY_SCAN", "Query paginated violations and failures from one repository audit baseline.")),
     params: z.object({ auditId: z.string().min(1) }),
     query: repositoryAuditEntryQuerySchema,
     output: z.object({

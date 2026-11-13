@@ -50,6 +50,7 @@ import {
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
@@ -86,6 +87,16 @@ interface TargetInput {
   readonly repository?: string | undefined;
   readonly checkout?: string | undefined;
   readonly folder?: string | undefined;
+}
+
+/**
+ * Internal testing: refuses a write that puts a rule on `block` while Block mode is off, or stores a conversation rule
+ * while conversation rules are off, in the daemon (`400 experimental-off`). A rule already on Block keeps it.
+ */
+function refuseExperimentsOff(modes: ReadonlyArray<RuleMode | null | undefined>, kind?: "code" | "conversation"): void {
+  const off = (feature: ExperimentalFeature, more = ""): ApiError => new ApiError(400, "experimental-off", `${experimentOffMessage(feature, "start the Rerail daemon with")}${more}`);
+  if (kind === "conversation" && !conversationRulesEnabled()) throw off("CONVERSATION_RULES");
+  if (modes.includes("block") && !blockModeEnabled()) throw off("BLOCK_MODE", ` ${BLOCK_STEERS_NOTE} Save it on steer.`);
 }
 
 /** `{ note }` when a write puts a rule on `block`, which steers until block enforcement lands; else nothing. */
@@ -537,6 +548,7 @@ export const repositoryOperations: readonly Operation[] = [
     body: settingsSetBodySchema,
     output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
     handler: (stores, input, caller) => {
+      refuseExperimentsOff([input.mode]);
       const target = resolveTarget(stores, input, caller, true);
       const db = stores.database();
       let owner: RuleSetting["owner"];
@@ -577,6 +589,7 @@ export const repositoryOperations: readonly Operation[] = [
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
+      refuseExperimentsOff(changes.map(change => change.mode));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
       for (const change of changes) checkConfig(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
@@ -747,6 +760,7 @@ export const repositoryOperations: readonly Operation[] = [
     output: libraryUpsertResultSchema,
     handler: (stores, input, caller) => {
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
+      refuseExperimentsOff([input.rule.mode], input.kind);
       const db = stores.database();
       const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();

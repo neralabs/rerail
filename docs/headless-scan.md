@@ -2,12 +2,14 @@
 
 > [!WARNING]
 > In [internal testing](internal-testing.md): in the code but not ready for public use, and may change or go without
-> notice.
+> notice. Experimental: `rerail scan` without `--session` refuses unless `RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1` (or
+> `RERAIL_EXPERIMENTAL=1`) is set for it.
 
 `rerail scan` without `--session` scans a checkout in its own process, so it runs in CI.
 
 - **Output:** `--json` prints one `rerail.scan/1` document (below); otherwise one line per violation and a summary.
-- **Remotes:** a completed scan is queued for each [remote](remote-sink.md), unless `--no-send`.
+- **Remotes:** a completed scan is queued for each [remote](remote-sink.md), unless `--no-send` or the remote sink is
+  off (`RERAIL_EXPERIMENTAL_REMOTE_SINK`).
 
 <details>
 <summary>What it does not need or touch</summary>

@@ -168,3 +168,13 @@ export {
   type MergeAssistStatus,
 } from "./merge-assist/model.js";
 export { conflictNote } from "./merge-assist/conflict-note.js";
+export {
+  EXPERIMENTAL_ALL,
+  EXPERIMENTAL_FEATURES,
+  enabledExperiments,
+  experimentEnabled,
+  experimentOffMessage,
+  experimentVariable,
+  ExperimentOffError,
+  type ExperimentalFeature,
+} from "./experimental-features.js";

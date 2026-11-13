@@ -32,7 +32,7 @@ import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/n
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath, type RerailDatabase } from "../engine/storage/database.js";
-import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
+import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
@@ -549,8 +549,9 @@ export class RerailDaemon {
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
     if (options.stateFile !== undefined) await replaceFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`, { mode: 0o600 });
-    // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
-    if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
+    // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`), and nothing at all
+    // while it is off in the daemon.
+    if (options.remoteSink !== false && remoteSinkEnabled()) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
   }
@@ -591,6 +592,7 @@ export class RerailDaemon {
       ui: this.#ui,
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
+      experiments: enabledExperiments(),
     };
   }
 

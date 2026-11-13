@@ -8,11 +8,14 @@ import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../engine/ca
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { recordedCheckoutsVersion } from "../engine/catalog/repository-registry.js";
 import { allowedHost, type PublicHosts } from "./http.js";
-import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, invokeOperation, operationAvailable, type Operation, type RerailApiStores } from "./operation.js";
 import { operationInputShape } from "./operations.js";
 import { within } from "./repository-operations.js";
 
-/** Every operation becomes one MCP tool with the same id, description, and schemas as its HTTP route. */
+/**
+ * Every operation becomes one MCP tool with the same id, description, and schemas as its HTTP route, but for one of an
+ * experimental feature this daemon runs without: a coding agent is never offered a tool that would only refuse.
+ */
 export function createRerailMcpServer(
   stores: RerailApiStores,
   operations: readonly Operation[],
@@ -21,6 +24,7 @@ export function createRerailMcpServer(
 ): McpServer {
   const server = new McpServer({ name: "rerail", version: info.version });
   for (const operation of operations) {
+    if (!operationAvailable(operation)) continue;
     server.registerTool(
       operation.id,
       {

@@ -35,6 +35,9 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { approve, currentSubject } from "../../../src/engine/index.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../../support/platform/file-mode.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];

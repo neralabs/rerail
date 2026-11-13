@@ -10,6 +10,7 @@ import { readCloneId, readRemoteAddress, repositoryIdentityLocation, repositoryK
 import { openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { addRemote, readRemoteConfig, remoteStateKey, removeRemote, setRepositoryExcluded } from "../runtime/remote-config.js";
 import { RemoteOutbox, type RemoteStatus } from "../runtime/remote-outbox.js";
+import { requireExperiment } from "../engine/experimental-features.js";
 
 export interface RemoteCliOptions {
   home: string;
@@ -152,6 +153,9 @@ function setExcludedCommand({ rest, options, out }: RemoteSubcommand, excluded: 
 
 export async function runRemoteCommand(args: readonly string[], options: RemoteCliOptions): Promise<number> {
   const [action, ...rest] = args;
+  // Internal testing: off, nothing is sent and only reading the remotes and removing one still work, so a remote added
+  // earlier can always be seen and taken away.
+  if (!["list", "status", "remove"].includes(action ?? "")) requireExperiment("REMOTE_SINK");
   const subcommand: RemoteSubcommand = { rest, options, out: options.stdout ?? process.stdout, outbox: options.outbox ?? new RemoteOutbox({ home: options.home }) };
   switch (action) {
     case "add": return addRemoteCommand(subcommand);

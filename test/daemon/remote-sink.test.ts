@@ -1,11 +1,14 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
 import { addRemote, machineId, SqliteSessionStore } from "../../src/runtime/index.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REMOTE_SINK");
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -56,4 +59,24 @@ describe("the daemon's remote sink", () => {
     await until(() => storedRecords(sink).some(item => item.id === `${machine}:2`));
     expect(storedRecords(sink).filter(item => item.type === "session").at(-1)).toMatchObject({ id: "s-1", endedAt: expect.any(Number) });
   }, 30_000);
+
+  it("sends nothing to a remote added earlier while the remote sink is off in the daemon, and says so in /healthz", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_REMOTE_SINK", "0");
+    const home = mkdtempSync(join(tmpdir(), "rerail-remote-daemon-off-"));
+    cleanups.push(() => removeFolderSync(home));
+    const sink: FakeSink = await startFakeSink();
+    cleanups.push(() => sink.close());
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const databasePath = join(home, "rerail.sqlite");
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: { intervalMs: 100 } });
+    cleanups.push(() => daemon.close());
+    expect(daemon.health().experiments).not.toContain("REMOTE_SINK");
+
+    const store = new SqliteSessionStore(databasePath, { repositoryId: "remote:example.com/team/app" });
+    cleanups.push(() => store.close());
+    store.openSession({ host: "claude-code", sessionId: "s-1", cwd: home }, Date.now());
+    store.append({ sessionId: "s-1", eventId: "e-1", kind: "user-prompt", observedAt: Date.now(), payload: { text: "hello" } });
+    await new Promise(resolve => setTimeout(resolve, 600));
+    expect(sink.requests).toHaveLength(0);
+  });
 });

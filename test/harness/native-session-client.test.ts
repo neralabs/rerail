@@ -25,6 +25,9 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
   sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: ruleIds.map(id => ({ id, state: "steered" })),

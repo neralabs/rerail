@@ -81,7 +81,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    instead.
 2. **Choose the kind.** A code rule checks files; read [references/code-rules.md](references/code-rules.md). A conversation rule
    checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md). Conversation
-   rules are in internal testing: Rerail's latest release ships code rules only.
+   rules are experimental and off unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` is set; Rerail's latest release ships
+   code rules only. Write one only when the person asks for a rule over a command, and only while `rerail rules test`
+   accepts the draft: when it answers that conversation rules are experimental and off, tell the person in one line and
+   offer a code rule if one would do.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
@@ -153,8 +156,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
-   - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
-     part of Rerail's latest release yet.`
+   - **Conversation rules** (command or similarity). Put one line above the card: `Experimental: this kind of rule is not
+     part of Rerail's latest release, and runs only while RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 is set for the daemon.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.

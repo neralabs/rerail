@@ -6,6 +6,9 @@ import { DefaultResourceLoader, SessionManager, type ExtensionContext, type Exte
 import { isRerailStarted } from "../src/runtime/index.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 import { startTestRepository } from "../test/support/started-repository.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {

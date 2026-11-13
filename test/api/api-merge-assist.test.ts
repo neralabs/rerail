@@ -93,6 +93,20 @@ describe("the Merge Assist operations", () => {
     return body.result.isError === true ? body.result.content[0]!.text : body.result.structuredContent!;
   }
 
+  /** The names of the MCP tools offered to a coding agent whose bridge started in `cwd`. */
+  async function tools(cwd: string): Promise<string[]> {
+    const response = await mcp(new Request("http://localhost:4737/mcp", {
+      method: "POST",
+      headers: {
+        host: "localhost:4737", "content-type": "application/json", accept: "application/json, text/event-stream",
+        [CALLER_CWD_HEADER]: encodeURIComponent(cwd),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    }));
+    const body = await response.json() as { result: { tools: Array<{ name: string }> } };
+    return body.result.tools.map(tool => tool.name);
+  }
+
   it("hands a person's request to the service for the checkout its target names", async () => {
     for (const [method, path, body] of [
       ["GET", `/api/merge-assist?${new URLSearchParams({ repository: repositoryKey })}`],
@@ -119,7 +133,9 @@ describe("the Merge Assist operations", () => {
     ]);
   });
 
-  it("answers every operation 404 experimental-off while the experiment is off, over HTTP and MCP, before the service runs", async () => {
+  it("answers every operation 404 experimental-off over HTTP while the experiment is off, offers none as an MCP tool, and runs no service", async () => {
+    const mergeAssistTools = async (): Promise<string[]> => (await tools(checkout)).filter(name => name.startsWith("merge_assist_")).sort();
+    expect(await mergeAssistTools()).toEqual(["merge_assist_conflict_dismiss", "merge_assist_get", "merge_assist_scan", "merge_assist_settings_get", "merge_assist_settings_set"]);
     vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "");
     for (const [method, path, body] of [
       ["GET", `/api/merge-assist?${new URLSearchParams({ checkout })}`],
@@ -130,7 +146,8 @@ describe("the Merge Assist operations", () => {
     ] as const) {
       expect(await request(method, path, body), `${method} ${path}`).toMatchObject({ status: 404, body: { error: "experimental-off" } });
     }
-    expect(await call("merge_assist_get", {}, checkout)).toMatch(/^experimental-off: /u);
+    expect(await mergeAssistTools()).toEqual([]);
+    expect(await call("merge_assist_get", {}, checkout)).toMatch(/Tool merge_assist_get not found/u);
     expect(service.calls).toEqual([]);
   });
 

@@ -16,6 +16,9 @@ import type { ConversationRule } from "../../../src/engine/catalog/rule-schema.j
 import { MOCK_CODE_RULES } from "../../../src/cli/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 const temporaryDirectories: string[] = [];
 const connections: RerailDatabase[] = [];

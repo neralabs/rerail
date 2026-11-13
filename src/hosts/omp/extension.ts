@@ -41,6 +41,7 @@ import { createOmpPresentation } from "../../presentation/omp-presentation.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules, readRepositoryState } from "../../presentation/session-presentation.js";
 import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } from "../../engine/code-rule/rerail-steer.js";
 import { registerConversationRulesTool } from "./tool.js";
+import { conversationRulesEnabled, semanticToolsEnabled } from "../../engine/experimental-features.js";
 import { registerOmpSteerRenderer } from "./steer-renderer.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, type DroppedEvents } from "../../runtime/session-state.js";
 
@@ -488,13 +489,16 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       indexing = watched;
     };
 
-    if (options.registerTool !== false) {
+    // Internal testing: each family of tools and `/cosine-rules` only while its experiment is on in OMP's process.
+    if (options.registerTool !== false && conversationRulesEnabled()) {
       registerConversationRulesTool(pi, {
         remoteExecute: () => {
           const current = remote;
           return current === undefined ? undefined : input => current.conversationRules(input);
         },
       });
+    }
+    if (options.registerTool !== false && semanticToolsEnabled()) {
       registerOmpSemanticTools(pi, {
         mark: change => activeSemantic().mark(change),
         select: spec => activeSemantic().select(spec),
@@ -502,7 +506,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         relate: (leftProjectionId, rightProjectionId, spec) => activeSemantic().relate(leftProjectionId, rightProjectionId, spec),
       });
     }
-    if (options.registerCommand !== false) {
+    if (options.registerCommand !== false && conversationRulesEnabled()) {
       registerConversationRulesCommand(pi, {
         remoteCommand: () => {
           const current = remote;
@@ -520,6 +524,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           await initialize(currentContext, { rebuild: true });
         },
       });
+    }
+    if (options.registerCommand !== false) {
       registerHostCommands(pi, {
         sessionId: () => activeSession?.sessionId,
         packageRoot: PACKAGE_ROOT,

@@ -97,9 +97,16 @@ function renderAsk(stored) {
 const BLOCK_NOT_LIVE = "Block is not in this release";
 const MODE_READ_ONLY = "Use Edit with coding agent to change this";
 
+/**
+ * Whether the Block button shows: while the daemon runs Block mode's experiment (internal testing), or for a rule
+ * already on Block, which keeps it.
+ */
+const showsBlock = mode => mode === "block" || (data.health?.experiments ?? []).includes("BLOCK_MODE");
+
 function renderModes(stored) {
   const mode = ruleMode(stored);
   for (const b of p.modes.children) {
+    if (b.dataset.v === "block") setAttr(b, "hidden", !showsBlock(mode));
     const pressed = b.dataset.v === mode, why = b.dataset.v === "block" ? BLOCK_NOT_LIVE : MODE_READ_ONLY;
     setAttr(b, "aria-pressed", String(pressed));
     setAttr(b, "title", pressed ? null : why);

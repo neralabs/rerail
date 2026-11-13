@@ -3,9 +3,12 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PACKAGE_ROOT } from "../../src/engine/index.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { experimentOffMessage, PACKAGE_ROOT, type ExperimentalFeature } from "../../src/engine/index.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("HEADLESS_SCAN", "REMOTE_SINK", "EVENT_STREAM");
 
 const REMOTE_USAGE = "Usage: rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content] | list | remove <name|url> | status | push | exclude [--repo <dir>] | include [--repo <dir>]";
 const SESSION_USAGE = "Usage: rerail session [<host> [<session-id>]] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID";
@@ -45,6 +48,26 @@ describe("rerail's command dispatch", () => {
     expect(run.stdout).toBe("");
     expect(run.status).toBe(1);
   };
+
+  it.each([
+    [["scan"], "HEADLESS_SCAN"],
+    [["remote", "add", "https://remote.example"], "REMOTE_SINK"],
+    [["remote", "push"], "REMOTE_SINK"],
+    [["events"], "EVENT_STREAM"],
+    [["activate", "--file", "profile.jws", "--trust-root", "roots.json"], "ACTIVATION_PROFILES"],
+    [["profile"], "ACTIVATION_PROFILES"],
+    [["--profile", "acme", "status"], "ACTIVATION_PROFILES"],
+  ] as Array<[string[], ExperimentalFeature]>)("%j refuses while its experiment is off, naming the variable", (args, feature) => {
+    vi.stubEnv(`RERAIL_EXPERIMENTAL_${feature}`, "0");
+    refuses(args, experimentOffMessage(feature), false);
+  });
+
+  it("lists remotes while the remote sink is off, so one added earlier can be seen and removed", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_REMOTE_SINK", "0");
+    const run = rerail(["remote", "list"]);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+  });
 
   it.each([
     [["stop", "--nope"], "Unknown stop option: --nope"],
