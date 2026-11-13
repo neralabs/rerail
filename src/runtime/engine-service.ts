@@ -448,7 +448,11 @@ function cutStalledRequests(connections: ReadonlyMap<Socket, IncomingMessage | u
 /**
  * Each open connection of `server`, with the request it carries once that request's headers have arrived, the latest
  * one on a connection that carries several (`cutStalledRequests` reads it). A connection leaves it when it closes, so
- * a daemon does not keep every hook's socket for its life.
+ * a daemon does not keep every hook's socket for its life. A connection its client keeps open after an answer still
+ * shows that request while only part of the next one's headers has come, so the close leaves it to Node's keep-alive
+ * timeout, which ends it about 6 s after its last byte, as `server.close()` alone does. Clearing the entry once the
+ * answer is written would cut it within two seconds, and with it a next request the client sends a few seconds later,
+ * which `server.close()` answers. Rerail's own clients open a connection for each request.
  */
 export function trackConnections(server: Server): ReadonlyMap<Socket, IncomingMessage | undefined> {
   const connections = new Map<Socket, IncomingMessage | undefined>();
