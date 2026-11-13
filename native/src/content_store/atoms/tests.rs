@@ -354,7 +354,7 @@ fn probe_a_store() {
     eprintln!("a new atom: {id} of {} in {:.3} s; held {:.1} MB", atoms.len(), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
 }
 
-/// Decision 0114 §4: atoms a component makes ahead of the run's order are reserved, not counted by the commit
+/// Decision 0114b §4: atoms a component makes ahead of the run's order are reserved, not counted by the commit
 /// check, until it retires; then they are pending as any, and the next commit writing rows appends them.
 #[test]
 fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {

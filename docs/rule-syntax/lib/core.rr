@@ -174,7 +174,7 @@
 // message is CPython's where CPython names the error (indentation, brackets, strings, targets), else "invalid
 // syntax"; a null byte's line, which CPython does not give, is 1. The corpus binds it as cpython_syntax_error(d, l,
 // msg); the converter's programs declare syntax_error(d: number) and read the tape's verdict (tree-sitter's ERROR
-// and MISSING nodes) under that name instead (a file cannot: decision 0047; an authored overlay reads it as
+// and MISSING nodes) under that name instead (a file cannot: decision 0047a; an authored overlay reads it as
 // tape_syntax_error(d)). Other languages use tree-sitter's ERROR and MISSING
 // nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).

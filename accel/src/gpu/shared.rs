@@ -7,7 +7,7 @@
 //!   hashing their source.
 //! - **A pool of shared buffers** by size class: powers of two from 16 KiB, as decision 0039's blocks. A buffer a
 //!   command has used is resident already, so a pooled one costs neither its creation nor its first mapping (about
-//!   6 µs against 0.1 µs, measured in 0095). At most `IDLE_LIMIT` bytes are kept idle. A lease goes back only when
+//!   6 µs against 0.1 µs, measured in 0095b). At most `IDLE_LIMIT` bytes are kept idle. A lease goes back only when
 //!   it is dropped, and its holder drops it once every command buffer that reads it has completed: the host's next
 //!   write into it is not ordered after a GPU read.
 //! - **The guard.** A function the engine sets to its launch budget. Every submission checks it first, on the

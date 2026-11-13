@@ -1,4 +1,4 @@
-//! A stratum's joins on the device (decision 0095, step 4): the native join plan run by Metal, when the placement
+//! A stratum's joins on the device (decision 0095b, step 4): the native join plan run by Metal, when the placement
 //! planner puts the stratum there (`plan::placement`, under the Metal binding).
 //!
 //! **What runs where.** The planner writes the stratum's spec as for the CPU, with one more line, `device`. At
@@ -1600,7 +1600,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
     }
     rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
     let rows: u64 = rep.rows;
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095b)", "head rows read back", rows);
     LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok(out)
 }
@@ -1688,7 +1688,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
     let out = complete(runs, rules, store, names, fresh, &mut rep)?;
     rep.encode_cpu += (thread_cpu() - c0 - rep.decode_cpu).max(0.0);
     let rows: u64 = rep.rows;
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095b)", "head rows read back", rows);
     LAST.with_borrow_mut(|l| *l = Some(rep));
     Ok(spliced(all, &live, out))
 }
@@ -1703,7 +1703,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
-    let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095b)", "encode: uploads, sorts, stages");
     let mut runs: Vec<Run<'static>> = Vec::with_capacity(rules.len());
     let mut bytes = 0;
     for (plan, _, _) in rules {
@@ -1807,7 +1807,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     }
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
-    let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "decode: rows into the store");
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095b)", "decode: rows into the store");
     let mut out = Vec::with_capacity(runs.len());
     for (r, &(plan, j, head)) in runs.iter().zip(rules) {
         let last = r.io.last().map_or(0, |io| io.1);

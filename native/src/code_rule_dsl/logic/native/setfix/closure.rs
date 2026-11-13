@@ -26,7 +26,7 @@
 //!
 //! The form runs in two halves around its launches (`prepare`, `finish`), so a stratum can wait for them while the
 //! other strata of its level prepare theirs: the launches of a level then go to the executor as one batch (a device
-//! wave, decision 0095 §5, `lanes::wave`).
+//! wave, decision 0095b §5, `lanes::wave`).
 
 use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each};
 use crate::code_rule_dsl::logic::lanes::prof;

@@ -1,4 +1,4 @@
-//! The tile join on the device (decision 0095 §4): two relations grouped by their key 0's chunk, compared by brute
+//! The tile join on the device (decision 0095b §4): two relations grouped by their key 0's chunk, compared by brute
 //! force within a chunk. The GPU lane's `join` kernel takes it for joins grouped by document (decision 0100 §1);
 //! the engine's row programs read the same layout (`Resident`).
 //!
@@ -107,7 +107,7 @@ pub struct Joined {
     pub compared: u64,
 }
 
-/// The equi-join of two resident relations on key columns, by brute force within a document (decision 0095 §4,
+/// The equi-join of two resident relations on key columns, by brute force within a document (decision 0095b §4,
 /// `tile`): both relations grouped by their key 0 (each one's column 0, a node column in the 16-bit layout on both
 /// sides), so a pair whose key 0 is equal is in one group, a document's rows. A threadgroup takes 256 left rows of
 /// a group; the group's right rows come through threadgroup memory 256 at a time (each key 16 bits when both sides

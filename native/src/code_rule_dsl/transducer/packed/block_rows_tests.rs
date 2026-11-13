@@ -1,4 +1,4 @@
-//! Row programs (decision 0095 §2): block programs whose stream is a run's rows, written in
+//! Row programs (decision 0095b §2): block programs whose stream is a run's rows, written in
 //! `rir`, checked on the CPU interpreter and Cranelift against a row-by-row reference that exists
 //! only here.
 

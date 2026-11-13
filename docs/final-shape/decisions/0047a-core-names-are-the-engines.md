@@ -1,4 +1,6 @@
-# 0047: `core.rr`'s names are the engine's
+# 0047a: `core.rr`'s names are the engine's
+
+_Numbered 0047 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: accepted (2026-11-06)
 

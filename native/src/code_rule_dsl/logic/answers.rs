@@ -21,7 +21,7 @@ fn atom(rel: String, args: Vec<Term>) -> Atom {
 }
 
 /// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
-/// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0108).
+/// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0108a).
 pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
 
 /// Whether `rel` is a gate's `done` relation (`gate`): a test of keys its rule's literals bind, which the planner

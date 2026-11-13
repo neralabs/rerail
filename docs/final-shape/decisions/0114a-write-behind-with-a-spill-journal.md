@@ -1,4 +1,6 @@
-# 0114: Write behind, as far as memory allows, with a spill journal past it
+# 0114a: Write behind, as far as memory allows, with a spill journal past it
+
+_Numbered 0114 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: draft (2026-11-11), an exploration. Only the measurement aids are built
 (`RERAIL_WRITE_QUEUE_MB`, the writer's account by kind of write, the end-of-run drain line).

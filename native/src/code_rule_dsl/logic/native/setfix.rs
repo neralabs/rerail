@@ -62,7 +62,7 @@ use std::os::raw::c_int;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Instant;
 
-/// Strata captured and run again on their own (decision 0095, step 0).
+/// Strata captured and run again on their own (decision 0095b, step 0).
 pub mod lab;
 pub mod spec;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
@@ -1033,7 +1033,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into());
         join_rule(conn, j, syms)
     };
-    // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
+    // `device`: the placement put the stratum on the device (decision 0095b §7); its seeds are parsed without the
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
     // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
@@ -1311,7 +1311,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
-    // This run's own cursor over the shared atoms (decision 0114 §3): the atoms lock themselves, so a stratum need
+    // This run's own cursor over the shared atoms (decision 0114b §3): the atoms lock themselves, so a stratum need
     // not hold the connection's symbols for its run, and strata on other threads intern at once.
     let mut cursor = Interner::for_loading(&symbols);
     {
@@ -1492,7 +1492,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 fresh[head].offer(&row, &store.rels[head]);
             }
         }
-        // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
+        // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095b, step 4).
         let dev = solver();
         let tried = !seeded && comp.device.is_some() && dev.is_some();
         // The component's fixpoint ran on the device (a recursive one): its rows are all of them, and it is done.
@@ -1568,7 +1568,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // Join probes, natively; seed joins in the first wave only (none when the device ran the fixpoint).
         // The whole plans run this wave, by head: a spec says what a body derives, not where, so two rules with one
-        // body and different heads (a magic relation and its reader's, decision 0108's demand) are two runs.
+        // body and different heads (a magic relation and its reader's, decision 0108a's demand) are two runs.
         let mut wholes_run: Vec<(usize, &Arc<JoinSpec>)> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
@@ -1770,7 +1770,7 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
     Ok(out)
 }
 
-/// Holds back request rows the caller does not answer yet (a load past the budget's current level, decision 0108):
+/// Holds back request rows the caller does not answer yet (a load past the budget's current level, decision 0108a):
 /// they are asked again once the run is otherwise quiet. Until then they are as rows not yet asked.
 pub fn defer(conn: impl Scoped, name: &str, table: &str, rows: Vec<Vec<i64>>) -> Result<()> {
     let conn = conn.db();
@@ -3078,7 +3078,7 @@ impl InRel {
     }
 }
 
-/// A level's device wave (decision 0095 §5, 0098 §6): the count tables its strata read (`wants`, by relation and key
+/// A level's device wave (decision 0095b §5, 0098 §6): the count tables its strata read (`wants`, by relation and key
 /// columns) that an earlier chunk found worth building and that this run holds, built now as one batch. Returns the
 /// launches and the relations they read.
 pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {

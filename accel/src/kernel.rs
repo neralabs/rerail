@@ -101,7 +101,7 @@ pub enum Kernel {
     /// rule `j`). Without it, every count, as [`Output::Counts`] (`a.rows` × `b.rows`).
     BitProduct { a: Bits, b: Bits, min: Option<Arc<[u32]>> },
 
-    /// **Count table.** An equality join within each partition, on 16-bit codes (decision 0095 §6: a document's
+    /// **Count table.** An equality join within each partition, on 16-bit codes (decision 0095b §6: a document's
     /// local name ids, a kind, a node's low 16 bits).
     ///
     /// For each left row, how many right rows of the same partition have its code: [`Output::PerRow`]
@@ -137,7 +137,7 @@ pub enum Kernel {
 /// was begun, [`crate::col`]).
 pub type Keys = Arc<[crate::col::Col]>;
 
-/// How a join's pairs are found on a device (decision 0095 §4).
+/// How a join's pairs are found on a device (decision 0095b §4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoinBy {
     /// The right sorted by key 0 and kept; each left row searches its key's run.

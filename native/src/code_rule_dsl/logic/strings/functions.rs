@@ -84,7 +84,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_place_line", &[Number], Number),
     // Characters, as SQLite's `length` counts a text's.
     ("rr_strlen", &[Text], Number),
-    // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107): positions from 1,
+    // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107b): positions from 1,
     // characters not bytes; `sql_substr2` is SQLite's `substr(x, y)`, `sql_trim2` its `trim(x, chars)`.
     ("sql_instr", &[Text, Text], Number),
     ("sql_substr", &[Text, Number, Number], Text),
@@ -133,7 +133,7 @@ pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     }
 }
 
-/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
+/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107b: t17's catalogue, the
 /// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
 /// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
 pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {

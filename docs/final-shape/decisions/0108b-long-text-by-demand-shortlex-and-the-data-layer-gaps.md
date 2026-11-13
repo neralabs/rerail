@@ -1,10 +1,12 @@
-# 0108: Long node text by demand, shortlex symbols, and the data-layer gaps closed
+# 0108b: Long node text by demand, shortlex symbols, and the data-layer gaps closed
+
+_Numbered 0108 until 2026-11-13, when 3 decisions shared the number; the letter orders them by when each was written._
 
 Status: proposed (2026-11-10)
 
 ## Intro
 
-Decision 0107 ran the first data-layer programs on the `.rr` engine and left five
+Decision 0107b ran the first data-layer programs on the `.rr` engine and left five
 open items. These were the cost of capture absorption, the `shortlex_min` lattice,
 options other than the defaults, the remaining programs, and the cost of relaxed
 matchers. This record closes the first three and the last. It moves the remaining

@@ -1565,7 +1565,7 @@ pub fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments
 
 /// `run_resident` with each file's SHA-256 given (`digests`, in the files' order), as the
 /// residency's documents take theirs (decision 0032 §4): the engine knows them from a `stat` or
-/// a Git blob (decision 0095 §3), and the run hashes no file's bytes.
+/// a Git blob (decision 0095a §3), and the run hashes no file's bytes.
 pub fn run_resident_digested(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments) -> Result<(SerialRun, Resident), Error> {
     let (run, kept) = run_kept(programs, files, digests, segments, false)?;
     Ok((run, kept.ok_or(Error::BackendFailure)?))

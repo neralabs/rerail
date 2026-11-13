@@ -107,7 +107,7 @@ These came earlier in the same project and bear on the same question.
   answer from one order of 4 bytes a row built on first use. Index statements fell
   from 99 to 28 on a 49-file slice. This is the idea approach 1 brought to the
   native engine.
-- **Sort join against hash join (decision 0095, lab captures).** On 232 two-atom
+- **Sort join against hash join (decision 0095b, lab captures).** On 232 two-atom
   joins (5.6 M pairs): CPU hash join 234 ms, CPU radix sort join (each right side
   sorted once a capture) 96 ms. A sort-based join beat the hash join by 2.4× there.
 - **Bulk lookups against a sorted posting index (candidate spikes, 2026-11-09).**
@@ -567,6 +567,6 @@ All in the engine's `native/src/code_rule_dsl/logic/native/setfix.rs` and its
   (`plan.rs`).
 - [j] ae9b21080, on a side branch only.
 - Earlier work: 7d7827a87 and ffae8ae7e (per-chunk index builds); c7ba9dce5 (SQL
-  chain-cover orders, in `open-items.md`); decision 0095's lab check (radix sort
+  chain-cover orders, in `open-items.md`); decision 0095b's lab check (radix sort
   join); `docs/comparisons/candidate-and-index-spikes.md` (bulk lookups);
   decision 0045 (chunked containers).

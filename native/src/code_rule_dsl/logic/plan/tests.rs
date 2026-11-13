@@ -26,7 +26,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
 }
 
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
-/// decision 0108's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
+/// decision 0108a's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
 /// head, so neither head loses the rows the first wave derives.
 #[test]
 fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
@@ -83,7 +83,7 @@ fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
     assert_eq!(outputs[1].len(), 2, "{:?}", outputs[1]);
 }
 
-/// Device waves (decision 0095 §5): three closures of one level, each over a graph with a fork and a cycle, wait
+/// Device waves (decision 0095b §5): three closures of one level, each over a graph with a fork and a cycle, wait
 /// for their bit rows' launches, which run as one batch when the level ends; the rows are SQL's.
 #[test]
 fn closures_of_one_level_launch_in_one_wave() {
@@ -537,7 +537,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
 #[ignore = "O95: T's facts predate relations calls.rr now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
-    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047b): empty here, so every
     // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
     // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rr), which calls.rr reads through
     // python/conditions.rr (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
@@ -573,7 +573,7 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        // The product's own outputs (calls.rr's type relations, decision 0047b) are not T's: they have no golden.
         for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();

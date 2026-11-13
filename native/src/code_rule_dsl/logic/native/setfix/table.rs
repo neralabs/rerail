@@ -5,7 +5,7 @@
 //! match its key, and counts them. When many bindings reach it, the walks add up to more than reading `r` once.
 //! The count table reads `r` once instead:
 //!
-//! - **The histogram.** The relation's rows, by their key's value, are given a 16-bit code within a partition (0095
+//! - **The histogram.** The relation's rows, by their key's value, are given a 16-bit code within a partition (0095b
 //!   §6's local codes; the partitions are by a hash of the key, so each holds at most 2^16 distinct keys), and the
 //!   executor's `Histogram` kernel counts each partition's codes. A probe looks its key up and reads its count. The
 //!   table belongs to the relation, as its indexes do: every later step that counts it by the same columns reads the
@@ -346,7 +346,7 @@ fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], 
     Ok(pos.iter().map(|&p| counts[p as usize]).collect())
 }
 
-/// The device wave of a level (0095 §5): the tables its strata will read that an earlier chunk found worth building,
+/// The device wave of a level (0095b §5): the tables its strata will read that an earlier chunk found worth building,
 /// built now in one batch, so each lane gets one submission for the level. `wants`: the level's count reads, by
 /// relation and columns; `held`: the relation's rows, if this run holds them. Returns (launches, distinct relations).
 pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&str) -> Option<Arc<InRel>>) -> Result<(usize, usize), String> {

@@ -384,7 +384,7 @@ Also found here, and needed under any keying: a run read from a memo must plan w
   memoised by this decision as they are. What 0065 adds is the fixpoint reading the recorded rows
   in place, rather than through `<rel>__cross` copies, and per-class grouping if a closure is too
   large.
-- Rounds (0035, 0047) still iterate the whole cross-file part of the components that missed. A
+- Rounds (0035, 0047b) still iterate the whole cross-file part of the components that missed. A
   per-component cutoff inside the rounds is O41's remaining step.
 - Stored component rows are never removed while their name stays bound. Every version of a
   component's key is kept. Collecting rows that no recent manifest names is open, as it was for

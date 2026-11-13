@@ -1,4 +1,4 @@
-//! Rows ordered by a key column on the host (decision 0095 §4): the CPU lane's joins, and the narrow form a column
+//! Rows ordered by a key column on the host (decision 0095b §4): the CPU lane's joins, and the narrow form a column
 //! takes on the device. Moved into the executor with the device's joins (decision 0100 §1): the CPU reference of
 //! the `join` kernel is `probe` here.
 //!

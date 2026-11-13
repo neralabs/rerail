@@ -32,7 +32,7 @@ Status: draft (2026-11-11), for review. Only the measurements and one fix (below
 ## What was measured
 
 The 20-file corpus (476 KB, 20 `.py` files), under strict mode, with the debug-profile build, the queue's cap at
-4 GB (0114), and the export demand on (0099). A cold run, then a one-line edit (an assignment appended to
+4 GB (0114a), and the export demand on (0099). A cold run, then a one-line edit (an assignment appended to
 `_internal/connection_helpers.py`), then a warm run against the cold run's store.
 
 | | Cold | Warm, one-line edit |
@@ -114,10 +114,10 @@ run? They were built one at a time.
 | `covering` | `lower.rs` | context groups that only test that rows exist are dropped | literal |
 | Factorized store (0099) | `typing::file_local` | an export crosses the chunk boundary as parts, not as their join | relation |
 | Export demand (0099, 2026-11-11) | `file_local/export_demand.rs` | an export crosses only with the rows its cross-file readers can join | key |
-| A search is demand rules (0107) | rules in `.rr` | a search answers only what is asked | key |
-| The cone is magic sets, kept by delta (0108) | `answers`, `kept_strata` | the file system is read only where it is asked | key, across runs |
+| A search is demand rules (0107a) | rules in `.rr` | a search answers only what is asked | key |
+| The cone is magic sets, kept by delta (0108a) | `answers`, `kept_strata` | the file system is read only where it is asked | key, across runs |
 | Kept strata and a session's kept part (0077, 0101) | `kept_strata.rs`, `retain.rs` | every derived relation's rows and digest are kept for the next run | relation, across runs |
-| The per-file memo (0108) | `memo.rs` | each file's exports and the base rows the cross part reads are kept | file, across runs |
+| The per-file memo (0108c) | `memo.rs` | each file's exports and the base rows the cross part reads are kept | file, across runs |
 
 Unmerged and relevant, on `jeremybarnes/Data-layer-rule-expressivity`:
 - **31aea1a9a, 3d47054af, 4e0774680.** Which kept relations' rows a run loads: everything the views among them read,

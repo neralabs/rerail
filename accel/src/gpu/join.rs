@@ -1,4 +1,4 @@
-//! Relations sorted by a key on the device, and the equi-joins that probe them (decision 0095 §4, §5): the GPU
+//! Relations sorted by a key on the device, and the equi-joins that probe them (decision 0095b §4, §5): the GPU
 //! lane's `join` kernel, moved into the executor from the engine (decision 0100 §1).
 //!
 //! **A column on the device** (`Column`) is each value's offset from the column's least value, in 16, 32 or 64

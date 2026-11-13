@@ -213,15 +213,15 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
     );
 }
 
-/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0108 §4): the plan's runs are
+/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0108c §4): the plan's runs are
 /// every root's, so worktrees that take turns keep theirs.
 const MEMO_RUNS: i64 = 32;
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
-/// branches that take turns at a file keep theirs (decision 0108 §4); an edited file's earlier contents go.
+/// branches that take turns at a file keep theirs (decision 0108c §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
 
-/// The memo's relation in its plan's space: one frame per entry (decision 0108).
+/// The memo's relation in its plan's space: one frame per entry (decision 0108c).
 pub(super) fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
     crate::content_store::FrameRel { name: "local".to_owned(), ident: *plan }
 }
@@ -481,7 +481,7 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 }
 
 /// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their frames in
-/// one transaction (decision 0108). Queued behind the run (decision 0102): encoded and written by the store's
+/// one transaction (decision 0108c). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
@@ -782,7 +782,7 @@ pub(super) fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
 }
 
-// An entry's frame (decision 0108): typed rows of integers, each row's first value its kind, its second the
+// An entry's frame (decision 0108c): typed rows of integers, each row's first value its kind, its second the
 // relation or output it is of. A relation's rows are rows of it, a value to a column; text (names, lines) is packed
 // eight bytes to a value.
 const NODES: i64 = 0;

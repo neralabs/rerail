@@ -9,7 +9,7 @@ recursion may cross a file boundary: for example, a call's target is in another 
 re-exports it from a third.
 
 Decision 0035 bounds that recursion. Each round reads the previous round's rows of the hop
-relations, and a round stops at k (0047: k = 4, with a pending round past it). The bound exists for
+relations, and a round stops at k (0047b: k = 4, with a pending round past it). The bound exists for
 typing programs. Their answers are lower bounds, and a fact a round could not reach is marked
 unknown (03 §13, "Pending is a state distinct from ⊤").
 
@@ -36,7 +36,7 @@ own namespace, so two rules reading the same answers held two copies.
      `with_k` or the `RERAIL_CROSS_ROUNDS` diagnostic overrides it.
    - A program with hops and no pragma runs its cross-file part as one fixpoint. The profile records the decision:
      "none: the program declares no `.pragma "cross-rounds"` …".
-   - The pending round (0047) is unchanged. A program that declares `unconverged(0)` still gets it.
+   - The pending round (0047b) is unchanged. A program that declares `unconverged(0)` still gets it.
    - The `.rdl` copies carry the same line, which both front ends read, so each `.rr` stays its `.rdl`'s
      translation until the copies are removed.
    - The engine knows nothing about typing beyond this one generic switch. Which programs are bounded, and by how
@@ -44,7 +44,7 @@ own namespace, so two rules reading the same answers held two copies.
      same way.
 2. **Bridged answers are one shared fact family, handed over as rows.**
    - `bridge::is_bridged(rel)` recognises `typing_<program>__<output>`. `corpus::combine` does not namespace it,
-     as it does not namespace `core.rr`'s relations (0047, core names): the answers are the same whichever rule
+     as it does not namespace `core.rr`'s relations (0047a, core names): the answers are the same whichever rule
      reads them.
    - `bridge::facts` returns rows (`front::Value`), which the runner adds to the combined program. Nothing is
      printed or parsed again, and each program runs once however many rules read it.
@@ -69,10 +69,10 @@ own namespace, so two rules reading the same answers held two copies.
 ## Prior work consulted
 
 - **ast-index-spike:** design index §17 scopes cross-file facts out. It offers no prior form for bounded rounds,
-  as 0035 and 0047 record.
+  as 0035 and 0047b record.
 - **The ledger's row 20** (partition by file; global machinery only where needed): rounds now run only where a
   program asks for them.
-- **0035, 0047:** the mechanism (hops, `@doc`, the digest cutoff, k = 4, the pending round) is unchanged. Only
+- **0035, 0047b:** the mechanism (hops, `@doc`, the digest cutoff, k = 4, the pending round) is unchanged. Only
   who switches it on has moved.
 
 ## Departs from

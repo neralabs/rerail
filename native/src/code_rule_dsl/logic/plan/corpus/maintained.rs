@@ -4,7 +4,7 @@
 //!
 //! The cross-file part's session path does the same with more beside it (statistics kept by delta, frames, the
 //! measurement aids); this is its core, for a program run many times over growing inputs: the cone's rounds
-//! (decision 0108).
+//! (decision 0108a).
 
 use super::{Result, held_rows, lower, maintain, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, syntax};

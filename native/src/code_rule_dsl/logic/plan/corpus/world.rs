@@ -95,14 +95,14 @@ impl World {
                 }
             }
         }
-        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
+        // What the requests may read is watched (decision 0105b): a directory listed or a file read that the
         // journal says is unchanged is not statted.
         super::observe(|o| o.watch(&roots));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
-    /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
+    /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105b).
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
         let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
@@ -225,13 +225,13 @@ impl World {
     }
 
     /// Takes back every document loaded from beyond the corpus root this run: a cone that starts again in levels
-    /// (decision 0108) asks them again, level by level. How many.
+    /// (decision 0108a) asks them again, level by level. How many.
     pub(super) fn take_back_libraries(&mut self) -> usize {
         let paths: Vec<String> = self.loads.keys().filter(|p| !self.own(p)).cloned().collect();
         paths.iter().filter(|p| self.unload(p)).count()
     }
 
-    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// Takes back the document loaded from `path` this run (decision 0108a, a load taken back): its place in the
     /// budget is free again. Whether it was loaded.
     pub(super) fn unload(&mut self, path: &str) -> bool {
         let Some(loaded) = self.loads.remove(path) else { return false };

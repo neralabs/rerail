@@ -112,5 +112,5 @@ batch and the plans.
   run as one component's job on an executor thread. **Closed (2026-11-12):** the job still flushed them as one wave
   of three (a component's members share a wave, `run_members`); only the count was the job thread's, and the test
   read the run's. A job now moves its waves to the thread that takes it back (`wave::since`, `wave::credit`, carried
-  in its `Strand`): 30 of 30 with strands on. So it was not a gap between 0113 and 0095 §5. Strata of one level in
+  in its `Strand`): 30 of 30 with strands on. So it was not a gap between 0113 and 0095b §5. Strata of one level in
   different components (`RERAIL_STRATA_MERGE=off`) still flush a wave each.

@@ -1,4 +1,4 @@
-//! A join step's filters as one row program (decision 0095 §2).
+//! A join step's filters as one row program (decision 0095b §2).
 //!
 //! An atom that binds columns is often followed by steps that only test or compute from what is
 //! bound: `lt`, `eq`, `ne`, `in`, `deq`/`dne`, `docof`, `let`. Those steps are fused with the atom
@@ -12,7 +12,7 @@
 //! - a slot bound before the atom, or a constant, is a parameter, one value for the whole chunk;
 //! - `@doc(x)` (`docof`, `deq`, `dne`) is computed: `x >> 32`. Computed values are the plan's own
 //!   expression list (`Word`), evaluated over the chunk's columns before the program runs. They
-//!   do not fit `Program`, which holds no word-valued row code (decision 0095 §2).
+//!   do not fit `Program`, which holds no word-valued row code (decision 0095b §2).
 //!
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.

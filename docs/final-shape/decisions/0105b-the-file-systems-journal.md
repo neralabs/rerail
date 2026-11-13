@@ -1,4 +1,6 @@
-# 0105: The file system's journal says what changed; the observer trusts the rest
+# 0105b: The file system's journal says what changed; the observer trusts the rest
+
+_Numbered 0105 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: built (2026-11-10). macOS: FSEvents. Elsewhere: Watchman when it is installed, else
 stat mode.
@@ -136,4 +138,4 @@ The findings are identical to the baseline (`n_loaded.csv`).
   the status again only when a named path could change the list (a new or removed file, a
   directory, `HEAD`, the index, refs, config, info or an ignore file).
 - A run whose edit makes the cone rerun as whole strata cost ~20 s CPU; three plans were the
-  cost, and it is now 2.4 s (decision 0108).
+  cost, and it is now 2.4 s (decision 0108a).

@@ -1,4 +1,4 @@
-//! Row programs on Metal (decision 0095 §2, §3, §6): `scan` as `count` and `scatter` over a
+//! Row programs on Metal (decision 0095b §2, §3, §6): `scan` as `count` and `scatter` over a
 //! relation held in the stratified 16-bit layout.
 //!
 //! **The layout.** The rows are grouped by their lead column's chunk, its high part (`v >> 16`):

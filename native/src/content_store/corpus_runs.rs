@@ -109,7 +109,7 @@ fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<
 }
 
 /// The holds (`object_pins`) of runs whose process is gone: a run killed (a watchdog, a crash) never releases its
-/// hold, which kept its plans live, and their memos (decision 0108), for the lease's 6 hours. A run's owner names its
+/// hold, which kept its plans live, and their memos (decision 0108c), for the lease's 6 hours. A run's owner names its
 /// process (`corpus-run:<pid>:…`); a process of this host that no longer exists holds nothing. A pid used again by
 /// another process keeps the hold to its lease, as before.
 fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>> {
@@ -588,7 +588,7 @@ impl ContentStore {
             }
             // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
             // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
-            // build and the program, and its memo (decision 0108: a space of frames, the size of every file's
+            // build and the program, and its memo (decision 0108c: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
             let mut protection = Protection::default();
@@ -706,7 +706,7 @@ impl ContentStore {
                     params![plan, PLAN_ROWS_PER_PASS],
                 )?;
                 if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0108): its frames' space.
+                    // The plan's per-file memo (decision 0108c): its frames' space.
                     let mut frames_gone = 0;
                     if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
                         let space = super::frames::local_space(&digest);
@@ -719,7 +719,7 @@ impl ContentStore {
                     }
                     tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                     tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is frames now (decision 0108), not rows.
+                    // A dead plan collected is work done, though its memo is frames now (decision 0108c), not rows.
                     return Ok(n + frames_gone + 1);
                 }
                 Ok(n)

@@ -1,4 +1,4 @@
-//! Row programs on the CPU JIT (decision 0095 §2): Cranelift emits a row program's native IR
+//! Row programs on the CPU JIT (decision 0095b §2): Cranelift emits a row program's native IR
 //! (`native_ir::BlockNative` of a `block::BlockProgram` with `rows`) as one function
 //! `tempo_rows(columns, params, sets, words, out)`. Its one loop is over the run's words, 64 rows
 //! each; a word's body is straight-line:

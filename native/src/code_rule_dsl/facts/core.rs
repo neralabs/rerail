@@ -680,7 +680,7 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
+/// The relations `core.rr` declares (the engine's names, decision 0047a), as the rule language reads them;
 /// registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -831,7 +831,7 @@ pub mod cpython_relations {
     }
 }
 
-/// The relations a program's `ast` atoms bind (`rr_ast_<k>`, `rr_ast_<k>_<m>`, decision 0107) and their columns.
+/// The relations a program's `ast` atoms bind (`rr_ast_<k>`, `rr_ast_<k>_<m>`, decision 0107b) and their columns.
 pub mod ast_matches {
     /// The prefix of a matcher's relation.
     pub const PREFIX: &str = "rr_ast_";

@@ -1,4 +1,6 @@
-# 0108: The cone of requests is magic sets, maintained by delta
+# 0108a: The cone of requests is magic sets, maintained by delta
+
+_Numbered 0108 until 2026-11-13, when 3 decisions shared the number; the letter orders them by when each was written._
 
 Status: built (2026-11-10). The join half and the delta half (rounds) are both built (below).
 
@@ -56,7 +58,7 @@ per-file facts, and the rules. Three facts follow from the standard results:
    those inputs, and counting or DRed (decision 0077) maintain derived relations from input
    deltas. A deleted request deletes its answers (`dir_entry` loses `d`'s rows), because the
    answer is a join with the request.
-3. **The journal gives `Δfs`.** The journal (decision 0105) names the paths changed since the
+3. **The journal gives `Δfs`.** The journal (decision 0105b) names the paths changed since the
    last run. `Δfs_dir(d)` is `d`'s new listing against its kept one, for each `d` both named
    and asked. `Δfs_line(p)` is the same for files. Paths not named have `Δfs = ∅`.
 
@@ -211,7 +213,7 @@ So a session and a new process start the same way. The round program has no outp
 are handed on, so each relation is stored with its rows. A relation of no columns is stored as
 its count. A view of one input records its input's digest.
 
-**Unchanged directories are not asked (decision 0105).** With its frames, the rounds record the
+**Unchanged directories are not asked (decision 0105b).** With its frames, the rounds record the
 journal's cursors for the roots they read, and the digest of the file-system answers kept. The
 next run asks the journal what changed since. A carried directory, file or digest request keeps
 its kept answer and is not asked, when the journal names none of these paths:

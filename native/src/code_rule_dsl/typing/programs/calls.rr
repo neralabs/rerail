@@ -1055,7 +1055,7 @@ builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"
 builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
 builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
 
-// ---- types (decision 0047, point 3) ---------------------------------------------------------------------------
+// ---- types (decision 0047b, point 3) ---------------------------------------------------------------------------
 // What a rule reads of a value's type, at the positions whose value the program models (`vpos`: callees and
 // receivers, assigned, returned and decorating values, arguments and bases). Three-valued, as calls are:
 //   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name, or a builtin's

@@ -1,4 +1,4 @@
-//! The gpu lane (decision 0098 §5, 0095 §3): the four kernels in Metal compute, a batch as **one command buffer**.
+//! The gpu lane (decision 0098 §5, 0095b §3): the four kernels in Metal compute, a batch as **one command buffer**.
 //!
 //! A submission plans each launch as a list of **stages**: dispatches that read only the launch's inputs and what
 //! its earlier stages wrote. All launches' stage 0 dispatches are encoded first, then one memory barrier over the

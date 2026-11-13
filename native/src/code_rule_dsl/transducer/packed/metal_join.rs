@@ -1,4 +1,4 @@
-//! A stratum's join plan on the device (decision 0095 §3, §4, step 4): binding tables, the stages that extend and
+//! A stratum's join plan on the device (decision 0095b §3, §4, step 4): binding tables, the stages that extend and
 //! filter them, and relations kept on the device across a chunk's strata.
 //!
 //! **What runs.** A native join rule (`setfix`'s `JoinRule`) is a pipeline of steps over bindings: an atom read by

@@ -1,5 +1,5 @@
 //! A program's `ast` matchers (decision 0106) lowered for the transducer and run as one wave over a batch's tapes
-//! (decision 0107): the engine's `AstWave`, which facts runs where `with_matchers` binds.
+//! (decision 0107b): the engine's `AstWave`, which facts runs where `with_matchers` binds.
 
 use super::*;
 use std::collections::HashMap;
@@ -48,13 +48,13 @@ pub(crate) struct Matcher {
     pub(crate) rel: String,
     pub(in crate::code_rule_dsl) lowered: Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>,
     pub(in crate::code_rule_dsl) gates: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
-    /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
+    /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107b).
     pub(crate) captures: Vec<String>,
     pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
-/// chunk (decision 0107).
+/// chunk (decision 0107b).
 pub(crate) struct Wave {
     pub(crate) list: Vec<Matcher>,
     pub(in crate::code_rule_dsl) wave: Option<Arc<crate::code_rule_dsl::transducer::packed::LoweredWave>>,
@@ -88,7 +88,7 @@ impl AstWave for Wave {
     }
 }
 
-/// A chunk's matcher wave as one launch of the executor (decision 0107), as every other dispatch: priced by its tape
+/// A chunk's matcher wave as one launch of the executor (decision 0107b), as every other dispatch: priced by its tape
 /// nodes and passes, placed on the cores or the GPU, run on that lane's worker and scored. Its GPU form is the wave's
 /// passes and roots in one command buffer; its cores' form the interpreter, which the GPU's runs instead where the
 /// device refuses the batch.
@@ -240,14 +240,14 @@ fn matched(
                 }
             }
         } else {
-            // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
+            // Captures, or a relaxed matcher's roots to confirm (decision 0107b): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
             let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
             }
-            // A relaxed matcher's cost (decision 0107 §3): the roots W confirmed on the host, and the rows it kept.
+            // A relaxed matcher's cost (decision 0107b §3): the roots W confirmed on the host, and the rows it kept.
             if m.captor.verify {
                 crate::code_rule_dsl::prof::count("ast.relaxed_roots", roots);
                 crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len());
@@ -264,7 +264,7 @@ fn matched(
     Ok(out)
 }
 
-/// A captured matcher's rows (decision 0107): at each root the transducer matched, W's matcher of the atom's rule
+/// A captured matcher's rows (decision 0107b): at each root the transducer matched, W's matcher of the atom's rule
 /// matched again on the host, and each capture's nodes read from its bindings (a multi-capture's every node, so its
 /// rows are the product of the captures' nodes). A node the projection leaves out has no row. Tapes in parallel; also
 /// how many roots hit their file's visit budget (no rows).

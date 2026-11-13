@@ -1,4 +1,6 @@
-# 0107: A search is demand rules
+# 0107a: A search is demand rules
+
+_Numbered 0107 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: draft (2026-11-10), for review. It replaces 0083 §4's "a search is a program kind" with ordinary rules,
 as 0103 did for caches.

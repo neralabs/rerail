@@ -326,7 +326,7 @@ fn prepared_from<C: program_facts::Cell>(facts: &Facts, grouped: &program_facts:
         indexed(facts, "prepared_matcher")?
             .iter()
             .map(|(_, r)| {
-                // Captured names (decision 0107): none in a program kept before.
+                // Captured names (decision 0107b): none in a program kept before.
                 let captures = r.get(2).map(text).transpose()?.filter(|c| !c.is_empty()).map(|c| c.split(',').map(str::to_owned).collect()).unwrap_or_default();
                 Ok((text(&r[0])?, text(&r[1])?, captures))
             })

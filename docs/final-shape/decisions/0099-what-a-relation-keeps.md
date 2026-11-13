@@ -22,7 +22,7 @@ proposed, and what is built.
 
 ## What the Python pack shows
 
-These are estimates from the profile taken after 0095's fixes (12.45 s of placed CPU, 139.9 M units of join work)
+These are estimates from the profile taken after 0095b's fixes (12.45 s of placed CPU, 139.9 M units of join work)
 and the relational lab's 144 captures. No inlining experiment was run.
 
 - **Native strata write 58.9 M rows.**
@@ -77,7 +77,7 @@ Two consequences beyond CPU:
 - **Maintenance across edits (0090, 0092).** A kept relation is paid for per row on every run, and a wide one widens
   over-deletion. An inlined relation is maintained through its inputs, which are maintained anyway. So inlining
   shrinks the kept state and stays exact.
-- **Device waves (0095 §5, 0098).** Inlining is kernel fusion: no intermediate to size, keep resident or spill.
+- **Device waves (0095b §5, 0098).** Inlining is kernel fusion: no intermediate to size, keep resident or spill.
   Storing pays on the device only when several waves read the rows.
 
 Memory matters as much as CPU: the pack's peak is 1.39 GB against the 1 GB budget, and the chunk size is set by

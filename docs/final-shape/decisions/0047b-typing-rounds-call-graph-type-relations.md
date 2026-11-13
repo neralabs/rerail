@@ -1,4 +1,6 @@
-# 0047: Typing: k = 4 with a pending round; `calls:` moves to the programs after parity; type relations drafted here
+# 0047b: Typing: k = 4 with a pending round; `calls:` moves to the programs after parity; type relations drafted here
+
+_Numbered 0047 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: accepted (the user, 2026-11-06; t20)
 

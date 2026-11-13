@@ -1,6 +1,6 @@
 //! The executor: every job of the process's relational work, run on every lane at once, and scored.
 //!
-//! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095 §5).
+//! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095b §5).
 //! The executor runs them as jobs on the lanes' workers:
 //!
 //! - **The cores** are the process's one pool ([`configure`]: [`threads`] threads, `RERAIL_THREADS`, else the
@@ -1261,7 +1261,7 @@ impl Running {
 
 
 /// A batch whose launches are taken one by one as each ends ([`Running::each`]): one submission to the lanes, and
-/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114 §2).
+/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114b §2).
 pub struct Each {
     claims: Arc<Claims>,
     cpu: Option<Arc<dyn Backend>>,

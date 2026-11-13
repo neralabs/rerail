@@ -1,4 +1,4 @@
-//! The relational lab (decision 0095, step 0): a stratum of a real run, captured with everything its native join
+//! The relational lab (decision 0095b, step 0): a stratum of a real run, captured with everything its native join
 //! reads, and run again on its own in a fraction of a second.
 //!
 //! A pack run is a minute of CPU. A change to a join (an order, a kernel, a backend) is judged by a few strata of it:

@@ -24,7 +24,7 @@ The local part of a stub is already made once: the per-file memo (0052) keys a d
 content, path and plan, and a stub's path is its canonical path, the same in every workspace.
 
 The cross-file part is not. Every run derives the stubs' classes, bases, inherited attributes and
-re-exports again, and each bounded round (0035, 0047) derives them again from the start. These rows
+re-exports again, and each bounded round (0035, 0047b) derives them again from the start. These rows
 do not depend on the workspace: a library never imports it. They are the derivation the store's
 graph (03 §14, `content_store::derivation`) exists for, at one more granularity: one per set of
 library documents closed under their imports, not one per file (t21 §2.5).

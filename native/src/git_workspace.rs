@@ -695,7 +695,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 /// worktree. Its trees, base files and overlays are those under `root`; a file elsewhere is none of them.
 /// Where the Git repository holding `root` keeps its work tree, its own directory (`HEAD`, the index) and the
 /// directory it shares with its other work trees (refs, config, info), each canonical: found without reading its
-/// status (decision 0105: a run watches them before it reads the status).
+/// status (decision 0105b: a run watches them before it reads the status).
 pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
     let repository = gix::discover(root).ok()?;
     let canonical = |p: &Path| p.canonicalize().ok();

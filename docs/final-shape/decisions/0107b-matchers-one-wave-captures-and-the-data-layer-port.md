@@ -1,4 +1,6 @@
-# 0107: Matchers run as one wave, with captures; the data-layer programs run on the `.rr` engine
+# 0107b: Matchers run as one wave, with captures; the data-layer programs run on the `.rr` engine
+
+_Numbered 0107 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
 
 Status: proposed (2026-11-10)
 
@@ -143,7 +145,7 @@ Load was 30–60 throughout.
 
 ## Open items
 
-Decision 0108 closes the capture cost, `shortlex_min`, the tripwire options and the relaxed
+Decision 0108b closes the capture cost, `shortlex_min`, the tripwire options and the relaxed
 matchers' cost, and records where the remaining programs stop.
 
 - **`shortlex_min`.** Two tripwire part files declare a lattice over symbols ordered

@@ -112,7 +112,7 @@ components then run on as many threads as the executor gives them, and retire in
     never splits across components.
   - 0090 (levels strata) and 0077 (DRed). A levels stratum, or a maintained one (`__del`, `__ins`, `__old`),
     is a sub-step like any other. Its driver's rows are written inside the component.
-  - 0095 §5 and 0100 §5 (a level is one batch). **Generalized.** The batch is "the components that issued
+  - 0095b §5 and 0100 §5 (a level is one batch). **Generalized.** The batch is "the components that issued
     together". Count tables, seed joins and chained joins are collected from the components issued, not from a
     level.
   - 0100 §1 (one executor) and §12 (one pool; a job that waits for a long job is not itself a job). **Kept.**

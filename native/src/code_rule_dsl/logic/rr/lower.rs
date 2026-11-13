@@ -3071,7 +3071,7 @@ impl Lowerer {
             STerm::Str(s) => Term::Str(s.clone()),
             STerm::Call { name, functor: true, args } => {
                 let mut args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
-                // The data-layer programs' SQL builtins (decision 0107): the engine's functions of SQLite's meaning.
+                // The data-layer programs' SQL builtins (decision 0107b): the engine's functions of SQLite's meaning.
                 if let Some((f, swap)) = crate::code_rule_dsl::logic::strings::functions::catalogue(name, args.len()) {
                     if swap {
                         args.swap(0, 1);

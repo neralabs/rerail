@@ -318,10 +318,10 @@ thread_local! {
 }
 
 /// Atoms reserved by components not yet retired, by arena (its address): pending, but no row a commit writes holds
-/// them yet (decision 0114 §4).
+/// them yet (decision 0114b §4).
 static RESERVED: LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<Sym>>>> = LazyLock::new(Default::default);
 
-/// Atoms made ahead of the run's order, by a component of strata (decision 0114 §4: the atoms' publication model).
+/// Atoms made ahead of the run's order, by a component of strata (decision 0114b §4: the atoms' publication model).
 ///
 /// - **Allocation.** Ids come from the shared arena, on any thread, as any atom's: unique, and never reused.
 /// - **Visibility.** An atom's string is readable by every thread as soon as it is made; rows that hold it are
