@@ -798,12 +798,19 @@ describe("launching the daemon", () => {
   it("on Windows reads a launched process's exit code from the handle the native spawn kept, whoever has its pid now", () => {
     // A live pid, as when Windows has given a dead daemon's pid to another process during the start wait.
     const codes: Array<number | null> = [null, 3];
-    const machine = fakeMachine("win32", {
-      kill: () => true,
-      spawnDetached: () => ({ pid: process.pid, exitCode: () => codes.shift() ?? null }),
-    });
+    let closed = false;
+    const exitCode = (): number | null => {
+      // As the native module does: it closes the handle once it has given the code, and a later read is an error.
+      if (closed) throw new Error(`process ${process.pid} was not started by spawnDetached in this process`);
+      const code = codes.shift() ?? null;
+      closed = code !== null;
+      return code;
+    };
+    const machine = fakeMachine("win32", { kill: () => true, spawnDetached: () => ({ pid: process.pid, exitCode }) });
     const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, machine);
     expect(daemon.exitReason()).toBeUndefined();
+    expect(daemon.exitReason()).toBe("exited with code 3");
+    // Asked again once the handle is closed, it gives the same reason.
     expect(daemon.exitReason()).toBe("exited with code 3");
   });
 
