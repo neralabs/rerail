@@ -30,7 +30,7 @@ export interface RerailCommand {
 export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   { name: "rerail", description: "What Rerail is doing in this repo, and every Rerail command", summary: "what Rerail is doing here" },
   { name: "rerail-manage", description: "Open the Rerail dashboard", summary: "open the dashboard" },
-  { name: "rerail-create", description: "Create a rule for this repo, or change one (where it applies, too), in your own words", summary: "create or change a rule, in your own words" },
+  { name: "rerail-create", description: "Write a rule in your own words, get rule suggestions for this repo, or change one", summary: "write, suggest or change a rule" },
   { name: "rerail-stop", description: "Stop Rerail in this checkout and the worktrees inside it; rules and history are kept", summary: "stop Rerail in this repo" },
   { name: "rerail-start", description: "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time", summary: "start Rerail in this repo" },
   { name: "rerail-update", description: "Update Rerail to the newest version", summary: "get the newest version" },

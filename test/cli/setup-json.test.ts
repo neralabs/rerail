@@ -140,7 +140,7 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
 
     const packs = await runSetupStep(requestFrom(yes.next.args, setup, environment));
     expect(packs.step).toBe("confirm-packs");
-    expect(packs.screen).toContain("Scanned acme api. 1 rule pack fits:");
+    expect(packs.screen).toContain("Scanned acme api. 1 standard rule pack matches what it’s built with:");
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("stopped");
 
     const start = packs.question!.options.find(option => option.answer === "start")!;

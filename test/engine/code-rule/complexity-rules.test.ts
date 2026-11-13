@@ -43,12 +43,12 @@ const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
 /** The steer for a function scored `ccn`: named as `name` (in backticks), or "This function" when it has none. */
 function message(language: CorpusLanguage, name: string | undefined, ccn: number): string {
   const subject = name === undefined ? "This function" : `\`${name}\``;
-  return `${subject} has cyclomatic complexity ${ccn}, over the ceiling of ${LIMIT}. Decompose it into smaller functions.`;
+  return `${subject} has ${ccn} paths through it; this pack's limit is ${LIMIT}. Split it into smaller functions.`;
 }
 
 /** The number a steer carries; every message must be one `message` would write. */
 function ccnOf(language: CorpusLanguage, text: string): number {
-  const ccn = /has cyclomatic complexity (\d+),/u.exec(text)?.[1];
+  const ccn = /has (\d+) paths through it;/u.exec(text)?.[1];
   const name = /^`([^`]+)` has/u.exec(text)?.[1];
   expect(text).toBe(message(language, name, Number(ccn)));
   return Number(ccn);

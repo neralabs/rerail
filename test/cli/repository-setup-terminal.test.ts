@@ -82,7 +82,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const fresh = await fixture();
     const asked = terminalIo(["", "", "1"]);
     await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false })));
-    expect(asked.text()).toContain("Step 1 of 3 · Can Rerail see your coding agent sessions?");
+    expect(asked.text()).toContain("Step 1 of 3 · OK for Rerail to read your coding agent sessions?");
     expect(asked.text()).toContain("Step 2 of 3 · Find rule packs for acme-api?");
     expect(asked.text()).toContain("Step 3 of 3 · Start Rerail in acme-api with this rule pack?");
 
@@ -91,7 +91,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const other = gitRepository(join(named.root, "landing-page"));
     const repo = terminalIo(["", "1"]);
     await runSetup(repo, request(named, fakeSetupEnvironment({ sessionsApproved: false }), { repo: other }));
-    expect(repo.text()).toContain("Step 1 of 2 · Can Rerail see your coding agent sessions?");
+    expect(repo.text()).toContain("Step 1 of 2 · OK for Rerail to read your coding agent sessions?");
     expect(repo.text()).toContain("Step 2 of 2 · Start Rerail in landing-page with this rule pack?");
     expect(repo.text()).not.toContain("Find rule packs for");
   });
@@ -160,7 +160,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const asked = terminalIo(["", "1", fresh.repo, "1"]);
     await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false }), { cwd: elsewhere }));
     expect(steps(asked)).toEqual([
-      "Step 1 of 3 · Can Rerail see your coding agent sessions?",
+      "Step 1 of 3 · OK for Rerail to read your coding agent sessions?",
       "Step 2 of 3 · Which project do you want to start with?",
       "Step 3 of 3 · Start Rerail in acme-api with this rule pack?",
     ]);
@@ -178,7 +178,7 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     const io = terminalIo(["", "1"]);
     expect(await runSetup(io, request(setup, fakeSetupEnvironment({ sessionsApproved: false })))).toMatchObject({ status: "started" });
     expect(stripAnsi(io.text()).match(/Step \d of \d · [^\n]+/gu)).toEqual([
-      "Step 1 of 2 · Can Rerail see your coding agent sessions?",
+      "Step 1 of 2 · OK for Rerail to read your coding agent sessions?",
       "Step 2 of 2 · Start Rerail in acme-api with this rule pack?",
     ]);
   });

@@ -30,7 +30,7 @@ then offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
-| Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
+| Function complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Function complexity](#function-complexity). |
 | JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 537 (316) | Python source outside tests, scripts and docs |
@@ -275,11 +275,11 @@ A language or framework pack goes in the folder holding all its matches (`web` w
 
 </details>
 
-## Cyclomatic complexity
+## Function complexity
 
-The `complexity` pack flags functions with cyclomatic complexity above 6, reproducing the Metrics-in-the-Loop study's feedback.
+The `complexity` pack keeps functions small enough to read, test and change. Each `if`, loop, `catch`, `&&` or `||` adds a path through a function, and the pack flags functions with more than 6: cyclomatic complexity above 6, as in the Metrics-in-the-Loop study's feedback. The limit of 6 is the study's, a common standard rather than a verdict on existing code; a repository that works to another can keep the pack in Log or off.
 
-A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has cyclomatic complexity 8, over the ceiling of 6. Decompose it into smaller functions. ``
+A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has 8 paths through it; this pack's limit is 6. Split it into smaller functions. ``
 
 <details>
 <summary>How complexity is counted</summary>

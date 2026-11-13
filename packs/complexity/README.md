@@ -1,4 +1,4 @@
-# Rerail rule pack: Cyclomatic complexity
+# Rerail rule pack: Function complexity
 
 Cyclomatic complexity rules for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue, with the decision points of
 [lizard](https://github.com/terryyin/lizard) 1.24.0 and without its tokenizer defects. A `switch` or `match` counts once
@@ -22,8 +22,8 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 
 A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
-message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 7, over the
-ceiling of 6. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
+message names the function and its number in plain words: `` `grade` has 7 paths through it; this pack's limit is 6.
+Split it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
 to, and a PHP or Blade closure the variable it is assigned to (`` `$format` ``); a callback with none of those is "This
 function" (the `too-complex-anonymous` clause). Every Python and Rust function has a name. The number comes from the
 count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a

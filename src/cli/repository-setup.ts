@@ -291,6 +291,7 @@ async function approveSessions(run: Run, answer: string | undefined, repo: strin
   const form = sessionsQuestion({
     carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
     remoteHosts: remoteHostsOf(packsHome(run)),
+    inSession: run.io.lane !== "terminal",
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   });
   const picked = await choose(run, form, SESSIONS_ANSWERS);
