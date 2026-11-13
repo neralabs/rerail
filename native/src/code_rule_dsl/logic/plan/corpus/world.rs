@@ -21,6 +21,7 @@
 //! Only paths under the corpus root, or under a directory a setting names (`env(k, v)` with v a directory, relative
 //! to the root or absolute), are read. A selected file symlink in those directories may read its target;
 //! directory symlinks do not expand those roots. A path elsewhere, or missing, has no entries or lines.
+//! A selected final file link retains a read error even when its target cannot be resolved.
 
 use super::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
@@ -165,7 +166,17 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(path) = self.allowed(asked) else {
+        let path = self.allowed(asked).or_else(|| {
+            // A broken final link is still a selected resource. Resolve and authorize its parent,
+            // then let the read retain the actual OS error. Missing ordinary paths and directory
+            // links cannot use this fallback to widen the configured roots.
+            let logical = self.root.join(asked);
+            let parent = super::observe(|o| o.canonical(logical.parent()?))?;
+            (self.roots.iter().any(|r| parent.starts_with(r))
+                && std::fs::symlink_metadata(&logical).is_ok_and(|m| m.is_symlink()))
+                .then_some(logical)
+        });
+        let Some(path) = path else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
