@@ -145,6 +145,9 @@ pub enum Line {
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
+    /// A probe not planned yet (decision 0123 §9): its delta has had no rows. The run returns for its plan when its
+    /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
+    Unplanned { head: usize, delta: usize },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
     /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
     /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
@@ -436,6 +439,7 @@ impl std::fmt::Display for Line {
                 }
             }
             Line::Probe { head, delta, sql } => write!(f, "probe {head} {delta} {}", hex(sql)),
+            Line::Unplanned { head, delta } => write!(f, "unplanned {head} {delta}"),
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
@@ -521,6 +525,7 @@ impl ComponentSpec {
                     whole: t.get(4).map(|w| join(w)).transpose()?,
                 },
                 "probe" => Line::Probe { head: num(at(1)?)?, delta: num(at(2)?)?, sql: unhex(at(3)?)? },
+                "unplanned" => Line::Unplanned { head: num(at(1)?)?, delta: num(at(2)?)? },
                 "gate" => Line::Gate {
                     done: num(at(1)?)?,
                     src: if at(2)? == "-" { None } else { Some(num(at(2)?)?) },

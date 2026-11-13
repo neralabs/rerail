@@ -170,6 +170,48 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
     assert_eq!(outputs[1].len(), 16 * N, "{:?}", outputs[1].len());
 }
 
+/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
+/// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
+/// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+#[test]
+fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
+               .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
+               .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
+               r(a, b) :- e(a, b).\nr(a, c) :- r(a, b), e(b, c).\nr(a, c) :- s(a, b), e(b, c).\nr(a, b) :- t(b, a).\n\
+               s(a, b) :- r(a, b), g(a).\nt(a, b) :- r(a, b), h(b).\n\
+               .decl o(k: number, a: number, b: number)\no(1, a, b) :- r(a, b).\no(2, a, b) :- t(a, b).\n.output o\n";
+    let p = parse(src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let _plans = KeepPlans::start(None);
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::lazy_probes_counted();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::lazy_probes_counted();
+        if !modes.is_empty() {
+            assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
+            // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
+            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            let (left, planned) = (after.0 - before.0, after.1 - before.1);
+            assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
+            assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    // r: the 4-cycle's closure (16) and t's reversals, all in it; t: r's rows into 3 (4).
+    assert_eq!(outputs[1].len(), 16 + 4, "{:?}", outputs[1]);
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }

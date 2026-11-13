@@ -899,6 +899,13 @@ fn plan_site(site: &'static str) {
 /// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
 /// §7).
 static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+/// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
+/// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
+static LAZY: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn lazy_probes_counted() -> (u64, u64) {
+    (LAZY[0].load(std::sync::atomic::Ordering::Relaxed), LAZY[1].load(std::sync::atomic::Ordering::Relaxed))
+}
 
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1033,6 +1040,13 @@ const REPLAN_ROWS: f64 = 10_000.0;
 /// 0.8 µs a unit of work. The candidates follow from the joins `j`: with the delta first, `(j-1)·2^(j-2)+1` (`fgp`'s
 /// 12 joins 11,265, `lcbind`'s 9 1,025, `lgpar`'s 6 81, as counted); without, `j·2^(j-1)`; past `GREEDY`, `j²`.
 const SEARCH_FIXED_ROWS: f64 = 400.0;
+/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. `RERAIL_LAZY_PROBES=off`
+/// plans every probe when its stratum opens, as before (a measurement aid).
+fn lazy_probes() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LAZY_PROBES").map_or(true, |v| v != "off"));
+    *ON
+}
+
 /// Decision 0123 §7: a kept order priced at `priced` rows of work, under what a search costs, whose line did `ran` rows,
 /// a search's work or more, when it last ran. A search can pay there, and costs less than the line ran.
 pub fn mispriced(priced: f64, ran: Option<f64>, body: &[Literal], first: Option<usize>) -> bool {
@@ -1462,7 +1476,8 @@ impl Drop for KeepPlans {
             let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost)", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1]);
+            let lazy = lazy_probes_counted();
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -1775,6 +1790,16 @@ impl Model {
             self.wants(lines, into);
         }
         self.stats.solve(was);
+    }
+
+    /// Whether the line has no kept plan to start from (`plan_rule_reused` would search it: its first sight).
+    /// Its key, when so.
+    pub(in crate::code_rule_dsl) fn first_sight(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> Option<PlanKey> {
+        if plan_fresh() {
+            return None;
+        }
+        let key = self.plan_key("", head, body, first);
+        matches!(plans_find(&key, body, self.stats.nodes.max(1.0)), Some(None)).then_some(key)
     }
 
     /// Decision 0123, step 2: a round's requested statistics, made in one batch before any of its plans is made
@@ -4311,6 +4336,8 @@ struct Driving<'a> {
     lab: Option<super::native::component::lab::Capture>,
     /// Placed on the device but a shape its run does not take: why, reported once the stratum closes.
     not_taken: Option<&'static str>,
+    /// Per probe: not planned yet, until its delta has rows (decision 0123 §9).
+    unplanned: Vec<bool>,
 }
 
 struct Run<'a, 'b> {
@@ -6756,20 +6783,46 @@ impl<'a> Run<'a, '_> {
         }
         // Round 2 (decision 0123): the probes' statistics, and the whole plans' where one is made (below).
         let whole_wanted = |this: &Self, a: &Atom| !(wave0 && based.contains_key(a.rel.as_str()) || plan_budget() && this.model.card(&a.rel) < SEARCH_WORK);
+        // Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows, not here. Not where a
+        // closure may be the component's form (one relation: `closure::recognize` reads its probe at open), nor where
+        // the probes run in SQL, nor a probe with a whole plan (it runs over the relation's first delta).
+        // The probes so left, with their keys: decided once.
+        let mut lazy: HashMap<(*const Rule, usize), PlanKey> = HashMap::new();
+        if lazy_probes() && !answering && rels.len() > 1 {
+            for r in &rules {
+                for (ai, a) in recursive(&r.body, scc) {
+                    if !whole_wanted(self, a) && let Some(key) = self.model.first_sight(&r.head, &r.body, Some(ai)) {
+                        lazy.insert((*r as *const Rule, ai), key);
+                    }
+                }
+            }
+        }
         let mut wanted = BTreeSet::new();
         let round: Vec<(&Rule, Option<usize>)> = rules.iter().flat_map(|r| {
             let rec = recursive(&r.body, scc);
             let whole = rec.iter().any(|(_, a)| whole_wanted(self, a));
-            rec.into_iter().map(|(ai, _)| (*r, Some(ai))).chain(whole.then_some((*r, None))).collect::<Vec<_>>()
+            rec.into_iter().filter(|(ai, _)| !lazy.contains_key(&(*r as *const Rule, *ai))).map(|(ai, _)| (*r, Some(ai))).chain(whole.then_some((*r, None))).collect::<Vec<_>>()
         }).collect();
         self.model.wants(round, &mut wanted);
         self.model.make_statistics(prog, &wanted)?;
         let mut probes = Vec::new();
+        let mut unplanned: Vec<bool> = Vec::new();
         for r in &rules {
             // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
             let mut whole_plan: Option<Vec<Step>> = None;
             let mut whole_spec: Option<Option<Arc<JoinSpec>>> = None;
             for (ai, a) in recursive(&r.body, scc) {
+                if let Some(key) = lazy.remove(&(*r as *const Rule, ai)) {
+                    explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), None, 0.0, 0));
+                    lines.push(SpecLine::Unplanned { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()] });
+                    keys.push(Some(key));
+                    probes.push((*r, ai, Vec::new()));
+                    sql_probe.push(false);
+                    unplanned.push(true);
+                    LAZY[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    continue;
+                }
+                unplanned.resize(probes.len() + 1, false);
                 self.model.late(prog, r, Some(ai), false)?;
                 plan_site("a stratum's probe");
                 let _span = planning(r, "plan");
@@ -6873,6 +6926,25 @@ impl<'a> Run<'a, '_> {
         } else if placement::device_joins_off() {
             Some("device joins off (RERAIL_DEVICE_JOINS=off, a measurement aid)")
         } else {
+            // A probe not planned yet is planned now: the device compiles every probe at open.
+            let mut planned = Vec::new();
+            let due: Vec<usize> = (0..probes.len()).filter(|&k| unplanned[k]).collect();
+            for k in due {
+                let (r, ai) = (probes[k].0, probes[k].1);
+                let (order, spec, x) = self.plan_probe_now(r, ai, &ri, scc, native_rels, &planning)?;
+                explained[nseeds + k].2 = x;
+                probes[k].2 = order;
+                unplanned[k] = false;
+                planned.push((ri[r.head.rel.as_str()], ri[r.body[ai].atom().expect("a delta atom").rel.as_str()], spec));
+            }
+            let mut planned = planned.into_iter();
+            for l in &mut spec.lines {
+                if let SpecLine::Unplanned { head, delta } = l {
+                    let (h, d, join) = planned.next().expect("a plan per probe not planned");
+                    debug_assert_eq!((*head, *delta), (h, d));
+                    *l = SpecLine::Join { head: h, delta: d, join, whole: None };
+                }
+            }
             spec.lines.insert(0, SpecLine::Device);
             None
         };
@@ -6900,7 +6972,7 @@ impl<'a> Run<'a, '_> {
                 let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
                 for k in 0..probes.len() {
                     let r = probes[k].0;
-                    if sql_probe[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
+                    if sql_probe[k] || unplanned[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
                         continue;
                     }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
@@ -6935,6 +7007,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
+        unplanned.resize(probes.len(), false);
         let replanned_at = replanning::Watch::new(&ri, &probes);
         let d = Driving {
             scc: scc.clone(),
@@ -6966,6 +7039,7 @@ impl<'a> Run<'a, '_> {
             cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
             lab,
             not_taken,
+            unplanned,
         };
         self.drive(Box::new(d), native_rels, numbers)
     }
@@ -6974,9 +7048,29 @@ impl<'a> Run<'a, '_> {
     /// between them, then what it did recorded and the component closed. A run that waits on its device wave
     /// (`lanes::wave`) suspends the stratum: the driver's state goes back to the strata loop, which resumes it once
     /// the wave ran.
+    /// A probe planned when its delta first has rows (decision 0123 §9), or when the device takes its stratum: its
+    /// order, its spec and its explanation. A probe with no native form for its order fails the run, as a replanned
+    /// probe does.
+    #[allow(clippy::type_complexity)]
+    fn plan_probe_now(&mut self, r: &'a Rule, ai: usize, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>, planning: &dyn Fn(&Rule, &str) -> super::profile::Span) -> Result<(Vec<Step>, Arc<JoinSpec>, Option<super::profile::RulePlan>)> {
+        let prog = self.prog;
+        self.model.late(prog, r, Some(ai), false)?;
+        plan_site("a stratum's probe, when its delta came");
+        let span = planning(r, "plan when its delta came");
+        let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
+        drop(span);
+        let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
+        let spec = self
+            .whole_join_spec(&r.head, &order, Some(at), ri, scc, native_rels)
+            .ok_or_else(|| Error::Plan(format!("a probe of {} planned when its delta came has no native step", r.head)))?;
+        let x = x.map(|x| delta_sources(x, &order, at, scc));
+        LAZY[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok((order, spec, x))
+    }
+
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -7007,7 +7101,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -7065,6 +7159,29 @@ impl<'a> Run<'a, '_> {
                     replanned_at.record(i, slot, &self.model, r);
                 }
             }
+            // Decision 0123 §9: probes not planned yet whose delta has rows; planned now, as one round, and the run
+            // goes on. A probe whose delta never has rows is never planned.
+            if f.last() == Some(&"4") {
+                let due: Vec<usize> = (0..probes.len()).filter(|&k| unplanned[k] && replanned_at.delta_rows(k) > 0).collect();
+                if due.is_empty() {
+                    return Err(Error::Plan(format!("{name}: the run returned for a probe's plan, and none not planned has rows")));
+                }
+                let mut wanted = BTreeSet::new();
+                self.model.wants(due.iter().map(|&k| (probes[k].0, Some(probes[k].1))), &mut wanted);
+                self.model.make_statistics(prog, &wanted)?;
+                for k in due {
+                    let (r, ai) = (probes[k].0, probes[k].1);
+                    let t0 = if profiling { super::profile::now() } else { 0.0 };
+                    let (order, spec, x) = self.plan_probe_now(r, ai, &ri, scc, native_rels, &planning)?;
+                    self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
+                    let e = &mut explained[nseeds + k];
+                    e.2 = x;
+                    e.3 += if profiling { super::profile::now() - t0 } else { 0.0 };
+                    probes[k].2 = order;
+                    unplanned[k] = false;
+                }
+                continue;
+            }
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
             }
@@ -7086,7 +7203,7 @@ impl<'a> Run<'a, '_> {
                 let wanted: BTreeSet<String> = (0..probes.len()).filter(|&k| wants_whole(k, self)).flat_map(|k| Model::read_by([probes[k].0])).map(str::to_owned).collect();
                 self.model.make_statistics(prog, &wanted)?;
                 for k in 0..probes.len() {
-                    if !wants_whole(k, self) {
+                    if unplanned[k] || !wants_whole(k, self) {
                         continue;
                     }
                     let r = probes[k].0;
@@ -7110,7 +7227,7 @@ impl<'a> Run<'a, '_> {
             // The probes searched again this chunk, then a round (decision 0123): their statistics in one batch.
             let mut replan: Vec<usize> = Vec::new();
             for k in 0..probes.len() {
-                if sql_probe[k] {
+                if sql_probe[k] || unplanned[k] {
                     continue;
                 }
                 // Decision 0122: a probe is searched again only once its work so far, and the delta it is about to

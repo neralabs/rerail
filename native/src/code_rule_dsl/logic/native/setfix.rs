@@ -761,7 +761,8 @@ impl Fresh {
 struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
                   edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
-enum Body { Sql(String), Join(JoinRule) }
+/// `Unplanned`: a join probe whose plan is made when its delta first has rows (decision 0123 §9, `Line::Unplanned`).
+enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// `whole`: a join probe's plan for the wave whose delta is its whole relation (the relation was empty before it), in
 /// any literal order, reading that relation in full. `wkey`: its spec, the same for each probe of one rule: in a wave
 /// the store does not change, so a whole plan run once derives what each of its rule's probes would (it is not run
@@ -1098,6 +1099,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 rels.push(rel);
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
+            Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
             Line::KeptOld => kept_old = true,
@@ -1165,6 +1167,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             None => seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).map(|(pi, text)| match &probes[pi].body {
                 Body::Join(j) => dev.compile_join(j, &text).map(|p| (pi, p)),
                 Body::Sql(_) => Err("a SQL seed".to_owned()),
+                Body::Unplanned => Err("a probe not planned yet".to_owned()),
             }).collect::<std::result::Result<Vec<_>, String>>(),
         };
         match plans {
@@ -1324,7 +1327,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
     }
     let mut stmts = Vec::new();
-    for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.sql()?.prepare(sql)?), Body::Join(_) => None }); }
+    for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.sql()?.prepare(sql)?), Body::Join(_) | Body::Unplanned => None }); }
     let (mut waves, mut visits, mut runs, mut skips) = (0u32, 0u64, 0u64, 0u64);
     let mut done = false;
     let mut paused = false;
@@ -1445,7 +1448,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     {
         let rules: Vec<(&JoinPlan, &JoinRule, usize)> = plans.iter().map(|(pi, plan)| match &comp.probes[*pi].body {
             Body::Join(j) => (plan, j, comp.probes[*pi].head),
-            Body::Sql(_) => unreachable!("a device plan is a join's"),
+            Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
         let submitted = { let syms = symbols.read().unwrap(); dev.submit(&rules, &syms) };
         if let Ok(Some(t)) = submitted {
@@ -1457,7 +1460,17 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     }
     // A stratum back from its wave: its device joins are finished below, in their place.
     let mut device_ticket = comp.device_wait.take();
+    // A probe not planned yet whose delta has rows (decision 0123 §9): the run returns for its plan before the wave
+    // that would read them (`done 4`), and goes on from there when run again.
+    let mut unplanned = false;
     while !done {
+        if comp.probes.iter().any(|p| matches!(p.body, Body::Unplanned)) {
+            let s = comp.store.read().unwrap();
+            if comp.probes.iter().any(|p| matches!(p.body, Body::Unplanned) && s.rels[p.delta].lo < s.rels[p.delta].hi) {
+                unplanned = true;
+                break;
+            }
+        }
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         // Probe rules: SQL over the vtabs, while no lock is held (the vtab cursors take read locks).
         let mut raw: Vec<(usize, Vec<Vec<Value>>)> = Vec::new();
@@ -1506,7 +1519,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let c0 = cpu_now();
             let rules: Vec<(&JoinPlan, &JoinRule, usize)> = plans.iter().map(|(pi, plan)| match &comp.probes[*pi].body {
                 Body::Join(j) => (plan, j, comp.probes[*pi].head),
-                Body::Sql(_) => unreachable!("a device plan is a join's"),
+                Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
             }).collect();
             let mut dev_fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
             let (seeds, deltas): (Vec<_>, Vec<_>) = rules.iter().copied().partition(|r| !dev.reads_own(r.0));
@@ -1720,6 +1733,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     if paused {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 2", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
+    if unplanned {
+        return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 4", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
+    }
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
@@ -1850,7 +1866,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
     let rules = comp.probes.iter().enumerate().flat_map(|(p, probe)| {
-        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) => None };
+        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) | Body::Unplanned => None };
         body.into_iter().chain(probe.whole.as_ref().map(|j| (format!("probe{p}.whole"), j)))
     });
     for (label, j) in rules {
@@ -1914,7 +1930,7 @@ pub fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
     let rules = comp.probes.iter().enumerate().flat_map(|(p, probe)| {
-        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) => None };
+        let body = match &probe.body { Body::Join(j) => Some((format!("probe{p}"), j)), Body::Sql(_) | Body::Unplanned => None };
         body.into_iter().chain(probe.whole.as_ref().map(|j| (format!("probe{p}.whole"), j)))
     });
     for (label, j) in rules {
@@ -1962,7 +1978,7 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.counts.iter().map(|[a, b]| (a.replace(0) as i64, b.replace(0) as i64)).collect(),
-        Body::Sql(_) => Vec::new(),
+        Body::Sql(_) | Body::Unplanned => Vec::new(),
     }).collect())
 }
 
@@ -1995,7 +2011,7 @@ pub fn passed_over(conn: &Connection, name: &str) -> Result<Vec<u64>> {
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.passed_over.replace(0),
-        Body::Sql(_) => 0,
+        Body::Sql(_) | Body::Unplanned => 0,
     }).collect())
 }
 
@@ -2004,7 +2020,7 @@ pub fn steps(conn: &Connection, name: &str) -> Result<String> {
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => j.counts.iter().map(|[a, b]| format!("{}:{}", a.replace(0), b.replace(0))).collect::<Vec<_>>().join(","),
-        Body::Sql(_) => String::new(),
+        Body::Sql(_) | Body::Unplanned => String::new(),
     }).collect::<Vec<_>>().join("\n"))
 }
 

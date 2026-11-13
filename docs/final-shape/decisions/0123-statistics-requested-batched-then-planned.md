@@ -2,7 +2,8 @@
 
 Status: decided and built (2026-11-12): §2 (`plan.rs`: `Model::wants`, `wants_strata`, `make_statistics`, `late`;
 `plan/issue.rs`), §3 (`plan/corpus.rs`, the kept relations' lazy statistics). It takes up 0122 §4. §5's two items
-are closed (2026-11-13): §6 (`plan/issue.rs`, `lanes::wave`) and §7 (`plan.rs`, `mispriced`, greedy first).
+are closed (2026-11-13): §6 (`plan/issue.rs`, `lanes::wave`) and §7 (`plan.rs`, `mispriced`, greedy first). §8
+(`profile`, jobs' spans) and §9 (`plan.rs`, `native/setfix.rs`: lazy probes) are built (2026-11-13).
 
 ## Intro
 
@@ -214,3 +215,55 @@ part, by step:
 
 The numbers measured before this (§3 here, 0122 §1) read the run's thread. Where jobs ran, they undercount.
 
+
+## 9. A probe is planned when its delta first has rows
+
+**The gap.** At step 06 the cross part made 4,714 orders (searched, or taken greedily) in 0.51 s of planning,
+against 0.29 s of joins. Of its 2,497 probes, 1,431 never had a delta row: a stratum planned every probe when
+it opened, and most of a maintained component's relations never change in a small edit. Greedy first (§7) did
+not help there: a greedy take still costs a call into the planner, and most of the cost is the call's fixed part.
+
+**Now.** A probe with no kept plan to start from (`Model::first_sight`: it would be a first sight) is left
+unplanned when its stratum opens. Its spec line is `unplanned h d` (`Line::Unplanned`). When a wave's delta for
+it has rows, setfix returns before the wave (code `4`). The driver then plans the probes so due as one round:
+their statistics in one batch (§2), then each plan (`Run::plan_probe_now`), and it gives each one's join to the
+engine as a replan does (`Reprobe::Join`). The run goes on from the same wave. A probe whose delta never has rows
+is never planned.
+
+- **Where it is not done.** A component of one relation (`closure::recognize` reads its probe when it opens), a
+  run answering requests, and a probe with a whole plan (it reads the relation's first delta in full) are planned
+  when the stratum opens, as before. A probe with a kept plan is taken as before, from the cache, under 0122's
+  budget.
+- **On the device.** Placement compiles every probe when the stratum opens, so the probes left unplanned are
+  planned there before the spec goes to the device.
+- **Statistics.** A lazy probe's statistics are not requested in the stratum's round of probes. They are
+  requested when it is planned.
+- `RERAIL_LAZY_PROBES=off` plans every probe when its stratum opens, as before (a measurement aid).
+  `RERAIL_PLAN_CACHE_COUNTS` prints the probes left unplanned at open and those planned later.
+
+`a_probe_is_planned_when_its_delta_first_has_rows` (`plan/tests.rs`) tests it. A component `{r, s, t}` in which
+`s` never has a row: the probe of `r` by `s` is never planned. The probes by `r` are planned when the first wave
+returns, and the outputs are the SQL run's.
+
+**Measured** (O125 replay, two alternating runs each way, debug, same as full: true in all four). The cross
+part's retired instructions, by step:
+
+| step | eager, run 1 | eager, run 2 | lazy, run 1 | lazy, run 2 |
+|---|---|---|---|---|
+| cold at 05 | 75.81 G | 76.10 G | 76.82 G | 76.97 G |
+| 06 | 40.33 G | 40.45 G | 35.81 G | 35.81 G |
+| 07 | 55.06 G | 55.01 G | 52.00 G | 51.62 G |
+| 08 | 63.39 G | 63.00 G | 62.43 G | 61.76 G |
+
+From the profile of the second runs (planning without the profile's explain records):
+
+| step | orders made, eager → lazy | planning, eager → lazy | joins, eager → lazy |
+|---|---|---|---|
+| 06 | 4,714 → 2,916 | 0.51 → 0.21 s | 0.29 → 0.27 s |
+| 07 | 3,199 → 3,394 | 0.29 → 0.36 s | 1.15 → 1.36 s |
+| 08 | 3,927 → 3,740 | 0.32 → 0.26 s | 1.32 → 1.44 s |
+
+So step 06 now plans for less time than it joins. Steps 07 and 08 retire fewer instructions. Their seconds
+moved with the machine's load (40 at the time), and the instructions are the measure there. At 07 a probe that
+06 never planned is a first sight, and is searched there. The cold run retires about 1 G more: its probes are all
+first sights, and each due round costs a return from setfix and a statistics batch.
