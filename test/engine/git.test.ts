@@ -282,7 +282,7 @@ async function heldListing(filter: HeldFilter, waitMs: number, whileReading: () 
   }
 }
 
-/** From now on `performance.now()` answers `ms` later than it would: the clock a read finds after stalls its looks did not count. */
+/** From now on `performance.now()` answers `ms` later than it would: the clock a read finds after the event loop stalled. */
 function clockAhead(ms: number): void {
   const now = performance.now.bind(performance);
   vi.spyOn(performance, "now").mockImplementation(() => now() + ms);
@@ -313,8 +313,8 @@ describe("Git reads and their time limit", () => {
     await expect(heldListing("leaves-a-process", 5_000)).resolves.toEqual(["a.py"]);
   }, 30_000);
 
-  it("ends a read whose Git prints nothing at its first look past the time limit on the clock, however few looks it counted", async () => {
-    // As if the event loop had stalled for 11 s as the read started: its first look counts 1 s.
+  it("ends a read whose Git prints nothing at its first look past the time limit on the clock, after a stall", async () => {
+    // As if the event loop had stalled for 11 s as the read started: its first look, 1 s in by its timer, is 12 s in on the clock.
     await expect(heldListing("keeps-git-waiting", 5_000, () => clockAhead(11_000))).resolves.toBeUndefined();
   }, 30_000);
 
@@ -339,7 +339,7 @@ describe("Git reads and their time limit", () => {
     const read = gitModifiedOrUntrackedPaths(root);
     clockAhead(10_000);
     // The read's first look after the stall finds it past the limit on the clock, with output still coming: it ends
-    // there, as execFile's timeout ended it, and a walk asks the listing once more off its path.
+    // there, as a timer of the time limit ended it, and a walk asks the listing once more off its path.
     stallSoon(1_500);
     await expect(read).resolves.toBeUndefined();
   }, 30_000);
