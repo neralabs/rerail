@@ -180,7 +180,7 @@ Every table that maps a key to rows, the string table included, is built from th
 
 Appending is appending.
 
-**A hash table, for keys that are bytes.** It is used for a text to its atom, and a rule's bytes to its rule (§7).
+**A hash table, for keys that are bytes.** It is used for a text to its atom, and a rule's bytes to its rule (§8).
 It is a *linear hash table*:
 
 - The table is a region of 64-byte buckets. Each bucket holds 7 (tag, id) pairs, a count and an overflow link into
@@ -210,7 +210,7 @@ A string table is these forms together:
 - the end offsets, a dense array;
 - the hash table.
 
-The image's own table, the store's atoms (stage 4) and a run's rule pool (§7) are all this one structure.
+The image's own table, the store's atoms (stage 4) and a run's rule pool (§8) are all this one structure.
 
 ### 5. The rest of a program is tables
 
@@ -227,6 +227,10 @@ That last point is decision 0074's schema, kept. The difference is that its rows
 the hot part (rules) is the node table, not `rule`, `body`, `lit_atom`, `arg` and `term` rows joined back together.
 
 ### 6. An edit costs its own size
+
+This section is for an image with **one line of history**: each version replaces the one before it, and no other
+version is made from it. Most programs in a run are not like that. §7 covers the ones with several versions alive
+at once.
 
 An image has one writer at a time (a lease, as the store's atoms have) and any number of readers, each reading the
 generation it opened. Every edit is one of three kinds.
@@ -270,7 +274,106 @@ item. It runs off the edit's path: no edit waits for one.
 
 Atoms are never removed (0111: an atom keeps its id). Compaction keeps them, so ids are stable across it.
 
-### 7. A run shares rules by their bytes
+### 7. Two versions at once: views, overlays and derivations
+
+A survey of every place a program is made, read, copied or changed found these places where two versions of a
+program, or of a structure made from one, are alive at once or compared:
+
+| | where | the versions | how much they differ | shape |
+|---|---|---|---|---|
+| E1 | the prepared program (`corpus.rs` `PREPARED`, `Prepared`), its split (`file_local.rs:815`, `:823`) | the program, its lowered form, and its file-local and cross parts, each a `clone` then `retain` | the parts are complementary subsets | one base, three variants |
+| E2 | each run's copy of the split (`corpus.rs:2748`), then the run's edits (cross memo, request cone, run constants) | the shared split, and the run's own | a few relations moved, inputs added, a cone split off; the copy is the whole program | one base, a variant for each run and each concurrent session |
+| E3 | a session's cross part (`maintained_cross` `corpus.rs:9182`, `retain::Cut::program` `retain.rs:334`, `maintain::rewrite_with`) | the cross part, its maintained form, and the cut that drops clean strata and adds `__plus`/`__minus` inputs | the cut drops most strata; the maintained form rewrites every relation | one base, three variants |
+| E4 | `RERAIL_CROSS_VERIFY` (`corpus.rs:6846`) | the plain and the maintained program, run side by side | the whole maintained form | debug only |
+| E5 | the planner's forms (`plan.rs:9015`, the `Forms` arena; `Driver::form` `corpus.rs:7461`) | the cross program, and a one-stratum program for each stratum reached | one stratum | one base, many small variants |
+| E6 | `plan::run` (`plan.rs:8260`): normalize, physical, `stated_apart`, lowering, `keeps::choose`, `split_negations`; the chosen form kept in `choices` | each stage's input and output, all held; the chosen one kept for later chunks and runs | normalize rewrites every rule; the others, some relations | a chain, each stage held |
+| E7 | `split_memo` (`KEPT = 2`) | the splits before and after a preparation round, compared by per-relation rule digests | a few hundred rules of tens of thousands | linear, old against new |
+| E8 | kept strata (`kept_strata.rs`, `plan::identities`) | frames made under the old program, matched to the new by per-relation identity | the relations a rule edit reaches | linear, the old program not held |
+
+And retry loops, which hold a candidate and the original until the candidate is accepted or dropped: `magic_sets`
+(`magic.rs:219`, `:424`), `push_local_joins` and `push_with` (`file_local.rs:852`, `:1415`), `factorize_exports`
+(`:984`), `export_demand.rs:403`.
+
+So the common case is not a line of history. It is **one base, with several variants alive at once**: E1 to E5,
+for every run and every concurrent session. A variant cannot tombstone its base's rows, because the base's other
+variants still read them. It cannot copy the base, because that costs the base. So:
+
+- **A shared image is immutable.** An image that more than one version reads (a store's prepared program, a run's
+  pool, a split's part) is never changed by a variant. §6's in-place edit is only for an image with one line of
+  history and no variant over it.
+- **A variant is made in one of three forms, each costing what it changes.**
+
+**A view** is a subset of a base: ranges of its rules, and the relations they need. A view has no rules of its own.
+
+- The base is laid out by (part, stratum), so the views the engine makes are a few ranges each:
+  - the file-local and cross parts (E1);
+  - one stratum's form (E5);
+  - the cut that keeps only the dirty strata (E3).
+- A view costs its range list, where `clone` then `retain` costs the program today.
+
+**An overlay** is a base (or a view) and a small delta. The delta has its own regions, in the same format:
+
+- the rules it adds;
+- the base rules it removes, as a sorted `u32` set;
+- the relation rows it changes: a rename, an input or declaration added, columns moved.
+
+Reading an overlay walks the base's ranges, skipping the removed set, then the delta's rules. A lookup probes the
+delta's index, then the base's, as a two-level table does. So reading costs the base plus the delta, and making one
+costs the delta alone.
+
+This covers:
+
+- a run's edits (E2);
+- a session's cut and its added inputs (E3);
+- the side-by-side verify run (E4);
+- each retry loop: the candidate is an overlay, dropped if refused, kept if accepted.
+
+Overlays stack, as a run's delta over the prepared program, and a session's cut over that. A stack is at most a
+few deep. When a delta reaches half its base, it is folded into a new image: off the run's path, and paid for
+geometrically, as compaction is (§6).
+
+**A derivation** is a new image whose rules all differ from its input's:
+
+- normalize's sentinel columns;
+- lowering;
+- `keeps::choose`;
+- `split_negations`;
+- the maintained form's qualifiers (E3).
+
+These are not overlays. They are new images, made once, with `from` (§9) linking each output rule to its sources.
+When the input gains an overlay, a local pass maps that overlay alone, and the derivation gains the matching
+overlay: pass(base ⊕ Δ) = pass(base) ⊕ pass(Δ).
+
+So the chain from the prepared program through split, run, normalized and lowered (E1, E2, E6) is a chain of
+overlays, each costing the change, and none a copy.
+
+**Linear history** (E7, E8, and a stored program edited by a file change) takes §6's edit in place when no variant
+is over the image. Otherwise it is an overlay, folded later.
+
+**Digests compose.** Five digests today hash a whole program's `Debug` text, so each costs the program and turns
+any edit into a whole miss:
+
+- `memo::program_digest` (`corpus/memo.rs:105`), every run;
+- `retain::key` (`retain.rs:133`), up to three times a run;
+- `choices::key` (`choices.rs:56`), every `plan::run`, so every chunk;
+- `prepared_key` (`corpus.rs:2501`), every run;
+- `cross_digest` (`corpus.rs:2841`), every run.
+
+Then there is `program_text::store`'s check, which prints the program, reads it back and compares (`:284`).
+
+In the image:
+
+- A program's digest is a commutative sum of its rules' hashes (each rule's byte hash, already its key in the
+  pool, §8) and its relation rows' hashes.
+- An overlay's digest is its base's, less what it removes, plus what it adds. It costs the delta.
+- A digest by relation, which E7's `split_memo` and E8's identities already compute, is the same sum grouped by
+  head relation, kept as a column.
+- The store's read-back check runs when an image is built, not when it is edited.
+
+**Concurrent readers** need nothing more. Strands sharing one program, background writes holding an `Arc`, and
+sessions all read an immutable base, or a generation of a single-history image.
+
+### 8. A run shares rules by their bytes
 
 Within one image, two equal rules have equal nodes, byte for byte, because every name in them is an id. So a run's
 programs can live in one pool image:
@@ -281,7 +384,7 @@ programs can live in one pool image:
 This is decision 0172's `Lists` table, found by a hash of a byte range instead of by addresses. A pool can be the
 run's (an anonymous mapping, dropped when the run ends) or a store's (a file, kept). There is no process table.
 
-### 8. Passes are edits, or rules, maintained by the edit
+### 9. Passes are edits, or rules, maintained by the edit
 
 A pass either keeps a program's image up to date (an edit, §6) or writes a different program from it (a
 derivation). Every pass surveyed for this record does some of five things:
@@ -301,12 +404,12 @@ Then:
   and appends what it gives.
 - **A pass that is not local** (prune and reachability, magic sets, strata, merging repeats) depends on the whole
   program. It is maintained as the engine maintains any derived relation: written as rules over the image's
-  relations (§9), and kept up to date by the engine's own delta maintenance (counting, DRed). This is the reason to
+  relations (§10), and kept up to date by the engine's own delta maintenance (counting, DRed). This is the reason to
   make these passes rules: so they cost the change, not the program, by the same machinery as everything else.
 
 A build from nothing (a cold run, a new pack) runs every pass once over the whole image, as an append of everything.
 
-### 9. The image is the program's relations
+### 10. The image is the program's relations
 
 The node table and its indexes are a relational encoding: `rule(r, node)`, `literal(r, k, node)`,
 `atom(node, rel, neg)`, `term(node, kind, val)`, `reads(rel, r, node)`. They can be exposed as relations, as views over
@@ -327,19 +430,24 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
      - growth across extents;
      - a reader at an old generation;
      - recovery from a lost commit;
-     - compaction.
+     - compaction;
+     - views, overlays and their stacking and folding (§7);
+     - digests that compose (§7).
    - `program_text::store` writes a program's image beside its `.rr` text. The text stays, for people and for the
      converter's tests.
    - `load` maps the image, and builds today's `front::Program` from it only where a caller still needs one.
    - Measured: a warm run's reads.
 2. **The warm path, by id and by edit.** The planner takes an image, keyed on relation numbers, slots and node
    positions (`Model`, `JoinSpec`, `Step`; `Run.numbers` by `*const Rule` and the `Forms` arena go).
-   `file_local::assemble`, the per-run part edits, `normalize`, `physical` and `stated_apart` become edits of a
-   run's pool image, maintained by `from`.
-   - Measured: a warm run's program work, and a one-rule edit's.
+   Each of E1 to E6 (§7) moves to its form:
+   - the split's parts and the planner's per-stratum forms become views;
+   - a run's edits and a session's cut become overlays;
+   - normalize, physical, `stated_apart` and lowering become derivations, maintained by `from`.
+   The five whole-program digests become composed ones.
+   - Measured: a warm run's program work, and a one-rule edit's, which should cost the rule.
 3. **The prepare passes.** Local passes move one at a time, each an edit, each checked against the tree pass it
    replaces on every pack program (as decision 0162's reader was checked against the statement reader). Non-local
-   passes are written as rules (§8, §9).
+   passes are written as rules (§9, §10).
 4. **The store's atoms.** The store's atom table becomes a string table of §4: a mapped file whose header is
    committed through SQLite. A process maps it, and no longer rebuilds a hash table. This touches 0111, 0160 and
    0170's atoms, which other worktrees are changing, so it is planned with them.
@@ -355,7 +463,14 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
    SQLite. A blob inside SQLite is not mappable (it spans overflow pages). Is a file beside the database, under the
    store's reclamation, acceptable?
 3. **Tombstones as generations.** §6 spends a `u32` a row, so that old readers need no copy. A bitmap is 32 times
-   smaller, but readers would have to stop at each commit. Is a word a row right for rules and fact rows?
+   smaller, but readers would have to stop at each commit. Since §7, in-place tombstones are only for images with one
+   line of history; shared images are removed from by overlays. Is a word a row still worth it there?
+4. **Rule order.** §7's views need the base laid out by (part, stratum), not in source order. Does anything depend
+   on a program's rule order (plan determinism, the printer, `plan_key`)? The survey did not look for that; it
+   should be checked before stage 2.
+5. **How deep overlays stack, and when they fold.** §7 proposes a few deep, folded at half the base. The real
+   depths are a prepared program, a run's edits, a session's cut, and a retry's candidate, so four. Is folding at
+   half right, or should a run's overlay never fold, since it is dropped with the run?
 
 ## Prior work consulted
 
@@ -372,6 +487,6 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
 - **The store's durability (SQLite the source of truth, memory ahead):** §6's commit.
 - **Linear hashing (Litwin, 1980):** the hash table's growth, one bucket at a time, in §4.
 - **The target architecture:** everything a fact; file-local recursion inside the GPU dispatch; phases, not new
-  evaluators (§8, §9).
-- **The survey of `front::Program`'s passes for this record:** the five kinds of rewrite in §8, the warm path's
+  evaluators (§9, §10).
+- **The survey of `front::Program`'s passes for this record:** the five kinds of rewrite in §9, the warm path's
   copies in point 4 of "What was measured", and the planner's address-keyed structures in stage 2.
