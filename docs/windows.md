@@ -228,13 +228,22 @@ A database an earlier version wrote can hold keys in the caller's spelling: a fo
 the audit settings and presentation preferences of a session opened as `c:\…`. The first time this version opens the
 database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) moves each key to the
 spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule settings, its
-audit settings and audit, and its presentation preferences. Two rows that come to one folder merge: the newer one stays
-(last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
-a start state either row held is kept. A folder that is gone keeps its key: the file system holds no spelling for it,
-and a session opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read
-keeps its key, and the database still opens. So does a folder on a network share (`\\host\share\…`), which the step does
-not look up: a host that does not answer would hold the database for about 21 seconds. On macOS and Linux the step
-moves nothing.
+audit settings and audit, and its presentation preferences. Audit settings are copied rather than moved: no list shows
+them, so the row under the old spelling stays for an earlier version that opens the database later. Where each audit
+ran moves with its key, so the list of repository audits shows each folder once. Two rows that come to one folder
+merge: the newer one stays (last seen, last saved, last started; of two presentation preferences, which keep no time,
+the one created later), and a start state either row held is kept. A folder that is gone keeps its key: the file system
+holds no spelling for it, and a session opened there as `c:\…` still finds its audit settings under that spelling. A
+folder Rerail cannot read keeps its key, and the database still opens. So does a folder on a network share
+(`\\host\share\…`), which the step does not look up: a host that does not answer would hold the database for about 21
+seconds. On macOS and Linux the step moves nothing.
+
+An earlier version that opens the database after the step, after a downgrade or for a coding agent whose Rerail is
+still on that version, looks keys up by the caller's spelling again. It still reads its audit settings, and finds a Git
+checkout under the spelling Git prints. Under a spelling the step moved, it shows the default presentation where a
+preference was saved, runs the folder's repository audit again, and, for a folder outside Git spelt otherwise than by
+case alone (an 8.3 short name such as `RUNNER~1`), reads the folder as stopped where it was started on its own. Rows it
+writes after the step stay under its spelling: the step runs once per database.
 
 <details>
 <summary>Other places that compare Windows paths</summary>

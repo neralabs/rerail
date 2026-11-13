@@ -151,8 +151,13 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
     // a caller passed, such as `c:\` from VS Code. Each key of a folder that exists moves to that spelling, and rows
     // that come to one key are merged (`path-key-spelling.ts`), so a checkout keeps its start state and settings.
-    // Elsewhere keys keep their spelling and the step moves nothing. No floor: the shape does not change, and an older
-    // build still finds a checkout under the spelling Git gives its top folder, as it always did.
+    // Audit settings are copied and also stay under the old key, since no reader lists them; where each audit ran moves
+    // with its key, so the list of repository audits names each folder once. Elsewhere keys keep their spelling and the
+    // step moves nothing. No floor: a floor would refuse an older build the whole file. An older build that opens it
+    // after this step (after a downgrade, or on another agent host sharing the file) still reads its audit settings and
+    // finds a Git checkout under the spelling Git prints, as it always did. Under a moved spelling it no longer finds a
+    // presentation preference (it shows the default), a repository audit (it runs the audit again), or, for a folder
+    // outside Git spelt another way than by case alone (an 8.3 short name), the folder's own start state and settings.
     id: "path-keys-as-stored",
     up(database) {
       respellPathKeys(database, stored => currentPathKey(stored));

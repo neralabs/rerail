@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
+import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { listRepositories, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
@@ -64,10 +65,18 @@ function write(databasePath: string, statements: ReadonlyArray<readonly [string,
   }
 }
 
+/** An audit that ran in `root`, as the audit history keeps it. */
+function auditRow(auditId: string, root: string): readonly [string, ...string[]] {
+  return [`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, rule_provenance_json, paths_json,
+    started_at, finished_at, status, violations_json, failures_json)
+    VALUES (?, 'earlier', ?, 'repository', 'log', 0, '[]', '[]', 1, 2, 'completed', '[]', '[]')`, auditId, root];
+}
+
 /**
  * What an earlier build left for a checkout it recorded as `stored`: the checkout started on its own (its repository
- * is set up but not started), a rule turned off there, its audit settings, a presentation preference and its
- * repository audit. Written by this build under `folder`, then moved to `stored`, with the step not yet run.
+ * is set up but not started), a rule turned off there, its audit settings, a presentation preference, and its
+ * repository audit with the audit and the audit request it came from. Written by this build under `folder`, then moved
+ * to `stored`, with the step not yet run.
  */
 function earlierBuildRecorded(folder: string, databasePath: string, stored: string): void {
   const database = openRerailDatabase(databasePath);
@@ -80,6 +89,11 @@ function earlierBuildRecorded(folder: string, databasePath: string, stored: stri
       .run(folder, checkout.repositoryKey);
     database.$client.prepare(`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at, finished_at)
       VALUES (?, 'earlier', 'audit-1', 'completed', 1, 2)`).run(folder);
+    const [statement, ...parameters] = auditRow("audit-1", folder);
+    database.$client.prepare(statement).run(...parameters);
+    database.$client.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status,
+      created_at, started_at, finished_at, audit_ids_json) VALUES ('request-1', 'earlier', ?, 'repository', 'log', '[]',
+      'completed', 1, 1, 2, '["audit-1"]')`).run(folder);
   } finally {
     database.$client.close();
   }
@@ -95,6 +109,8 @@ function earlierBuildRecorded(folder: string, databasePath: string, stored: stri
     ["UPDATE rule_settings SET owner_id = ? WHERE owner_kind = 'checkout'", stored],
     ["UPDATE audit_settings SET workspace_root = ?", stored],
     ["UPDATE repository_audits SET workspace_root = ?", stored],
+    ["UPDATE audits SET workspace_root = ?", stored],
+    ["UPDATE audit_requests SET workspace_root = ?", stored],
     ["UPDATE presentation_preferences SET repository = ? WHERE repository <> ''", stored],
     ["DELETE FROM schema_migrations WHERE id = ?", STEP],
   ]);
@@ -107,25 +123,38 @@ function recordsAt(folder: string, databasePath: string) {
   const database = openRerailDatabase(databasePath);
   const controls = new SqliteAuditControlStore(databasePath);
   const preferences = new SqlitePresentationPreferenceStore(databasePath);
+  const audits = new SqliteAuditStore(databasePath);
   try {
     return {
       startState,
       checkouts: listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.checkoutPath)),
       settings: rows(database, "SELECT owner_kind, owner_id, \"on\" FROM rule_settings ORDER BY owner_kind"),
       auditSettings: controls.getWorkspaceSettings(folder),
+      // Every row, with the mode it holds: an earlier build looks its own up by the spelling it stored.
+      auditSettingsRows: rows(database, "SELECT workspace_root, json_extract(settings_json, '$.mode') AS mode FROM audit_settings ORDER BY workspace_root"),
       presence: preferences.effective(folder, "claude-code"),
       preferences: rows(database, "SELECT repository, host, presence FROM presentation_preferences ORDER BY repository"),
       repositoryAudits: rows(database, "SELECT workspace_root, status FROM repository_audits"),
+      // The list of repository audits the dashboard and `repository_audits_list` show, one entry per folder.
+      repositoryAuditList: audits.listRepositoryAudits().repositories.map(({ workspaceRoot, repositoryAudit, audit }) =>
+        ({ workspaceRoot, status: repositoryAudit?.status, auditId: audit?.auditId })),
+      auditHistory: rows(database, "SELECT workspace_root FROM audits UNION SELECT workspace_root FROM audit_requests"),
     };
   } finally {
+    audits.close();
     preferences.close();
     controls.close();
     database.$client.close();
   }
 }
 
-/** What a checkout the earlier build recorded keeps once its keys move to `folder`: every record, under `folder`. */
-function kept(folder: string, repositoryAudit: string): ReturnType<typeof recordsAt> {
+type Records = ReturnType<typeof recordsAt>;
+
+/**
+ * What a checkout the earlier build recorded as `stored` keeps once its keys move to `folder`: every record, under
+ * `folder`, and its audit settings under `stored` too, where the earlier build looks them up.
+ */
+function kept(folder: string, stored: string, repositoryAudit: Omit<Records["repositoryAuditList"][number], "workspaceRoot">): Records {
   return {
     startState: "started",
     checkouts: [folder],
@@ -134,12 +163,15 @@ function kept(folder: string, repositoryAudit: string): ReturnType<typeof record
       { owner_kind: "repository", owner_id: expect.stringMatching(/^clone:/u), on: 1 },
     ],
     auditSettings: { scope: "ai-output", mode: "log", steerStrategy: "message" },
+    auditSettingsRows: [folder, stored].sort().map(root => ({ workspace_root: root, mode: "log" })),
     presence: "silent",
     preferences: [
       { repository: "", host: "", presence: "compact" },
       { repository: folder, host: "claude-code", presence: "silent" },
     ],
-    repositoryAudits: [{ workspace_root: folder, status: repositoryAudit }],
+    repositoryAudits: [{ workspace_root: folder, status: repositoryAudit.status }],
+    repositoryAuditList: [{ workspaceRoot: folder, ...repositoryAudit }],
+    auditHistory: [{ workspace_root: folder }],
   };
 }
 
@@ -150,7 +182,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     earlierBuildRecorded(folder, databasePath, stored);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, "completed"));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "completed", auditId: "audit-1" }));
   });
 
   it("merge with rows this build already wrote for the folder: the newer row stays, and the start state is kept", async () => {
@@ -167,6 +199,7 @@ describe("path keys an earlier build stored under another spelling", () => {
         VALUES ('checkout', ?, '', 'rule', 'no-console', 1, 0)`, folder],
       [`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at, finished_at)
         VALUES (?, 'later', 'audit-2', 'interrupted', 3, 4)`, folder],
+      auditRow("audit-2", folder),
       [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at)
         VALUES (?, '{"scope":"repository","mode":"steer"}', 0)`, folder],
       ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
@@ -176,7 +209,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     ]);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, "interrupted"));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "interrupted", auditId: "audit-2" }));
   });
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
@@ -213,14 +246,15 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(actual.currentPathKey(stored)).toBe(folder);
     earlierBuildRecorded(folder, databasePath, stored);
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, "completed"));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "completed", auditId: "audit-1" }));
   });
 
   it.runIf(process.platform === "win32")("stay, on Windows, on a network share, which the step never looks up", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     const { folder, databasePath } = await checkoutFolder();
-    earlierBuildRecorded(folder, databasePath, otherSpelling(folder));
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
     // A documentation address no host answers on (RFC 5737): a lookup there waits about 21 s for the connection.
     const share = "\\\\192.0.2.1\\share\\app";
     write(databasePath, [["INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{\"scope\":\"repository\",\"mode\":\"log\"}', 1)", share]]);
@@ -229,8 +263,9 @@ describe("path keys an earlier build stored under another spelling", () => {
     const database = openRerailDatabase(databasePath);
     try {
       expect(Date.now() - started).toBeLessThan(2_000);
+      // The folder's audit settings are copied to its stored spelling and stay under the old one; the share's stay.
       expect(rows(database, "SELECT workspace_root FROM audit_settings ORDER BY workspace_root"))
-        .toEqual([folder, share].sort().map(root => ({ workspace_root: root })));
+        .toEqual([folder, stored, share].sort().map(root => ({ workspace_root: root })));
     } finally {
       database.$client.close();
     }
@@ -268,7 +303,8 @@ describe("path keys an earlier build stored under another spelling", () => {
       expect(rows(database, `SELECT checkout_path AS key FROM checkouts
         UNION ALL SELECT owner_id FROM rule_settings WHERE owner_kind = 'checkout'
         UNION ALL SELECT workspace_root FROM audit_settings UNION ALL SELECT workspace_root FROM repository_audits
-        UNION ALL SELECT repository FROM presentation_preferences WHERE repository <> ''`)).toEqual(Array(5).fill({ key: stored }));
+        UNION ALL SELECT repository FROM presentation_preferences WHERE repository <> ''
+        UNION ALL SELECT workspace_root FROM audits UNION ALL SELECT workspace_root FROM audit_requests`)).toEqual(Array(7).fill({ key: stored }));
     } finally {
       database.$client.close();
     }
