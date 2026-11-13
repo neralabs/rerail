@@ -1,7 +1,12 @@
 //! The Datalog engine: plans, the native executor, SQL, typing, the waves core, the solver device interface.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
-#![allow(dead_code, unused_imports)]
+// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.
+#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
+// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
+// signatures and tuple types are the sources' own.
+#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
 pub use rerail_store::git_workspace;

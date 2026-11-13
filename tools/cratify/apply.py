@@ -647,7 +647,13 @@ def main(tree_tsv, join_out, *flags):
             text = own.rstrip('\n') + '\n\n' + GEN_BEGIN + body + GEN_END
         else:
             doc = f'//! {DESCRIPTIONS.get(c, c)}\n//!\n//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.\n'
-            text = doc + '#![allow(dead_code, unused_imports)]\n' + GEN_BEGIN + body + GEN_END
+            allow = ("// The mounts glob their owners' modules and widen what the crates above read: the split's facades, not a design.\n"
+                     '#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]\n'
+                     "// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long\n"
+                     "// signatures and tuple types are the sources' own.\n"
+                     '#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]\n'
+                     '#![allow(clippy::type_complexity, clippy::too_many_arguments)]\n')
+            text = doc + allow + GEN_BEGIN + body + GEN_END
         if write:
             os.makedirs(os.path.dirname(lib), exist_ok=True)
             open(lib, 'w').write(text)
