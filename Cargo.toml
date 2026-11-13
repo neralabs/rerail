@@ -27,6 +27,12 @@ opt-level = 3
 [profile.dev.package.rerail-python-lean]
 opt-level = 3
 
+# The tape writer (`rerail-tape-format`) runs a step per node of every parser that writes the tape
+# directly (the lean Python parser, `.rr`'s): its non-generic code (`block`, `put`) unoptimized was
+# most of the lean parser's time in dev builds.
+[profile.dev.package.rerail-tape-format]
+opt-level = 3
+
 # Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the
 # test binary was ~300 MB, mostly DWARF, and linking it dominated each rebuild. For a debugger,
 # build with full debug info: `cargo test --profile debugging` (or `cargo build --profile debugging`).

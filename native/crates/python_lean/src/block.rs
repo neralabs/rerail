@@ -32,9 +32,18 @@ static CLASS: [u8; 256] = {
     t
 };
 
-/// The 64 bytes from `at` (padded past the end).
+/// The 64 bytes from `at`, read in place; the last block of the text copied and padded with zeros.
 #[inline(always)]
-fn window(src: &[u8], at: usize) -> [u8; 64] {
+fn with_block<R>(src: &[u8], at: usize, f: impl FnOnce(&[u8; 64]) -> R) -> R {
+    if let Some(b) = src.get(at..at + 64) {
+        f(b.try_into().expect("64 bytes"))
+    } else {
+        f(&tail(src, at))
+    }
+}
+
+#[cold]
+fn tail(src: &[u8], at: usize) -> [u8; 64] {
     let mut b = [0u8; 64];
     let n = src.len().saturating_sub(at).min(64);
     b[..n].copy_from_slice(&src[at..at + n]);
@@ -45,8 +54,7 @@ fn window(src: &[u8], at: usize) -> [u8; 64] {
 #[inline]
 fn run_end(src: &[u8], mut at: usize, run: u8) -> usize {
     while at < src.len() {
-        let w = window(src, at);
-        let stop = !masks::of(&w, run);
+        let stop = with_block(src, at, |w| !masks::of(w, run));
         if stop != 0 {
             return (at + stop.trailing_zeros() as usize).min(src.len());
         }
@@ -97,8 +105,7 @@ pub fn spec_stop(src: &[u8], at: usize) -> usize {
 #[inline(always)]
 fn find(src: &[u8], mut at: usize, mask: impl Fn(&[u8; 64]) -> u64) -> usize {
     while at < src.len() {
-        let w = window(src, at);
-        let m = mask(&w);
+        let m = with_block(src, at, &mask);
         if m != 0 {
             return (at + m.trailing_zeros() as usize).min(src.len());
         }

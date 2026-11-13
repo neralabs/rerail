@@ -346,7 +346,12 @@ impl<'s> Lexer<'s> {
         let mut brackets = 0u32;
         loop {
             // The scanner, where it runs: outside brackets.
-            if brackets == 0 {
+            // (Only where a line may end before the next token: else the scanner gives nothing.)
+            let mut k = self.p;
+            while matches!(self.at(k), b' ' | b'\t') {
+                k += 1;
+            }
+            if brackets == 0 && (k >= src.len() || matches!(src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c)) {
                 while let Some((indent, first_comment)) = self.scan(self.p)? {
                     let current = *indents.last().expect("an indent");
                     let p = self.p;
@@ -370,7 +375,7 @@ impl<'s> Lexer<'s> {
                 }
             }
             // Blanks and line ends, then an extra or a token.
-            let mut i = self.p;
+            let mut i = k;
             loop {
                 let c = self.at(i);
                 if c == b' ' || c == b'\t' || c == 0x0c {

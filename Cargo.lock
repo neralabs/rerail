@@ -3304,6 +3304,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",

@@ -507,6 +507,12 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src, &lexed)
 }
 
+/// How many tokens and extras `src` lexes to (the lexer alone, for a measurement).
+pub fn token_count(src: &[u8]) -> Result<usize, Refusal> {
+    let lexed = lex::lex(src)?;
+    Ok(lexed.toks.len() + lexed.extras.len())
+}
+
 /// The tokens `src` lexes to, as text (for the tests): each token's kind and span, and the extras.
 pub fn tokens_text(src: &[u8]) -> Result<String, Refusal> {
     let lexed = lex::lex(src)?;
