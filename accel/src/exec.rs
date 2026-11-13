@@ -136,10 +136,16 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
-static WAITS: std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)> = std::sync::Mutex::new((BTreeMap::new(), BTreeMap::new()));
+/// Every site's wait stats, and by job the waits it made late.
+type WaitTables = (BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>);
+
+static WAITS: std::sync::Mutex<WaitTables> = std::sync::Mutex::new((BTreeMap::new(), BTreeMap::new()));
+
+/// [`waits`]: every site's waits, and the jobs that made them late.
+pub type SiteWaits = (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>);
 
 /// Every site's waits so far, and the jobs that made them late: for the profile.
-pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
+pub fn waits() -> SiteWaits {
     let w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
 }
@@ -267,10 +273,10 @@ pub fn help_until_as<T>(site: &'static str, mut poll: impl FnMut() -> Option<T>)
 pub fn cores_slowdown() -> f64 {
     static LAST: std::sync::Mutex<Option<(Instant, f64)>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((at, v)) = *last {
-        if at.elapsed().as_secs_f64() < 0.1 {
-            return v;
-        }
+    if let Some((at, v)) = *last
+        && at.elapsed().as_secs_f64() < 0.1
+    {
+        return v;
     }
     let ncpu = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
     #[cfg(unix)]
@@ -860,6 +866,10 @@ impl<R> Job<R> {
     }
 }
 
+/// A batch's placement ([`Executor::place`]): per launch, its lane, its cost there and the fastest lane's; and the
+/// load it was weighed against.
+pub type Placement = (Vec<(Lane, Cost, Cost)>, Load);
+
 impl Executor {
     /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
     pub fn board(&self) -> Arc<Scoreboard> {
@@ -870,6 +880,7 @@ impl Executor {
     pub fn new() -> Self {
         configure(false);
         let present = lanes::present();
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut, reason = "only macOS adds the device lanes"))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {
@@ -1003,7 +1014,7 @@ impl Executor {
 
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
-    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<Placement, String> {
         let predicted = self.predict(batch, &self.load(tag));
         self.place_predicted(tag, batch, &predicted)
     }
@@ -1016,7 +1027,7 @@ impl Executor {
     }
 
     /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
-    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<Placement, String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -1286,10 +1297,10 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if !lane.is_pool() {
-                if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
-                    report.cpu_freed += cc.wall;
-                }
+            if !lane.is_pool()
+                && let Some(cc) = claims.costs[i][Lane::Cpu.index()]
+            {
+                report.cpu_freed += cc.wall;
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
@@ -1486,10 +1497,10 @@ impl Backend for CpuBackend {
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
-        if let Ok(mut s) = self.space.lock() {
-            if let Some((rows, k)) = s.sorted.remove(&id) {
-                s.bytes -= rows * 12 + k.runs.len() * 16;
-            }
+        if let Ok(mut s) = self.space.lock()
+            && let Some((rows, k)) = s.sorted.remove(&id)
+        {
+            s.bytes -= rows * 12 + k.runs.len() * 16;
         }
     }
     fn clear(&self) {

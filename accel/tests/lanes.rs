@@ -355,7 +355,8 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     let delay = std::time::Duration::from_millis(300);
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
     // The device priced far cheaper, so the plan puts every launch there.
-    for f in [rerail_accel::kernel::Form::Probe] {
+    {
+        let f = rerail_accel::kernel::Form::Probe;
         ex.prices.set(f, Lane::Gpu, Some(1e-15));
     }
     ex.prices.latency = [0.0; Lane::COUNT];

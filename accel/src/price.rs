@@ -216,8 +216,11 @@ pub const MIN_SAMPLES: usize = 8;
 /// (on every thread, for every launch) touches no shared lock.
 static LEARNED_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// A thread's copy of [`LEARNED`]: the version it was taken at, and each rate's kernel name, lane and per-unit seconds.
+type LearnedCopy = (u64, Vec<(String, Lane, f64)>);
+
 thread_local! {
-    static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, f64)>)> = const { std::cell::RefCell::new((0, Vec::new())) };
+    static LEARNED_COPY: std::cell::RefCell<LearnedCopy> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
 fn learned(name: &str, lane: Lane) -> Option<f64> {
