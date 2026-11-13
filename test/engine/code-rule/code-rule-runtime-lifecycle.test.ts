@@ -811,6 +811,45 @@ describe("source-scoped steers", () => {
     });
   });
 
+  describe("a Claude Code session reopened while its rules open again", () => {
+    it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const databasePath = join(root, "rerail.sqlite");
+      const attachments = gateStorageAttachments();
+      attachments.gated = false;
+      const runtime = new RerailRuntime({
+        storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+        createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+      });
+      const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
+      try {
+        await runtime.ingest({ kind: "session-start", eventId: "start", session });
+        await runtime.codeRulesOpened(session.sessionId);
+        await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: session.sessionId, text: "" });
+        expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+        // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
+        attachments.gated = true;
+        await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, session, text: "go on" });
+        await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+        const call = runtime.ingest({
+          kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write",
+          input: { file_path: join(root, "edited.py"), content: "NEEDLE\n" },
+        });
+        // The call waits for the rules; their storage attaches once the test lets it.
+        attachments.workspaces[1]!.release();
+        expect(await call).toEqual([]);
+        await writeFile(join(root, "edited.py"), "NEEDLE\n");
+        expect(await runtime.ingest({
+          kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write", output: "written",
+        })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+      } finally {
+        for (const workspace of attachments.workspaces) workspace.release();
+        attachments.restore();
+        await runtime.dispose();
+      }
+    }, 30_000);
+  });
+
 
   it("keeps a session whose evaluator cannot open, and records why its code rules are off", async () => {
     const root = await realpath(await temporaryDirectory());

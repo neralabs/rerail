@@ -1,1 +1,1 @@
-The daemon closes a session that sends nothing for 30 minutes, or 24 hours while it is still owed a check, steer or finding. Its next event opens it again; an edit made while its rules compile again is checked when the turn ends, and its steer arrives a turn later than usual.
+The daemon closes a session that sends nothing for 30 minutes, or 24 hours while it is still owed a check, steer or finding. Its next event opens it again, and its first tool call waits up to 20 seconds for its rules to open, so that edit is still steered at its own result.
