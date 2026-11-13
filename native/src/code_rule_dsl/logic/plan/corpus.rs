@@ -1099,6 +1099,17 @@ pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
         }
         all.policies.extend(prog.policies);
+        // Its join shape directives, on its relations as renamed (O-join-shape-directives).
+        for mut shape in prog.shapes {
+            shape.head = rename(&shape.head);
+            shape.lit = rename(&shape.lit);
+            if let front::ShapeWait::After(a) = &mut shape.wait {
+                *a = rename(a);
+            }
+            if !all.shapes.contains(&shape) {
+                all.shapes.push(shape);
+            }
+        }
         // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
         all.rx_spans.extend(prog.rx_spans);
         all.ast_patterns.extend(prog.ast_patterns);
@@ -2050,8 +2061,10 @@ fn run_observed(
     // profiling on may have turned it off meanwhile.
     // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one.
-    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0;
+    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
+    // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
+    // holds the profile and waits for it).
+    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None

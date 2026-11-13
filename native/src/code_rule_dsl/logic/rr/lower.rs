@@ -296,6 +296,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
+    // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
+    let mut last_heads: Option<Vec<String>> = None;
+    let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
     for (item, line) in statements {
         let at = |e: Error| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
@@ -337,6 +340,12 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             // A test is never the program's (decision 0130): testing mode splices its statements into a program of
             // its own (`rr::testing`).
             Item::Test { .. } | Item::Fixtures { .. } => {}
+            Item::Setting { key, text } if key == "shape" => {
+                let Some(heads) = &last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
+                for h in heads {
+                    shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
+                }
+            }
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -344,8 +353,10 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                     for (rel, row) in rows {
                         l.prog.facts.entry(rel).or_default().push(row);
                     }
+                    last_heads = None;
                     continue;
                 }
+                last_heads = edits.is_empty().then(|| heads.iter().map(|h| h.rel.clone()).collect());
                 clauses.push((heads, body, edits, line));
             }
         }
@@ -361,6 +372,22 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
             e => e,
         })?;
+    }
+    // Each directive names what its rules read: a relation of their body, and the variables it waits for.
+    for (shape, line) in shapes {
+        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
+        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
+        let missing = match &shape.wait {
+            _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
+            ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
+            ShapeWait::Bound(vars) => vars.iter().find(|v| !rules.iter().any(|r| r.body.iter().any(|x| x.vars().contains(*v)))).map(|v| format!("no rule of `{}` has the variable `{v}`", shape.head)),
+            _ => None,
+        };
+        if let Some(why) = missing {
+            return Err(Error::Syntax(format!("line {line}: `.shape {}`: {why}", shape.text)));
+        }
+        l.prog.shapes.push(shape);
     }
     l.three_valued();
     l.findings()?;

@@ -4469,6 +4469,8 @@ gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
 ## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
 
+**Closed (2026-11-12) by [decision 0137](decisions/0137-join-shape-directives.md):** `.shape B after A` and `.shape B bound x` on a written rule shape it and every derived form; EXPLAIN marks a shaped plan; a profiled run reports a directive whose order is the planner's own; the DP takes no cross product priced from a default size. Test: `a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms`.
+
 Found at O125 step 07 (2026-11-12). `pv__ins`, driven by `pv`'s delta, crossed `pv` with `retparam` (no shared
 variable: 1,553 -> 159,959 rows) and read its 15-row input delta `posarg__plus` last, about 1.08 M rows of work
 for none. The cause was missing statistics, not a misjudgement: in a driven session the run's model is made from
