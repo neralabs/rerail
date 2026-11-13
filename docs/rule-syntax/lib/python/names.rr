@@ -402,7 +402,8 @@ ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part
 .decl concat_part(s: node)  // s is one of the strings of `"a" "b"`
 concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
 .decl literal_str(s: node)  // s is inside the brackets of `Literal[...]` or `x.Literal[...]`
-literal_str(s) :- kind(l, "subscript"), field(l, "value", v), text(v, t), (t = "Literal" ; suffix(".Literal", t)),
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), (kind(v, "identifier") ; kind(v, "attribute")),
+    text(v, t), (t = "Literal" ; suffix(".Literal", t)),
     within(s, l), !within(s, v).
 literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
 // type_checking_block(b): b is the body of `if TYPE_CHECKING:` (from typing or typing_extensions). Code there never

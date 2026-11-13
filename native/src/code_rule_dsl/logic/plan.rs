@@ -2678,6 +2678,25 @@ impl Model {
                 _ => None,
             }
         };
+        // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
+        // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
+        // rows it drops. `def_name`'s long-text twin seeded every node past the text bound and read each one's text
+        // before `field($f, "name", $n)` kept none: 77 MB of module, class and function texts in a posthog store.
+        let call_waits = |f: usize, bound: &dyn Fn(&str) -> bool, open: &dyn Fn(usize) -> bool| -> bool {
+            let Literal::Cmp { l, op: "=", r } = &body[f] else { return false };
+            let (out, call) = match (l, r) {
+                (Term::Var(v), c @ Term::Call(..)) | (c @ Term::Call(..), Term::Var(v)) if !bound(v) => (v, c),
+                _ => return false,
+            };
+            let mut ins = BTreeSet::new();
+            call.vars(&mut ins);
+            (0..body.len()).filter(|&j| is_join(&body[j])).any(|j| {
+                open(j) && matches!(&body[j], Literal::Atom(a) if !a.neg) && {
+                    let vs = body[j].vars();
+                    !vs.contains(out) && !vs.is_disjoint(&ins)
+                }
+            })
+        };
         // Applies every filter (negation, comparison, aggregate) whose variables are bound.
         let close = |order: &mut Vec<Step>, mut rows: f64, bound: &mut BTreeSet<String>, rest: &mut Vec<usize>| -> f64 {
             let mut progressed = true;
@@ -2685,7 +2704,7 @@ impl Model {
                 progressed = false;
                 for i in rest.clone() {
                     let l = &body[i];
-                    if !is_join(l) && ready(l, bound) {
+                    if !is_join(l) && ready(l, bound) && !call_waits(i, &|v: &str| bound.contains(v), &|j: usize| !order.iter().any(|s| s.at == j)) {
                         order.push(Step { at: i, lit: l.clone(), mode: None });
                         rest.retain(|&j| j != i);
                         bound.extend(l.vars());
@@ -2897,7 +2916,7 @@ impl Model {
             while progressed {
                 progressed = false;
                 for (k, &f) in filters.iter().enumerate() {
-                    if !placed[k] && ready_at(f, bound) {
+                    if !placed[k] && ready_at(f, bound) && !call_waits(f, &|v: &str| var_ids.get(v).is_some_and(|&b| bound >> b & 1 == 1), &|j: usize| joins.iter().position(|&x| x == j).is_none_or(|i| mask & (1 << i) == 0)) {
                         placed[k] = true;
                         bound |= lit_bits[f];
                         progressed = true;

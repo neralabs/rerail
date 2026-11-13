@@ -2334,3 +2334,35 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let guarded = order_of(rule, &no_posarg, None, Some(0));
     assert!(at(&guarded, "retparam") > at(&guarded, "posarg"), "{guarded:?}");
 }
+
+/// A computed value waits for the atoms still to join that read its arguments and not the value: they only narrow the
+/// rows, so the value is computed (and its text interned) for the rows kept. `def_name`'s long-text twin read the text
+/// of every node past the bound, then kept none at `field($f, "name", $n)`.
+#[test]
+fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
+    let p = parse(
+        ".decl p(s: symbol)\n.decl q(s: symbol)\n.decl o(s: symbol, n: number)\n\
+         p(\"a\"). p(\"bb\"). p(\"ccc\"). q(\"bb\").\n\
+         o(s, n) :- p(s), n = @strlen(s), q(s).\n.output o\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("p".into(), 10.0);
+    stats.card.insert("q".into(), 14_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&p, &db, inputs).unwrap();
+    let r = &p.rules[0];
+    let (order, _, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| s.lit.to_string()).collect();
+    let at = |prefix: &str| shown.iter().position(|s| s.starts_with(prefix)).unwrap_or_else(|| panic!("{prefix} in {shown:?}"));
+    assert_eq!(at("p("), 0, "{shown:?}");
+    assert!(at("$n = ") > at("q("), "the value is computed after q narrows: {shown:?}");
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    assert_eq!(out.outputs["o"].len(), 1, "{:?}", out.outputs["o"]);
+}
