@@ -219,7 +219,8 @@ fn disjoint_literal_tags_prove_unique_union_support_and_overlap_keeps_counts() {
     let program = rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(2,x) :- a(x).\n.output tagged\n").unwrap();
     let analysis=ProgramAnalysis::analyze(&program);
     assert!(analysis.support_uniqueness["tagged"].proven);
-    let overlap=rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(1,x) :- a(x).\n.output tagged\n").unwrap();
+    // Two rules, as lowering keeps a repeated rule once: one tag over two inputs whose rows may be the same.
+    let overlap=rr::parse(".decl a(x:number)\n.decl b(x:number)\n.input a,b\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(1,x) :- b(x).\n.output tagged\n").unwrap();
     assert!(!ProgramAnalysis::analyze(&overlap).support_uniqueness["tagged"].proven);
     assert!(!scalars::maintenance_equivalent(true,false).proven);
     assert!(!scalars::maintenance_equivalent(false,true).proven);
