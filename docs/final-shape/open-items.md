@@ -4047,8 +4047,9 @@ without (206 G against 187 G instructions on dl1).
    (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
    no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
    looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
-   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
-   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+   (decision 0104). The check is now made before the first wave (`retain::kept_inputs_stored`; the column
+   mismatch no longer arises, since `retain::group_col` takes the split's locations first), and a refused run decodes
+   every hit whole as it finds it. The one policy fails on its second run without this.
 2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
    (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
    their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
