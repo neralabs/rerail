@@ -247,7 +247,7 @@ fn hash_lookup_index_contains_only_algorithm_and_first_lane() {
 #[test]
 fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let (_, store) = store("bulk-sources");
+    let (_path, store) = store("bulk-sources");
     let requests = (0..257)
         .map(|i| {
             let source = format!("source {i} π").into_bytes();
