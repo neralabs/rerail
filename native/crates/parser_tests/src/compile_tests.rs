@@ -1170,13 +1170,13 @@ fn json_compiled_path_equals_the_interpreters() {
     let native = native_ir::lower(&p, 0, 0).expect("lowers");
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
-    // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's. The table's final pass (parents and extras) is
-    // a function of its own, called once: its loop is not the token loop's. A token's end is its
+    // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
+    // heads are the stream's. The table is written as it goes (each row's parent and extra flag
+    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
     // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
+    assert_eq!(tier2.own_calls, 0, "no pass over the table");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

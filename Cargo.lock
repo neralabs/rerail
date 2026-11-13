@@ -3307,6 +3307,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-sessions",
+ "rerail-simdjson",
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
@@ -3601,6 +3602,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-simdjson",
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
@@ -4295,6 +4297,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-simdjson"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "memchr",
 ]
 
 [[package]]

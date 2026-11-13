@@ -87,6 +87,8 @@ rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+# JSON's parser (`json_parser::simdjson`).
+rerail-simdjson = { path = "../simdjson" }
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]

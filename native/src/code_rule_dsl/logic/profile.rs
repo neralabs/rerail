@@ -315,6 +315,8 @@ pub struct RulePlan {
     pub subsets: u64,
     pub candidates: u64,
     pub steps: Vec<StepPlan>,
+    /// The join shape directives that held back a step of its search (`.shape`, O-join-shape-directives).
+    pub shaped: Vec<String>,
 }
 
 #[derive(Default)]
@@ -471,6 +473,11 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 /// Opens span `name` (made only when profiling) under this thread's open span.
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
+        // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
+            eprintln!("RERAIL_TIMELINE span {}", name());
+        }
         return Span(false);
     }
     let name = name();
@@ -700,6 +707,11 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     let out = f();
     BEHIND.with(|b| b.set(was));
     out
+}
+
+/// Whether this thread works behind the run (`behind`, `behind_the_run`).
+pub fn is_behind() -> bool {
+    BEHIND.with(std::cell::Cell::get)
 }
 
 fn in_waves() -> bool {
@@ -1291,9 +1303,10 @@ pub fn explain(r: &mut String, state: &State) {
         }
         for ((_, kind, _), t) in plans {
             let produced = t.produced.map_or(String::new(), |n| format!(" produced={n}"));
+            let shaped = if t.plan.shaped.is_empty() { String::new() } else { format!("; shaped by {}", t.plan.shaped.iter().map(|s| format!("`.shape {s}`")).collect::<Vec<_>>().join(", ")) };
             let _ = writeln!(
                 r,
-                "  -> {}  (est work={:.0} rows={:.1}) (loops={} replans={}{produced})  search: {} subsets, {} candidates; planning {:.3} s",
+                "  -> {}  (est work={:.0} rows={:.1}) (loops={} replans={}{produced})  search: {} subsets, {} candidates{shaped}; planning {:.3} s",
                 rule_name(t.rule, kind),
                 t.plan.work,
                 t.plan.rows,

@@ -47,7 +47,8 @@ pub(in crate::code_rule_dsl) fn run(
     let digests: HashMap<String, u64> = inputs.iter().map(|(rel, _, d, _)| (rel.clone(), *d)).collect();
     let sources: Vec<(String, Arc<dyn Source>)> = inputs.iter().map(|(r, s, ..)| (r.clone(), Arc::clone(s))).collect();
     let s = span("cut and rewrite");
-    let cut = retain::cut(kept.as_ref(), key, &prog.program, &digests)?;
+    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(&prog.program).map_err(|e| super::Error::Plan(e.to_string()))?;
+    let cut = retain::cut(kept.as_ref(), key, &prog.program, &sccs, &digests)?;
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {
         k.load(store, &cut, &prog.program, false)?;
@@ -64,8 +65,8 @@ pub(in crate::code_rule_dsl) fn run(
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };
-    let mut maintained = maintain::rewrite(&cut, kept.as_ref(), prog, &mut given)?;
-    let derived = cut.derived(&prog.program)?;
+    let mut maintained = maintain::rewrite(&cut, kept.as_ref(), prog, &sccs, &mut given)?;
+    let derived = cut.derived(&sccs)?;
     {
         let program = &mut maintained.program.program;
         if maintain::levels_wanted() {

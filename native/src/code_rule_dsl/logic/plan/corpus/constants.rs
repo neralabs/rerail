@@ -41,16 +41,23 @@ pub(super) const OWN: &str = "constants_run";
 /// settings and file-system reads, through other such relations and negations of them. Those the split already
 /// treats as constants (`constant_relations`: no request among them) are left to it.
 pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
-    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    // Each relation's rules, and the inputs, looked up (a scan of every rule per relation and round was 0.23 s of an
+    // edit's start-up on the Python pack's main program).
+    let mut heads: std::collections::HashMap<&str, Vec<&crate::code_rule_dsl::logic::front::Rule>> = std::collections::HashMap::new();
+    for r in &prog.rules {
+        heads.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
     let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| !derived.contains(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !prog.inputs.iter().any(|i| i == rel)));
-    let mut fold: BTreeSet<String> =
-        derived.iter().filter(|r| !prog.natives.contains_key(**r) && !prog.lattice.contains_key(**r) && !prog.inputs.iter().any(|i| i == **r)).map(|r| (*r).to_owned()).collect();
+    let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
+    let mut fold: std::collections::HashSet<&str> =
+        heads.keys().copied().filter(|r| !prog.natives.contains_key(*r) && !prog.lattice.contains_key(*r) && !inputs.contains(r)).collect();
     loop {
-        let kept: BTreeSet<String> = fold
+        let out: Vec<&str> = fold
             .iter()
+            .copied()
             .filter(|rel| {
-                prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
+                !heads[rel].iter().all(|r| {
                     r.body.iter().all(|l| match l {
                         Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel),
                         Literal::Cmp { .. } => true,
@@ -58,13 +65,15 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
                     })
                 })
             })
-            .cloned()
             .collect();
-        if kept == fold {
+        if out.is_empty() {
             break;
         }
-        fold = kept;
+        for rel in out {
+            fold.remove(rel);
+        }
     }
+    let mut fold: BTreeSet<String> = fold.into_iter().map(str::to_owned).collect();
     // Only those that read the world (else the split derives them in both parts already).
     let constant = constant_relations(prog);
     fold.retain(|r| !constant.contains(r));
@@ -119,24 +128,25 @@ pub(super) fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<Vec<(String, String, String)>> {
+) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
     if options.get(OWN).is_some() {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let wanted = foldable(prog);
     if wanted.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, root, options, &wanted);
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
-    let (texts, consulted) = match was_kept {
-        Some(kept) => kept,
+    // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
+    let ((texts, consulted), plans) = match was_kept {
+        Some(kept) => (kept, Vec::new()),
         None => {
-            let derived = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            let (derived, plans) = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
             keep(&key, &derived.0, &derived.1)?;
-            derived
+            (derived, plans)
         }
     };
     for rel in &wanted {
@@ -149,7 +159,7 @@ pub(super) fn fold(
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok(consulted)
+    Ok((consulted, plans))
 }
 
 type Derived = (std::collections::BTreeMap<String, String>, Vec<(String, String, String)>);
@@ -167,7 +177,7 @@ fn derive(
     typing: &Typing,
     options: &serde_json::Value,
     wanted: &BTreeSet<String>,
-) -> Result<Derived> {
+) -> Result<(Derived, Vec<[u8; 32]>)> {
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
@@ -175,7 +185,7 @@ fn derive(
     let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
     let texts = wanted.iter().map(|rel| (rel.clone(), std::fs::read_to_string(out.join(format!("{}.csv", copy(rel)))).unwrap_or_default())).collect();
     let _ = std::fs::remove_dir_all(&out);
-    Ok((texts, report.consulted))
+    Ok(((texts, report.consulted), report.plans))
 }
 
 /// What the constants are keyed by, beside what their run consulted.

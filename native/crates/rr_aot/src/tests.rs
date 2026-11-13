@@ -39,7 +39,12 @@ const BOTH: crate::Tiers = crate::Tiers { one: true, two: true };
 fn aot_tapes_are_the_jits() {
     let jit = rerail_rr_parser::compiled().expect("compiles");
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
-    let files = corpus();
+    // The corpus, and the table's in-place cases (`rr_parser`'s `the_table_is_written_in_place`):
+    // wraps, a drop then a reread.
+    let mut files = corpus();
+    for src in ["r(x) :- x = a - b - c - d.", "r(x) :- x = (a + b) * (c - d) - e / f.", "r(x) :- x = a /* c */ - b // d\n - c.", "r(n) :- n = min (a, b) : { s(a, b) }."] {
+        files.push(src.to_string());
+    }
     let (mut differ, mut tier1_differ) = (Vec::new(), Vec::new());
     let mut taken = 0;
     for (i, f) in files.iter().enumerate() {
@@ -79,7 +84,7 @@ fn jit_against_aot() {
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
     let files = corpus();
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.columns(f.as_bytes()).is_ok()).collect();
-    let nodes: usize = ours.iter().map(|f| rr::tape(f).len()).sum();
+    let nodes: usize = ours.iter().map(|f| rr::engine_tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
     let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
         ours.iter()
@@ -129,7 +134,7 @@ fn jit_against_aot() {
         }
         lap(5, &mut best);
         for f in &ours {
-            n += rr::tape(f).len();
+            n += rr::engine_tape(f).len();
         }
         lap(6, &mut best);
         for f in &ours {
@@ -180,4 +185,32 @@ fn jit_against_aot() {
     let sum = |a: usize, b: usize| (best[a].0 + best[b].0, best[a].1 + best[b].1, best[a].2 + best[b].2);
     row("tier 1 + 2 (JIT)", sum(0, 2));
     row("tier 1 + 2 (AOT)", sum(1, 3));
+}
+
+/// Where tier 2's work goes: each opcode's runs a token over the corpus (the interpreter's
+/// trace, `stream::run_seen`), and the rule calls.
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn tier2_words_a_token() {
+    use rerail_compiler::program::split;
+    let c = rerail_rr_parser::compiled().expect("compiles");
+    let program = &c.program;
+    let mut runs = vec![0u64; program.words.len()];
+    let mut tokens = 0u64;
+    for src in corpus() {
+        let run = program.block_programs[0].run(src.as_bytes());
+        tokens += run.codes.len() as u64;
+        let _ = rerail_compiler::stream::run_seen(program, src.as_bytes(), &run, &mut |pc| runs[pc] += 1);
+    }
+    let mut by: std::collections::BTreeMap<String, u64> = Default::default();
+    for (pc, &n) in runs.iter().enumerate() {
+        let (op, mode, _) = split(program.words[pc]);
+        *by.entry(format!("{op:#04x} m={}", if op == rerail_compiler::program::MARK { 0 } else { mode })).or_default() += n;
+    }
+    let mut v: Vec<(String, u64)> = by.into_iter().collect();
+    v.sort_by_key(|x| std::cmp::Reverse(x.1));
+    eprintln!("{tokens} tokens; words a token, by opcode:");
+    for (k, n) in v {
+        eprintln!("  {k}: {:.3}", n as f64 / tokens as f64);
+    }
 }

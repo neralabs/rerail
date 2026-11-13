@@ -50,10 +50,10 @@ the file, so the new store starts empty.
 store missing any object (new, or lacking an index this build added) takes the exclusive lock and
 applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
-`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (3). A build refuses a store
+`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (4). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v3.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v4.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,

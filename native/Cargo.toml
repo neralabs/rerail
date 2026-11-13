@@ -185,6 +185,8 @@ rerail-metal = { path = "crates/metal" }
 rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 
 [dev-dependencies]
+# JSON's parser, measured directly (`tape::tests::json_parse_costs`).
+rerail-simdjson = { path = "crates/simdjson" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.

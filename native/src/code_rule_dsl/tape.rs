@@ -290,12 +290,6 @@ pub trait TreeParser: Send + Sync {
     ) -> Option<Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>> {
         None
     }
-
-    /// Whether it stands in for the dialect's tree-sitter grammar, node for node (a file it refuses goes to
-    /// tree-sitter). A workspace that times its own tree-sitter parse reads such a dialect with tree-sitter.
-    fn stands_in_for_tree_sitter(&self) -> bool {
-        false
-    }
 }
 
 static PARSERS: std::sync::OnceLock<Vec<(GrammarDialect, &'static dyn TreeParser)>> = std::sync::OnceLock::new();
@@ -370,6 +364,16 @@ pub struct Code {
 }
 
 impl Code {
+    /// A code of `kind` under `field`, with no flags or alias, in the supertypes `classes` (ascending).
+    pub fn plain(kind: u16, field: u16, classes: &[u16]) -> Result<Self, String> {
+        if kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == ERROR_CODE || classes.len() > MAX_NODE_SUPERTYPES {
+            return Err(format!("kind {kind}, field {field} or {} supertypes past the tape's codes", classes.len()));
+        }
+        let mut code = Code { kf: kind | (field << 10), flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: [0; MAX_NODE_SUPERTYPES] };
+        code.classes[..classes.len()].copy_from_slice(classes);
+        Ok(code)
+    }
+
     fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]
     }
@@ -1279,7 +1283,7 @@ impl TapeImage {
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061).
-    pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
             return Err("only a .rr file is encoded from its rule tree".into());
@@ -1287,20 +1291,22 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
+        // The lean parser's rows, packed as a tree's nodes are, until a parser writes the tape's columns
+        // itself (O-bitlex-writes-tape).
         let nodes = rerail_rr_syntax::tape(source)
             .into_iter()
-            .map(|node| {
-                let error = node.is_error();
-                if !error && (usize::from(node.kind) >= KIND_LIMIT || usize::from(node.field) >= FIELD_LIMIT) {
-                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", node.kind, node.field));
+            .map(|row| {
+                let error = row.kind == rerail_rr_syntax::tape::ERROR;
+                if !error && (usize::from(row.kind) >= KIND_LIMIT || usize::from(row.field) >= FIELD_LIMIT) {
+                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", row.kind, row.field));
                 }
                 Ok(Pending {
-                    kf: if error { ERROR_CODE } else { node.kind | (node.field << 10) },
-                    parent: node.parent,
-                    start: node.start,
-                    length: node.end.checked_sub(node.start).ok_or("inverted node span")?,
+                    kf: if error { ERROR_CODE } else { row.kind | (row.field << 10) },
+                    parent: (row.parent != rerail_rr_syntax::tape::NO_PARENT).then_some(row.parent),
+                    start: row.start,
+                    length: row.end.checked_sub(row.start).ok_or("inverted node span")?,
                     size: 1,
-                    extra: node.extra,
+                    extra: row.extra != 0,
                     error,
                     missing: false,
                     kind_alias: None,
@@ -1338,6 +1344,51 @@ impl TapeImage {
             }
         }
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
+    /// per `CHECKPOINT_STRIDE` nodes, each of `size`, `off` and `tail` at its narrowest width): no node is
+    /// packed again, and only the columns' lengths are checked (a code's range is the writer's: a node's code
+    /// is numbered as the node is written). Not generic, so it is compiled once, here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn written(
+        code: Vec<u8>,
+        size: Vec<u8>,
+        base: Vec<u8>,
+        off: Vec<u8>,
+        tail: Vec<u8>,
+        widths: [u8; 3],
+        codes: Vec<Code>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Result<Self, String> {
+        let count = code.len() / 2;
+        let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
+        if count == 0
+            || code.len() % 2 != 0
+            || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
+            || size.len() != count * size_width
+            || off.len() != count * off_width
+            || tail.len() != count * tail_width
+            || base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
+            || codes.is_empty()
+        {
+            return Err("a written tape's columns do not agree".into());
+        }
+        Ok(Self {
+            code,
+            size,
+            base,
+            off,
+            tail,
+            widths,
+            codes,
+            kind_aliases: Vec::new(),
+            language: grammar.lang,
+            source_len: source.len(),
+            source_digest: Some(source_digest(source, &budget)?),
+        })
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by

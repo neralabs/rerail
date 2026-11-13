@@ -60,6 +60,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
     (COUNT, "COUNT"),
+    (CHECK, "CHECK"),
 ];
 
 /// How an opcode's operand prints.
@@ -435,6 +436,33 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.word_kinds.push((s, k));
         }
+        "localcheck" => {
+            use crate::program::LocalOp;
+            let mask: u16 = line.number("m")?;
+            let delay: u8 = line.number("d")?;
+            let mut ops = Vec::new();
+            while let Some(w) = line.peek_word() {
+                line.word()?;
+                let bad = || format!("a bad local op `{w}`");
+                let (tag, rest) = w.split_at(1);
+                let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
+                let v = nums(rest)?;
+                let two = |v: &[u64]| -> Result<(u16, u16), String> { if v.len() == 2 { Ok((v[0] as u16, v[1] as u16)) } else { Err(bad()) } };
+                ops.push(match tag {
+                    "b" if v.len() == 4 => LocalOp::Bytes([v[0], v[1], v[2], v[3]]),
+                    "c" if v.len() == 1 => LocalOp::Const(v[0]),
+                    "w" if v.len() == 1 => LocalOp::Within(v[0] as u8),
+                    "n" if v.len() == 1 => LocalOp::Not(v[0] as u16),
+                    "a" => { let (a, b) = two(&v)?; LocalOp::And(a, b) }
+                    "o" => { let (a, b) = two(&v)?; LocalOp::Or(a, b) }
+                    "x" => { let (a, b) = two(&v)?; LocalOp::Xor(a, b) }
+                    "m" => { let (a, b) = two(&v)?; LocalOp::AndNot(a, b) }
+                    "p" => { let (a, k) = two(&v)?; LocalOp::Prev(a, k as u8) }
+                    _ => return Err(bad()),
+                });
+            }
+            parts.local_checks.push(crate::program::LocalCheck { mask, delay, ops });
+        }
         "tokencount" => {
             let at: usize = line.number("")?;
             if at != parts.counts.len() {
@@ -710,6 +738,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
     crate::rir_text::count_rows(out, &program.counts);
+    crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
 }
 

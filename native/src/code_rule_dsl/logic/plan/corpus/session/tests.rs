@@ -155,6 +155,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         ("b.py", "from c import y\n"),
     ];
     let mut recursive = 0;
+    let unsized_before = crate::code_rule_dsl::logic::plan::unsized_deltas();
     for (path, text) in edits {
         std::fs::write(src.join(path), text).unwrap();
         let report = run();
@@ -164,6 +165,9 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         recursive += report.cross_maintained.1;
     }
     assert!(recursive > 0, "the recursive stratum is maintained");
+    // Every input delta the maintained forms read was priced by its size, not the default's 1,000 rows.
+    let unsized_reads = crate::code_rule_dsl::logic::plan::unsized_deltas() - unsized_before;
+    assert_eq!(unsized_reads, 0, "reads of an input delta priced with no size");
     stop();
     let _ = std::fs::remove_dir_all(&base);
 }

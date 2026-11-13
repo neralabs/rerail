@@ -3206,6 +3206,12 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
+**Seen again (2026-11-12), after the hub at 026a650ac.** `rr_embed_req`, the embed requests a policy writes as an
+output, is now written empty where it had rows: on dl1, `public-api-triples` had 22 `annotation` requests, now none;
+on dl10, two policies. Every `violation.csv` is unchanged, CPU and device, and the `.rr` parser (engine or lean)
+makes no difference. Likely this item's cause reached by the hub's memo and cross-part changes (041942a64); not yet
+traced.
+
 ## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
@@ -3739,6 +3745,39 @@ after a filter the CPU applies one step later.
 
 **Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
 
+## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
+
+Found at O125 step 07 (decision 0101, "Measured: the `ifn__ins` order"). `ifn__ins` is in a recursive maintained
+component of 183 relations. Its rule driven by `fv`'s delta was first planned while `pv__ins`, a relation of the
+same component, held few rows, so probing it by class looked cheap: `fv → pv__ins by class → icall`. Once
+`pv__ins` grew, the drift check replanned to `fv → icall by name → pv__ins checked`, which does no work past the
+delta (273 + 160 units). The first plan ran 12 delta batches before that: 83,862 units, 1.6% of the step's
+5.39 M. It is not skew: `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637 against an actual 452.
+
+Two ways to remove it, either or both:
+
+- Price a relation of the component by what it will hold, not what it holds when planned: the last run's size
+  of the same piece (`pv__ins`), or a bound from the deltas that feed it (`pv`'s).
+- Check the drift between a wave's batches, not only between waves, so any wrong first plan runs one batch.
+
+**Closure:** at O125 step 07 the first plan of `ifn__ins` (delta `fv`) is icall first, or the plan that probes
+`pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
+full run's.
+
+**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
+a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
+floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
+(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
+SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
+planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
+
+At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
+`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
+from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
+open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
+is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
+as the joins it plans (4.7 s), against decision 0122.
+
 ## O-test-store-cost. A test's own store costs 5–21% more instructions per suite
 
 **Seen (2026-11-11), decision 0118.** Against one store per process: `logic::rr::` 740 G instructions against 668 G,
@@ -3978,6 +4017,148 @@ corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which
 Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
 setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
 
+## O-pha000-kept-part (closed 2026-11-12). A negation-only reader of a demanded relation reported a false finding
+
+**Seen (2026-11-12).** `plan-helpers-allowlist.rr` over dl1, strict: with no store it reported `PHA000`; with any
+store, even an empty one, it reported nothing. **The run with a store was right.** `allow_status` holds
+`("plan_helpers", "valid")` (the allowlist's signature is in the policy's tables), so `PHA000 :-
+!allow_status("plan_helpers", "valid")` must not hold.
+
+**Cause.** Demand (decision 0048) computes `allow_status` only for the keys its readers reach. A reader whose body
+is only demanded negations has nothing to make a `pre_<i>` of, and was left as written, demanding nothing: its key
+was never computed, and the negation held. A run that keeps its cross-file part (K4 or the kept part) does not
+demand there, so it was right; the session tests' oracle (both off) had the fault.
+
+**Fixed** (`demand::split_with`): such a reader refuses demand for the relations it reads, which are built whole.
+`a_reader_that_only_negates_a_demanded_relation_reads_it_whole` runs the policy from nothing kept and by default
+and asserts they agree, with no `PHA000` (it fails without the fix). The 44 policies give 48 findings over dl1 and
+over dl10, with a store and without; the 49th of the earlier measurements was this false one.
+
+## O-store-single-program (closed 2026-11-12). Batches over one store lost memo entries and kept inputs
+
+**Seen (2026-11-12)** while trying O-combine-hiding-single: with `combine_stored` keeping one program too, the third
+batch of the 44 policies over one store failed: `leg-083-typed.rr: _internal/__init__.py: its memo entry is gone`.
+Single program storing was not the cause: three store faults were, and the batch over a store cost more than one
+without (206 G against 187 G instructions on dl1).
+
+**Causes, and fixes.**
+1. *The kept route was refused at the waves' end.* A file counted unchanged is looked up for its outputs alone, before
+   the first wave, and its rows come from the kept inputs after. When those could not be taken
+   (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
+   no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
+   looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
+   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
+   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
+   (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
+   their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
+   manifest now names the batch's earlier plans (`phases::batch_plans`), and the batch collects at its first run
+   alone, when the last batch's final manifest names all its plans.
+3. *Each policy a run of the root's spaces.* The kept-strata space is the root's, shared by the policies, and counts
+   a run per run token: 44 a batch, so a policy's kept inputs, used once a batch, were collected after `frames::RUNS`
+   (4) others. The batch is one run now (`phases::Batch` holds the run token).
+4. Also: an outputs frame found marks its entry frame used with it (`MEMO_RUNS` aged the entry alone), and
+   `Found::whole` reads the store, not the snapshot.
+
+**Measured** (dl1, 44 policies, strict, CPU): five batches over one store give the 48 findings of a run without a
+store each time; a warm batch is 112 G instructions, 36 G cycles (no store: 188 G; before: 206 G). dl10: 141 G
+warm against 280 G. Keeping a single program's combined form in the store adds nothing on top (113.5 G warm, and a
+cold batch 291 G against 265 G): not kept. Policies run one process each: O-policies-one-process-each.
+`a_policy_refused_its_kept_inputs_runs_again_over_its_store` runs the one policy three times
+over a store (in one process, so it passed before the fix too).
+
+## O-policies-one-process-each (closed 2026-11-12)
+
+The 44 data-layer policies run one process each over one root and one store (not a batch), round after round. Two
+things aged by the root, not by the program, so a policy run once a round lost what it kept to the 43 run between:
+
+1. *Frames.* The kept-strata space is the root's, shared by its programs (decision 0103), and a relation was kept
+   while the space's last `frames::RUNS` (4) runs used it: 17 policies found no kept inputs in every round. A run's
+   use is now kept by program (`frames::Used`'s third part, the prepared or `retain` key; table
+   `frame_program_used`, the old `frame_used` no longer read): a relation is kept while one of its programs' last
+   `RUNS` runs used it, and a program not run for `frames::ABANDON` (256) runs of the space counts no more.
+2. *Manifests.* Collection protected a root's last `protected_runs` (2) manifests, and their plans alone were live:
+   the other 42 policies' memo spaces were collected, and their files missed the memo in every round (dl10: 64 a
+   round). A manifest now has a lane (`record_corpus_run_lane`, table `corpus_manifest_lanes`): the digest of the
+   run's program texts, which does not name the build. A root's last `protected_runs` manifests *of each lane* are
+   protected, for its newest `protected_lanes` (64) lanes; a replaced build's plan is its lane's, and dies as before.
+   A manifest without a lane (an older binary's, the store's own tests) is the root's one lane, as before.
+
+**Measured** (strict, CPU, 44 processes a round; instructions summed; 48 findings in every round):
+
+| | before | frames by program | and lanes |
+|---|---|---|---|
+| dl1, round 2 | 320.8 G; 17 without kept inputs; 11 misses | 335.8 G; 0; 11 | 273.8 G; 0; 0 |
+| dl1, round 3 | 293.0 G; 17; 9 | 324.6 G; 0; 9 | 258.9 G; 0; 0 |
+| dl10, round 2 | 438.5 G; 17; 64 | 448.8 G; 0; 64 | 300.5 G; 0; 1 |
+
+Kept inputs alone cost a little (the kept route maintains what the missed memo then recomputed); with the memo kept
+too, round 2 is 15% (dl1) and 31% (dl10) cheaper. Tests: `each_program_keeps_what_it_used_however_many_run_between`
+(frames), `each_lane_keeps_its_last_runs_plans` (manifests). The one dl10 miss left: O-inner-run-memo-miss.
+
+## O-inner-run-memo-miss. One one-file run inside `matching-architecture.rr` misses the memo every round
+
+Over dl10, policies one process each, round 3: `matching-architecture.rr`'s process makes a second run of one file
+(`statkeep before the first wave: 1 files, 1 known by stat, 0 found`; 21 relations, 11,936 rows written; 0.78 s for
+the process). It misses in every round, so its entry is not stored, or is stored under a plan no manifest names.
+Small; not yet traced.
+
+## O-dl10-demand-computed-head (closed 2026-11-12, 6ec67d811)
+
+The 44 policies over dl10 stopped under `RERAIL_SQL_STRICT` (on the hub too):
+`demand_bch_allowed($d, @add($l, 1)) has no native step`. Demand copied a demanded rule's computed head column
+into its demand atom. It now reads a fresh variable, checked equal to the term once the body binds it. dl10 gives
+the 48 findings a run without demand gives; the `demand` tests pass.
+
+## O-read-unreached-library (closed 2026-11-12). A policy lowered its libraries whole
+
+**Seen (2026-11-12)**, after O-store-single-program: reading a policy (`rr::read_file` → `lower_files`) was 16% of
+the dl1 batch's main thread, with a store and without, the largest per-policy setup cost with the typing run.
+Of the 21,102 rules the 44 policies lowered, 5,261 were reached; the rest were their libraries' rules, checked
+(`token_reads::refuse`, a fixpoint over every clause), lowered and then pruned (`front::prune`).
+
+**Fixed** (`rr::unreached_dropped`): an included file's clauses no root reaches are dropped before the checks
+and the lowering. Roots: every identifier of the policy's own file and of `core.rr` and the engine's files, and
+another file's outputs, violations and settings (its declarations, inputs, `.stored`, functors and types read
+nothing); a kept clause's names, terms' included (a relation may be an argument: `nearest(n, p, block_node)`).
+Every clause for a reached relation is kept. Seven tests (`dropping_unreached_clauses_prunes_to_the_same_program*`,
+989 programs of the data layer and the packs) lower each program both ways and compare the pruned programs: the
+same rules (a lowering helper's numbered as met, compared by count), natives, outputs, inputs read and
+declarations. Two differences are the dropped form's gain, not a change: an unreached clause's input stays
+declared and unread after `prune`; and a violation's `@place` variant is made when any rule makes a place (no
+reached one does there). 52–58% of the packs' and data layer's clauses are dropped.
+
+**Measured** (44 policies, strict, CPU, 48 findings each): dl1 188.1 → 163.2 G instructions; dl10 280.4 →
+257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
+now: no item.
+
+**What remained, cut (2026-11-12).** Reading was still 15.5% of a warm batch's main thread (850 of 5,500 samples):
+
+1. *A store a file.* Each rule file read off its tape (`stored_statements`) opened the tape cache and closed it,
+   and the close of its last handle closed every thread's connection to it (`ContentStore`'s drop,
+   `release_all`): 514 samples. A batch, and a program's reading, now hold one handle (`phases::Reading`,
+   `reading_store`). `read_file` also copies only the statements kept (`reached_statements`), not every library.
+2. *The token check's fixpoint.* `token_reads::refuse` brought the column kinds of every relation of the program to
+   a fixpoint, 16 rounds at most, though only a clause that reads a token (`READS`) consults them: now only the
+   relations of those clauses and what they derive from (141 → 9 samples).
+   `a_parent_kind_derived_through_rules_is_named` checks a kind derived through a rule is still named.
+3. *The cycle check's summaries.* `front::cycles::check` summarized every component, though only a recursive
+   component with a value cycle not keyed by constants reads them: now none past the last such component (166 →
+   60 samples).
+
+Warm dl1 batch, same tree and store: 94.8 → 91.3 G instructions and 32.2 → 28.8 G cycles for (1) (load 16–20);
+88.2 G and 27.1 G with (2) and (3) (load 4); 48 findings. Reading is 367 of 3,206 samples (11.4%): `lower::lower`
+269 (`clause` and `span_patterns`, the lowering itself), `front::finish` 70.
+
+## O-prepared-decode. A warm batch decodes each policy's prepared program from the store
+
+**Seen (2026-11-12)**, after O-store-single-program and O-read-unreached-library: in a warm dl1 batch over a store,
+`prepared::lookup` is 12.7% of the main thread (552 of 4,347 samples): `prepared_of` (rebuilding the program from
+its stored facts) and `document_facts`. The evaluation the batch exists for is 1.6% (70 samples). Each policy's
+prepared program is decoded once a process, so a batch of 44 decodes 44. **Closure:** a prepared program read
+by its rows as needed (the parts a run reads), or kept decoded across a session's runs; the warm batch's share
+measured under 5%.
+
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
 **Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
@@ -3992,6 +4173,23 @@ per policy. O91 is the same work across runs; this is the same work within one b
 phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands each policy its rows. Measured as
 `run_typed` once per batch, not once per policy, with findings unchanged on dl1 and dl10 (CPU and device).
 
+
+**Found (2026-11-12): the typing program runs once a batch already.** Traced on dl1 and dl10, the bridge runs
+`calls.rr` once in the whole batch (outputs `call_target` and `possible_type`): only one policy's pruned program
+reaches a bridged relation. The 15–20% is that one run's own cost, not a rerun per policy, so the closure as
+written holds. What is left is O91 (the same run across batches and edits) and the typing run's own planning.
+A combined run of the batch (all policies of a language as one, decision 0051) was tried: 202.4 G against
+212.3 G instructions on dl1. It gave 48 findings to the per-policy runs' 49; the 49th was false
+(O-pha000-kept-part, closed).
+
+**Measured again (2026-11-12, after O-store-single-program and O-read-unreached-library).** The typing run is
+one a batch and 20% of a warm dl1 batch's main thread (860 of 4,347 samples), 22% without a store. Warm, its
+evaluation is 92 samples: its answers are kept across batches already. The rest is its setup, once a process:
+combining the typing program (182, of which guest hiding 127; a single program, so not kept in the store, and
+keeping it there was measured to gain nothing, O-store-single-program), decoding its prepared program from the
+store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
+many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
+
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
 **Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
@@ -4000,6 +4198,12 @@ policies of a batch read the same phases over the same files.
 
 **Closure:** as O-batch-typing-once: each phase runs once per batch for every policy that reads it, and is measured
 so.
+
+
+**Closed (2026-11-12, 149c06bf2).** `run_policies` holds a `phases::Batch`; phase 1 is a function of its files,
+tree, language and options, so a policy whose run has the same ones takes the earlier run's documents and
+exports. Nothing is kept past the batch. dl1 runs it 11 times, dl10 24 times over 6 file sets. Measured on the 44 strict data-layer policies of `run-policies`, CPU, `RERAIL_TAPE_CACHE=off` (debug, load 10-25).
+dl1 195.8 G → 190.0 G, dl10 306.3 G → 282.6 G; `phases::sources` 4.2% → 1.4%; findings unchanged.
 
 ## O-lower-aggregate-demand. Aggregate demand clones and rescans the whole program for each aggregate
 
@@ -4013,6 +4217,13 @@ program, not with the rules it touches.
 they change, with an undo when refused. `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and
 the `lowering_is_idempotent_*` shards pass, and `optimize` costs a small fraction of lowering.
 
+
+**Closed (2026-11-12, 16b5d2870).** One dependency map, the readers and makers of each aggregate by rule index,
+and whether the program is declared, made once and kept as candidates are placed; a candidate is placed in the
+program itself and taken out where stratifying refuses it. Measured on the 44 strict data-layer policies of `run-policies`, CPU, `RERAIL_TAPE_CACHE=off` (debug, load 10-25). dl1 227.9 G → 212.4 G; `optimize` 8.6% → 1.4%;
+findings unchanged; `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and the 11
+`lowering_is_idempotent_*` shards pass.
+
 ## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
 
 **Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
@@ -4024,6 +4235,26 @@ program.
 by the text's digest (like the combined program, decision 0094 §6). Measured as `hiding::hide` below 1% of a
 batch.
 
+
+**Part built (2026-11-12, e3ee52294).** Hiding cannot be skipped for one program: it adds the shown-documents
+bounds. A rule's analysis is made only where it can find something (`hiding::reaching`: a seed, or a guest
+relation read, transitively); 130–200 of a policy's 600–800 rules do. dl1 190.0 G → 186.9 G; `hide` 8.3% →
+7.5–7.8%. **Still open:** what is left is each policy analysing the library's rules again. Two ways were tried
+and not kept:
+- the hidden program kept in the store by its text for one program too (`combine_stored` keeps it for packs
+  only): the third batch over one store failed (`leg-083-typed.rr: _internal/__init__.py: its memo entry is
+  gone`), and the warm batch with a store (206 G) cost more than one without (187 G);
+- one run of the batch (above): the library held once, hidden once (decision 0089); its findings were right
+  (O-pha000-kept-part), so it is open again as the way to share the library's analysis.
+The closure is a hiding analysis kept per library module (its relations' carried columns depend only on its
+rules and what they read), or a combined run that is exact.
+
+**Measured again (2026-11-12, after O-read-unreached-library).** Hiding is 5% of a warm dl1 batch (216 of 4,347
+samples) and 3.3% without a store; of the warm 216, 127 are the typing program's (once a batch) and about 89 the
+44 policies' together: dropping the libraries' unreached clauses before lowering cut what each policy hides. A
+hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
+not built. Open at that size.
+
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 
 **Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
@@ -4033,6 +4264,66 @@ most of their library patterns, but each policy's vocabulary is compiled from sc
 **Closure:** compiled searchers kept by pattern set (or per pattern, then combined), so a pattern set already built
 in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
 saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
+
+
+**Closed (2026-11-12, f5f20564b).** A group determinized once is kept by its key for the process. Across the
+44 policies only 3 of 41 groups repeat: each policy's group mixes its own patterns with the library's. So a group
+neither kept nor cached is determinized only where it pays: the run keeps it in its store (decision 0075), or
+reads at least 64 documents; otherwise it runs on the lazy DFA. dl1 210.8 G → 196.8 G; `Vocabulary::compile`
+4.4% → below 1%; findings unchanged.
+## O-tape-pack-cost. Packing a tape costs 30 times simdjson's parse
+
+**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB, 7.2 M nodes), simdjson parses and builds
+the tree in 1.1 G instructions; the tape from it takes 32.6 G (4,530 a node) in a debug build.
+
+**Measured why (`json_parse_costs`):**
+- **Most of it is the debug build.** `TapeImage::finish` and `pack` are generic over the budget closure, so they
+  are compiled in the caller's crate (`rerail-lang-json`), unoptimized. With `rerail-lang` and `rerail-lang-json`
+  at `-O3`, the same step is 5.0 G (697 a node): the packing 3.9 G (543 a node), 3.5 times the tree. The debug
+  profile's top frames are std's `precondition_check`s and iterator adapters.
+- **What is left, optimized** (profile): `finish`/`pack`'s loops 29% (each node's code folded through an
+  `FxHashMap` of `Code`, sizes summed from parents, parents checked, block minima, widths); the three column
+  writes 23% (`put_cell`, a `Vec::extend_from_slice` of 2–4 bytes a cell); the tree 13%; SHA-256 of the source
+  11%; simdjson 10%; the tree copied into `Pending` records (with an `Option<(String, bool)>` alias each) 7%.
+
+**JSON closed (2026-11-12, 0134):** simdjson writes the columns itself (`rerail_simdjson::tape`,
+`TapeImage::written`): the tape 1.89 G, against 32.6 G packed. **Still open for the parsers that pack:** tree-sitter's
+trees (every other language) and the Bitlex path (O-bitlex-writes-tape).
+
+**Closure:** the tape packed in code that is optimized in every build (not generic over the budget, or in a crate
+optimized as a dependency is), written from a parser's rows straight into the columns: sizes known from the
+parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
+cells written at fixed widths. Measured as the tape within 2 times the tree in a debug build.
+
+## O-bitlex-writes-tape. Bitlex does not write the tape: doc 12 §2.2 and doc 13 §7 step 3 were never built
+
+**Seen (2026-11-12).** Doc 12 §2.2 (decided): "the output is our v9np tape, written directly, by a final extract
+pass whose sizes come from the passes before it"; doc 13 §7 step 3: "the CPU executors write the tape … byte for
+byte". Neither exists, on this branch or on `Parser-generators` (33e9b514f): tier 2 writes `NodeRow`s
+(`native_cpu_stream::Columns`), and `json_parser::tape::encode_columns` copies them into `Pending` records and runs
+the engine's `TapeImage::finish`/`pack`, a second packing (O-tape-pack-cost: 31.5 of 35.6 G on the repository's JSON
+in a debug build). simdjson's first hookup copied that route; it now writes the columns itself (0134).
+
+**Why the table:** on 2026-11-08 tier 2 wrote the v9np columns (decision 0054; doc 19 §4, "four stores, a table probe
+and three ORs a node"). Doc 20 deleted those backends the same day, because the format, widths and first-use
+numbering were held in the backend, not stated by any instruction. The node table replaced them, generic but one
+step short: the tape writing was never stated in the program (doc 13 §2–§3 gives each column as one write at
+`ord`). Doc 34 then made the table 24-byte rows.
+
+**Closure:** the executors' last pass writes the v9np columns (codes, sizes, base and offsets, tails) from the
+records, with the sizes the passes before it found; no `Pending`, no `finish`. Tapes equal `TapeImage::encode`'s
+byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
+the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
+
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+
+**Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
+editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
+In this repository 1 of 2,201 files is refused; JavaScript repositories have more.
+
+**Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
+its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
+the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
@@ -4337,39 +4628,6 @@ optimisation. No optimized build has been measured. That is deliberate: they are
 **Closure:** once the rocks above have a first version, one optimized build is measured on O125, cold and step
 01, beside the debug one. That gives the ratio, and the targets are set against the optimized figures.
 
-## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
-
-Found at O125 step 07 (decision 0101, "Measured: the `ifn__ins` order"). `ifn__ins` is in a recursive maintained
-component of 183 relations. Its rule driven by `fv`'s delta was first planned while `pv__ins`, a relation of the
-same component, held few rows, so probing it by class looked cheap: `fv → pv__ins by class → icall`. Once
-`pv__ins` grew, the drift check replanned to `fv → icall by name → pv__ins checked`, which does no work past the
-delta (273 + 160 units). The first plan ran 12 delta batches before that: 83,862 units, 1.6% of the step's
-5.39 M. It is not skew: `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637 against an actual 452.
-
-Two ways to remove it, either or both:
-
-- Price a relation of the component by what it will hold, not what it holds when planned: the last run's size
-  of the same piece (`pv__ins`), or a bound from the deltas that feed it (`pv`'s).
-- Check the drift between a wave's batches, not only between waves, so any wrong first plan runs one batch.
-
-**Closure:** at O125 step 07 the first plan of `ifn__ins` (delta `fv`) is icall first, or the plan that probes
-`pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
-full run's.
-
-**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
-a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
-floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
-(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
-SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
-planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
-
-At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
-`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
-from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
-open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
-is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
-as the joins it plans (4.7 s), against decision 0122.
-
 ## O-rr-tests-sigill. One run of `logic::rr::` and `logic::plan::corpus::tests::` died of SIGILL
 
 **Seen (2026-11-12), after merging the hub into `More-ergonomic-rule-syntax`.** `cargo test -p rerail-engine
@@ -4393,3 +4651,48 @@ long rules' orders and searches short ones it could keep.
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
+
+## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive
+
+**Seen (2026-11-12, once in about ten runs of `logic::rr::` with `phase0::`, at four threads, under load).**
+`phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed its third part: for `python/conditions.rr`,
+the graph kept for the file's text (`keep_text`, from the file's graph) had another digest than `derive` gave the
+same seed. It passed alone three times, and in eight more runs of its chunk (at 4 and 20 threads). The kept file
+graph comes from `KEPT`, which other tests in the process fill. Suspects: a module's digest taken while another
+run had begun phase 0's observer (`observe::begin`), or a graph cut (`Graph::of`) from a run batched with other
+seeds. The message now prints each graph's module digests, so the next failure shows which.
+
+**Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
+recur in ten runs of the chunk.
+
+## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
+
+**Closed (2026-11-12) by [decision 0137](decisions/0137-join-shape-directives.md):** `.shape B after A` and `.shape B bound x` on a written rule shape it and every derived form; EXPLAIN marks a shaped plan; a profiled run reports a directive whose order is the planner's own; the DP takes no cross product priced from a default size. Test: `a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms`.
+
+Found at O125 step 07 (2026-11-12). `pv__ins`, driven by `pv`'s delta, crossed `pv` with `retparam` (no shared
+variable: 1,553 -> 159,959 rows) and read its 15-row input delta `posarg__plus` last, about 1.08 M rows of work
+for none. The cause was missing statistics, not a misjudgement: in a driven session the run's model is made from
+the base program, which reads no input delta, so every `r__plus` and `r__minus` was priced at the default's 1,000
+rows (fixed in 6b04cb8d2; `plan::unsized_deltas`, asserted zero by
+`a_session_maintains_a_recursive_cross_file_stratum`). Join work went 6.85 -> 3.54 M.
+
+The next case like it should be fixable from the `.rr` alone. Today the only planner overrides are the relation
+qualifiers of decision 0099 (`inline`, `magic`, `reach` and their negations); nothing fixes a join's order or
+shape. What is wanted:
+
+1. **A directive on the rule as written, carried into every form made from it.** One written rule is planned many
+   times: once per delta that can drive it, in its maintenance forms (`__ins`, `__del`, `__redo`) and in guest
+   hiding's copies. The bad plan above was `pv__ins`'s, a rule no one writes. So the directive constrains the
+   written body: "join `posarg` straight after `pv`", or "`retparam` only once `$f` is bound". The planner maps it
+   onto each derived form (there `posarg__plus` is `posarg`'s delta). A whole fixed order is not the shape: it is
+   wrong for most of the forms.
+2. **Explained and checked.** EXPLAIN marks a plan a directive shaped; the profile flags a directive whose plan is
+   no cheaper than the planner's own, so stale ones are removed.
+3. **Each use opens the item that fixes its cause.** A directive here would have hidden the missing statistics, and
+   the next delta reader would have hit them unseen.
+4. **Beside it, a planner guard:** a step that shares no variable with what is bound is a cross product, taken only
+   on a size that was measured, never on a default.
+
+**Closure:** a `.rr` directive on a written rule shapes its plan and every derived form's (a test where it changes
+a maintained form's order, and EXPLAIN shows it); the profile reports a directive that saves nothing; the planner
+takes no cross product priced from a default size (a guard test).

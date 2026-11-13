@@ -40,9 +40,17 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
     let gated: BTreeSet<&str> = prog.gates.iter().map(|(g, _)| g.as_str()).collect();
     let mut rules: Vec<Rule> = Vec::new();
     let (mut through, mut kept) = (0, 0);
+    // A stratum of one relation is recursive when a rule of it reads it: found in one pass over the rules (a pass
+    // per stratum was quadratic, thousands of strata by tens of thousands of rules).
+    let reads_itself: BTreeSet<&str> = prog
+        .rules
+        .iter()
+        .filter(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == r.head.rel)))
+        .map(|r| r.head.rel.as_str())
+        .collect();
     let recursive: BTreeSet<&str> = sccs
         .iter()
-        .filter(|scc| scc.len() > 1 || prog.rules.iter().any(|r| scc.contains(r.head.rel.as_str()) && r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(a.rel.as_str())))))
+        .filter(|scc| scc.len() > 1 || scc.iter().any(|r| reads_itself.contains(r.as_str())))
         .flatten()
         .map(String::as_str)
         .collect();

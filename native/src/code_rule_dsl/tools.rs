@@ -289,15 +289,13 @@ pub fn run_program(
     };
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
     let source = rr::print(&program).map_err(|e| e.to_string())?;
-    // The run reads the program from its text: the one just lowered, not the text lowered again.
-    rr::remember_lowered(&source, &program);
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written.
-    let dialects = corpus::run_dialects(root, &source, &with_reuse(options)).map_err(|e| e.to_string())?;
+    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(String, std::path::PathBuf)> = if dialects.is_empty() {
-        vec![(source, out.to_path_buf())]
+        vec![(source.clone(), out.to_path_buf())]
     } else {
         dialects
             .iter()
@@ -315,19 +313,15 @@ pub fn run_program(
             .collect::<Result<_, _>>()?
     };
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
+    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
     for (text, dir) in &runs {
-        let report = corpus::run_with_options(
-            &[text.as_str()],
-            root,
-            None,
-            dir,
-            "program",
-            // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
-            if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu },
-            1 << 18,
-            &Default::default(),
-            &with_reuse(options),
-        )
+        // The run of the text read holds the program read. Another dialect's text is lowered for its own grammar.
+        let report = if *text == source {
+            corpus::run_read(text, &program, root, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
+        } else {
+            corpus::run_with_options(&[text.as_str()], root, None, dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options))
+        }
         .map_err(|e| e.to_string())?;
         match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
             Ok(text) => {
@@ -374,6 +368,8 @@ pub fn run_policies(
     if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
         let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
     }
+    // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
+    let _batch = super::logic::plan::corpus::phases::Batch::enter();
     for (k, path) in paths.iter().enumerate() {
         let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
         diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());

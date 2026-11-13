@@ -42,6 +42,17 @@ pub struct Records {
 /// The most marks a code holds.
 pub const MARKS: usize = 16;
 
+/// A mark's output in `Records::marks` when it has none: its bit is its word's alone (`word ==
+/// W`), no mask read. A token mark's (decision 0129): its mask is every grammar token's start,
+/// and no other token (an extra's) can have the word.
+pub const WORD_ALONE: u16 = u16::MAX;
+
+/// Whether a record's mark `(o, w)` holds: its mask's bit at the start (`bit`, read only when it
+/// has one) and its word.
+pub fn mark_holds(o: u16, w: u16, word: u32, bit: impl FnOnce() -> bool) -> bool {
+    (w == 0 || u32::from(w) == word) && (o == WORD_ALONE || bit())
+}
+
 /// The most words a code names (a byte: 0 is none).
 pub const WORDS: usize = 255;
 
@@ -181,8 +192,8 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         let word = table.word(bytes, s, len);
         let mut marks = 0u32;
         for (k, &(o, w)) in records.marks.iter().enumerate() {
-            let bit = outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
-            if bit && (w == 0 || u32::from(w) == word) {
+            let bit = || outputs.get(usize::from(o)).and_then(|v| v.get(s / 64)).is_some_and(|x| x >> (s % 64) & 1 == 1);
+            if mark_holds(o, w, word, bit) {
                 marks |= 1 << k;
             }
         }
