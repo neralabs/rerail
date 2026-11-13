@@ -7,3 +7,7 @@ description = "The engine's tape (v9np, format 11) as bytes: its constants, and 
 
 [dependencies]
 sha2 = "0.10"
+
+# SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
+[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }

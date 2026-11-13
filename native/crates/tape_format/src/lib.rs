@@ -88,8 +88,10 @@ const NO_CODE: u16 = u16::MAX;
 ///
 /// A node's key is its code: `kf | flags << 16`.
 pub struct Writer {
-    /// The header, then the code column: the image's start, as it will be.
+    /// The header, then the code column: the image's start, as it will be. Reserved for the
+    /// whole image at `cap` nodes, so that `finish` appends the columns in place.
     out: Vec<u8>,
+    /// The columns, each `cap` cells at its width; the first `n` are the nodes'.
     size: Vec<u8>,
     off: Vec<u8>,
     tail: Vec<u8>,
@@ -97,8 +99,13 @@ pub struct Writer {
     /// Each node's start and key: the parser's working state, what an edit recomputes from.
     starts: Vec<u32>,
     keys: Vec<u32>,
+    /// The nodes, and the nodes the cells have room for.
+    n: usize,
+    cap: usize,
     /// The codes by id: each key and the node that first used it.
     codes: Vec<(u32, u32)>,
+    /// The nodes before this have their codes written; the rest only their keys.
+    coded: usize,
     id_of: Vec<u16>,
     widths: Widths,
     /// The nodes whose offset or tail needs 4 bytes, or that end before their last descendant
@@ -112,6 +119,9 @@ const OFF_WIDE: u8 = 0;
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
 
+/// Code table bytes reserved for at first: room for 256 codes.
+const CODES_RESERVED: usize = 6 * 256;
+
 thread_local! {
     /// The code ids by key, kept between a thread's tapes: each tape clears what it set.
     static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -121,19 +131,36 @@ thread_local! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Redo(pub Widths);
 
+/// An image's bytes at `nodes` nodes and `widths`, with the code table reserved.
+fn image_bytes(nodes: usize, w: Widths) -> usize {
+    HEADER_BYTES
+        + padded(2 * nodes)
+        + padded(usize::from(w.size) * nodes)
+        + padded(4 * nodes.div_ceil(CHECKPOINT_STRIDE))
+        + padded(usize::from(w.off) * nodes)
+        + padded(usize::from(w.tail) * nodes)
+        + CODES_RESERVED
+}
+
 impl Writer {
+    /// A writer for about `nodes` nodes (more grow it) at `widths`.
     pub fn new(tag: u8, widths: Widths, nodes: usize) -> Self {
-        let mut out = Vec::with_capacity(HEADER_BYTES + 2 * nodes + COLUMN_ALIGN);
-        out.resize(HEADER_BYTES, 0);
+        let cap = nodes.max(CHECKPOINT_STRIDE);
+        let mut out = Vec::with_capacity(image_bytes(cap, widths));
+        out.resize(HEADER_BYTES + 2 * cap, 0);
+        let cells = |w: u8| vec![0u8; cap * usize::from(w)];
         Writer {
             out,
-            size: Vec::with_capacity(nodes * usize::from(widths.size)),
-            off: Vec::with_capacity(nodes * usize::from(widths.off)),
-            tail: Vec::with_capacity(nodes * usize::from(widths.tail)),
-            base: Vec::with_capacity(nodes / CHECKPOINT_STRIDE + 1),
-            starts: Vec::with_capacity(nodes),
-            keys: Vec::with_capacity(nodes),
+            size: cells(widths.size),
+            off: cells(widths.off),
+            tail: cells(widths.tail),
+            base: Vec::with_capacity(cap / CHECKPOINT_STRIDE + 1),
+            starts: vec![0; cap],
+            keys: vec![0; cap],
+            n: 0,
+            cap,
             codes: Vec::new(),
+            coded: 0,
             id_of: IDS.with(|ids| {
                 let mut ids = std::mem::take(&mut *ids.borrow_mut());
                 ids.resize(1 << 19, NO_CODE);
@@ -143,6 +170,22 @@ impl Writer {
             marks: Vec::new(),
             tag,
         }
+    }
+
+    /// Room for twice the nodes: every column at once.
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self) {
+        let cap = 2 * self.cap;
+        let w = self.widths;
+        self.out.reserve_exact(image_bytes(cap, w) - self.out.len());
+        self.out.resize(HEADER_BYTES + 2 * cap, 0);
+        self.size.resize(cap * usize::from(w.size), 0);
+        self.off.resize(cap * usize::from(w.off), 0);
+        self.tail.resize(cap * usize::from(w.tail), 0);
+        self.starts.resize(cap, 0);
+        self.keys.resize(cap, 0);
+        self.cap = cap;
     }
 
     /// Whether node `node` has mark `what`, as `on` says.
@@ -158,33 +201,44 @@ impl Writer {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
-        self.keys.len()
+        self.n
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
+        self.n == 0
     }
 
+    #[inline]
     pub fn key(&self, node: usize) -> u32 {
         self.keys[node]
     }
 
+    #[inline]
     pub fn start(&self, node: usize) -> u32 {
         self.starts[node]
     }
 
+    /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
+    #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
-        let w = usize::from(width);
-        column[at * w..at * w + w].copy_from_slice(&value.to_le_bytes()[..w]);
+        if width == 2 {
+            column[2 * at..2 * at + 2].copy_from_slice(&(value as u16).to_le_bytes());
+        } else {
+            column[4 * at..4 * at + 4].copy_from_slice(&value.to_le_bytes());
+        }
     }
 
+    #[inline(always)]
     fn set_code(&mut self, node: usize, id: u16) {
         let at = HEADER_BYTES + 2 * node;
         self.out[at..at + 2].copy_from_slice(&id.to_le_bytes());
     }
 
     /// The id of `key`, numbered by first use: new at `node` if no node before used it.
+    #[inline]
     fn id(&mut self, key: u32, node: usize) -> u16 {
         match self.id_of[key as usize] {
             NO_CODE => {
@@ -197,13 +251,12 @@ impl Writer {
         }
     }
 
-    /// Whether some code was first used at `node` or after: then an edit there renumbers.
-    fn fresh_from(&self, node: usize) -> bool {
-        self.codes.last().is_some_and(|&(_, first)| first as usize >= node)
-    }
-
-    /// The codes first used from `node` on, numbered again over the nodes from there.
-    fn renumber_from(&mut self, node: usize) {
+    /// The nodes from `node` on have no code yet: the codes first used there are dropped.
+    #[inline]
+    fn uncode_from(&mut self, node: usize) {
+        if node >= self.coded {
+            return;
+        }
         while let Some(&(key, first)) = self.codes.last() {
             if (first as usize) < node {
                 break;
@@ -211,16 +264,23 @@ impl Writer {
             self.id_of[key as usize] = NO_CODE;
             self.codes.pop();
         }
-        for n in node..self.len() {
+        self.coded = node;
+    }
+
+    /// The nodes so far are final (a statement parsed or recovered): their codes, numbered by
+    /// first use, written to the code column.
+    pub fn commit(&mut self) {
+        for n in self.coded..self.n {
             let id = self.id(self.keys[n], n);
             self.set_code(n, id);
         }
+        self.coded = self.n;
     }
 
     /// Block `b`'s base and its nodes' offsets, from their starts.
     fn block(&mut self, b: usize) {
         let from = b * CHECKPOINT_STRIDE;
-        let to = (from + CHECKPOINT_STRIDE).min(self.len());
+        let to = (from + CHECKPOINT_STRIDE).min(self.n);
         let base = self.starts[from..to].iter().copied().min().expect("a node in the block");
         if b == self.base.len() {
             self.base.push(base);
@@ -237,28 +297,28 @@ impl Writer {
     }
 
     /// A node at the end, in preorder: its key and start. Its size is 1 and its tail 0 until
-    /// its close.
+    /// its close; its code is written when it is committed.
     #[inline]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
-        let node = self.len();
-        self.keys.push(key);
-        self.starts.push(start);
-        let id = self.id(key, node);
-        self.out.extend_from_slice(&id.to_le_bytes());
-        self.size.resize(self.size.len() + usize::from(self.widths.size), 0);
-        self.off.resize(self.off.len() + usize::from(self.widths.off), 0);
-        self.tail.resize(self.tail.len() + usize::from(self.widths.tail), 0);
-        Self::put(&mut self.size, node, self.widths.size, 1);
-        let b = node / CHECKPOINT_STRIDE;
-        match self.base.get(b) {
+        let node = self.n;
+        if node == self.cap {
+            self.grow();
+        }
+        self.n = node + 1;
+        self.keys[node] = key;
+        self.starts[node] = start;
+        let w = self.widths;
+        Self::put(&mut self.size, node, w.size, 1);
+        Self::put(&mut self.tail, node, w.tail, 0);
+        match self.base.get(node / CHECKPOINT_STRIDE) {
             Some(&base) if base <= start => {
                 let off = start - base;
                 if off > 0xffff {
                     self.mark(node, OFF_WIDE, true);
                 }
-                Self::put(&mut self.off, node, self.widths.off, off);
+                Self::put(&mut self.off, node, w.off, off);
             }
-            _ => self.block(b),
+            _ => self.block(node / CHECKPOINT_STRIDE),
         }
         node
     }
@@ -266,8 +326,8 @@ impl Writer {
     /// `node`'s end: its subtree is the nodes from it on, and its tail from its last one.
     #[inline]
     pub fn close(&mut self, node: usize, end: u32) {
-        let size = (self.len() - node) as u32;
-        let last = self.starts[node + size as usize - 1];
+        let size = (self.n - node) as u32;
+        let last = self.starts[self.n - 1];
         let from = if self.widths.from_start { self.starts[node] } else { last };
         let tail = end.wrapping_sub(from);
         let (early, wide) = (end < last, tail > 0xffff && end >= from);
@@ -280,79 +340,54 @@ impl Writer {
     }
 
     /// `node`'s key changed (a field set after it was made, a kind found later).
+    #[inline]
     pub fn set_key(&mut self, node: usize, key: u32) {
-        if self.keys[node] == key {
-            return;
-        }
+        self.uncode_from(node);
         self.keys[node] = key;
-        if self.fresh_from(node) || self.id_of[key as usize] == NO_CODE {
-            self.renumber_from(node);
-        } else {
-            self.set_code(node, self.id_of[key as usize]);
-        }
     }
 
     /// A node at `at`, before the nodes from there on, which move up one: a node found after
     /// the first of its children (an operator after its left operand). It is open: its close
-    /// gives its size.
+    /// gives its size. The code column from `at` on is written again at the commit.
     pub fn insert(&mut self, at: usize, key: u32, start: u32) {
-        if at == self.len() {
+        if at == self.n {
             self.push(key, start);
             return;
         }
-        let shift = |column: &mut Vec<u8>, width: u8| {
+        if self.n == self.cap {
+            self.grow();
+        }
+        let (n, ws) = (self.n, self.widths);
+        let shift = |column: &mut [u8], width: u8| {
             let w = usize::from(width);
-            column.resize(column.len() + w, 0);
-            let n = column.len();
-            column.copy_within(at * w..n - w, at * w + w);
+            column.copy_within(at * w..n * w, at * w + w);
         };
-        let ws = self.widths;
-        self.out.resize(self.out.len() + 2, 0);
-        let n = self.out.len();
-        self.out.copy_within(HEADER_BYTES + 2 * at..n - 2, HEADER_BYTES + 2 * at + 2);
         shift(&mut self.size, ws.size);
         shift(&mut self.tail, ws.tail);
-        self.off.resize(self.off.len() + usize::from(ws.off), 0);
-        self.keys.insert(at, key);
-        self.starts.insert(at, start);
+        self.keys.copy_within(at..n, at + 1);
+        self.starts.copy_within(at..n, at + 1);
+        self.n = n + 1;
+        self.keys[at] = key;
+        self.starts[at] = start;
         Self::put(&mut self.size, at, ws.size, 1);
         Self::put(&mut self.tail, at, ws.tail, 0);
-        // The codes from `at` on: numbered again where any was first used there or after.
-        for c in self.codes.iter_mut().filter(|c| c.1 as usize >= at) {
-            c.1 += 1;
-        }
+        self.uncode_from(at);
         for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {
             m.0 += 1;
         }
-        if self.fresh_from(at) || self.id_of[key as usize] == NO_CODE {
-            self.renumber_from(at);
-        } else {
-            self.set_code(at, self.id_of[key as usize]);
-        }
         // The blocks from `at`'s on.
-        for b in at / CHECKPOINT_STRIDE..self.len().div_ceil(CHECKPOINT_STRIDE) {
+        for b in at / CHECKPOINT_STRIDE..self.n.div_ceil(CHECKPOINT_STRIDE) {
             self.block(b);
         }
     }
 
     /// The nodes from `len` on taken back (a parse that did not hold).
     pub fn truncate(&mut self, len: usize) {
-        if len >= self.len() {
+        if len >= self.n {
             return;
         }
-        self.keys.truncate(len);
-        self.starts.truncate(len);
-        self.out.truncate(HEADER_BYTES + 2 * len);
-        self.size.truncate(len * usize::from(self.widths.size));
-        self.off.truncate(len * usize::from(self.widths.off));
-        self.tail.truncate(len * usize::from(self.widths.tail));
-        while let Some(&(key, first)) = self.codes.last() {
-            if (first as usize) < len {
-                break;
-            }
-            self.id_of[key as usize] = NO_CODE;
-            self.codes.pop();
-        }
+        self.n = len;
+        self.uncode_from(len);
         self.marks.retain(|m| (m.0 as usize) < len);
         let blocks = len.div_ceil(CHECKPOINT_STRIDE);
         self.base.truncate(blocks);
@@ -365,10 +400,11 @@ impl Writer {
     /// the code table, and the header. `Redo` when a column's values do not fit its width, or a
     /// tail from its last descendant is negative: the widths to parse again at.
     pub fn finish(mut self, src: &[u8]) -> Result<Vec<u8>, Redo> {
+        self.commit();
         let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
         let from_start = has(EARLY);
         let want = Widths {
-            size: width_for(self.len() as u32),
+            size: width_for(self.n as u32),
             off: if has(OFF_WIDE) { 4 } else { 2 },
             // Tails measured from the other place say nothing of the width: 2, the guess.
             tail: if from_start == self.widths.from_start && has(TAIL_WIDE) { 4 } else { 2 },
@@ -378,21 +414,23 @@ impl Writer {
             return Err(Redo(want));
         }
         let w = self.widths;
-        let nodes = self.len();
+        let nodes = self.n;
         let code_bytes = 6 * self.codes.len();
         let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
         let mut out = std::mem::take(&mut self.out);
-        out.reserve(padded(self.size.len()) + padded(4 * self.base.len()) + padded(self.off.len()) + padded(self.tail.len()) + code_bytes + 3 * COLUMN_ALIGN);
+        out.truncate(HEADER_BYTES + 2 * nodes);
+        // Reserved at `new` or `grow` for these nodes and 256 codes: more codes grow it.
+        out.reserve(image_bytes(nodes, w) - CODES_RESERVED + code_bytes - out.len());
         pad(&mut out);
-        out.extend_from_slice(&self.size);
+        out.extend_from_slice(&self.size[..nodes * usize::from(w.size)]);
         pad(&mut out);
         for b in &self.base {
             out.extend_from_slice(&b.to_le_bytes());
         }
         pad(&mut out);
-        out.extend_from_slice(&self.off);
+        out.extend_from_slice(&self.off[..nodes * usize::from(w.off)]);
         pad(&mut out);
-        out.extend_from_slice(&self.tail);
+        out.extend_from_slice(&self.tail[..nodes * usize::from(w.tail)]);
         pad(&mut out);
         for &(key, _) in &self.codes {
             out.extend_from_slice(&((key & 0xffff) as u16).to_le_bytes());

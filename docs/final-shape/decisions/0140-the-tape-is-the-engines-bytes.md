@@ -30,12 +30,18 @@ called the tape. A tape from either still needed the engine's passes.
 **The decision.** A parser writes the image's bytes, byte for byte the engine's,
 with no conversion after it (`rerail_tape_format::Writer`):
 
-- **Each node's columns at their place, as it is made:** its code id at its push,
-  its offset from its block's base, its size and tail at its close.
+- **Each node's columns at their place, as it is made:** its offset from its block's base
+  at its push, its size and tail at its close.
+- **Code ids at commit points.** Codes are numbered by first use, so an edit could
+  renumber every node after it. Instead the parser commits after each statement,
+  when its nodes are final, and the commit writes their code ids.
+  Nodes past the last commit carry only their keys.
 - **Edits touch only the tail.** A parser edits only the nodes it made last:
   a field set after a node, a node put before its operand (a wrap), nodes taken back.
-  Codes first used at or after the edit are a suffix of the code table, numbered again
-  over the nodes from there; the blocks from there get their bases again.
+  These are past the commit point, so they rewrite no code ids;
+  the blocks from the edit get their bases again.
+- **Every column is sized for the same node count.** A push is indexed stores,
+  with one check for room; the image's bytes are reserved at the start.
 - **The widths are guessed from the source's length** (2 bytes below 320,000 bytes for sizes,
   2 always for offsets and tails). Where a value does not fit, or 2 would have held a column
   written at 4, the file is parsed again at the widths it needs.
@@ -45,6 +51,22 @@ with no conversion after it (`rerail_tape_format::Writer`):
   (the user's choice: the size column's place depends on the node count),
   and the header and code table are written.
 - **One definition of the format.** The engine's constants are the crate's.
+
+## Cost
+
+Over the corpus (1,360 files, 8.80 MB, 1,166,154 nodes; instructions, cycles):
+
+| The lean parser, whole | Instructions | Cycles |
+|---|---|---|
+| Writing the old node table (not the tape) | 362.4M | 69.3M |
+| The tape, codes renumbered at each edit | 1,326.0M | |
+| … SHA-256 by the CPU's instructions (`sha2`'s `asm`) | 1,074.4M | 178.0M |
+| … code ids at commit points | 620.8M | 116.5M |
+| … every column one capacity, indexed stores | 550.6M | 106.9M |
+
+The renumbering had cost about one renumbering a node (1.2 million over 4.0 million rows).
+What remains above the node table: the digest (about 9% of the time, 1.1 cycles a byte)
+and the columns' stores, about 50 instructions a push and 40 a close.
 
 ## Tests
 

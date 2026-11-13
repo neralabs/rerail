@@ -632,6 +632,8 @@ fn tape_at(src: &str, lexed: &Lexed, widths: Widths) -> Result<Vec<u8>, Redo> {
         if p.statement().is_err() {
             p.recover(save);
         }
+        // The statement's nodes are final: their codes are written now.
+        p.out.commit();
     }
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
