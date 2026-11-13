@@ -132,9 +132,9 @@ const FRAME_SHIFT: i32 = 240;
 const STATE: i32 = 248;
 const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
-/// A node of the table, as the lean parser's tape has one (`rr_syntax::lean::Node`, 24 bytes):
-/// its kind and field, its bytes, and (where the lean parser has its parent) the records in its
-/// subtree, its own counted; its parent and whether it is an extra, made at `ACCEPT` (`table`).
+/// A node of the table, as the lean parser's tape has one (`rr_syntax::tape::Row`, 24 bytes, the
+/// same layout): its kind and field, its bytes, the records in its subtree (its own counted),
+/// its parent and whether it is an extra, each written with the row as it stands at the end.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeRow {

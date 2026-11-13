@@ -155,3 +155,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Tier 2 ahead of time as structured Rust from the native IR (`rust_stream`, decision 0135; AOT, not the JIT) | `403a5050f` | | AOT 307.0M (54.3M) |
 | A local check word-parallel in the JIT: no loop over bits | `72629b5ea` | | 330.4M (58.4M) |
 | The tape written directly: parents and extras with each row, wraps in place, no pass at `ACCEPT` (decision 0136) | `8a1762be0` | | 248.3M (41.0M; load 11); AOT 224.8M (36.4M) |
+| The lean parser writes the tape's rows too (sizes at its closes): its whole parse 356.5M to 362.4M (69.3M), the baseline from here | | | 248.3M (41.1M) |

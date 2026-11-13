@@ -132,8 +132,8 @@ pub fn tape(src: &str) -> Columns {
 }
 
 /// The compiled grammar's node table, or `None` where it refuses the file (or did not compile).
-/// Every column is the compiled code's: kinds, fields, spans and sizes from tier 2's words,
-/// parents and extra flags from its final pass.
+/// Every column is the compiled code's, each row written by tier 2's words as it stands at the
+/// end: no pass after the parse.
 pub fn compiled_tape(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
@@ -184,6 +184,24 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
         }
         Err(_) => false,
     }
+}
+
+// The compiled parser's rows and the lean parser's are one layout: a tape either writes.
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    use rr::tape::Row;
+    assert!(size_of::<NodeRow>() == size_of::<Row>() && std::mem::align_of::<NodeRow>() == std::mem::align_of::<Row>());
+    assert!(offset_of!(NodeRow, kind) == offset_of!(Row, kind) && offset_of!(NodeRow, field) == offset_of!(Row, field));
+    assert!(offset_of!(NodeRow, start) == offset_of!(Row, start) && offset_of!(NodeRow, end) == offset_of!(Row, end));
+    assert!(offset_of!(NodeRow, size) == offset_of!(Row, size) && offset_of!(NodeRow, parent) == offset_of!(Row, parent));
+    assert!(offset_of!(NodeRow, extra) == offset_of!(Row, extra) && offset_of!(NodeRow, pad) == offset_of!(Row, pad));
+    assert!(NO_PARENT == rr::tape::NO_PARENT);
+};
+
+/// A compiled tape's rows as the lean parser's (`rr::tape::Row`), in place: the same bytes.
+pub fn as_rows(c: &Columns) -> &[rr::tape::Row] {
+    // SAFETY: the two are one layout (checked above), plain integers each.
+    unsafe { std::slice::from_raw_parts(c.rows.as_ptr().cast(), c.rows.len()) }
 }
 
 /// The fallback: the engine's parser's nodes, in the compiled parser's rows.
@@ -306,6 +324,8 @@ pub mod tests {
         for src in parsed {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+            // The lean parser writes the same rows.
+            assert_eq!(super::as_rows(&super::tape(src)), &super::rr::lean::tape(src)[..], "{src:?}");
         }
         // 127 deep, the most (tier 2's count, `COUNT`), is taken; 128 deep is not.
         let most = format!(".policy {{\"a\": {}{}}}", "[".repeat(126), "]".repeat(126));
@@ -498,7 +518,8 @@ pub mod tests {
             for (k, c) in [rules, &machine].into_iter().enumerate() {
                 if let Ok(t) = c.parser.columns(f.as_bytes()) {
                     taken[k] += 1;
-                    if t != engine {
+                    // The engine's, and the lean parser's rows byte for byte.
+                    if t != engine || crate::as_rows(&t) != &crate::rr::lean::tape(f)[..] {
                         differ.push((i, k));
                     }
                 }

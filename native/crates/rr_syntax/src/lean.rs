@@ -11,8 +11,10 @@
 //! - **The lexer** is simdjson's shape over Bitlex's 64-byte block masks (`micro`): a block's
 //!   token starts found at once and taken one at a time (`lex`). A word ends at its run of
 //!   word bits; a comment, string or backtick literal by its micro-lexer, run from its start.
-//! - **No statements.** Only the tape is built: each node is written in preorder as it opens.
-//!   The open nodes and their children are a stack.
+//! - **No statements.** Only the tape is built, its rows as they stand at the end
+//!   (`tape::Row`): each node is written in preorder as it opens, its parent and extra flag
+//!   with it, its end and size where it closes. No pass after the parse. The open nodes and
+//!   their children are a stack.
 //! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
 //!   before the operand. When the operand is one leaf, the two swap; only a larger operand
 //!   moves the nodes after it.
@@ -21,7 +23,7 @@
 //! - **Backtracking** cuts the tape, the stack and the comments back to a mark.
 
 use crate::micro;
-use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, Node};
+use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, NO_PARENT, Row};
 
 // Token kinds; punctuation is `P0` plus its place in `syntax::PUNCT` (and in the anonymous kinds).
 const ID: u8 = 0;
@@ -587,7 +589,7 @@ struct Parser<'s> {
     i: usize,
     no_named: bool,
     /// The tape so far, in preorder.
-    out: Vec<Node>,
+    out: Vec<Row>,
     /// The open nodes: each its place in `out` and where its children start in `kids`.
     open: Vec<(u32, u32)>,
     /// The open nodes' children, by place in `out`.
@@ -603,11 +605,11 @@ pub fn token_count(src: &str) -> usize {
     lex(src).n
 }
 
-/// `src`'s tape: `crate::tape(src)`, node for node.
-pub fn tape(src: &str) -> Vec<Node> {
+/// `src`'s tape: `crate::tape(src)`, node for node, as rows (`tape::rows`).
+pub fn tape(src: &str) -> Vec<Row> {
     let Lexed { toks, n, comments } = lex(src);
     let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
-    out.push(Node { kind: Kind::SourceFile as u16, field: 0, start: 0, end: src.len() as u32, parent: None, extra: false });
+    out.push(Row { kind: Kind::SourceFile as u16, start: 0, end: src.len() as u32, parent: NO_PARENT, ..Row::default() });
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
     while p.kind() != EOF {
@@ -618,6 +620,7 @@ pub fn tape(src: &str) -> Vec<Node> {
     }
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
+    p.out[0].size = p.out.len() as u32;
     p.out
 }
 
@@ -678,7 +681,7 @@ impl Parser<'_> {
     fn comments_before(&mut self, parent: u32, before: u32) {
         while self.next_comment < before {
             let (start, end) = self.comments[self.comment];
-            self.out.push(Node { kind: Kind::Comment as u16, field: 0, start, end, parent: Some(parent), extra: true });
+            self.out.push(Row { kind: Kind::Comment as u16, start, end, size: 1, parent, extra: 1, ..Row::default() });
             self.comment += 1;
             self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
         }
@@ -706,7 +709,7 @@ impl Parser<'_> {
         }
         let parent = self.top().0;
         let id = self.out.len() as u32;
-        self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
+        self.out.push(Row { kind, start, end, size: 1, parent, ..Row::default() });
         self.kids.push(id);
         if open {
             self.open.push((id, self.kids.len() as u32));
@@ -722,7 +725,7 @@ impl Parser<'_> {
             self.comments_before(parent, start);
         }
         let id = self.out.len() as u32;
-        self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
+        self.out.push(Row { kind, start, end, size: 1, parent, ..Row::default() });
         self.kids.push(id);
         if open {
             self.open.push((id, self.kids.len() as u32));
@@ -753,6 +756,8 @@ impl Parser<'_> {
         if self.next_comment < end {
             self.comments_before(id, end);
         }
+        // Its subtree: the rows from it on.
+        self.out[id as usize].size = self.out.len() as u32 - id;
         self.kids.truncate(base as usize);
     }
 
@@ -778,15 +783,15 @@ impl Parser<'_> {
         let Some(&k) = self.kids.get(at) else {
             // Nothing to wrap: an empty node at the end.
             let id = self.out.len() as u32;
-            self.out.push(Node { kind: kind as u16, field: 0, start: 0, end: 0, parent: Some(x), extra: false });
+            self.out.push(Row { kind: kind as u16, size: 1, parent: x, ..Row::default() });
             self.kids.push(id);
             self.open.push((id, self.kids.len() as u32));
             return;
         };
         let mut first = self.out[k as usize];
-        let wrapper = Node { kind: kind as u16, field: first.field, start: first.start, end: first.start, parent: Some(x), extra: false };
+        let wrapper = Row { kind: kind as u16, field: first.field, start: first.start, end: first.start, size: 1, parent: x, ..Row::default() };
         first.field = 0;
-        first.parent = Some(k);
+        first.parent = k;
         if k as usize + 1 == self.out.len() {
             // One leaf: the two swap.
             self.out[k as usize] = wrapper;
@@ -795,16 +800,16 @@ impl Parser<'_> {
             // A larger operand: the nodes from it on shift by one, and the open node's children
             // there are the new node's.
             self.out[k as usize] = first;
+            // (No row there is the root, whose parent is none.)
             for node in &mut self.out[k as usize + 1..] {
-                if let Some(p) = node.parent.as_mut() {
-                    if *p >= k {
-                        *p += 1;
-                    } else if *p == x {
-                        *p = k;
-                    }
+                let p = &mut node.parent;
+                if *p >= k {
+                    *p += 1;
+                } else if *p == x {
+                    *p = k;
                 }
             }
-            self.out[k as usize].parent = Some(k);
+            self.out[k as usize].parent = k;
             self.out.insert(k as usize, wrapper);
         }
         for c in &mut self.kids[at..] {
@@ -1443,7 +1448,7 @@ impl Parser<'_> {
         self.out[call as usize].kind = Kind::Atom as u16;
         // Its function is its first child, after any comments.
         for node in &mut self.out[call as usize + 1..] {
-            if node.parent == Some(call) && !node.extra {
+            if node.parent == call && node.extra == 0 {
                 if node.field == Field::Function as u16 {
                     node.field = Field::Relation as u16;
                 }
@@ -1731,7 +1736,7 @@ mod tests {
             }
             for at in cuts {
                 let src = &text[..at];
-                let (lean, engine) = (super::tape(src), crate::tape(src));
+                let (lean, engine) = (super::tape(src), crate::tape::rows(&crate::tape(src)));
                 if lean != engine {
                     // The first node that differs, and the text it is at.
                     let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));

@@ -54,5 +54,13 @@ Tests: every tape over the corpus is the engine's; the `.rr` ladder against the 
 engine; JSON's compiled path makes no call; wraps in chains, over large operands, among comments,
 and a drop then a reread (`the_table_is_written_in_place`), on the JIT and ahead of time.
 
+**The lean parser too.** It wrote the engine's nodes (`tape::Node`: no size, an optional
+parent), so a tape needed a pass after it (sizes from the last node back).
+It now writes the tape's rows (`tape::Row`), the compiled parser's 24 bytes:
+parent and extra flag at each push, size at each close, the root's at the end.
+`rr_parser` checks the two layouts are one and compares the tapes byte for byte.
+Its benchmark: 356.5M instructions to 362.4M, 68.0M cycles to 69.3M, for the sizes
+it did not write before.
+
 Open: `ACCEPT` still reads each row's field once, to refuse a provisional field left
 (`.rr` has one). A count kept at the field writes would remove that read.
