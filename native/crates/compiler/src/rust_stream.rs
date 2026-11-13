@@ -222,6 +222,9 @@ pub struct Row { kind: u16, field: u16, start: u32, end: u32, size: u32, parent:
 pub const REFUSED: u64 = u64::MAX - 1;
 /// The root's parent.
 const NO_PARENT: u32 = u32::MAX;
+/// A row's marks (`head`): a wrap; a dropped row taken out from among its children.
+const WRAPPED: u32 = 1;
+const DROPPED_IN: u32 = 2;
 const DEAD: u16 = u16::MAX;
 
 type R = Result<(), bool>;
@@ -390,17 +393,28 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
     let n = x.native;
     let framed = x.framed;
     let f = |s: &str| if framed { s.to_string() } else { String::new() };
-    // Which rows are wraps, where `NODE_FIELD m=3` asks (`head`, moved with the rows).
+    // Each row's marks (`head`, moved with the rows; `marked`): which rows are wraps, where
+    // `NODE_FIELD m=3` asks; which had a dropped row taken out from among their children, where
+    // a reread reads the table.
+    let marked = marks(n);
     let inner = n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. }));
-    let w = |s: &str| if inner { s.to_string() } else { String::new() };
+    let w = |s: &str| if marked { s.to_string() } else { String::new() };
     let extras: Vec<String> = n.readings.extras.iter().map(u16::to_string).collect();
     let is_extra = if extras.is_empty() { "0".to_string() } else { format!("u32::from(matches!(kind, {}))", extras.join(" | ")) };
+    let dropped_in = if marked { "unsafe { *Self::col(self.head, i) & DROPPED_IN != 0 }" } else { "false" };
     writeln!(
         out,
         "    /// A kind's extra flag (`Readings::extras`).
     #[inline(always)]
     fn xflag(kind: u32) -> u32 {{
         {is_extra}
+    }}
+
+    /// Whether a dropped row was taken out from among row `i`'s children: a reread that reads
+    /// on into them refuses, as it would meet the dropped one (`stream::run` keeps it there).
+    #[inline(always)]
+    fn dropped_in(&self, i: u32) -> bool {{
+        {dropped_in}
     }}
 
     /// The innermost open node: the parent of a node written now.
@@ -565,6 +579,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 let p = if r.parent < from || r.parent == NO_PARENT {{ r.parent }} else {{ *Self::col(to, r.parent) }};
                 if r.kind == DEAD {{
                     *Self::col(to, i) = p;
+                    {}
                     continue;
                 }}
                 let j = i - *Self::col(before, i);
@@ -724,10 +739,11 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         f("self.last_made = at + 1;"),
         f("if !DEFERRED && !EXTRA {\n                self.last_made = n + 1;\n            }"),
         w("\n            *Self::col(self.head, n) = 0;"),
-        w("core::ptr::copy(Self::col(self.head, r), Self::col(self.head, r + 1), (n - r) as usize);\n            *Self::col(self.head, r) = 1;\n            "),
+        w("core::ptr::copy(Self::col(self.head, r), Self::col(self.head, r + 1), (n - r) as usize);\n            *Self::col(self.head, r) = WRAPPED;\n            "),
         "",
+        w("*Self::col(self.head, p) |= DROPPED_IN;"),
         w("*Self::col(self.head, j) = *Self::col(self.head, i);"),
-        if inner { "*Self::col(self.head, r) == 0 || *Self::col(self.head, r + 1) != 0" } else { "true" },
+        if inner { "*Self::col(self.head, r) & WRAPPED == 0 || *Self::col(self.head, r + 1) & WRAPPED != 0" } else { "true" },
         f("self.last_made = o + 2;"),
     )
     .unwrap();
@@ -780,9 +796,9 @@ fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
     let way = |w: u16| -> String {
         match w {
             KEEP => "{ i += (*row).size; continue; }".to_string(),
-            GONE => "{ if i == root { self.last_made = 0 } (*row).kind = DEAD; gone = true; }".to_string(),
-            REMEMBERED => "{ if word == 0 { return Err(false) } (*row).kind = word as u16; (*row).extra = Self::xflag(word); }".to_string(),
-            k => format!("{{ (*row).kind = {k}; (*row).extra = Self::xflag({k}); }}"),
+            GONE => "{ if self.dropped_in(i) { return Err(false) } if i == root { self.last_made = 0 } (*row).kind = DEAD; gone = true; }".to_string(),
+            REMEMBERED => "{ if self.dropped_in(i) || word == 0 { return Err(false) } (*row).kind = word as u16; (*row).extra = Self::xflag(word); }".to_string(),
+            k => format!("{{ if self.dropped_in(i) {{ return Err(false) }} (*row).kind = {k}; (*row).extra = Self::xflag({k}); }}"),
         }
     };
     let mut fields = String::new();
@@ -1042,6 +1058,12 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
         _ => vec![pc + 1],
     };
     v.into_iter().filter(|&t| t < n).collect()
+}
+
+/// Whether rows carry marks (`head`): where a field is set on a wrap's inner node, or a reread
+/// may meet a dropped row's place (`native_cpu_stream::TableFns` keeps the same).
+pub(crate) fn marks(n: &Structure) -> bool {
+    n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }))
 }
 
 /// The field the word after a node's sets on it (`NODE_FIELD` on the node just made), stored

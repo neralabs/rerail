@@ -318,6 +318,30 @@ pub mod tests {
         }
     }
 
+    /// Tier 2 writes the table as it stands at the end (`rust_stream::node_words`): a wrap
+    /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
+    /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
+    /// wraps over large operands and inside them, and comments among them, as the engine's.
+    /// A reread that meets a dropped node's place refuses, as the interpreter, which keeps the
+    /// dropped row there, and the reference do.
+    #[test]
+    fn the_table_is_written_in_place() {
+        let parsed = [
+            "r(x) :- x = a - b - c - d.",
+            "r(x) :- x = (a + b) * (c - d) - e / f.",
+            "r(x) :- x = a /* c */ - b // d\n - c.",
+            "r(x) :- x = f(a - b, c) - g(d) + 1, y <= x + 2.",
+            "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
+        ];
+        for src in parsed {
+            assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+        }
+        let src = "r(n) :- n = min (a, b) : { s(a, b) }.";
+        assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
+        assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+    }
+
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
     /// whose calls save states are calls (`grammar::shared`). With every rule inlined into each
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as

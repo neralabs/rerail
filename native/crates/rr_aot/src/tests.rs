@@ -39,7 +39,12 @@ const BOTH: crate::Tiers = crate::Tiers { one: true, two: true };
 fn aot_tapes_are_the_jits() {
     let jit = rerail_rr_parser::compiled().expect("compiles");
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
-    let files = corpus();
+    // The corpus, and the table's in-place cases (`rr_parser`'s `the_table_is_written_in_place`):
+    // wraps, a drop then a reread.
+    let mut files = corpus();
+    for src in ["r(x) :- x = a - b - c - d.", "r(x) :- x = (a + b) * (c - d) - e / f.", "r(x) :- x = a /* c */ - b // d\n - c.", "r(n) :- n = min (a, b) : { s(a, b) }."] {
+        files.push(src.to_string());
+    }
     let (mut differ, mut tier1_differ) = (Vec::new(), Vec::new());
     let mut taken = 0;
     for (i, f) in files.iter().enumerate() {
