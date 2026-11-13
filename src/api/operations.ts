@@ -89,7 +89,8 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
   blind: z.enum(AUDIT_BLIND_REASONS).optional(),
 }).strict();
 
-export const auditRecordSchema = createSelectSchema(audits).extend({
+// `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
+export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),

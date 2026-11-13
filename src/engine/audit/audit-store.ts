@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -18,6 +18,7 @@ import {
   type AuditMode,
   type AuditScope,
   type AuditStatus,
+  type AuditRuleProvenance,
 } from "./audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import {
@@ -25,6 +26,7 @@ import {
   auditResultPages,
   auditUnlistedFailures,
   audits,
+  auditRuleProvenances,
   auditRuleSetRules,
   auditRuleSetUses,
   auditViolations,
@@ -82,9 +84,34 @@ function unlistedFailures(database: RerailDatabase): SQL<number> {
       WHERE unlisted.audit_id = audits.audit_id), 0)`
     : sql<number>`0`;
 }
-/** An `audits` row with `unlistedFailures`, which `record` reads. */
+/**
+ * An audit's rule provenance in a select from `audits`: the copy `audit_rule_provenances` keeps, or the row's own for
+ * an audit an older build wrote. Written with table names, as `unlistedFailures` is.
+ */
+function ruleProvenance(): SQL<AuditRuleProvenance[]> {
+  return sql<AuditRuleProvenance[]>`coalesce((SELECT provenance.rule_provenance_json FROM audit_rule_provenances provenance
+    WHERE provenance.provenance_id = audits.rule_provenance_id), audits.rule_provenance_json)`.mapWith(audits.ruleProvenance);
+}
+/** An `audits` row with its rule provenance and `unlistedFailures`, which `record` reads. */
 function auditColumns(database: RerailDatabase) {
-  return { ...getTableColumns(audits), unlistedFailureCount: unlistedFailures(database) };
+  return { ...getTableColumns(audits), ruleProvenance: ruleProvenance(), unlistedFailureCount: unlistedFailures(database) };
+}
+
+/**
+ * The id of `provenance` in `audit_rule_provenances`, stored first when no audit recorded it yet, so the audits of one
+ * checkout's rules share one copy. Its key is the SHA-256 of its JSON text. For the caller's write transaction: no other
+ * writer can store the same text between the lookup and the insert.
+ */
+function storedRuleProvenanceId(database: RerailDatabase, provenance: readonly AuditRuleProvenance[]): number {
+  const json = JSON.stringify(provenance);
+  const digest = createHash("sha256").update(json).digest("hex");
+  const stored = database.select({ id: auditRuleProvenances.provenanceId }).from(auditRuleProvenances)
+    .where(eq(auditRuleProvenances.digest, digest)).get();
+  if (stored !== undefined) return stored.id;
+  // The text the digest was taken of, rather than the column's JSON mode serializing the provenance again.
+  const inserted = database.$client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)")
+    .run(digest, json);
+  return Number(inserted.lastInsertRowid);
 }
 
 export interface AuditQuery {
@@ -622,26 +649,31 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
 
   start(input: AuditInput): string {
     const auditId = randomUUID();
-    this.#database
-      .insert(audits)
-      .values({
-        auditId: auditId,
-        sessionId: input.sessionId,
-        workspaceRoot: input.workspaceRoot,
-        scope: input.scope,
-        mode: input.mode,
-        revision: input.revision,
-        catalogRevision: input.catalogRevision,
-        ruleRevisions: input.ruleRevisions,
-        paths: input.paths,
-        ruleProvenance: input.ruleProvenance ?? [],
-        startedAt: Date.now(),
-        finishedAt: null,
-        status: "running",
-        violations: [],
-        failures: [],
-      })
-      .run();
+    const provenance = input.ruleProvenance ?? [];
+    // Immediate: the provenance lookup and the inserts that follow it take the write lock together.
+    this.#database.$client.transaction(() => {
+      this.#database
+        .insert(audits)
+        .values({
+          auditId: auditId,
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          scope: input.scope,
+          mode: input.mode,
+          revision: input.revision,
+          catalogRevision: input.catalogRevision,
+          ruleRevisions: input.ruleRevisions,
+          paths: input.paths,
+          ruleProvenance: [],
+          ruleProvenanceId: provenance.length === 0 ? null : storedRuleProvenanceId(this.#database, provenance),
+          startedAt: Date.now(),
+          finishedAt: null,
+          status: "running",
+          violations: [],
+          failures: [],
+        })
+        .run();
+    }).immediate();
     return auditId;
   }
   appendResultPage(

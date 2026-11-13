@@ -401,7 +401,13 @@ export const audits = sqliteTable(
     catalogRevision: text("catalog_revision"),
     /** Exact rule revisions compiled for this run; empty when it never reached evaluation. */
     ruleRevisions: text("rule_revisions_json", { mode: "json" }).$type<Array<{ ruleId: string; revision: number }>>().notNull().default([]),
+    /**
+     * The run's rule provenance as an older Rerail writes it, inline. This build keeps it once in
+     * `audit_rule_provenances` and writes `[]` here; the audit store reads whichever the row has.
+     */
     ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
+    /** The run's rule provenance in `audit_rule_provenances`; null when `rule_provenance_json` holds it, or it is empty. */
+    ruleProvenanceId: integer("rule_provenance_id"),
     paths: text("paths_json", { mode: "json" }).$type<string[]>().notNull(),
     startedAt: integer("started_at").notNull(),
     finishedAt: integer("finished_at"),
@@ -414,6 +420,8 @@ export const audits = sqliteTable(
     index("audits_status").on(table.status),
     index("audits_scope").on(table.scope),
     index("audits_mode").on(table.mode),
+    // The delete trigger asks whether any audit still names a provenance (`audit-history.ts`).
+    index("audits_rule_provenance").on(table.ruleProvenanceId),
     check("audits_scope", sql`${table.scope} IN (${sql.raw(inList(AUDIT_SCOPES))})`),
     check("audits_mode", sql`${table.mode} IN (${sql.raw(inList(AUDIT_MODES))})`),
     check("audits_status", sql`${table.status} IN (${sql.raw(inList(AUDIT_STATUSES))})`),
@@ -423,6 +431,22 @@ export const audits = sqliteTable(
     check("audits_violations_json", sql`json_type(${table.violations}) = 'array'`),
     check("audits_failures_json", sql`json_type(${table.failures}) = 'array'`),
   ],
+);
+
+/**
+ * Each distinct rule provenance an audit recorded, once. The audits of a checkout share one until its rules or their
+ * settings change, and one runs to hundreds of KB (767 rules: 221 KB), so an audit names it by
+ * `audits.rule_provenance_id` rather than holding a copy. `digest` is the SHA-256 of the JSON text, which a writer looks
+ * it up by. The last audit that names one takes it along when deleted (`audit-history.ts`).
+ */
+export const auditRuleProvenances = sqliteTable(
+  "audit_rule_provenances",
+  {
+    provenanceId: integer("provenance_id").primaryKey(),
+    digest: text("digest").notNull().unique(),
+    ruleProvenance: text("rule_provenance_json", { mode: "json" }).$type<AuditRuleProvenance[]>().notNull(),
+  },
+  table => [check("audit_rule_provenances_json", sql`json_type(${table.ruleProvenance}) = 'array'`)],
 );
 
 /** Workspace-owned ongoing audit defaults; first-repository audits are fixed log-only audits. */
@@ -645,8 +669,9 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
 
 /**
  * Session history `rerail reset` deletes for every session of the repository, running or not.
- * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
- * lose only ended sessions, so running ones keep recording.
+ * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`, and a stored rule provenance goes with the
+ * last audit that names it (`audit-history.ts`); `sessions` and `policy_session_owners` lose only ended sessions, so
+ * running ones keep recording.
  */
 export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits] as const;
 
