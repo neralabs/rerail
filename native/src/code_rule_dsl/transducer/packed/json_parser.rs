@@ -2,12 +2,11 @@
 //! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
-//! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, so its node
-//! table is the tree-sitter tree's, node for node (`bitlex_json_tests`): the tape of a JSON file is
-//! encoded from it (`tape::TapeImage::parse`). A file the grammar refuses (invalid JSON, an empty
-//! file, a comment holding a quote) goes to tree-sitter-json.
+//! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, and tier 2 writes
+//! the engine's image of a JSON file itself, its bytes (decision 0140: no node table, no conversion), with
+//! JSON's tape tag; supertype memberships are in its codes. A file the grammar refuses (invalid JSON,
+//! an empty file, a comment holding a quote) goes to tree-sitter-json.
 
-pub use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 
@@ -49,13 +48,14 @@ fn compile() -> Result<Compiled, String> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let program = rir::assemble(&compiled.text())?;
-    let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    native.tag = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Json).ok_or("JSON has no tape tag")?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser })
 }
 
-/// `src`'s node table, with tree-sitter-json's ids; `None` where the grammar refuses the file (or
-/// did not compile: the reason is [`compile_error`]).
+/// `src`'s image, the engine's bytes as tier 2 wrote them, with tree-sitter-json's ids; `None` where
+/// the grammar refuses the file (or did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
 pub mod tape;
 // The engine's JSON parser: simdjson's stage 1 (the source hashed in it) and a stage 2 of ours, which
@@ -63,8 +63,8 @@ pub mod tape;
 #[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
 
-pub fn columns(src: &str) -> Option<Columns> {
-    compiled().ok()?.parser.columns(src.as_bytes()).ok()
+pub fn image(src: &str) -> Option<Vec<u8>> {
+    compiled().ok()?.parser.image(src.as_bytes()).ok()
 }
 
 /// Why the grammar did not compile, if it did not.

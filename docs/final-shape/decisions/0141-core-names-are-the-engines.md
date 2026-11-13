@@ -1,4 +1,4 @@
-# 0047: `core.rr`'s names are the engine's
+# 0141: `core.rr`'s names are the engine's
 
 Status: accepted (2026-11-06)
 

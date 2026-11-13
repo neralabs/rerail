@@ -1591,11 +1591,20 @@ mod literal {
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    pub mod program_text {
+        pub use rerail_logic::code_rule_dsl::logic::program_text::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
+    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     pub mod liveness {
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
         #[cfg(test)]
         pub mod tests;
     }
+    // The cost statistics' read of each lane and form (3a42aefcf).
+    #[cfg(test)]
+    mod costs_tests;
     pub mod convert;
     #[path = "front"]
     pub mod front {
@@ -1649,8 +1658,6 @@ pub(crate) mod logic {
         #[path = "setfix"]
         pub mod setfix {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
-            #[cfg(target_os="macos")]
-            pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
             // The lab's tests run strata on the Metal device (the transducer's), which the engine alone sees.
             #[path = "lab"]
             pub mod lab {
@@ -1658,6 +1665,8 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod tests;
             }
+            #[cfg(target_os="macos")]
+            pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
             #[allow(unused_imports)]
@@ -1861,6 +1870,9 @@ pub(crate) mod logic {
     #[path = "profile"]
     pub mod profile {
         pub use rerail_prof::code_rule_dsl::logic::profile::*;
+        // The profile's account of every thread's CPU, under its spans and between them (3af4e92a3, 2f9181e59).
+        #[cfg(test)]
+        mod threads_tests;
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
         pub mod report {
             pub use rerail_logic::code_rule_dsl::logic::profile::report::*;

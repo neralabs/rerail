@@ -75,9 +75,14 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
 /// (itself counted): each closed where its subtree ends. The widths are the narrowest, from
 /// `Widths::guess` and again where it does not hold.
 pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
+    preorder_image_in(tag, &[], src, nodes)
+}
+
+/// `preorder_image`, the keys naming the supertype `classes` (`Writer::classes`).
+pub fn preorder_image_in(tag: u8, classes: &[u16], src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut w = Writer::new(tag, widths, nodes.len());
+        let mut w = Writer::new(tag, widths, nodes.len()).classes(classes);
         // The open nodes, each its place and where its subtree ends.
         let mut open: Vec<(usize, usize, u32)> = Vec::new();
         for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
@@ -174,8 +179,14 @@ impl Layout for Widths {
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
 const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+/// The id table's slots: a key is below this (`kf` 16 bits, flags 3), with no supertype
+/// classes (`Writer::classes`): each class doubles it.
 const ID_SLOTS: usize = 1 << 19;
+/// A key's first class bit (`Writer::classes`): bit `CLASS_SHIFT + j` puts the node in the
+/// writer's class `j`.
+pub const CLASS_SHIFT: u32 = 19;
+/// The most supertype classes a writer's keys name.
+pub const MAX_CLASSES: usize = 4;
 
 /// A tape written as a parser parses: each node's columns at their final widths, at its place,
 /// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
@@ -184,7 +195,8 @@ const ID_SLOTS: usize = 1 << 19;
 /// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
 /// columns are moved into place after the code column, and the header and code table written.
 ///
-/// A node's key is its code: `kf | flags << 16`.
+/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
+/// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
     /// whole image at `cap` nodes, so that `finish` appends the columns in place.
@@ -207,6 +219,10 @@ pub struct Writer<L: Layout = Widths> {
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
     id_of: Vec<u16>,
+    /// The id table's slots in use: `ID_SLOTS`, doubled for each class.
+    slots: usize,
+    /// The supertype classes a key's bits name, ascending (none for most languages).
+    classes: Vec<u16>,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
@@ -271,11 +287,25 @@ impl<L: Layout> Writer<L> {
                 ids.resize(ID_SLOTS, NO_CODE);
                 ids
             }),
+            slots: ID_SLOTS,
+            classes: Vec::new(),
             layout,
             wide_from: 0x10000,
             marks: Vec::new(),
             tag,
         }
+    }
+
+    /// The supertype classes a key's bits from `CLASS_SHIFT` name, ascending, at most
+    /// `MAX_CLASSES`: each node's code carries the classes its key has. Before the first push.
+    pub fn classes(mut self, classes: &[u16]) -> Self {
+        assert!(classes.len() <= MAX_CLASSES && classes.windows(2).all(|w| w[0] < w[1]) && self.n == 0);
+        self.slots = ID_SLOTS << classes.len();
+        if self.id_of.len() < self.slots {
+            self.id_of.resize(self.slots, NO_CODE);
+        }
+        self.classes = classes.to_vec();
+        self
     }
 
     /// Room for twice the nodes: every column at once.
@@ -368,10 +398,10 @@ impl<L: Layout> Writer<L> {
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[from..to];
         let code = &mut self.out[HEADER_BYTES + 2 * from..HEADER_BYTES + 2 * to];
-        let (id_of, codes) = (&mut self.id_of[..], &mut self.codes);
+        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, self.slots - 1);
         for (k, (&key, cell)) in keys.iter().zip(code.chunks_exact_mut(2)).enumerate() {
-            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
-            let slot = &mut id_of[(key as usize) & (ID_SLOTS - 1)];
+            // A key is below `slots` (`push`'s assertion): the mask is no change, and no check.
+            let slot = &mut id_of[(key as usize) & mask];
             if *slot == NO_CODE {
                 *slot = codes.len() as u16;
                 codes.push((key, (from + k) as u32));
@@ -409,7 +439,7 @@ impl<L: Layout> Writer<L> {
     /// close: every node is closed before `finish`. Its code is written when it is committed.
     #[inline(always)]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
-        debug_assert!((key as usize) < ID_SLOTS);
+        debug_assert!((key as usize) < self.slots);
         let node = self.n;
         if node == self.cap {
             self.grow();
@@ -537,7 +567,8 @@ impl<L: Layout> Writer<L> {
         }
         let w = self.layout.widths();
         let nodes = self.n;
-        let code_bytes = 6 * self.codes.len();
+        let class_count = |key: u32| (key >> CLASS_SHIFT).count_ones() as usize;
+        let code_bytes: usize = self.codes.iter().map(|&(key, _)| 6 + 2 * class_count(key)).sum();
         let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
         let mut out = std::mem::take(&mut self.out);
         out.truncate(HEADER_BYTES + 2 * nodes);
@@ -556,9 +587,14 @@ impl<L: Layout> Writer<L> {
         pad(&mut out);
         for &(key, _) in &self.codes {
             out.extend_from_slice(&((key & 0xffff) as u16).to_le_bytes());
-            out.push((key >> 16) as u8);
+            out.push((key >> 16 & 0x7) as u8);
             out.extend_from_slice(&SENTINEL.to_le_bytes());
-            out.push(0);
+            out.push(class_count(key) as u8);
+            for (j, c) in self.classes.iter().enumerate() {
+                if key >> (CLASS_SHIFT + j as u32) & 1 != 0 {
+                    out.extend_from_slice(&c.to_le_bytes());
+                }
+            }
         }
         let mut h = Vec::with_capacity(HEADER_BYTES);
         h.extend_from_slice(MAGIC);
@@ -668,4 +704,135 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, String> {
         open.push((i as u32, i + s.max(1)));
     }
     Ok(out)
+}
+
+/// An image read in place: each node's key, subtree size and span, straight from the columns, with nothing decoded
+/// ahead (`decode` makes every node at once). A node's children are the nodes after it, each the next one's
+/// predecessor by its size (`children`).
+#[derive(Clone)]
+pub struct View<'a> {
+    n: usize,
+    code: &'a [u8],
+    size: &'a [u8],
+    base: &'a [u8],
+    off: &'a [u8],
+    tail: &'a [u8],
+    widths: [u8; 3],
+    from_start: bool,
+    /// Each code's key, by id.
+    keys: Vec<u32>,
+}
+
+impl<'a> View<'a> {
+    /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
+    /// each code id and size in range.
+    pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
+        let u64_at = |at: usize| -> Result<usize, String> {
+            let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
+            usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
+        };
+        if bytes.len() < HEADER_BYTES || &bytes[..8] != MAGIC {
+            return Err("not a tape image".into());
+        }
+        if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("4 bytes")) != FORMAT_VERSION {
+            return Err("a tape of another format".into());
+        }
+        let widths = [bytes[header::WIDTHS], bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2] & !TAIL_FROM_START];
+        if widths.iter().any(|&w| w != 2 && w != 4) {
+            return Err("a tape column of another width".into());
+        }
+        let from_start = bytes[header::WIDTHS + 2] & TAIL_FROM_START != 0;
+        let (n, code_count) = (u64_at(header::NODES)?, u64_at(header::CODES)?);
+        let mut at = HEADER_BYTES;
+        let mut column = |width: usize, count: usize| -> Result<&'a [u8], String> {
+            let c = bytes.get(at..at + width * count).ok_or("a short tape column")?;
+            at = padded(at + width * count);
+            Ok(c)
+        };
+        let w = widths.map(usize::from);
+        let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
+        let mut keys = Vec::with_capacity(code_count);
+        let mut c = at;
+        for _ in 0..code_count {
+            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+            c += 6 + 2 * usize::from(entry[5]);
+        }
+        let view = View { n, code, size, base, off, tail, widths, from_start, keys };
+        for i in 0..n {
+            if usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]])) >= code_count {
+                return Err("a node's code is not in the table".into());
+            }
+            if i + view.size(i).max(1) > n {
+                return Err("a node's size runs past the tape".into());
+            }
+        }
+        Ok(view)
+    }
+
+    #[inline(always)]
+    fn cell(column: &[u8], width: u8, i: usize) -> u32 {
+        if width == 2 { u32::from(u16::from_le_bytes([column[2 * i], column[2 * i + 1]])) } else { u32::from_le_bytes(column[4 * i..4 * i + 4].try_into().expect("4 bytes")) }
+    }
+
+    /// The nodes.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// Node `i`'s key: `kf | flags << 16`, as `Writer::push` took it.
+    #[inline(always)]
+    pub fn key(&self, i: usize) -> u32 {
+        self.keys[usize::from(u16::from_le_bytes([self.code[2 * i], self.code[2 * i + 1]]))]
+    }
+
+    /// Node `i`'s subtree, itself counted (at least 1).
+    #[inline(always)]
+    pub fn size(&self, i: usize) -> usize {
+        (Self::cell(self.size, self.widths[0], i) as usize).max(1)
+    }
+
+    #[inline(always)]
+    pub fn start(&self, i: usize) -> u32 {
+        Self::cell(self.base, 4, i / CHECKPOINT_STRIDE).wrapping_add(Self::cell(self.off, self.widths[1], i))
+    }
+
+    #[inline(always)]
+    pub fn end(&self, i: usize) -> u32 {
+        let from = if self.from_start { self.start(i) } else { self.start(i + self.size(i) - 1) };
+        from.wrapping_add(Self::cell(self.tail, self.widths[2], i))
+    }
+
+    /// Node `i`'s children, in order: from `i + 1`, each the one after the last one's subtree.
+    #[inline]
+    pub fn children(&self, i: usize) -> Children<'_, 'a> {
+        Children { view: self, at: i + 1, end: i + self.size(i) }
+    }
+}
+
+/// A node's children (`View::children`).
+pub struct Children<'v, 'a> {
+    view: &'v View<'a>,
+    at: usize,
+    end: usize,
+}
+
+impl Iterator for Children<'_, '_> {
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<usize> {
+        if self.at >= self.end {
+            return None;
+        }
+        let c = self.at;
+        self.at += self.view.size(c);
+        Some(c)
+    }
 }

@@ -17,11 +17,11 @@
             super::super::here()
         };
         assert_eq!(under.as_deref(), Some("xrun/evaluate"));
+        // As `Ambient::enter` opens a job: its span at the issuing run's path, the members' spans under it.
         std::thread::spawn(move || {
-            let _based = super::super::based(under);
-            assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate"));
+            let _issued = super::super::span_at(under.as_deref(), || "issued components (stream job)".into());
             let _job = span(|| "stratum s (in a job)".into());
-            assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/stratum s (in a job)"));
+            assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/issued components (stream job)/stratum s (in a job)"));
         })
         .join()
         .unwrap();
@@ -33,7 +33,7 @@
         .unwrap();
         let s = super::super::spans();
         set(false);
-        assert!(s.contains_key("xrun/evaluate/stratum s (in a job)") && s.contains_key("xloose"), "{:?}", s.keys().collect::<Vec<_>>());
+        assert!(s.contains_key("xrun/evaluate/issued components (stream job)/stratum s (in a job)") && s.contains_key("xloose"), "{:?}", s.keys().collect::<Vec<_>>());
         assert!(!s.contains_key("stratum s (in a job)"));
     }
 

@@ -27,7 +27,7 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
-use rerail_tape_format::CODE_EXTRA;
+pub use rerail_tape_format::CODE_EXTRA;
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
@@ -1054,6 +1054,14 @@ impl TapeImage {
 
     pub fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
         Self::read_image(bytes, grammar)
+    }
+
+    /// The image a parser wrote as it parsed `source` (its bytes, the engine's: decision 0140), read as
+    /// stored, with the source's digest (not stored since format 12), as `encode_rr`'s.
+    pub fn parsed(bytes: &[u8], grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let mut image = Self::read_image(bytes, grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
     }
 
     /// The image `bytes` hold, of a `grammar` file.

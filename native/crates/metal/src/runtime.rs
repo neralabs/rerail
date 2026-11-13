@@ -19,7 +19,11 @@ use crate::launch;
 // and output pools, 32-64 MB), in place of a 2 GB guard (list step 13). A plan's buffers are
 // sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
 // refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
-pub const METAL_BUFFER_LIMIT: usize = 256 << 20;
+// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; 512 MB by default, decision
+// 0126), on top of the overall budget.
+pub fn metal_buffer_limit() -> usize {
+    rerail_accel::budget::metal()
+}
 #[cfg(not(any(test, feature = "test-hooks")))]
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// The most `METAL_BUFFER_BYTES` has held.
@@ -51,18 +55,28 @@ use test_pool::{driver_bytes, pool, pool_peak};
 
 /// The Metal buffer budget, in bytes.
 pub fn buffer_limit() -> usize {
-    METAL_BUFFER_LIMIT
+    metal_buffer_limit()
 }
 
 /// The bytes of the Metal buffer budget not reserved now.
-/// The bytes the device's buffers hold now, of `METAL_BUFFER_LIMIT`: a user of them that can wait (the logic
+/// The bytes the device's buffers hold now, of `metal_buffer_limit()`: a user of them that can wait (the logic
 /// engine's device joins) keeps within what is left.
 pub fn reserved() -> usize {
     pool().load(Ordering::Acquire)
 }
 
+/// The bytes of `metal_buffer_limit()` relational work (the logic engine's device joins) may still lease: past the
+/// buffer pool's reservations and what relational work holds itself, leased and kept idle in its pool. Its leases
+/// reserve nothing in the pool's ledger, so a check of `reserved` alone never saw them: a wave encoded strata until
+/// it held 400 MB.
+pub fn relational_bytes_left() -> usize {
+    rerail_accel::gpu::shared::set_other_reserved(reserved);
+    let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + live + idle)
+}
+
 pub fn buffer_free() -> usize {
-    METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire))
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire))
 }
 
 /// The bytes of Metal buffers alive now (their reservations), in MB.
@@ -87,7 +101,7 @@ const METAL_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 pub fn available_buffer_bytes(device: &Device) -> usize {
     let reserved = pool().load(Ordering::Acquire);
     let driver = usize::try_from(driver_bytes(device)).unwrap_or(usize::MAX);
-    METAL_BUFFER_LIMIT.saturating_sub(reserved.max(driver))
+    metal_buffer_limit().saturating_sub(reserved.max(driver))
 }
 
 pub fn buffer_usage() -> (usize, usize) {
@@ -152,6 +166,7 @@ impl BufferReservation {
                         std::backtrace::Backtrace::force_capture()
                     );
                 }
+                rerail_prof::count("capacity.metal_pool_ledger", 1);
                 Error::BackendCapacity
             })?;
         let pooled = std::ptr::eq(ledger, pool());
@@ -234,7 +249,7 @@ impl MappedRegion {
             .map(|value| value / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation =
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?;
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?;
         let raw = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -419,7 +434,7 @@ impl MappedBuffer {
         if mapping.length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(mapping.length as u64)
-                > METAL_BUFFER_LIMIT as u64
+                > metal_buffer_limit() as u64
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -429,6 +444,20 @@ impl MappedBuffer {
                     device.current_allocated_size(),
                     device.max_buffer_length()
                 );
+            }
+            rerail_prof::count("capacity.metal_pool_driver", 1);
+            if rerail_prof::on() {
+                // What the driver held then, and the pool's own part of it (the most seen).
+                let mut stages = rerail_prof::stages();
+                let e = stages.entry("capacity.driver_mb_max".to_owned()).or_default();
+                e.1 = e.1.max((driver_bytes(device) >> 20) as usize);
+                let e = stages.entry("capacity.pool_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(pool().load(Ordering::Acquire) >> 20);
+                let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+                let e = stages.entry("capacity.accel_live_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(live >> 20);
+                let e = stages.entry("capacity.accel_idle_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(idle >> 20);
             }
             return Err(Error::BackendCapacity);
         }
@@ -471,7 +500,7 @@ impl MappedBuffer {
         if length as u64 > device.max_buffer_length()
             || driver_bytes(device)
                 .saturating_add(length as u64)
-                > METAL_BUFFER_LIMIT as u64
+                > metal_buffer_limit() as u64
         {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                 eprintln!(
@@ -481,6 +510,20 @@ impl MappedBuffer {
                     device.max_buffer_length(),
                     std::panic::Location::caller()
                 );
+            }
+            rerail_prof::count("capacity.metal_pool_driver", 1);
+            if rerail_prof::on() {
+                // What the driver held then, and the pool's own part of it (the most seen).
+                let mut stages = rerail_prof::stages();
+                let e = stages.entry("capacity.driver_mb_max".to_owned()).or_default();
+                e.1 = e.1.max((driver_bytes(device) >> 20) as usize);
+                let e = stages.entry("capacity.pool_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(pool().load(Ordering::Acquire) >> 20);
+                let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+                let e = stages.entry("capacity.accel_live_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(live >> 20);
+                let e = stages.entry("capacity.accel_idle_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(idle >> 20);
             }
             return Err(Error::BackendCapacity);
         }
@@ -513,7 +556,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?.private(),
         );
         let target = Self::owned_allocation(
             device,
@@ -566,7 +609,7 @@ impl MappedBuffer {
             .map(|length| length / page * page)
             .ok_or(Error::BackendCapacity)?;
         let reservation = Arc::new(
-            BufferReservation::acquire(length, pool(), METAL_BUFFER_LIMIT)?.private(),
+            BufferReservation::acquire(length, pool(), metal_buffer_limit())?.private(),
         );
         Self::owned_allocation(
             device,
@@ -597,7 +640,7 @@ impl MappedBuffer {
         let reservation = Arc::new(BufferReservation::acquire(
             length,
             pool(),
-            METAL_BUFFER_LIMIT,
+            metal_buffer_limit(),
         )?);
         Self::owned_allocation(device, length, reservation, MTLResourceOptions::StorageModeShared)
     }
@@ -620,7 +663,7 @@ impl MappedBuffer {
         let reservation = Arc::new(BufferReservation::acquire(
             length,
             pool(),
-            METAL_BUFFER_LIMIT,
+            metal_buffer_limit(),
         )?);
         let buffer = Self::owned_allocation(
             device,
@@ -823,6 +866,20 @@ mod execution_lock_tests {
 mod memory_budget_tests {
     use super::*;
 
+    /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
+    /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.
+    #[test]
+    fn the_budget_left_counts_relational_leases() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let before = relational_bytes_left();
+        let held = rerail_accel::gpu::shared::lease(32 << 20).unwrap();
+        let during = relational_bytes_left();
+        assert!(before - during >= 32 << 20 || during == 0, "a 32 MB lease leaves {} MB of {} MB", during >> 20, before >> 20);
+        drop(held);
+    }
+
     #[test]
     fn operation_allocation_observation_excludes_unrelated_retirement() {
         let _guard = metal_execution_guard().unwrap();
@@ -891,7 +948,7 @@ mod memory_budget_tests {
     #[test]
     fn oversized_mapping_is_rejected_before_allocation() {
         assert!(matches!(
-            MappedRegion::zeroed(METAL_BUFFER_LIMIT + 1),
+            MappedRegion::zeroed(metal_buffer_limit() + 1),
             Err(Error::BackendCapacity)
         ));
         assert!(matches!(
@@ -900,7 +957,7 @@ mod memory_budget_tests {
         ));
         let device = Device::system_default().unwrap();
         assert!(matches!(
-            MappedBuffer::zeroed::<u8>(&device, METAL_BUFFER_LIMIT + 1),
+            MappedBuffer::zeroed::<u8>(&device, metal_buffer_limit() + 1),
             Err(Error::BackendCapacity)
         ));
         assert!(matches!(

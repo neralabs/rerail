@@ -74,8 +74,6 @@ class c_v       = 'v'
 class c_m       = 'm'
 class c_a       = 'a'
 class c_j       = 'j'
-class lc_d      = 'd'
-class lc_d      = 'd'
 class c_u       = 'u'
 class c_h       = 'h'
 class c_g       = 'g'
@@ -102,26 +100,17 @@ mask ttt        = tt & next(tick, 2)
 mask tick1      = tick & ~next(tick)
 mask tick2      = tt & ~next(tick, 2)
 mask tick3      = ttt & ~next(tick, 3)
-# A `` `` `` somewhere after the byte two on, in the file's bytes as they are.
-mask tt_later   = next(back_fill(tt, empty), 2)
-rounds until settled {
-  carry hidden  = empty
-  mask code0    = ~hidden
-  mask o_str    = q & code0
-  mask o_line   = line_open & code0
-  mask o_block  = block_open & code0
-  mask o_t1     = tick1 & code0
-  mask o_t2     = tick2 & code0 & tt_later
-  # Two backticks with none later: the empty literal.
-  mask e_t2     = tick2 & code0 & ~tt_later
-  mask o_t3     = tick3 & code0
-  mask f_str    = fill(o_str, q)
-  mask f_line   = fill(o_line, lf)
-  mask f_block  = fill(o_block, block_end)
-  mask f_t1     = fill(o_t1, tick)
-  mask f_t2     = fill(o_t2, tt)
-  mask f_t3     = fill(o_t3, ttt)
-  next hidden   = prev(f_str | f_block | f_t1 | f_t2 | f_t3 | e_t2) | (prev(f_line) & ~lf) | prev(f_t2 | f_t3, 2) | prev(f_t3, 3)
+# The regions, left to right: each opener not hidden opens its region, to its closer's first
+# byte after it. The hidden bytes run from the byte after the opener through the closer's
+# last (`bytes`), but not a line comment's `\n` (`outside`): it ends the line. Two backticks
+# with no `` `` `` later in the file open no region: they are the empty literal, `e_t2`.
+regions hidden {
+  str   = q .. q
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  t1    = tick1 .. tick
+  t2    = tick2 .. tt bytes 2 else e_t2 bytes 2
+  t3    = tick3 .. ttt bytes 3
 }
 
 # Each region's last byte.
@@ -279,10 +268,9 @@ mark empty_parens = tokens "(" ")"
 # file is refused wherever it is.
 mark no_value   = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
 mark newline     = lf & ~after_comma, end
-# A `.end`'s `.`: a `.` before the word `end`, past blanks and comments. After the line
-# breaks' marks, which a statement before it takes.
-mask end_w       = id_first & c_e & next(c_n) & next(lc_d, 2) & ~next(ident, 3)
-mark end_on      = code & dot & p_start & next(back_fill(end_w, solid))
+# A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments. After the
+# line breaks' marks, which a statement before it takes.
+mark end_on      = tokens "." "end"
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
 mask in_str      = f_str & ~o_str

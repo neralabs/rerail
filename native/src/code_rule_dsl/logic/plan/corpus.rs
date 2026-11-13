@@ -1229,7 +1229,7 @@ fn same_relations(prog: &mut front::Program) {
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("merge the relations that are one ({} rules)", prog.rules.len()));
     let rules = prog.rules.len();
-    let (merged, shared, repeated) = merge_to_fixpoint(prog);
+    let (merged, shared, repeated) = merge_and_drop_repeats(prog);
     if merged > 0 || repeated > 0 {
         crate::code_rule_dsl::logic::profile::decision("merged after hiding and combining", || {
             format!("{merged} relations merged into an identical one ({shared} classes shared across programs), {repeated} rules that repeat another dropped; {} rules of {rules} left", prog.rules.len())
@@ -1237,25 +1237,16 @@ fn same_relations(prog: &mut front::Program) {
     }
 }
 
-/// `simplify::merge_identical` and `drop_repeated_rules` until neither changes anything: each enables the other, as a
-/// repeated rule keeps a relation's rules apart from its twin's (they are compared as lists), and a merge renames
-/// atoms, which can make two rules one. The relations merged, the classes shared across programs, the rules dropped.
-pub fn merge_to_fixpoint(prog: &mut front::Program) -> (usize, usize, usize) {
-    // Another merge is wanted only when the last one made rules repeat: a merge alone finds every class at once (its
-    // congruence is the greatest), and one that renames a class of outputs reports a merge each time (a loop on `m`
-    // never ended on `libraries_are_held_once_and_equal_requests_share_one_cone`).
+/// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across
+/// programs, the rules dropped.
+pub fn merge_and_drop_repeats(prog: &mut front::Program) -> (usize, usize, usize) {
+    // One merge finds every class at once: its congruence is the greatest, and it compares a relation's rules as a
+    // set, so a repeated rule does not keep a relation from its twin. The merge's renaming can make rules repeat;
+    // they are dropped after it, and make nothing more mergeable. (A loop of merges until no rule repeated was 2-3
+    // congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
     let mut repeated = drop_repeated_rules(prog);
-    let (mut merged, mut shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-    for _ in 0..16 {
-        let r = drop_repeated_rules(prog);
-        if r == 0 {
-            break;
-        }
-        repeated += r;
-        let (m, s) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-        merged += m;
-        shared += s;
-    }
+    let (merged, shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
+    repeated += drop_repeated_rules(prog);
     (merged, shared, repeated)
 }
 
@@ -1571,7 +1562,7 @@ impl Drop for HeldPlan<'_> {
 }
 
 /// Sources a queued write stores (decision 0102), for the manifest queued after it.
-type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
+pub type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
 /// The store's collection (decision 0053), started once the run's manifest is written: `join` waits for it.
 pub struct Collecting(std::sync::mpsc::Receiver<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>>);
@@ -2476,7 +2467,7 @@ fn run_observed(
         let folded = hiding::fold_own(&mut prog, label, bound);
         if folded > 0 {
             let rules = prog.rules.len();
-            let (merged, _, repeated) = merge_to_fixpoint(&mut prog);
+            let (merged, _, repeated) = merge_and_drop_repeats(&mut prog);
             crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
         }
     }
@@ -2548,11 +2539,13 @@ fn run_observed(
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
         memo::named_source(store, text, false, &late_sources);
+        // And its program's text (decision 0155), a source of its own.
+        combined::name_program(store, &texts, &late_sources);
         program_plans.push(plan);
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, &late_sources);
@@ -2690,7 +2683,7 @@ fn run_observed(
             let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
                 crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program)
             } else {
-                let (m, s, _) = merge_to_fixpoint(&mut lowered.program);
+                let (m, s, _) = merge_and_drop_repeats(&mut lowered.program);
                 (m, s)
             };
             drop(_step);
@@ -3659,7 +3652,15 @@ fn run_observed(
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
-            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c) || b.found.is_none())).map(|(p, c, _)| (p, c)).collect();
+            // Each file the keeper will count out: one it counted under another content or document key than the
+            // run's (`keptstats::same`, the keeper's own test), one whose entry the run's plan does not have (a new
+            // build over an older store: `found` is none), or one the run does not have.
+            let key_now: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
+            let kept = |p: &String, c: memo::Content, k: i64| match (now.get(p), key_now.get(p.as_str())) {
+                (Some(b), Some(&d)) => b.found.is_some() && b.content.is_some_and(|content| keptstats::same((c, k), (content, d))),
+                _ => false,
+            };
+            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, k)| !kept(p, *c, *k)).map(|(p, c, _)| (p, c)).collect();
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
@@ -3667,7 +3668,7 @@ fn run_observed(
         }
         _ => HashMap::new(),
     };
-    // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
+    // The entry a file was counted under: as found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
             Some(Some(found)) => found.entry(key).ok().flatten(),
@@ -7324,9 +7325,13 @@ fn run_observed(
         drop(waited);
         let w = store.written_so_far();
         let (by_what, peak, held) = store.written_by_what();
+        let dropped = store.dropped();
         crate::code_rule_dsl::logic::profile::decision("write-back by what (decision 0102)", || {
             let rows: Vec<String> = by_what.iter().map(|(what, jobs, bytes, cpu)| format!("{what}: {jobs} jobs, {:.1} MB, {cpu:.3} s", *bytes as f64 / 1048576.0)).collect();
-            format!("queue peak {:.1} MB; back-pressure held producers {} times, {:.3} s; {}", peak as f64 / 1048576.0, held.0, held.1, rows.join("; "))
+            format!(
+                "queue peak {:.1} MB; back-pressure held producers {} times, {:.3} s; cache writes dropped for a full queue {} ({:.1} MB: the next run parses them again); {}",
+                peak as f64 / 1048576.0, held.0, held.1, dropped.0, dropped.1 as f64 / 1048576.0, rows.join("; ")
+            )
         });
         crate::code_rule_dsl::logic::profile::decision("write-back (decision 0102)", || format!("{} writes queued behind the run in {} transactions, {:.1} MB, {:.3} s of the writer's CPU", w.jobs, w.batches, w.bytes as f64 / 1048576.0, w.cpu));
         // By kind, over the process so far.
@@ -8135,7 +8140,7 @@ impl Totals {
         }
     }
     /// A chunk's rows of `rel` (`inserted` of them new to `x`), with its columns' declared types.
-    fn add_rows(&mut self, rel: &str, inserted: usize, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, types: &[&str]) {
+    pub fn add_rows(&mut self, rel: &str, inserted: usize, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, types: &[&str]) {
         let n = rows.len();
         // A row's document: its first node column's (`d << 32 | index`), or one document for a relation without one.
         let doc_col = types.iter().position(|t| *t == "node");
@@ -8669,7 +8674,7 @@ pub struct Own {
 
 impl Own {
     /// The program's integer constants by (input relation, column name) they are compared at.
-    fn constants(prog: &front::Program) -> BTreeMap<(String, String), BTreeSet<i64>> {
+    pub fn constants(prog: &front::Program) -> BTreeMap<(String, String), BTreeSet<i64>> {
         let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
         for literal in prog.rules.iter().flat_map(|r| &r.body) {
             let Some(atom) = literal.atom() else { continue };
@@ -8685,7 +8690,7 @@ impl Own {
         out
     }
 
-    fn measure(sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)], constants: &BTreeMap<(String, String), BTreeSet<i64>>) -> Self {
+    pub fn measure(sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)], constants: &BTreeMap<(String, String), BTreeSet<i64>>) -> Self {
         use rustc_hash::{FxHashMap, FxHashSet};
         let mut own = Own::default();
         let of = |rel: &str| sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref());
@@ -8731,7 +8736,7 @@ impl Own {
     }
 
     /// The program's constants' postings in the relations `of_rel` keeps: rows per (relation, column, value).
-    fn postings(
+    pub fn postings(
         sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)],
         constants: &BTreeMap<(String, String), BTreeSet<i64>>,
         of_rel: impl Fn(&str) -> bool,
@@ -8768,7 +8773,7 @@ impl Own {
 
     /// These counts for a chunk `r` times this one's size: every count is of nodes, edges, documents or rows, so
     /// each scales by `r`.
-    fn scaled(&self, r: f64) -> Own {
+    pub fn scaled(&self, r: f64) -> Own {
         let s = |n: i64| (n as f64 * r).round() as i64;
         Own {
             kinds: self.kinds.iter().map(|(k, (n, size))| (*k, (s(*n), s(*size)))).collect(),
@@ -8779,7 +8784,7 @@ impl Own {
     }
 
     /// The counts and the nodes they were measured over, as bytes (`own_counts`).
-    fn encode(&self, nodes: usize) -> Vec<u8> {
+    pub fn encode(&self, nodes: usize) -> Vec<u8> {
         let mut b = Vec::new();
         let int = |b: &mut Vec<u8>, v: i64| b.extend_from_slice(&v.to_le_bytes());
         let text = |b: &mut Vec<u8>, t: &str| {
@@ -8807,7 +8812,7 @@ impl Own {
         b
     }
 
-    fn decode(b: &[u8]) -> Option<(usize, Own)> {
+    pub fn decode(b: &[u8]) -> Option<(usize, Own)> {
         let mut at = 4usize;
         if b.get(..4)? != b"own1" {
             return None;
@@ -8845,7 +8850,7 @@ impl Own {
         Some((nodes, own))
     }
 
-    fn add(&mut self, other: &Own) {
+    pub fn add(&mut self, other: &Own) {
         for (k, (n, size)) in &other.kinds {
             let e = self.kinds.entry(*k).or_default();
             e.0 += n;
@@ -8861,7 +8866,7 @@ impl Own {
     }
 
     /// `other` taken away (a file's share counted out): counts that reach 0 are dropped, as a sum without it holds.
-    fn sub(&mut self, other: &Own) {
+    pub fn sub(&mut self, other: &Own) {
         for (k, (n, size)) in &other.kinds {
             let e = self.kinds.entry(*k).or_default();
             e.0 -= n;
@@ -8913,7 +8918,7 @@ impl Own {
     }
 
     /// From a memo entry's rows (`put`).
-    fn taken(rows: &BTreeMap<String, (usize, Vec<i64>)>) -> Own {
+    pub fn taken(rows: &BTreeMap<String, (usize, Vec<i64>)>) -> Own {
         let mut own = Own::default();
         let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
         own.kinds = flat(OWN_KINDS).chunks(3).map(|r| (r[0], (r[1], r[2]))).collect();
@@ -8926,7 +8931,7 @@ impl Own {
         own
     }
 
-    fn apply(&self, stats: &mut super::Stats) {
+    pub fn apply(&self, stats: &mut super::Stats) {
         stats.tree(&self.kinds, &self.edges, self.docs);
         let mut by: BTreeMap<&str, Vec<(String, i64, i64)>> = BTreeMap::new();
         for ((rel, col, v), n) in &self.postings {

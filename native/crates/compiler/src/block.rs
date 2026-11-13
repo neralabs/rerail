@@ -474,6 +474,100 @@ pub struct BlockProgram {
     /// Tier 1's token records (`records`): two extracts zipped by index, the tokens' first and
     /// last bytes, and a code a token, written by the record pass.
     pub records: Option<crate::records::Records>,
+    /// Rounds groups that are regions (Bitlex's `regions`): the same values, which a backend may
+    /// make by walking the regions left to right instead of running the rounds (`Walk`).
+    pub walks: Vec<Walk>,
+}
+
+/// A rounds group that is regions (Bitlex's `regions H { … }`, decision 0139): kinds of region
+/// that hide each other, as strings, comments and quoted literals do. Its one carry is the
+/// hidden bytes. Its meaning is the walk (`BlockProgram::walk_values`), which is the rounds'
+/// fixed point: every value of the group is at the carry's delay, so a word's bit `t` is one
+/// place `t` of the group's frame throughout.
+///
+/// From place 0 on, the first place where some kind's `opener` has a bit (the first such kind
+/// at a place) opens that kind's region:
+///
+/// - with `empty = (e, m)`, when `closer` has no bit after it in the file: no region. `e` has
+///   the bit, and places `t + 1 ..= t + m - 1` are hidden;
+/// - else `open` has the bit, `fill` runs from it up to, not including, the first bit `c` of
+///   `closer` after it (to the file's end without one), and places `t + 1 ..= c + bytes - 1`
+///   are hidden (`outside`: `..= c - 1`).
+///
+/// The next region opens at the first place after the hidden ones (after `t` at least).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Walk {
+    /// Its rounds group (`BlockProgram::rounds`).
+    pub group: u16,
+    /// The hidden places: the group's one carry.
+    pub hidden: u16,
+    pub kinds: Vec<WalkKind>,
+}
+
+/// A kind of region (`Walk`). `opener` and `closer` are outside the group; `open`, `fill` and
+/// the empty openers are its members, the values the rest of the program reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WalkKind {
+    pub opener: u16,
+    pub closer: u16,
+    pub open: u16,
+    pub fill: u16,
+    /// The closer's bytes (1 to 3), hidden with the region.
+    pub bytes: u8,
+    /// The closer is not the region's: not hidden (one byte).
+    pub outside: bool,
+    /// An opener with no closer after it in the file: its value, and its bytes (1 to 3).
+    pub empty: Option<(u16, u8)>,
+}
+
+impl Walk {
+    /// The values the walk makes: the hidden places, then each kind's open, fill and empty.
+    pub fn made(&self) -> Vec<u16> {
+        let mut out = vec![self.hidden];
+        for k in &self.kinds {
+            out.push(k.open);
+            out.push(k.fill);
+            out.extend(k.empty.map(|e| e.0));
+        }
+        out
+    }
+
+    /// The values it reads: each kind's opener and closer.
+    pub fn reads(&self) -> Vec<u16> {
+        self.kinds.iter().flat_map(|k| [k.opener, k.closer]).collect()
+    }
+}
+
+/// A test of one byte: what a closer an `else` reads is made of (`byte_tests`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ByteTest {
+    Eq(u8),
+    /// The byte is in the stream.
+    Inside,
+}
+
+/// Value `v` as byte tests at fixed offsets, when it is one: bit `t` is set when for every
+/// `(k, test)` the byte at `t - k` passes `test` (a byte outside the stream is 0x00, and passes
+/// only `Eq(0)`), each `k` at most 16 (the zeros before a file, `native_cpu_block::FRONT`). An
+/// `else`'s closer is one (`Walk`): a CPU finds the next of its bits past a block by testing
+/// the bytes (`native_cpu_block`'s scan), not by running the program there.
+pub fn byte_tests(ops: &[BlockOp], v: u16) -> Option<Vec<(u8, ByteTest)>> {
+    match ops[usize::from(v)] {
+        BlockOp::Eq(b) => Some(vec![(0, ByteTest::Eq(b))]),
+        BlockOp::Within(d) if d <= 16 => Some(vec![(d, ByteTest::Inside)]),
+        BlockOp::Prev(a, k) => {
+            let inner = byte_tests(ops, a)?;
+            inner.into_iter().map(|(o, t)| Some((o.checked_add(k).filter(|&o| o <= 16)?, t))).collect()
+        }
+        BlockOp::And(a, b) => {
+            let mut out = byte_tests(ops, a)?;
+            out.extend(byte_tests(ops, b)?);
+            out.sort_by_key(|x| x.0);
+            out.dedup();
+            Some(out)
+        }
+        _ => None,
+    }
 }
 
 /// A rounds group's layout: its members in order (the values on a way from one of its carries
@@ -656,7 +750,39 @@ impl BlockProgram {
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !records {
             return Err(Error::InvalidTarget(0));
         }
-        groups(&self.ops, &self.rounds).map_err(|_| Error::InvalidTarget(0))?;
+        let groups = groups(&self.ops, &self.rounds).map_err(|_| Error::InvalidTarget(0))?;
+        self.verify_walks(&groups).map_err(|_| Error::InvalidTarget(0))?;
+        Ok(())
+    }
+
+    /// A walk's rules: its group has one carry, the walk's values are the group's members and
+    /// its inputs are not, each fill is `fill(open, closer)`, every input comes before the
+    /// group's last value the walk makes, the byte counts fit, and an `else`'s closer is byte
+    /// tests (`byte_tests`).
+    pub fn verify_walks(&self, groups: &[Group]) -> Result<(), String> {
+        let mut seen = vec![false; groups.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            let g = usize::from(walk.group);
+            let Some(group) = groups.get(g) else { return Err(format!("walk {w}: no group {g}")) };
+            if std::mem::replace(&mut seen[g], true) || group.carries.len() != 1 || usize::from(walk.hidden) != group.carries[0].0 || walk.kinds.is_empty() {
+                return Err(format!("walk {w}: a group of one carry, walked once"));
+            }
+            let member = |v: u16| group.members.contains(&usize::from(v));
+            let made = walk.made();
+            let last = made.iter().copied().max().expect("the carry");
+            if !made.iter().all(|&v| member(v)) || walk.reads().iter().any(|&v| member(v) || v >= last) {
+                return Err(format!("walk {w}: made values outside its group, or read ones inside it"));
+            }
+            for k in &walk.kinds {
+                let fits = (1..=3).contains(&k.bytes) && (!k.outside || k.bytes == 1) && k.empty.is_none_or(|e| (1..=3).contains(&e.1));
+                if self.ops.get(usize::from(k.fill)) != Some(&BlockOp::Fill(k.open, k.closer)) || !fits {
+                    return Err(format!("walk {w}: a fill not of its open and closer, or a count that does not fit"));
+                }
+                if k.empty.is_some() && byte_tests(&self.ops, k.closer).is_none() {
+                    return Err(format!("walk {w}: an `else` whose closer is not byte tests"));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -745,6 +871,19 @@ impl BlockProgram {
                     out.extend_from_slice(&o.to_le_bytes());
                     out.extend_from_slice(&w.to_le_bytes());
                 }
+            }
+        }
+        // The walks, tagged.
+        for walk in &self.walks {
+            out.extend_from_slice(b"walk");
+            out.extend_from_slice(&walk.group.to_le_bytes());
+            for k in &walk.kinds {
+                for v in [k.opener, k.closer, k.open, k.fill] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                let (e, m) = k.empty.unwrap_or((u16::MAX, 0));
+                out.extend_from_slice(&e.to_le_bytes());
+                out.extend_from_slice(&[k.bytes, u8::from(k.outside), m]);
             }
         }
         out
@@ -850,6 +989,16 @@ impl BlockProgram {
     /// With each file's span of blocks. For checks of what is claimed about a value
     /// (`token_local`).
     pub fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+        self.values_by(files, true)
+    }
+
+    /// `all_values` with each walk's group run as rounds, not walked: the other backend's form
+    /// (Metal's), for the check that the two are one.
+    pub fn rounds_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+        self.values_by(files, false)
+    }
+
+    fn values_by(&self, files: &[&[u8]], walk: bool) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
         let extra = usize::from(self.delay);
         // Each block's file (its length, and its block number within it), and whether it is
         // the file's first.
@@ -878,7 +1027,17 @@ impl BlockProgram {
             .collect()
         }
         let n = self.ops.len();
-        let groups = groups(&self.ops, &self.rounds).expect("a verified program");
+        let mut groups = groups(&self.ops, &self.rounds).expect("a verified program");
+        // A walked group: the walk makes its values, run where the last of them is; the
+        // group's other values (the rounds' working) are ordinary ones after it.
+        let walk_of: Vec<Option<&Walk>> = (0..groups.len()).map(|g| self.walks.iter().find(|w| usize::from(w.group) == g).filter(|_| walk)).collect();
+        for (g, w) in walk_of.iter().enumerate() {
+            if let Some(w) = w {
+                let mut made: Vec<usize> = w.made().into_iter().map(usize::from).collect();
+                made.sort_unstable();
+                groups[g].members = made;
+            }
+        }
         let mut owner: Vec<Option<usize>> = vec![None; n];
         for (g, group) in groups.iter().enumerate() {
             for &m in &group.members {
@@ -920,7 +1079,10 @@ impl BlockProgram {
         for x in order {
             if x > n {
                 let g = usize::MAX - x;
-                self.rounds_group(&groups[g], &first, &mut values);
+                match walk_of[g] {
+                    Some(w) => self.walk_group(w, &first, &mut values),
+                    None => self.rounds_group(&groups[g], &first, &mut values),
+                }
                 continue;
             }
             let op = &self.ops[x];
@@ -979,6 +1141,67 @@ impl BlockProgram {
 }
 
 impl BlockProgram {
+    /// A walk over every file's blocks (`Walk`): its regions left to right, each opener's
+    /// region to the first bit of its closer after it.
+    fn walk_group(&self, walk: &Walk, first: &[bool], values: &mut [Vec<u64>]) {
+        let blocks = first.len();
+        let hidden = usize::from(walk.hidden);
+        for v in walk.made() {
+            values[usize::from(v)] = vec![0; blocks];
+        }
+        let next_bit = |v: &[u64], from: usize, end: usize| -> Option<usize> {
+            let mut t = from;
+            while t < end {
+                let w = v[t / 64] >> (t % 64);
+                if w != 0 {
+                    return Some(t + w.trailing_zeros() as usize).filter(|&b| b < end);
+                }
+                t = (t / 64 + 1) * 64;
+            }
+            None
+        };
+        let set = |v: &mut [u64], from: usize, to: usize| {
+            for t in from..to {
+                v[t / 64] |= 1 << (t % 64);
+            }
+        };
+        let starts: Vec<usize> = (0..blocks).filter(|&i| first[i]).collect();
+        for (f, &s) in starts.iter().enumerate() {
+            let end = 64 * starts.get(f + 1).copied().unwrap_or(blocks);
+            let mut resume = 64 * s;
+            loop {
+                let mut best: Option<(usize, usize)> = None;
+                for (k, kind) in walk.kinds.iter().enumerate() {
+                    if let Some(t) = next_bit(&values[usize::from(kind.opener)], resume, end)
+                        && best.is_none_or(|b| t < b.0)
+                    {
+                        best = Some((t, k));
+                    }
+                }
+                let Some((t, k)) = best else { break };
+                let kind = walk.kinds[k];
+                let closer = next_bit(&values[usize::from(kind.closer)], t + 1, end);
+                if let (Some((e, m)), None) = (kind.empty, closer) {
+                    set(&mut values[usize::from(e)], t, t + 1);
+                    let to = (t + usize::from(m)).min(end);
+                    set(&mut values[hidden], t + 1, to);
+                    resume = t + usize::from(m);
+                    continue;
+                }
+                set(&mut values[usize::from(kind.open)], t, t + 1);
+                let Some(c) = closer else {
+                    set(&mut values[usize::from(kind.fill)], t, end);
+                    set(&mut values[hidden], t + 1, end);
+                    break;
+                };
+                set(&mut values[usize::from(kind.fill)], t, c);
+                let to = if kind.outside { c } else { c + usize::from(kind.bytes) };
+                set(&mut values[hidden], t + 1, to.min(end));
+                resume = to.max(t + 1);
+            }
+        }
+    }
+
     /// A rounds group over every block, block by block: from the carries' initial words, its
     /// members again until no carry changes, each carried member from the settled block before
     /// (zero at a file's first block). The values the group does not hold are made already.
@@ -1432,6 +1655,15 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     for group in &block.rounds {
         let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
         let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
+    }
+    // `block N region G %opener %closer %open %fill B [outside] [else %e M]`: a walk's kinds,
+    // in order, each of rounds group `G` (`Walk`).
+    for walk in &block.walks {
+        for k in &walk.kinds {
+            let outside = if k.outside { " outside" } else { "" };
+            let empty = k.empty.map_or(String::new(), |(e, m)| format!(" else %{e} {m}"));
+            let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
+        }
     }
     for (k, value) in block.outputs.iter().enumerate() {
         match block.output_delay(k) {

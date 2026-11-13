@@ -224,7 +224,7 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
         // The setting's tokens: comments are not in them.
         let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
         let tokens: Vec<&rerail_rr_syntax::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
-        let words: Vec<&str> = tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+        let words: Vec<&str> = tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = t { Some(*w) } else { None }).collect();
         // `report dirs` and `text` say where findings land and how files are read, not which.
         if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
             continue;
@@ -234,7 +234,7 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
             match t {
                 // `option("…")`: an entry from a policy option, kept by name until the run's options are known
                 // (`front::OPTION_GLOB`); the form before it (`dirs`, `include`, `exclude`) stays the word.
-                rerail_rr_syntax::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => {
+                rerail_rr_syntax::syntax::Tok::Id(w) if *w == "option" && matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => {
                     if let Some(rerail_rr_syntax::syntax::Tok::Str(name)) = tokens.get(k + 2) {
                         let entry = format!("{}{word}:{name}", crate::code_rule_dsl::logic::front::OPTION_GLOB);
                         match word {
@@ -246,15 +246,15 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
                 }
                 rerail_rr_syntax::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => word = "",
                 rerail_rr_syntax::syntax::Tok::Id(w) => {
-                    if w == "false" && word == "tests" {
+                    if *w == "false" && word == "tests" {
                         out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
                     }
-                    word = w.as_str();
+                    word = w;
                 }
                 rerail_rr_syntax::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(rerail_rr_syntax::syntax::Tok::P("("))) => match word {
                     "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
-                    "include" => within.push(g.clone()),
-                    "exclude" => out.push(g.clone()),
+                    "include" => within.push(g.to_string()),
+                    "exclude" => out.push(g.to_string()),
                     _ => {}
                 },
                 _ => {}
@@ -273,11 +273,11 @@ fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
         let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
-        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
+        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = &t.0 { Some(*w) } else { None }).collect();
         if words != form {
             continue;
         }
-        found.extend(tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
+        found.extend(tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Str(g) = &t.0 { Some(g.to_string()) } else { None }));
     }
     found
 }
@@ -3078,6 +3078,20 @@ impl Lowerer {
                     }
                     return Ok(Term::Call(f.to_owned(), args));
                 }
+                // `@printf` of a constant format: its pieces concatenated (`printf_pieces`), each one a function every
+                // executor has.
+                if name == "printf"
+                    && let Some(Term::Str(format)) = args.first()
+                    && let Some(t) = printf_pieces(format, &args[1..])
+                {
+                    return Ok(t);
+                }
+                // `@concat(a, b, c)` is `@concat(@concat(a, b), c)`, as Soufflé's `cat` is.
+                if name == "concat" && args.len() > 2 {
+                    let mut args = args.into_iter();
+                    let first = args.next().expect("three or more");
+                    return Ok(args.fold(first, |acc, a| Term::Call("concat".to_owned(), vec![acc, a])));
+                }
                 Term::Call(if name == "dot" { "cat".to_owned() } else { name.clone() }, args)
             }
             STerm::Call { name, functor: false, args } => {
@@ -3601,4 +3615,48 @@ fn literal_terms(l: &Literal) -> Vec<&Term> {
         Literal::Cmp { l, r, .. } => vec![l, r],
         _ => Vec::new(),
     }
+}
+
+/// `@printf(format, args…)` of a constant format as the concatenation of its pieces: literal text, `%d` an
+/// integer's digits (`rr_to_string`), `%0Nd` its digits zero-padded to N columns, the sign first, never truncated
+/// (`zero_pad`), `%s` a text as it is, `%%` a percent sign. `None`: another conversion, or not one argument each.
+fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
+    let mut pieces: Vec<Term> = Vec::new();
+    let mut literal = String::new();
+    let mut args = args.iter();
+    let mut chars = format.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            literal.push(c);
+            continue;
+        }
+        let mut width = String::new();
+        while let Some(d) = chars.peek().filter(|d| d.is_ascii_digit()) {
+            width.push(*d);
+            chars.next();
+        }
+        let piece = match (chars.next()?, width.as_str()) {
+            ('%', "") => {
+                literal.push('%');
+                continue;
+            }
+            ('d', "") => Term::Call("rr_to_string".to_owned(), vec![args.next()?.clone()]),
+            ('d', w) if w.starts_with('0') && w.len() > 1 => Term::Call("zero_pad".to_owned(), vec![args.next()?.clone(), Term::Int(w[1..].parse().ok()?)]),
+            ('s', "") => args.next()?.clone(),
+            _ => return None,
+        };
+        if !literal.is_empty() {
+            pieces.push(Term::Str(std::mem::take(&mut literal)));
+        }
+        pieces.push(piece);
+    }
+    if args.next().is_some() {
+        return None;
+    }
+    if !literal.is_empty() || pieces.is_empty() {
+        pieces.push(Term::Str(literal));
+    }
+    let mut pieces = pieces.into_iter();
+    let first = pieces.next()?;
+    Some(pieces.fold(first, |acc, p| Term::Call("concat".to_owned(), vec![acc, p])))
 }

@@ -1,4 +1,4 @@
-# 0114: Write behind, as far as memory allows, with a spill journal past it
+# 0147: Write behind, as far as memory allows, with a spill journal past it
 
 Status: draft (2026-11-11), an exploration. Only the measurement aids are built
 (`RERAIL_WRITE_QUEUE_MB`, the writer's account by kind of write, the end-of-run drain line).

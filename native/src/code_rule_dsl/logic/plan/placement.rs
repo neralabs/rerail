@@ -191,7 +191,7 @@ pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
 }
 
 /// This thread's binding.
-pub(in crate::code_rule_dsl) fn binding() -> Binding {
+pub fn binding() -> Binding {
     DEVICE.with(Cell::get)
 }
 

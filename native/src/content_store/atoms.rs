@@ -1,5 +1,5 @@
 //! One string interner for the graph: every name, key, path and content hash is a `Sym` (u32).
-//! Strings live back to back in one byte arena; the table holds only ids. Append-only: a string
+//! Strings live back to back in one byte arena; the table holds ids and hash tags. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
 //!
 //! The store's single interner (C12, docs/final-shape/03-architecture.md §10.6; decision 0049). A
@@ -64,7 +64,9 @@ pub struct Interner {
     /// ends[i] = end offset of pending atom `base + i` in `buf`.
     ends: Vec<u32>,
     hashes: Vec<u64>,
-    table: hashbrown::HashTable<Sym>,
+    /// Each atom's id with its hash's high half (`tag`): a probe compares tags and reads no atom's hash, so a
+    /// stored atom costs no segment lookup until its tag matches (then one, for its string).
+    table: hashbrown::HashTable<(u32, Sym)>,
 }
 
 impl Default for Interner {
@@ -92,12 +94,14 @@ impl Interner {
         (i < held.ends.len()).then(|| held.str(i))
     }
 
-    fn hash_of(held: &std::collections::BTreeMap<Sym, Held>, base: Sym, hashes: &[u64], s: Sym) -> u64 {
-        if s >= base {
-            return hashes[(s - base) as usize];
-        }
-        let (first, h) = held.range(..=s).next_back().expect("a held atom");
-        h.hashes[(s - first) as usize]
+    /// A hash's tag, and the table's hash of a tag: the table places entries by what it holds, so it rehashes
+    /// without reading an atom.
+    fn tag(h: u64) -> u32 {
+        (h >> 32) as u32
+    }
+
+    fn placed(tag: u32) -> u64 {
+        ((tag as u64) << 32) | tag.rotate_left(16) as u64
     }
 
     pub fn get(&self, s: &str) -> Option<Sym> {
@@ -105,7 +109,8 @@ impl Interner {
     }
 
     pub fn get_h(&self, s: &str, h: u64) -> Option<Sym> {
-        self.table.find(h, |&id| Self::hash_of(&self.held, self.base, &self.hashes, id) == h && self.str(id) == Some(s)).copied()
+        let tag = Self::tag(h);
+        self.table.find(Self::placed(tag), |&(t, id)| t == tag && self.str(id) == Some(s)).map(|&(_, id)| id)
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
@@ -122,8 +127,8 @@ impl Interner {
         assert!(self.buf.len() <= u32::MAX as usize, "pending atoms over 4 GiB");
         self.ends.push(self.buf.len() as u32);
         self.hashes.push(h);
-        let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-        self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+        let tag = Self::tag(h);
+        self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
         id
     }
 
@@ -145,17 +150,20 @@ impl Interner {
     /// Heap bytes held (capacities).
     pub fn bytes(&self) -> usize {
         let held: usize = self.held.values().map(|h| h.bytes.capacity() + h.ends.capacity() * 4 + h.hashes.capacity() * 8 + 48).sum();
-        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
+        held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 9
     }
 
-    /// The pending atoms from `from` on as one segment: their end offsets (u32, little-endian, relative to the
-    /// segment's first byte), their bytes, and each one's (hash, id).
-    fn segment(&self, from: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>) {
+    /// The pending atoms from `from` on, as one segment of at most `most` bytes (and at least one atom): their end
+    /// offsets (u32, little-endian, relative to the segment's first byte), their bytes, each one's (hash, id), and
+    /// the id past its last.
+    fn segment(&self, from: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
         let i = from - self.base();
         let start = if i == 0 { 0 } else { self.ends[i - 1] };
-        let ends = self.ends[i..].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
-        let keys = self.hashes[i..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
-        (ends, self.buf[start as usize..].to_vec(), keys)
+        let n = self.ends[i..].partition_point(|&end| (end - start) as usize <= most).max(1).min(self.ends.len() - i);
+        let last = self.ends[i + n - 1];
+        let ends = self.ends[i..i + n].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
+        let keys = self.hashes[i..i + n].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
+        (ends, self.buf[start as usize..last as usize].to_vec(), keys, from + n)
     }
 
     /// The pending atoms below `upto` are stored now: held as a segment of their own.
@@ -165,8 +173,17 @@ impl Interner {
             return;
         }
         let cut = self.ends[n - 1] as usize;
-        let bytes = self.buf[..cut].to_vec();
-        self.buf.drain(..cut);
+        // The stored bytes move into the held segment; the pending rest (if any) is copied into a buffer of its own.
+        // A copy and a drain would keep the buffer's capacity: every stored atom held twice.
+        // (`split_off(0)` would hand the whole buffer over: stored atoms that are all empty take no bytes.)
+        let bytes = if cut == 0 {
+            Vec::new()
+        } else {
+            let rest = self.buf.split_off(cut);
+            let mut bytes = std::mem::replace(&mut self.buf, rest);
+            bytes.shrink_to_fit();
+            bytes
+        };
         let ends: Vec<u32> = self.ends.drain(..n).collect();
         for end in &mut self.ends {
             *end -= cut as u32;
@@ -238,9 +255,8 @@ impl Interner {
             self.held.insert(at, held);
             for k in 0..n {
                 let id = at + k as Sym;
-                let h = self.held[&at].hashes[k];
-                let (held, base, hashes) = (&self.held, self.base, &self.hashes);
-                self.table.insert_unique(h, id, |&x| Self::hash_of(held, base, hashes, x));
+                let tag = Self::tag(self.held[&at].hashes[k]);
+                self.table.insert_unique(Self::placed(tag), (tag, id), |&(t, _)| Self::placed(t));
             }
         }
         Ok(())
@@ -310,6 +326,19 @@ static IDENTITIES: LazyLock<Mutex<HashMap<String, ((u64, u64, u128), Option<i64>
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
     IDENTITIES.lock().remove(path);
+}
+
+/// The most bytes of atoms one segment holds (`write_pending`): a commit's new atoms are written as several, so
+/// neither the copy bound to the statement nor SQLite's record of the row holds a whole run's atoms at once.
+const SEGMENT_BYTES: usize = 8 << 20;
+
+thread_local! {
+    /// A test's smaller `SEGMENT_BYTES`.
+    pub(super) static SEGMENT_BYTES_TEST: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+fn segment_bytes() -> usize {
+    SEGMENT_BYTES_TEST.with(std::cell::Cell::get).unwrap_or(SEGMENT_BYTES)
 }
 
 thread_local! {
@@ -980,40 +1009,44 @@ impl Atoms {
             .query_row([], |row| row.get(0))
             .optional()?
             .unwrap_or(0);
-        let (from, ends, bytes, mut keys, upto) = {
+        let (end, upto) = {
             let state = self.state.read();
             let (end, len) = (end as usize, state.atoms.len());
             if end < state.atoms.base() {
                 return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", state.atoms.base())));
             }
-            if end >= len {
-                return Ok(end);
-            }
-            let (ends, bytes, keys) = state.atoms.segment(end);
-            (end, ends, bytes, keys, len)
+            (end, len)
         };
-        let size = (ends.len() + bytes.len()) as u64;
-        // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
-        if key_end(connection).is_none_or(|upto| upto < from) {
-            key_segments(connection)?;
-        }
-        connection
-            .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
-            .execute(rusqlite::params![from as i64, ends, bytes])?;
-        // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
-        // (decision 0111 §1).
-        if key_end(connection) == Some(from) {
-            keys.sort_unstable();
-            let mut insert = connection.prepare_cached("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
-            for (h, id) in keys {
-                insert.execute([h as i64, i64::from(id)])?;
+        // Segments of at most `segment_bytes`, each copied, bound and inserted before the next is made: a run's new
+        // atoms (141 MB in one segment on public_api_triples) were held four times at once (the arena's, the copy, the
+        // statement's, SQLite's record of the row).
+        let mut from = end;
+        while from < upto {
+            let (ends, bytes, mut keys, next) = self.state.read().atoms.segment(from, segment_bytes());
+            let size = (ends.len() + bytes.len()) as u64;
+            // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
+            if key_end(connection).is_none_or(|k| k < from) {
+                key_segments(connection)?;
             }
-            connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([upto as i64])?;
+            connection
+                .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
+                .execute(rusqlite::params![from as i64, ends, bytes])?;
+            // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
+            // (decision 0111 §1).
+            if key_end(connection) == Some(from) {
+                keys.sort_unstable();
+                let mut insert = connection.prepare_cached("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
+                for (h, id) in keys {
+                    insert.execute([h as i64, i64::from(id)])?;
+                }
+                connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([next as i64])?;
+            }
+            // Counted when written; a transaction that then rolls back still counts.
+            let mut written = self.written.lock();
+            *written = (written.0 + 1, written.1 + (next - from) as u64, written.2 + size);
+            from = next;
         }
-        // Counted when written; a transaction that then rolls back still counts.
-        let mut written = self.written.lock();
-        *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
-        Ok(upto)
+        Ok(upto.max(end))
     }
 
     /// After a commit that held `write_pending`'s segment: atoms below `upto` are stored. The

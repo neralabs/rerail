@@ -197,11 +197,16 @@ span, against 66,883 under the cross part. So the cross part's planning and join
 run thread's alone. They read 0.01–0.02 s of planning at steps 06–08, which was not so.
 
 **Now.** The run's `Ambient` takes the profile's path where it issues jobs (`profile::here`). A job entering it
-opens its spans under that path (`profile::based`, a thread's base path, used when no span is open on it). Each
+opens a span at that path, `issued components (stream job)` (`profile::span_at`), and its spans open under it. Each
 member a job runs is a span of its own, `stratum … (in a job)`, and `… (in a job, after its device wave)` when
 resumed. So a stratum's work is profiled under the run, whichever thread ran it. Its CPU is its own thread's.
 The run's span over it keeps its own thread's CPU, so a parent's total can be less than its children's.
 `a_jobs_spans_open_under_the_run_that_issued_it` tests it.
+
+Built here first with a base path of its own (`profile::based`: a thread's spans opened under it when none was
+open), it met the hub's own fix of the gap in the merge of 2026-11-13 (f433a0ec9: the stream job's span, opened at
+the issuing span's path). One mechanism is kept, the hub's, which also counts the job's CPU under a span. The
+members' spans are kept under it.
 
 **Measured** (O125 replay, profiled, same as full: true). Nothing is recorded under no span. The cross part's
 `search` spans count 4,573 at step 06, against 4,714 orders the process searched or took greedily. In the cross
