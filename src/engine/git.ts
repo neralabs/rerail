@@ -287,7 +287,26 @@ export interface FoundGit {
  * are never resolved: the status line, a process of its own every few seconds, pays for the entries up to its Git only.
  */
 export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): FoundGit {
+  return gitLook(search, probe)();
+}
+
+/** A look for Git ({@link findGit}) by inputs read once ({@link gitLook}); each call looks again. */
+export type GitLook = () => FoundGit;
+
+/**
+ * {@link findGit} with its inputs read once, now: `search` (the folder, `PATH` and the account's home) and the
+ * repository above that folder ({@link gitTrust}). Each call of the look it returns decides by those inputs and reads
+ * only each candidate on disk: whether it is a Git that runs, and the real path of its folder. So `PATH` and the
+ * repository its entries are checked against stay those of the first look, whatever has happened since to that
+ * repository's `.git`, the process's folder or its `PATH`.
+ */
+export function gitLook(search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): GitLook {
   const trust = gitTrust(search, probe);
+  return () => firstInstalled(search, trust, probe);
+}
+
+/** The first candidate ({@link candidateOrder}) that {@link gitInstalled} takes, behind its launcher on Windows. */
+function firstInstalled(search: GitSearch, trust: GitTrust, probe: GitProbe & GitPathProbe): FoundGit {
   const looked: string[] = [];
   for (const candidate of candidateOrder(search, trust)) {
     looked.push(candidate);
@@ -298,45 +317,60 @@ export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & G
   return { path: undefined, looked };
 }
 
+/** The look a process keeps ({@link gitLook}), and the Git it found last. */
+interface KeptGit {
+  readonly look: GitLook;
+  readonly found: FoundGit;
+}
+
 /**
- * The Git a process runs: looked for (`find`) at the first ask and kept, and looked for again only when starting it
- * found no program at its path ({@link afterMissing}). A daemon outlives an upgrade of Git, and Git for Windows 2.56
- * removed the `mingw64\bin\git.exe` that a daemon started on 2.55 runs (it moved to `ucrt64\bin`): every Git call it
- * made then failed until it restarted.
+ * The Git a process runs: looked for at the first ask and kept, and looked for again only when starting it found no
+ * program at its path ({@link afterMissing}), by the first look's own inputs. A daemon outlives an upgrade of Git, and
+ * Git for Windows 2.56 removed the `mingw64\bin\git.exe` that a daemon started on 2.55 runs (it moved to `ucrt64\bin`):
+ * every Git call it made then failed until it restarted.
  */
 export class ProcessGit {
-  #found: FoundGit | undefined;
-  readonly #find: () => FoundGit;
+  readonly #decide: () => GitLook;
+  #kept: KeptGit | undefined;
 
-  constructor(find: () => FoundGit) {
-    this.#find = find;
+  /** `decide` makes the look at the first ask, after the daemon has named its repository (`searchGitFrom`). */
+  constructor(decide: () => GitLook) {
+    this.#decide = decide;
   }
 
   /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
   path(): string {
-    this.#found ??= this.#find();
-    if (this.#found.path === undefined) throw new GitUnavailableError(this.#found.looked);
-    return this.#found.path;
+    this.#kept ??= this.#firstLook();
+    const { found } = this.#kept;
+    if (found.path === undefined) throw new GitUnavailableError(found.looked);
+    return found.path;
   }
 
   /**
    * The Git to start once more after a start of `failed`, the Git kept, found no program there (`ENOENT`): Git looked
-   * for again by the same rules ({@link findGit}), and kept from then on. A start that failed on a Git another start
-   * has already replaced gets that one without a look, so one look serves every start that failed at once. Undefined
-   * when the look finds no Git, or `failed` again: that start's failure stands and the Git kept stays, so the next
-   * start that fails looks again, and no call starts the same missing program twice.
+   * for again by the look the first ask made, with the folder, `PATH` and repository it read then ({@link gitLook}),
+   * and kept from then on. A start that failed on a Git another start has already replaced gets that one without a
+   * look, so one look serves every start that failed at once. Undefined when the look finds no Git, or `failed` again:
+   * that start's failure stands and the Git kept stays, so the next start that fails looks again, and no call starts
+   * the same missing program twice.
    */
   afterMissing(failed: string): string | undefined {
-    if (this.#found?.path !== failed) return this.#found?.path;
-    const found = this.#find();
+    const kept = this.#kept;
+    if (kept === undefined || kept.found.path !== failed) return kept?.found.path;
+    const found = kept.look();
     if (found.path === undefined || found.path === failed) return undefined;
-    this.#found = found;
+    this.#kept = { look: kept.look, found };
     return found.path;
+  }
+
+  #firstLook(): KeptGit {
+    const look = this.#decide();
+    return { look, found: look() };
   }
 }
 
-/** The Git this process runs, found by {@link findGit}. */
-const processGit = new ProcessGit(() => findGit());
+/** The Git this process runs, looked for by {@link gitLook} from this process's folder and `PATH` at its first ask. */
+const processGit = new ProcessGit(() => gitLook());
 
 /**
  * The system Git ({@link findGit}), kept for the process and looked for again only once it is gone ({@link ProcessGit});

@@ -156,9 +156,9 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - A Rerail process keeps the `git.exe` it finds (`ProcessGit` in `src/engine/git.ts`) and looks for Git again only
   when a start of it finds no program there (`ENOENT`). An upgrade from Git for Windows 2.55 to 2.56 removes the
   `mingw64\bin\git.exe` a daemon started on 2.55 runs; without the second look, every Git call of that daemon failed
-  until it restarted. The look takes the same candidates and checks as the first, and the call runs once more with the
-  Git it finds. When it finds none, as while an installer is still at work, that call fails and the next one looks
-  again.
+  until it restarted. The look reads the `PATH`, folder and repository the first look read (`gitLook`) and checks each
+  candidate as the first did, and the call runs once more with the Git it finds. When it finds none, as while an
+  installer is still at work, that call fails and the next one looks again.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside

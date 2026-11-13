@@ -687,8 +687,8 @@ should not widen it.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
-  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. It looks again, from the same folder
-  and `PATH` and by the same checks, only when a start of the Git it kept finds no program there.
+  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. It looks again, from the same folder,
+  `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program there.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).

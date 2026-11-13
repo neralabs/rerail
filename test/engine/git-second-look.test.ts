@@ -1,0 +1,146 @@
+/**
+ * The second look for Git: once the Git a process kept is gone, the look that finds another decides by what the first
+ * look decided by, the folder it looked from, `PATH` and the repository it found there. Each test loads git.ts afresh,
+ * so its process has not looked for Git yet. It looks, changes what a look would read anew (the repository's `.git`, the
+ * folder, `PATH`), removes the Git the first look kept and makes a Git call, which looks again.
+ *
+ * Every Git here is a stand-in: an empty file Rerail takes for a Git. The tests read only which one the process keeps.
+ */
+import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { removeFolder } from "../support/platform/remove-folder.js";
+
+type GitModule = typeof import("../../src/engine/git.js");
+
+const GIT = process.platform === "win32" ? "git.exe" : "git";
+
+describe("the second look for Git", () => {
+  const startedIn = process.cwd();
+  let root = "";
+  let repository = "";
+  let outside: string[] = [];
+
+  /** git.ts as a new process loads it: no Git looked for yet. */
+  async function freshGit(): Promise<GitModule> {
+    vi.resetModules();
+    return await import("../../src/engine/git.js");
+  }
+
+  /** `folder`, made with a stand-in Git in it. */
+  async function withGit(folder: string): Promise<string> {
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, GIT), "");
+    await chmod(join(folder, GIT), 0o755);
+    return folder;
+  }
+
+  const gitIn = (folder: string): string => join(folder, GIT);
+
+  /** Removes the Git `git` keeps, then makes a blocking Git call, which looks again; the Git kept after it. */
+  async function lookAgain(git: GitModule): Promise<string> {
+    await rm(git.gitExecutable());
+    git.runGit(root, ["--version"]);
+    return git.gitExecutable();
+  }
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-git-second-look-"));
+    repository = join(root, "repository");
+    await mkdir(join(repository, ".git"), { recursive: true });
+    await withGit(join(repository, "tools"));
+    outside = await Promise.all(["outside-1", "outside-2", "outside-3"].map(async name => await withGit(join(root, name))));
+  });
+
+  afterEach(async () => {
+    process.chdir(startedIn);
+    vi.unstubAllEnvs();
+    await removeFolder(root);
+  });
+
+  it("skips the repository's PATH entries once that repository's .git is gone, in a call and in a read", async () => {
+    vi.stubEnv("PATH", [join(repository, "tools"), ...outside].join(delimiter));
+    const git = await freshGit();
+    // As the daemon looks: from the repository it serves.
+    git.searchGitFrom(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    await rename(join(repository, ".git"), join(root, "moved-aside"));
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+    await rm(git.gitExecutable());
+    await git.gitHead(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[2]!));
+  });
+
+  it("skips an entry that links into the repository once its .git is gone", async () => {
+    const link = join(root, "linked-tools");
+    // A junction on Windows, which needs no privilege; the type is ignored elsewhere.
+    await symlink(join(repository, "tools"), link, "junction");
+    vi.stubEnv("PATH", [link, ...outside].join(delimiter));
+    const git = await freshGit();
+    git.searchGitFrom(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    await rename(join(repository, ".git"), join(root, "moved-aside"));
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("still skips a relative entry and a node_modules entry in the repository once its .git is gone", async () => {
+    // These two skips read no repository, so they hold at any look; this keeps them holding at the second.
+    await withGit(join(repository, "node_modules", ".bin"));
+    vi.stubEnv("PATH", ["tools", join(repository, "node_modules", ".bin"), ...outside].join(delimiter));
+    process.chdir(repository);
+    const git = await freshGit();
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    await rename(join(repository, ".git"), join(root, "moved-aside"));
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("looks from the folder of its first look after the process moves to another repository", async () => {
+    const other = join(root, "other");
+    await mkdir(join(other, ".git"), { recursive: true });
+    vi.stubEnv("PATH", [join(repository, "tools"), ...outside].join(delimiter));
+    await mkdir(join(repository, "src"));
+    process.chdir(join(repository, "src"));
+    const git = await freshGit();
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    // A look from there finds that repository, and the first repository's tools are outside it.
+    process.chdir(other);
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("looks from the folder of its first look after the process moves to a folder that is then deleted", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows keeps a process's working folder open, so it cannot be deleted under the process");
+    vi.stubEnv("PATH", [join(repository, "tools"), ...outside].join(delimiter));
+    process.chdir(repository);
+    const git = await freshGit();
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    // Node keeps the working folder it last read, so a deleted one reads as gone only after a move into it.
+    const gone = join(root, "gone");
+    await mkdir(gone);
+    process.chdir(gone);
+    await removeFolder(gone);
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("looks from the folder its first look was named after the process names another", async () => {
+    const other = join(root, "other");
+    await mkdir(join(other, ".git"), { recursive: true });
+    vi.stubEnv("PATH", [join(repository, "tools"), ...outside].join(delimiter));
+    const git = await freshGit();
+    git.searchGitFrom(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    git.searchGitFrom(other);
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+
+  it("reads the PATH of its first look, not one the process set since", async () => {
+    const elsewhere = await withGit(join(root, "elsewhere"));
+    vi.stubEnv("PATH", outside.join(delimiter));
+    const git = await freshGit();
+    git.searchGitFrom(repository);
+    expect(git.gitExecutable()).toBe(gitIn(outside[0]!));
+    vi.stubEnv("PATH", [elsewhere, ...outside].join(delimiter));
+    expect(await lookAgain(git)).toBe(gitIn(outside[1]!));
+  });
+});
