@@ -706,6 +706,14 @@ pub struct Model {
     pub derived: std::sync::Arc<HashSet<String>>,
 }
 
+/// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
+/// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
+static UNSIZED_DELTAS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn unsized_deltas() -> u64 {
+    UNSIZED_DELTAS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Model {
     /// Whether `rel` is one of `prog`'s inputs. A maintained program has thousands (each kept relation's `__old`,
     /// each changed input's `__plus` and `__minus`), and the planner asks for every atom it prices: a scan of the
@@ -1513,7 +1521,11 @@ impl Model {
             // 0038): at least one string.
             self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
         } else {
-            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+            let card = self.stats.card.get(rel).copied();
+            if card.is_none() && (rel.ends_with("__plus") || rel.ends_with("__minus")) && !self.stats.lazy.0.contains_key(rel) {
+                UNSIZED_DELTAS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            card.unwrap_or(1000.0)
         }
     }
 

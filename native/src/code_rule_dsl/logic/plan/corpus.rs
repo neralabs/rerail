@@ -7367,6 +7367,14 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             }
             self.bound_olds.insert(of);
         }
+        // The inputs' deltas this form reads (`r__plus`, `r__minus`): bound with the run, measured then, but the run's
+        // model was made from the base program, which reads none, so none had a size (each was priced as the
+        // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
+        for r in form.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).map(|a| a.rel.as_str()) {
+            if (r.ends_with("__plus") || r.ends_with("__minus")) && form.inputs.iter().any(|i| i == r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &form, r);
+            }
+        }
         if m.maintained > 0 {
             self.maintains.extend(scc.iter().cloned());
         }
