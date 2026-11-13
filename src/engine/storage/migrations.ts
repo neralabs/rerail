@@ -33,7 +33,7 @@ export interface Migration {
   up(database: RerailDatabase): void;
 }
 
-/** The step that keeps each rule provenance once; `rule-provenance-move.ts` moves what audits held before it. */
+/** The step that keeps each rule provenance once. */
 export const RULE_PROVENANCE_STEP = "audit-rule-provenance-once";
 
 /**
@@ -132,12 +132,12 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // An audit names its rule provenance in `audit_rule_provenances`, which keeps each distinct one once, instead of
     // holding a copy in `rule_provenance_json` (221 KB for 767 rules, written again by every audited edit). Steps run
     // before the DDL, so the table is created here as this step introduced it; then the column. The audits a file
-    // holds keep their provenance inline, where the audit store reads it, until the daemon moves it in short
-    // transactions (`rule-provenance-move.ts`): moving it here would hold the open's write lock for the whole history
-    // (about 10 s for 4,000 audits), and other writers fail once they have waited 5 s. No floor, by choice: builds at
-    // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
-    // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
-    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no provenance.
+    // holds keep their provenance inline, where the audit store reads it: moving it here would hold the open's write
+    // lock for the whole history (about 10 s for 4,000 audits), and other writers fail once they have waited 5 s. No
+    // floor, by choice: builds at the baseline keep opening the file, so agent hosts on different installed versions
+    // keep sharing it. An older build writes its audits' provenance inline as before, and this build reads it there;
+    // for the audits this build wrote it reads `[]`, which only its audit API and remote sink show, as its dashboard
+    // reads no provenance.
     id: RULE_PROVENANCE_STEP,
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
