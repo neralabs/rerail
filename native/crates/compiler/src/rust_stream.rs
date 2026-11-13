@@ -136,10 +136,10 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         outputs: c.outputs as *const u8, ostride: c.output_stride as usize, lstride: c.lasts_stride as usize,
         totals: c.totals as *const u8, tstride: c.totals_stride as usize, tmask: c.totals_mask,
         rows: c.rows, snode: c.super_node, skind: c.super_kind, open: c.open, counts_out: c.counts,
-        fbase: c.frame_base, head: c.head, link: c.link, place: c.place, out_rows: c.out_rows,
+        fbase: c.frame_base, head: c.head, link: c.link,
         room_nodes: c.room_nodes as usize, room_supers: c.room_supers as usize,
         next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, live: 0,
-        nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, last_made: 0, last_base: 0, moved: 0, wraps: 0, dead: 0,
+        nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, last_made: 0, moved: 0,
         counts: [0; COUNTS], depth: 0,
     };
 ",
@@ -220,9 +220,8 @@ pub struct Row { kind: u16, field: u16, start: u32, end: u32, size: u32, parent:
 
 /// A refusal's value: one more than a place past every word's (no word's place is kept).
 pub const REFUSED: u64 = u64::MAX - 1;
-/// The root's parent; a wrap's own record's mark in `head`.
+/// The root's parent.
 const NO_PARENT: u32 = u32::MAX;
-const IS_WRAP: u32 = u32::MAX;
 const DEAD: u16 = u16::MAX;
 
 type R = Result<(), bool>;
@@ -235,7 +234,8 @@ struct S {
     bytes: *const u8, len: u32, starts: *const u32, lasts: *const u32, codes: *const u32, n: usize,
     outputs: *const u8, ostride: usize, lstride: usize, totals: *const u8, tstride: usize, tmask: u64,
     rows: *mut Row, snode: *mut u32, skind: *mut u32, open: *mut u32, counts_out: *mut u64,
-    fbase: *mut u32, head: *mut u32, link: *mut u32, place: *mut u32, out_rows: *mut Row,
+    /// Scratch for a drop (`drop_dead`); which rows are wraps (`inner_field`).
+    fbase: *mut u32, head: *mut u32, link: *mut u32,
     room_nodes: usize, room_supers: usize,
     /// The next record; the token's start, end (its start until its bytes are taken), its
     /// record's end and code; the end of the token before; the stream's end; the bytes taken.
@@ -245,9 +245,9 @@ struct S {
     /// The nodes made, open; the deferred extras' leaves, and the end before them; the
     /// supertypes.
     nodes: u32, nopen: u32, pending: u32, keep: u32, supers: u32,
-    /// The node made last at the innermost level (one more than its record) and its base; the
-    /// node the last wrap moved; the wraps made; the records dropped.
-    last_made: u32, last_base: u32, moved: u32, wraps: u32, dead: u32,
+    /// The node made last at the innermost level (one more than its row); the node the last
+    /// wrap moved.
+    last_made: u32, moved: u32,
     counts: [u32; COUNTS],
     /// The calls open.
     depth: u32,
@@ -378,27 +378,57 @@ fn token_name(any: Option<u8>, extras: bool) -> String {
 
 /// The node words: open, close, leaf, wrap, fold, merge, and the relabels of the node made
 /// last at a level. Inline, as the lean parser's push.
+///
+/// Each writes the table as it stands at the end, as the lean parser does: a node's row has
+/// its parent (the innermost open node) and its extra flag (by its kind) when it is written,
+/// and a wrap goes before the node it wraps, the nodes from that one on moved up a row. The
+/// node made last at a level is the table's last node there, its range the table's tail
+/// (with the pending extras after it): a wrap moves that tail alone, one row where it wraps a
+/// leaf. A dropped node (`DEAD`) is taken out of that tail at once (`drop_dead`). `ACCEPT`
+/// makes no pass.
 fn node_words(out: &mut String, x: &Facts<'_>) {
+    let n = x.native;
     let framed = x.framed;
     let f = |s: &str| if framed { s.to_string() } else { String::new() };
+    // Which rows are wraps, where `NODE_FIELD m=3` asks (`head`, moved with the rows).
+    let inner = n.structural.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. }));
+    let w = |s: &str| if inner { s.to_string() } else { String::new() };
+    let extras: Vec<String> = n.readings.extras.iter().map(u16::to_string).collect();
+    let is_extra = if extras.is_empty() { "0".to_string() } else { format!("u32::from(matches!(kind, {}))", extras.join(" | ")) };
     writeln!(
         out,
-        "    #[inline(always)]
-    /// `OPEN`: its kind, with its field above it (or none), and its start.
+        "    /// A kind's extra flag (`Readings::extras`).
+    #[inline(always)]
+    fn xflag(kind: u32) -> u32 {{
+        {is_extra}
+    }}
+
+    /// The innermost open node: the parent of a node written now.
+    #[inline(always)]
+    fn top(&self) -> u32 {{
+        if self.nopen == 0 {{ NO_PARENT }} else {{ unsafe {{ *Self::col(self.open, self.nopen - 1) }} }}
+    }}
+
+    /// `OPEN`: its kind, with its field above it (or none), its start, its parent.
+    #[inline(always)]
     fn open(&mut self, kind_field: u32) {{
-        self.pending = 0;
         let n = self.nodes;
+        let parent = self.top();
+        self.pending = 0;
         unsafe {{
             let r = self.row(n);
             *(r as *mut u32) = kind_field;
             (*r).start = self.start;
+            (*r).parent = parent;
+            (*r).extra = Self::xflag(kind_field & 0xffff);
             *Self::col(self.open, self.nopen) = n;
-            {}
+            {}{}
         }}
         self.nopen += 1;
         self.nodes = n + 1;
     }}
 
+    /// `CLOSE`: its end and size; the pending extras after it are its parent's.
     #[inline(always)]
     fn close<const THIS: bool>(&mut self, this_end: u32) -> R {{
         if self.nopen == 0 {{
@@ -410,14 +440,27 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
             let end = if THIS {{ this_end }} else if self.pending != 0 {{ self.keep }} else {{ self.last_end }};
             let r = self.row(at);
             (*r).end = end;
-            let base = {};
-            (*r).size = self.nodes - base - self.pending;
+            (*r).size = self.nodes - at - self.pending;
+            if self.pending != 0 {{
+                self.unpend();
+            }}
+            {}
         }}
         Ok(())
     }}
 
+    /// The pending extras' rows, now the innermost open node's.
+    #[cold]
+    #[inline(never)]
+    fn unpend(&mut self) {{
+        let parent = self.top();
+        for i in self.nodes - self.pending..self.nodes {{
+            unsafe {{ (*self.row(i)).parent = parent }};
+        }}
+    }}
+
+    /// `LEAF`: its kind, with its field above it (or none); its bytes; its parent.
     #[inline(always)]
-    /// `LEAF`: its kind, with its field above it (or none); its bytes; one record.
     fn leaf<const DEFERRED: bool, const EXTRA: bool>(&mut self, kind_field: u32, end: u32) {{
         if DEFERRED {{
             if self.pending == 0 {{
@@ -428,18 +471,21 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
             self.pending = 0;
         }}
         let n = self.nodes;
+        let parent = self.top();
         unsafe {{
             let r = self.row(n);
             *(r as *mut u32) = kind_field;
             (*r).start = self.start;
             (*r).end = end;
             (*r).size = 1;
-            {}
+            (*r).parent = parent;
+            (*r).extra = Self::xflag(kind_field & 0xffff);
+            {}{}
         }}
         self.nodes = n + 1;
     }}
 
-    /// The node made last at the innermost level: its record.
+    /// The node made last at the innermost level: its row.
     #[inline(always)]
     fn made(&self) -> Result<u32, bool> {{
         if self.nopen == 0 || self.last_made == 0 {{
@@ -448,38 +494,123 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         Ok(self.last_made - 1)
     }}
 
+    /// `WRAP`: a node before the one made last (its field the wrap's), open around it. That
+    /// node and the rest of the table move up a row; their parents follow, and the pending
+    /// extras' are the wrap's.
     #[inline(always)]
     fn wrap(&mut self, kind: u16) -> R {{
         let r = self.made()?;
-        let (n, base) = (self.nodes, self.last_base);
+        let (n, x) = (self.nodes, self.top());
         unsafe {{
-            let (from, to) = (self.row(r), self.row(n));
-            (*to).kind = kind;
-            (*to).field = (*from).field;
+            core::ptr::copy(self.row(r), self.row(r + 1), (n - r) as usize);
+            {}if n - r > 1 {{
+                self.shift_parents(r, x);
+            }}
+            let (to, from) = (self.row(r), self.row(r + 1));
+            *(to as *mut u32) = u32::from(kind) | ((*from).field as u32) << 16;
             (*to).start = (*from).start;
+            (*to).parent = x;
+            (*to).extra = Self::xflag(u32::from(kind));
             (*from).field = 0;
-            *Self::col(self.link, n) = *Self::col(self.head, base);
-            *Self::col(self.head, base) = n + 1;
-            *Self::col(self.head, n) = IS_WRAP;
-            *Self::col(self.open, self.nopen) = n;
-            *Self::col(self.fbase, self.nopen + 1) = base;
+            (*from).parent = r;
+            *Self::col(self.open, self.nopen) = r;
+            {}
         }}
-        self.last_base = base;
-        self.moved = r;
+        let mut k = self.supers;
+        while k > 0 && unsafe {{ *Self::col(self.snode, k - 1) }} >= r {{
+            unsafe {{ *Self::col(self.snode, k - 1) += 1 }};
+            k -= 1;
+        }}
+        self.last_made = r + 2;
+        self.moved = r + 1;
         self.pending = 0;
         self.nopen += 1;
         self.nodes = n + 1;
-        self.wraps += 1;
         Ok(())
     }}
 
+    /// After a wrap at row `r` inside `x`: the parents in the moved rows past the first.
+    #[inline(never)]
+    fn shift_parents(&mut self, r: u32, x: u32) {{
+        for i in r + 2..=self.nodes {{
+            unsafe {{
+                let p = &mut (*self.row(i)).parent;
+                if *p == x {{
+                    *p = r;
+                }} else if *p >= r {{
+                    *p += 1;
+                }}
+            }}
+        }}
+    }}
+
+    /// The dropped rows (`DEAD`) from row `from` on taken out: the rest moved down, each
+    /// node's size less the dropped in its range, each parent the nearest kept; a dropped
+    /// node's supertypes go. Its two passes are over the tail the dropping word walked.
+    #[inline(never)]
+    fn drop_dead(&mut self, from: u32) {{
+        let n = self.nodes;
+        let (before, to) = (self.fbase, self.link);
+        let mut d = 0u32;
+        for i in from..n {{
+            unsafe {{
+                *Self::col(before, i) = d;
+                d += u32::from((*self.row(i)).kind == DEAD);
+            }}
+        }}
+        unsafe {{ *Self::col(before, n) = d }};
+        for i in from..n {{
+            unsafe {{
+                let mut r = *self.row(i);
+                let p = if r.parent < from || r.parent == NO_PARENT {{ r.parent }} else {{ *Self::col(to, r.parent) }};
+                if r.kind == DEAD {{
+                    *Self::col(to, i) = p;
+                    continue;
+                }}
+                let j = i - *Self::col(before, i);
+                *Self::col(to, i) = j;
+                let e = (i + r.size).min(n);
+                r.size -= *Self::col(before, e) - *Self::col(before, i);
+                r.parent = p;
+                *self.row(j) = r;
+                {}
+            }}
+        }}
+        // The supertypes of nodes in the tail: on to their rows, a dropped node's gone.
+        let mut k = self.supers;
+        while k > 0 && unsafe {{ *Self::col(self.snode, k - 1) }} >= from {{
+            k -= 1;
+        }}
+        let mut kept = k;
+        for s in k..self.supers {{
+            unsafe {{
+                let at = *Self::col(self.snode, s);
+                if *Self::col(before, at + 1) != *Self::col(before, at) {{
+                    continue;
+                }}
+                *Self::col(self.snode, kept) = *Self::col(to, at);
+                *Self::col(self.skind, kept) = *Self::col(self.skind, s);
+            }}
+            kept += 1;
+        }}
+        self.supers = kept;
+        if self.moved >= from && self.moved < n {{
+            self.moved = unsafe {{ *Self::col(to, self.moved) }};
+        }}
+        self.nodes = n - d;
+    }}
+
+    /// `RETAG m=2`: the node made last takes a kind; `DEAD` drops it.
     #[inline(always)]
     fn made_kind<const DROP: bool>(&mut self, kind: u16) -> R {{
         let r = self.made()?;
-        unsafe {{ (*self.row(r)).kind = kind }};
+        unsafe {{
+            (*self.row(r)).kind = kind;
+            (*self.row(r)).extra = Self::xflag(u32::from(kind));
+        }}
         if DROP {{
-            self.dead += 1;
             self.last_made = 0;
+            self.drop_dead(r);
         }}
         Ok(())
     }}
@@ -496,15 +627,16 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         Ok(())
     }}
 
-    /// The node a wrap made last holds first (`NODE_FIELD m=3`): its base, unless it wraps a wrap.
+    /// The node a wrap made last holds first (`NODE_FIELD m=3`): the row after it, unless that
+    /// is a wrap too.
     #[inline(always)]
     fn inner_field(&mut self, field: u16) -> R {{
         let r = self.made()?;
         unsafe {{
-            if *Self::col(self.head, r) != IS_WRAP || *Self::col(self.link, r) != 0 {{
+            if {} {{
                 return Err(false);
             }}
-            (*self.row(self.last_base)).field = field;
+            (*self.row(r + 1)).field = field;
         }}
         Ok(())
     }}
@@ -514,8 +646,22 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         if self.nopen == 0 {{
             return Err(false);
         }}
-        unsafe {{ (*self.row(*Self::col(self.open, self.nopen - 1))).kind = kind }};
+        unsafe {{
+            let r = self.row(*Self::col(self.open, self.nopen - 1));
+            (*r).kind = kind;
+            (*r).extra = Self::xflag(u32::from(kind));
+        }}
         Ok(())
+    }}
+
+    /// `RETAG m=1`: the node the last wrap moved takes a kind.
+    #[inline(always)]
+    fn moved_kind(&mut self, kind: u16) {{
+        unsafe {{
+            let r = self.row(self.moved);
+            (*r).kind = kind;
+            (*r).extra = Self::xflag(u32::from(kind));
+        }}
     }}
 
     /// `MERGE m=1`: the innermost open node's two leaves, all it holds, one.
@@ -534,6 +680,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 return Err(false);
             }}
             (*a).kind = kind;
+            (*a).extra = Self::xflag(u32::from(kind));
             (*a).end = (*b).end;
             self.nodes = o + 2;
             {}
@@ -555,6 +702,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 return Err(false);
             }}
             (*r).kind = kind;
+            (*r).extra = Self::xflag(u32::from(kind));
             (*r).end = end;
         }}
         self.nodes = kept;
@@ -571,16 +719,22 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         self.supers += 1;
     }}
 ",
-        f("*Self::col(self.fbase, self.nopen + 1) = n;\n            self.last_made = 0;\n            *Self::col(self.head, n) = 0;"),
-        if framed { "{ let b = *Self::col(self.fbase, self.nopen + 1); self.last_made = at + 1; self.last_base = b; b }" } else { "at" },
-        f("*Self::col(self.head, n) = 0;\n            if !DEFERRED && !EXTRA {\n                self.last_made = n + 1;\n                self.last_base = n;\n            }"),
-        f("self.last_made = o + 2;\n            self.last_base = o + 1;"),
+        f("self.last_made = 0;"),
+        w("\n            *Self::col(self.head, n) = 0;"),
+        f("self.last_made = at + 1;"),
+        f("if !DEFERRED && !EXTRA {\n                self.last_made = n + 1;\n            }"),
+        w("\n            *Self::col(self.head, n) = 0;"),
+        w("core::ptr::copy(Self::col(self.head, r), Self::col(self.head, r + 1), (n - r) as usize);\n            *Self::col(self.head, r) = 1;\n            "),
+        "",
+        w("*Self::col(self.head, j) = *Self::col(self.head, i);"),
+        if inner { "*Self::col(self.head, r) == 0 || *Self::col(self.head, r + 1) != 0" } else { "true" },
+        f("self.last_made = o + 2;"),
     )
     .unwrap();
 }
 
-/// `ACCEPT`: the root closed at the file's end; no provisional field left; the table in
-/// preorder (with wraps or dropped records), each node's parent and extra flag.
+/// `ACCEPT`: the root closed at the file's end; no provisional field left. The table is
+/// written: no pass over it.
 fn accept(out: &mut String, x: &Facts<'_>) {
     let n = x.native;
     let provisional = if n.readings.provisional.is_empty() {
@@ -588,27 +742,9 @@ fn accept(out: &mut String, x: &Facts<'_>) {
     } else {
         let fields: Vec<String> = n.readings.provisional.iter().map(u16::to_string).collect();
         format!(
-            "        for i in 0..nodes {{\n            let r = unsafe {{ &*self.row(i) }};\n            if r.kind != DEAD && matches!(r.field, {}) {{\n                return Err(false);\n            }}\n        }}\n",
+            "        for i in 0..nodes {{\n            if matches!(unsafe {{ (*self.row(i)).field }}, {}) {{\n                return Err(false);\n            }}\n        }}\n",
             fields.join(" | ")
         )
-    };
-    let rereads = n.structural.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
-    let extras: Vec<String> = n.readings.extras.iter().map(u16::to_string).collect();
-    let is_extra = if extras.is_empty() { "false".to_string() } else { format!("matches!(r.kind, {})", extras.join(" | ")) };
-    let reorder = if x.framed {
-        format!(
-            "        let moved = self.wraps + self.dead;
-        unsafe {{ *self.counts_out.add(2) = moved as u64 }};
-        if moved != 0 {{
-            let placed = self.reorder(nodes);
-            unsafe {{ *self.counts_out = placed as u64 }};
-            Self::table(self.out_rows, placed, self.open);
-            return Ok(());
-        }}
-"
-        )
-    } else {
-        "        unsafe { *self.counts_out.add(2) = 0 };\n".to_string()
     };
     writeln!(
         out,
@@ -628,112 +764,25 @@ fn accept(out: &mut String, x: &Facts<'_>) {
 {provisional}        unsafe {{
             *self.counts_out = nodes as u64;
             *self.counts_out.add(1) = self.supers as u64;
+            *self.counts_out.add(2) = 0;
         }}
-{reorder}        Self::table(self.rows, nodes, self.open);
         Ok(())
-    }}
-
-    /// The table's last pass: each node's parent (the open nodes a stack in `stack`) and its
-    /// extra flag. A loop over the records, each pushed once and popped at most once.
-    #[inline(never)]
-    fn table(rows: *mut Row, count: u32, stack: *mut u32) {{
-        let mut d = 0u32;
-        for i in 0..count {{
-            unsafe {{
-                while d > 0 {{
-                    let top = *Self::col(stack, d - 1);
-                    if top + (*rows.add(top as usize)).size <= i {{
-                        d -= 1;
-                    }} else {{
-                        break;
-                    }}
-                }}
-                let r = &mut *rows.add(i as usize);
-                r.parent = if d > 0 {{ *Self::col(stack, d - 1) }} else {{ NO_PARENT }};
-                r.extra = u32::from({is_extra});
-                *Self::col(stack, d) = i;
-            }}
-            d += 1;
-        }}
     }}
 "
     )
     .unwrap();
-    if x.framed {
-        let (count, adjust) = if rereads {
-            (
-                "        let before = self.fbase;\n        let mut d = 0u32;\n        for i in 0..nodes {\n            unsafe {\n                *Self::col(before, i) = d;\n                d += u32::from((*self.row(i)).kind == DEAD);\n            }\n        }\n        unsafe { *Self::col(before, nodes) = d };\n",
-                "                if true {\n                    let size = (*from).size;\n                    (*to).size = size - (*Self::col(self.fbase, first + size) - *Self::col(self.fbase, first));\n                }\n",
-            )
-        } else {
-            ("", "")
-        };
-        let dropped = if rereads { "(*self.row(w)).kind == DEAD" } else { "false" };
-        writeln!(
-            out,
-            "    /// The table in preorder: each record in the order made, a wrap's own skipped, each
-    /// base's chain of wraps before it, latest first; a dropped record left out, each node's
-    /// size less those in its range; then each supertype's node at its place. The count placed.
-    #[inline(never)]
-    fn reorder(&mut self, nodes: u32) -> u32 {{
-{count}        let mut j = 0u32;
-        for i in 0..nodes {{
-            unsafe {{
-                let h = *Self::col(self.head, i);
-                if h == IS_WRAP {{
-                    continue;
-                }}
-                let mut c = h;
-                loop {{
-                    let w = if c != 0 {{ c - 1 }} else {{ i }};
-                    if !({dropped}) {{
-                        self.place_at(w, j, i);
-                        j += 1;
-                    }}
-                    if c == 0 {{
-                        break;
-                    }}
-                    c = *Self::col(self.link, w);
-                }}
-            }}
-        }}
-        for k in 0..self.supers {{
-            unsafe {{
-                let s = Self::col(self.snode, k);
-                *s = *Self::col(self.place, *s);
-            }}
-        }}
-        j
-    }}
-
-    /// Record `w` to place `j`, its range from `first`.
-    #[inline(always)]
-    unsafe fn place_at(&mut self, w: u32, j: u32, first: u32) {{
-        unsafe {{
-            let (from, to) = (self.row(w), self.out_rows.add(j as usize));
-            (*to).kind = (*from).kind;
-            (*to).field = (*from).field;
-            (*to).start = (*from).start;
-            (*to).end = (*from).end;
-            (*to).size = (*from).size;
-{adjust}            *Self::col(self.place, w) = j;
-        }}
-    }}
-"
-        )
-        .unwrap();
-    }
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside
-/// it, each base's chain of wraps first; a kind each, its field the reading's.
+/// it, in preorder (its rows); a kind each, its field the reading's. The dropped are taken out
+/// after (`drop_dead`).
 fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
     let way = |w: u16| -> String {
         match w {
-            KEEP => "{ i += (*row).size; break; }".to_string(),
-            GONE => "{ if n == root { self.last_made = 0 } (*row).kind = DEAD; self.dead += 1; }".to_string(),
-            REMEMBERED => "{ if word == 0 { return Err(false) } (*row).kind = word as u16; }".to_string(),
-            k => format!("{{ (*row).kind = {k}; }}"),
+            KEEP => "{ i += (*row).size; continue; }".to_string(),
+            GONE => "{ if i == root { self.last_made = 0 } (*row).kind = DEAD; gone = true; }".to_string(),
+            REMEMBERED => "{ if word == 0 { return Err(false) } (*row).kind = word as u16; (*row).extra = Self::xflag(word); }".to_string(),
+            k => format!("{{ (*row).kind = {k}; (*row).extra = Self::xflag({k}); }}"),
         }
     };
     let mut fields = String::new();
@@ -744,11 +793,11 @@ fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
     let mut seen = BTreeSet::new();
     for &(k, w) in &r.kinds {
         if seen.insert(k) {
-            writeln!(kinds, "                        {k} => {}", way(w)).unwrap();
+            writeln!(kinds, "                    {k} => {}", way(w)).unwrap();
         }
     }
     let root_way = match r.root {
-        Some(w) => format!("if n == root {} else ", way(w)),
+        Some(w) => format!("if i == root {} else ", way(w)),
         None => String::new(),
     };
     writeln!(
@@ -757,45 +806,27 @@ fn reread(out: &mut String, i: usize, r: &crate::stream_ir::Reading) {
     #[inline(never)]
     fn reread_{i}(&mut self, word: u32) -> R {{
         let root = self.made()?;
-        let (last, base) = (self.last_made, self.last_base);
         let end = self.nodes - self.pending;
-        let mut i = base;
-        let mut c = if root != base {{ last }} else {{ 0 }};
-        loop {{
-            loop {{
-                let n = if c != 0 {{ c - 1 }} else {{ i }};
-                unsafe {{
-                    let row = self.row(n);
-                    if n != root {{
-                        (*row).field = match (*row).field {{ {fields}f => f }};
-                    }}
-                    let older = if c != 0 {{ *Self::col(self.link, c - 1) }} else {{ 0 }};
-                    {root_way}{{
-                        match (*row).kind {{
-{kinds}                            _ => return Err(false),
-                        }}
-                    }}
-                    if c != 0 {{
-                        c = older;
-                        continue;
+        let mut gone = false;
+        let mut i = root;
+        while i < end {{
+            unsafe {{
+                let row = self.row(i);
+                if i != root {{
+                    (*row).field = match (*row).field {{ {fields}f => f }};
+                }}
+                {root_way}{{
+                    match (*row).kind {{
+{kinds}                        _ => return Err(false),
                     }}
                 }}
-                i += 1;
-                break;
             }}
-            loop {{
-                if i >= end {{
-                    return Ok(());
-                }}
-                let h = unsafe {{ *Self::col(self.head, i) }};
-                if h == IS_WRAP {{
-                    i += 1;
-                    continue;
-                }}
-                c = h;
-                break;
-            }}
+            i += 1;
         }}
+        if gone {{
+            self.drop_dead(root);
+        }}
+        Ok(())
     }}
 "
     )
@@ -1204,7 +1235,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         }
         Op::Row { mask } => format!("if s.bit({}, s.start) {{ {} }} else {{ {} }}", mask_output(n, mask)?, jump(0)?, jump(1)?),
         Op::Retag { kind, on: On::Here } => format!("s.here_kind({kind})?;\n{}", jump(0)?),
-        Op::Retag { kind, on: On::Moved } => format!("unsafe {{ (*s.row(s.moved)).kind = {} }};\n{}", kind_of(kind), jump(0)?),
+        Op::Retag { kind, on: On::Moved } => format!("s.moved_kind({});\n{}", kind_of(kind), jump(0)?),
         Op::Retag { kind, on: On::Made } => format!("s.made_kind::<{}>({})?;\n{}", kind == DEAD, kind_of(kind), jump(0)?),
         Op::Reread { reading } => format!("s.reread_{reading}({})?;\n{}", if x.context { "word" } else { "0" }, jump(0)?),
         Op::Wrap { kind } => format!("s.wrap({kind})?;\n{}", jump(0)?),

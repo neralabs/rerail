@@ -43,23 +43,18 @@ thread_local! {
     static ADDRESSES: std::cell::RefCell<Vec<(i64, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Both tiers' sources, from a parser compiled with `native_cpu_stream::KEEP_IR`: tier 1's
-/// (`tier1_entry_K` a pass, the record pass's tables' address `TABLES`) and tier 2's
-/// (`tier2_entry`). Each ends with its own fingerprint, `SOURCE`.
-pub fn rust_sources(parser: &crate::native_cpu_stream::Parser) -> Result<(String, String), String> {
+/// Tier 1's source, from a parser compiled with `native_cpu_stream::KEEP_IR`: `tier1_entry_K`
+/// a pass, the record pass's tables' address `TABLES`; it ends with its fingerprint, `SOURCE`.
+/// (Tier 2's is `rust_stream`'s, from the native IR.)
+pub fn rust_source(parser: &crate::native_cpu_stream::Parser) -> Result<String, String> {
     let t1 = &parser.tier1;
     let names: Vec<String> = (0..t1.entry_ids.len()).map(|k| format!("tier1_entry_{k}")).collect();
     let entries: Vec<(u32, &str)> = t1.entry_ids.iter().zip(&names).map(|(&id, n)| (id, n.as_str())).collect();
     let addresses: Vec<(i64, &str)> = t1.tables_address().map(|a| (a, "TABLES")).into_iter().collect();
     let mut one = translate(&t1.ir, &entries, &addresses).map_err(|e| format!("tier 1: {e}"))?;
     writeln!(one, "/// The passes' entries, in order.\npub const ENTRIES: &[unsafe extern \"C\" fn(u64, u64, u64, u64, u64, u64, u64)] = &[{}];", names.join(", ")).unwrap();
-    let t2 = &parser.tier2;
-    let two = translate(&t2.ir, &[(t2.entry_id, "tier2_entry")], &[]).map_err(|e| format!("tier 2: {e}"))?;
-    let seal = |src: String| {
-        let h = fingerprint(&src);
-        format!("{src}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n")
-    };
-    Ok((seal(one), seal(two)))
+    let h = fingerprint(&one);
+    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
 }
 
 /// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: each of
