@@ -1,14 +1,14 @@
 /**
  * `VACUUM` for the daemon's move of audit rule provenance (`rule-provenance-move.ts`), run so that it never holds up a
- * write on the thread that answers hooks. `VACUUM` holds the write lock until it ends, every Rerail writer waits for
+ * write on the thread that answers hooks. `VACUUM` holds the write lock until it commits, every Rerail writer waits for
  * that lock on its own thread for up to its 5 s busy timeout (`database.ts`), and the daemon's stores wait on the thread
  * that answers hooks: the `VACUUM` after 4,000 audits took 8.9 s on a loaded Windows machine. better-sqlite3 cannot stop
  * a statement once it runs, so the `VACUUM` runs in a process of its own (`vacuum-process.ts`), which this ends once the
  * watched thread has not answered for `GIVE_WAY_MS` while the `VACUUM` has not committed: SQLite drops a `VACUUM` that
  * has not committed, the lock is free, this cuts the WAL back from the pages that `VACUUM` wrote (`cutWal`), and the
- * write that waited goes through. A `VACUUM` that has committed holds the lock no more and runs to its end. Each
- * attempt starts once no other connection has committed to the file for a while, twice as long after each one that gave
- * way, so a busy hour costs a few short attempts, and the `VACUUM` runs in the first quiet moment long enough for it.
+ * write that waited goes through. Each attempt starts once no other connection has committed to the file for a while,
+ * twice as long after each one that gave way, up to `LONGEST_QUIET_MS`, so the `VACUUM` runs in the first quiet moment
+ * long enough for it; once it has waited `noticeMs` it says so, once.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -25,8 +25,20 @@ const PING_MS = 50;
 /** How long no other connection may commit before the first attempt; each attempt that gives way doubles it. */
 const FIRST_QUIET_MS = 2_000;
 
-/** The longest quiet an attempt waits for. */
-const LONGEST_QUIET_MS = 300_000;
+/**
+ * The longest quiet an attempt waits for. On one day of tool-call times from a machine running many coding agents, a
+ * 10 s `VACUUM` started at a single session's busiest hour committed within 10.3 minutes with this cap, against 43
+ * minutes with a 60 s cap and 2.9 hours with 5 minutes, after at most 5 attempts that gave way, each costing a hook
+ * about 0.5 s.
+ */
+const LONGEST_QUIET_MS = 30_000;
+
+/**
+ * How long the `VACUUM` may wait for a quiet file before it says so, once. On the same day, with every session writing
+ * into one daemon, a 5 s `VACUUM` waited 1.9 hours at the median; with a single session's writes, even a 10 s one
+ * waited 10.3 minutes at most.
+ */
+export const WAIT_NOTICE_MS = 3_600_000;
 
 /** How often the wait for a quiet file reads whether another connection has committed. */
 const QUIET_POLL_MS = 250;
@@ -50,6 +62,16 @@ export const PONG = "rerail-vacuum-pong";
  */
 export type ThreadWatch = (stalled: () => void) => () => void;
 
+/** How `vacuumGivingWay` gives way, and to what. */
+export interface GivingWay {
+  readonly watch: ThreadWatch;
+  /** Stops the wait, and ends a running attempt at once. */
+  readonly signal: AbortSignal | undefined;
+  /** Called once if no attempt has committed `noticeMs` after the first wait began, with the quiet the next one needs. */
+  readonly waitedLong: (quietMs: number) => void;
+  readonly noticeMs: number;
+}
+
 /** The `VACUUM` stopped before it finished, because the move was asked to stop; the file is as it was. */
 export class VacuumStopped extends Error {
   constructor() {
@@ -57,8 +79,11 @@ export class VacuumStopped extends Error {
   }
 }
 
-/** One attempt: it committed, it gave way to a write or a stop, or another connection held the lock as it began. */
-type Attempt = "vacuumed" | "gave-way" | "busy";
+/**
+ * One attempt: it gave the free pages back (or found none left), it gave way to the watched thread or a stop, or
+ * another connection held the lock as it began.
+ */
+type Attempt = "shrunk" | "gave-way" | "busy";
 
 /**
  * The watch over the thread at the other end of `port`, which answers each `PING` with `PONG` (the daemon's thread,
@@ -85,30 +110,47 @@ export function watchThread(port: MessagePort): ThreadWatch {
 }
 
 /**
- * Runs `VACUUM` on the database at `path`, giving way to the thread `watch` watches, until it commits: each attempt waits
- * until no connection but `client`, the caller's, has committed for a while (`quietFor`), then runs in a process of its
- * own that ends once the thread stops answering (`vacuumOnce`), and says on stderr when the next one runs. Resolves once
- * the file holds no free page; throws `VacuumStopped` once `signal` stops it, and what `vacuum-process.ts` reported when
- * `VACUUM` failed.
+ * Runs `VACUUM` on the database at `path`, giving way to the thread `way.watch` watches, until it commits: each attempt
+ * waits until no connection but `client`, the caller's, has committed for a while (`quietFor`), then runs in a process
+ * of its own that ends once the thread stops answering (`vacuumOnce`), and stderr says when the next one runs. Resolves
+ * once the file holds no free page; throws `VacuumStopped` once `way.signal` stops it, and what `vacuum-process.ts`
+ * reported when `VACUUM` failed.
  */
-export async function vacuumGivingWay(
-  client: Database.Database,
-  path: string,
-  { watch, signal }: { readonly watch: ThreadWatch; readonly signal: AbortSignal | undefined },
-): Promise<void> {
-  for (let quiet = FIRST_QUIET_MS; ; quiet = longerQuiet(quiet)) {
-    if (!(await quietFor(client, quiet, signal))) throw new VacuumStopped();
-    // A file with no free page left has nothing to give back.
-    if (pragmaNumber(client, "freelist_count") === 0) return;
-    if ((await vacuumOnce(client, path, { watch, signal })) === "vacuumed") return;
-    if (signal?.aborted === true) throw new VacuumStopped();
-    process.stderr.write(`rerail: ${path}: VACUUM gave way to another connection's write, and runs again once no other `
-      + `connection has written to the file for ${longerQuiet(quiet) / 1_000} s.\n`);
+export async function vacuumGivingWay(client: Database.Database, path: string, way: GivingWay): Promise<void> {
+  let quiet = FIRST_QUIET_MS;
+  const notice = setTimeout(() => way.waitedLong(quiet), way.noticeMs);
+  try {
+    for (;;) {
+      const attempt = await nextAttempt(client, path, way, quiet);
+      if (attempt === "shrunk") return;
+      quiet = Math.min(2 * quiet, LONGEST_QUIET_MS);
+      process.stderr.write(notRunLine(path, attempt, quiet));
+    }
+  } finally {
+    clearTimeout(notice);
   }
 }
 
-function longerQuiet(quiet: number): number {
-  return Math.min(2 * quiet, LONGEST_QUIET_MS);
+/** Waits for `quietMs` of quiet, then runs one attempt unless `way` stops it, or no free page is left to give back. */
+async function nextAttempt(client: Database.Database, path: string, way: GivingWay, quietMs: number): Promise<Attempt> {
+  if (!(await quietFor(client, quietMs, way.signal))) throw new VacuumStopped();
+  if (pragmaNumber(client, "freelist_count") === 0) return "shrunk";
+  return stoppedOr(await vacuumOnce(client, path, way), way.signal);
+}
+
+/** `attempt`, unless a stop ended it before it committed. */
+function stoppedOr(attempt: Attempt, signal: AbortSignal | undefined): Attempt {
+  if (attempt !== "shrunk" && signal?.aborted === true) throw new VacuumStopped();
+  return attempt;
+}
+
+/** The line for an attempt that did not commit, with why, and how long the next one waits. */
+function notRunLine(path: string, attempt: "gave-way" | "busy", quietMs: number): string {
+  const why = attempt === "busy"
+    ? "another connection held the write lock as it began"
+    : `the daemon's thread did not answer for ${GIVE_WAY_MS / 1_000} s, as when a write of its own waits for that lock`;
+  return `rerail: ${path}: VACUUM gave way (${why}), and runs again once no other connection has written to the file `
+    + `for ${quietMs / 1_000} s.\n`;
 }
 
 /**
@@ -132,11 +174,7 @@ async function quietFor(client: Database.Database, quietMs: number, signal: Abor
  * committed (`attemptEnd`). Ended before it committed, it cuts the WAL back on `client` (`cutWal`) before the write that
  * waited takes the lock.
  */
-async function vacuumOnce(
-  client: Database.Database,
-  path: string,
-  { watch, signal }: { readonly watch: ThreadWatch; readonly signal: AbortSignal | undefined },
-): Promise<Attempt> {
+async function vacuumOnce(client: Database.Database, path: string, { watch, signal }: GivingWay): Promise<Attempt> {
   const committed = committedSince(client);
   const child = startVacuumProcess(path);
   const attempt = attemptEnd(child, client, committed);
@@ -218,7 +256,7 @@ function exitOf(child: ChildProcess): Promise<{ code: number | null; errors: str
 
 /** An attempt by whether its `VACUUM` committed, whether a stall or stop ended it, and its process's exit code. */
 function attemptOf(committed: boolean, ended: boolean, code: number | null): Attempt | undefined {
-  if (committed || code === 0) return "vacuumed";
+  if (committed || code === 0) return "shrunk";
   if (ended) return "gave-way";
   return code === BUSY_EXIT ? "busy" : undefined;
 }

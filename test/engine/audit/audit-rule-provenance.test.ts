@@ -101,7 +101,10 @@ function writeInlineAudits(path: string, provenances: readonly AuditRuleProvenan
   const written = provenances.map((provenance, index) => ({ auditId: `older-${index}`, text: JSON.stringify(provenance) }));
   const older = new Database(path);
   try {
-    written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, index, index + 1));
+    // One transaction: one sync for hundreds of audits.
+    older.transaction(() => {
+      written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, index, index + 1));
+    })();
   } finally {
     older.close();
   }
@@ -140,7 +143,7 @@ function fillPages(path: string, bytes: number): void {
   }
 }
 
-/** What the move wrote to stderr while `run` ran, and what `run` resolved to. */
+/** What this thread wrote to stderr while `run` ran, and what `run` resolved to. */
 async function stderrWhile<T>(run: () => Promise<T>): Promise<{ result: T; logged: string }> {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   try {
@@ -491,9 +494,10 @@ describe("audit rule provenance", () => {
     expect(await moveRuleProvenancesInWorker(path)).toBe(0);
   }, 60_000);
 
-  it("ends its VACUUM at once when stopped, however long the VACUUM would hold the database, and leaves the file whole", async () => {
+  it("ends its VACUUM at once when stopped, leaves the file whole, and a later run finishes the shrink", async () => {
     const path = await fileOfTheBuildBefore();
-    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // About 80 MB of provenance, more than the 64 MB of free space a later run leaves to new history.
+    const written = writeInlineAudits(path, Array.from({ length: 800 }, () => provenanceOf("/home/dev/app", 200)));
     // A VACUUM that would hold the write lock 30 s, as one of a large file on a loaded machine does.
     const held = join(dirname(path), "vacuum-held");
     const stop = new AbortController();
@@ -508,7 +512,7 @@ describe("audit rule provenance", () => {
 
     const asked = performance.now();
     stop.abort();
-    expect(await moving).toBe(30);
+    expect(await moving).toBe(800);
     // The daemon's close waits for this. Run on the move's thread, the VACUUM held it the whole 30 s.
     expect(performance.now() - asked).toBeLessThan(2_000);
 
@@ -528,7 +532,14 @@ describe("audit rule provenance", () => {
     } finally {
       store.close();
     }
-  }, 120_000);
+
+    // The stop left the space the move freed in the file. The next daemon start, with nothing left to move, gives it
+    // back: its thread runs the VACUUM, giving way as before.
+    expect(pageBytes(path).free).toBeGreaterThan(64_000_000);
+    expect(await moveRuleProvenancesInWorker(path)).toBe(0);
+    expect(pageBytes(path).free).toBe(0);
+    expect(statSync(path).size).toBe(bytesInUse(path));
+  }, 180_000);
 
   it("lets a VACUUM that has committed run to its end when the thread it gives way to stops answering", async () => {
     const path = await temporaryDatabase();
@@ -555,7 +566,9 @@ describe("audit rule provenance", () => {
     };
     let logged: string;
     try {
-      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, { watch, signal: undefined })));
+      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
+        watch, signal: undefined, waitedLong: () => undefined, noticeMs: 600_000,
+      })));
     } finally {
       restore();
       client.close();
@@ -569,6 +582,33 @@ describe("audit rule provenance", () => {
     expect(stalledFor).toBeLessThan(100);
     expect(pageBytes(path).free).toBe(0);
   }, 120_000);
+
+  it("says once, naming rerail scrub, when writes keep its VACUUM from starting past its bound, and VACUUMs once they stop", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // Another connection commits every 300 ms for 5 s, as a busy daemon does: the file is never quiet for 2 s meanwhile.
+    const writer = new Database(path);
+    writer.exec("CREATE TABLE steady (at)");
+    const steady = setInterval(() => writer.prepare("INSERT INTO steady VALUES (?)").run(performance.now()), 300);
+    const quiet = setTimeout(() => clearInterval(steady), 5_000);
+    let logged: string;
+    try {
+      ({ logged } = await stderrWhile(async () => {
+        // A thread that always answers: nothing gives way here, only the wait for a quiet file.
+        expect(await move(path, { watch: () => () => undefined, waitNotice: 2_500 })).toBe(30);
+      }));
+    } finally {
+      clearTimeout(quiet);
+      clearInterval(steady);
+      writer.close();
+    }
+
+    const told = logged.split("\n").filter(line => line.includes("rerail scrub"));
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain(`rerail: ${path} has not shrunk yet`);
+    expect(told[0]).toContain("in 2.5 s no other connection left the file alone for the 2 s its VACUUM waits for");
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
 
   it("leaves the free space in the file when there is no provenance to move", async () => {
     const path = await fileOfTheBuildBefore();
@@ -591,7 +631,7 @@ describe("audit rule provenance", () => {
       return () => reader.close();
     });
     expect(logged).toContain(`rerail: ${path} keeps its size`);
-    expect(logged).toContain("another connection was using it");
+    expect(logged).toContain("another connection was using it. Run `rerail scrub` to give the free space back.");
     expect(statSync(path).size).toBeGreaterThanOrEqual(size);
     expect(pageBytes(path).free).toBeGreaterThan(size / 2);
   }, 30_000);

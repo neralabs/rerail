@@ -8,7 +8,8 @@
  * inline. The move never waits inside SQLite for another connection: it awaits a pause and tries again (`whenFree`),
  * so a stop reaches it between two tries. The `VACUUM` that ends the move holds the write lock for as long as it copies
  * the file, so in the daemon it runs in a process of its own and gives way whenever the daemon's thread waits for that
- * lock (`vacuum-giving-way.ts`).
+ * lock (`vacuum-giving-way.ts`). A move whose `VACUUM` a stop or a skip cut short leaves the free space in the file, and
+ * a later run gives it back while it is more than half the file and `OWED_FREE_BYTES` (`shrinkOwed`).
  */
 import { createHash } from "node:crypto";
 import { existsSync, statfsSync, statSync } from "node:fs";
@@ -19,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
-import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumStopped } from "./vacuum-giving-way.js";
+import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumStopped, WAIT_NOTICE_MS } from "./vacuum-giving-way.js";
 
 /** What `moveRuleProvenancesInWorker` posts to stop the move's thread (`rule-provenance-move-worker.ts`). */
 export const MOVE_STOP = "rerail-move-stop";
@@ -50,6 +51,15 @@ const PAUSE_MS = 150;
  */
 const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
 
+/**
+ * The free space a later run gives back, once the move has ended, when it is also more than half the file
+ * (`shrinkOwed`): a move whose `VACUUM` was cut short leaves most of the file free (1.3 GB of 1.4 GB for 4,000 audits),
+ * and a `VACUUM` that ran leaves none. 64 MB is what the move frees from about 290 audits whose provenance took 221 KB
+ * each (767 rules on), a seventh of the smallest file reported; below it, a start leaves the space to new history, which
+ * fills it as it comes (39.9 KB per audited edit), and the line the cut wrote names `rerail scrub`.
+ */
+const OWED_FREE_BYTES = 64_000_000;
+
 export interface RuleProvenanceMoveOptions {
   /** The most audits per write transaction. */
   readonly perBatch?: number;
@@ -65,6 +75,8 @@ export interface RuleProvenanceMoveOptions {
    * `VACUUM` runs on the move's connection, holding the write lock until it ends.
    */
   readonly watch?: ThreadWatch;
+  /** How long a `VACUUM` that gives way waits for a quiet file before stderr says so, once; tests pass their own. */
+  readonly waitNotice?: number;
 }
 
 /** What the batches of one move take from its options. */
@@ -82,16 +94,17 @@ type Free = <T>(step: () => T) => Promise<T>;
 
 /**
  * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, then, if it
- * moved any, gives the space it freed back to the disk (`giveBackFreedSpace`). Audits that an older Rerail sharing the
- * file writes after that step keep theirs inline, where both versions read it. A file that does not exist yet holds
- * nothing to move, and the move does not create it. Resolves to how many audits it moved.
+ * moved any, or an earlier move's `VACUUM` was cut short (`shrinkOwed`), gives the space it freed back to the disk
+ * (`giveBackFreedSpace`). Audits that an older Rerail sharing the file writes after that step keep theirs inline, where
+ * both versions read it. A file that does not exist yet holds nothing to move, and the move does not create it. Resolves
+ * to how many audits it moved.
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const { signal } = options;
   const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
   const now = options.now ?? (() => performance.now());
   const batching: Batching = { most: options.perBatch ?? MOVED_PER_BATCH, pause, now, signal };
-  if (!existsSync(path) || !leftToMove(path)) return 0;
+  if (!existsSync(path) || !workLeft(path)) return 0;
   const database = openRerailDatabase(path);
   try {
     // From here SQLite reports another connection's lock at once, and `whenFree` waits for it between tries.
@@ -99,25 +112,36 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
     const free: Free = step => whenFree(step, pause, signal);
     const upTo = stepAppliedAt(database);
     if (upTo === undefined) return 0;
-    const { moved, ended } = await moveInBatches(database, upTo, free, batching);
-    // A run stopped before the end skips this, and the run that moves the rest gives the space back. One stopped after
-    // its last batch leaves the free pages to new history.
+    const done = await moveInBatches(database, upTo, free, batching);
     const client = database.$client;
-    if (ended && moved > 0) await giveBackFreedSpace(client, path, free, vacuumFor(client, path, free, options));
-    return moved;
+    if (shrinks(client, upTo, done)) await giveBackFreedSpace(client, path, free, vacuumFor(client, path, free, options));
+    return done.moved;
   } finally {
     database.$client.close();
   }
 }
 
+/**
+ * Whether the move gives the free space back now: once it has moved the last audit, if it moved any or a `VACUUM` is
+ * owed. A run stopped before the end skips it, and the run that moves the rest gives the space back.
+ */
+function shrinks(client: Client, upTo: number, { moved, ended }: { moved: number; ended: boolean }): boolean {
+  return ended && (moved > 0 || shrinkOwed(client, upTo));
+}
+
 /** The move's `VACUUM`: beside the move, giving way to the thread `options.watch` watches, or on its connection. */
-function vacuumFor(client: Client, path: string, free: Free, { watch, signal }: RuleProvenanceMoveOptions): () => Promise<void> {
+function vacuumFor(client: Client, path: string, free: Free, options: RuleProvenanceMoveOptions): () => Promise<void> {
+  const { watch, signal } = options;
   if (watch === undefined) {
     return () => free(() => {
       client.exec("VACUUM");
     });
   }
-  return () => vacuumGivingWay(client, path, { watch, signal });
+  const noticeMs = options.waitNotice ?? WAIT_NOTICE_MS;
+  return () => vacuumGivingWay(client, path, {
+    watch, signal, noticeMs,
+    waitedLong: quietMs => sayStillWaiting(client, path, { quietMs, noticeMs }),
+  });
 }
 
 /**
@@ -170,10 +194,10 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * 4,000 audits 8.9 s, past the 2 s a hook's health probe waits. The calling thread's own writes still wait for the
  * write lock the `VACUUM` holds, so the `VACUUM` gives way to them: the worker pings this thread while it runs, and ends
  * it once this thread stops answering (`watchThread`). `signal` stops the move before its next step, and a running
- * `VACUUM` at once. A file with nothing to move, read on the calling thread, starts no thread.
+ * `VACUUM` at once. A file with nothing to move and no `VACUUM` owed, read on the calling thread, starts no thread.
  */
 export async function moveRuleProvenancesInWorker(path: string, signal?: AbortSignal): Promise<number> {
-  if (signal?.aborted === true || !existsSync(path) || !leftToMove(path)) return 0;
+  if (signal?.aborted === true || !existsSync(path) || !workLeft(path)) return 0;
   const worker = moveWorker(path);
   const stop = (): void => worker.postMessage(MOVE_STOP);
   signal?.addEventListener("abort", stop, { once: true });
@@ -269,19 +293,34 @@ function stepAppliedAt(database: RerailDatabase): number | undefined {
 const TAKEN = "started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'";
 
 /**
- * Whether the file holds an audit the move takes, read on a read-only connection: once the move has ended, each later
- * daemon start finds none and opens no writer, so it takes no write lock. A read-only open runs a pending step through
- * a writable open first, as it does for any reader.
+ * Whether the file holds an audit the move takes, or a `VACUUM` an earlier move did not finish (`shrinkOwed`), read on a
+ * read-only connection: once the move and its `VACUUM` have ended, each later daemon start finds neither and opens no
+ * writer, so it takes no write lock. A read-only open runs a pending step through a writable open first, as it does for
+ * any reader.
  */
-function leftToMove(path: string): boolean {
+function workLeft(path: string): boolean {
   const database = openRerailDatabase(path, { readonly: true });
   try {
     const upTo = stepAppliedAt(database);
+    const client = database.$client;
     return upTo !== undefined
-      && database.$client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined;
+      && (client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined
+        || shrinkOwed(client, upTo));
   } finally {
     database.$client.close();
   }
+}
+
+/**
+ * Whether a `VACUUM` the move ran up to is owed: an audit that started before the step names a stored provenance (the
+ * move moved it), and the free pages are more than half the file and more than `OWED_FREE_BYTES`. A move whose `VACUUM`
+ * was stopped, skipped or failed leaves the file so; a `VACUUM` that ran leaves no free page.
+ */
+function shrinkOwed(client: Client, upTo: number): boolean {
+  const free = pragmaNumber(client, "freelist_count");
+  return 2 * free > pragmaNumber(client, "page_count") && free * pragmaNumber(client, "page_size") > OWED_FREE_BYTES
+    && client.prepare<[number], number>("SELECT 1 FROM audits WHERE rule_provenance_id IS NOT NULL AND started_at <= ? LIMIT 1")
+      .pluck().get(upTo) !== undefined;
 }
 
 /**
@@ -359,11 +398,31 @@ async function walNotEmptied(client: Client, free: Free): Promise<string | undef
   }
 }
 
-/** The line for a move whose `VACUUM` did not run, with the reason. */
+/** The line for a move whose `VACUUM` did not run, with the reason and what gives the space back. */
 function sayKeepsItsSize(client: Client, path: string, skipped: string): void {
-  const sizes = sizesOr(() => `, ${megabytes(pragmaNumber(client, "freelist_count") * pragmaNumber(client, "page_size"))} of its `
+  process.stderr.write(`rerail: ${path} keeps its size${freeOfSize(client, path)} after this Rerail's upgrade: ${skipped}. `
+    + "Run `rerail scrub` to give the free space back.\n");
+}
+
+/**
+ * The line for a `VACUUM` that has waited `noticeMs` for the quiet it needs: what is free, that the daemon keeps waiting,
+ * and what gives the space back now.
+ */
+function sayStillWaiting(client: Client, path: string, { quietMs, noticeMs }: { quietMs: number; noticeMs: number }): void {
+  process.stderr.write(`rerail: ${path} has not shrunk yet${freeOfSize(client, path)} after this Rerail's upgrade: in `
+    + `${duration(noticeMs)} no other connection left the file alone for the ${duration(quietMs)} its VACUUM waits for. `
+    + "The daemon keeps waiting; run `rerail scrub` to give the free space back now.\n");
+}
+
+/** ", <free> of its <size> free for new history,", or nothing when the sizes cannot be read. */
+function freeOfSize(client: Client, path: string): string {
+  return sizesOr(() => `, ${megabytes(pragmaNumber(client, "freelist_count") * pragmaNumber(client, "page_size"))} of its `
     + `${megabytes(statSync(path).size)} free for new history,`);
-  process.stderr.write(`rerail: ${path} keeps its size${sizes} after this Rerail's upgrade: ${skipped}.\n`);
+}
+
+/** `ms` in whole minutes from one minute up, else in seconds. */
+function duration(ms: number): string {
+  return ms >= 60_000 ? `${Math.round(ms / 60_000)} minutes` : `${ms / 1_000} s`;
 }
 
 /**
