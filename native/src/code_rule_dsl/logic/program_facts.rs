@@ -179,8 +179,6 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
         // `text_globs`: `.scope text`'s, in order.
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
-        // `ast_patterns`: the tree patterns the program's `ast` atoms match.
-        ("ast_pattern", &["p:sym", "pattern:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
         // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
@@ -212,6 +210,9 @@ struct Writer<'a> {
     terms: i64,
     atoms: i64,
     literals: i64,
+    /// Whether the parts `.rr` syntax writes are written too (rules, declarations, facts, inputs, outputs), or only
+    /// the rest (`write_about`, decision 0155).
+    syntax: bool,
 }
 
 impl Writer<'_> {
@@ -306,6 +307,14 @@ impl Writer<'_> {
 
     fn program(&mut self, prog: &Program) {
         self.row("program", vec![]);
+        if self.syntax {
+            self.syntax_parts(prog);
+        }
+        self.rest(prog);
+    }
+
+    /// What `.rr` syntax writes of `prog`: its rules, declarations, facts' rows, inputs and outputs.
+    fn syntax_parts(&mut self, prog: &Program) {
         for (r, rule) in prog.rules.iter().enumerate() {
             let head = self.atom(&rule.head);
             self.row("rule", vec![n(r), n(head)]);
@@ -320,6 +329,28 @@ impl Writer<'_> {
                 self.row("decl", vec![s(rel), n(i), s(col), s(ty)]);
             }
         }
+        for (rel, rows) in &prog.facts {
+            for (row, values) in rows.iter().enumerate() {
+                self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
+                for (i, v) in values.iter().enumerate() {
+                    let (kind, num, text) = match v {
+                        Value::Int(x) => ("int", *x, ""),
+                        Value::Str(x) => ("str", 0, x.as_str()),
+                    };
+                    self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
+                }
+            }
+        }
+        for (k, rel) in prog.inputs.iter().enumerate() {
+            self.row("input", vec![n(k), s(rel)]);
+        }
+        for (k, rel) in prog.outputs.iter().enumerate() {
+            self.row("output", vec![n(k), s(rel)]);
+        }
+    }
+
+    /// The rest: what `.rr` syntax has no form for, and each relation of facts by name (one may have no rows).
+    fn rest(&mut self, prog: &Program) {
         for rel in &prog.nullary {
             self.row("nullary", vec![s(rel)]);
         }
@@ -342,24 +373,8 @@ impl Writer<'_> {
                 self.row("lattice_widen", vec![s(rel), n(k)]);
             }
         }
-        for (rel, rows) in &prog.facts {
+        for rel in prog.facts.keys() {
             self.row("fact_rel", vec![s(rel)]);
-            for (row, values) in rows.iter().enumerate() {
-                self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
-                for (i, v) in values.iter().enumerate() {
-                    let (kind, num, text) = match v {
-                        Value::Int(x) => ("int", *x, ""),
-                        Value::Str(x) => ("str", 0, x.as_str()),
-                    };
-                    self.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
-                }
-            }
-        }
-        for (k, rel) in prog.inputs.iter().enumerate() {
-            self.row("input", vec![n(k), s(rel)]);
-        }
-        for (k, rel) in prog.outputs.iter().enumerate() {
-            self.row("output", vec![n(k), s(rel)]);
         }
         for (set, kinds) in &prog.kindsets {
             self.row("kindset", vec![s(set)]);
@@ -456,15 +471,18 @@ impl Writer<'_> {
             };
             self.row("rx_span", vec![s(&span), s(text)]);
         }
-        for text in &prog.ast_patterns {
-            self.row("ast_pattern", vec![s(text)]);
-        }
     }
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
 pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
-    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true }.program(prog);
+}
+
+/// What of `prog` its `.rr` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
+/// reads them back as a program of those parts alone.
+pub fn write_about(facts: &mut Facts, p: &str, prog: &Program) {
+    Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.program(prog);
 }
 
 /// Why facts do not read back as a program.
@@ -898,7 +916,6 @@ impl<'a, C: Cell> Reader<'a, C> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
         prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
-        prog.ast_patterns = self.get("ast_pattern").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
         for row in self.get("answer") {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
