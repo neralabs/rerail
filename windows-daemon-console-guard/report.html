@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 678 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #678</div>
+  <h1>Tests that fail if the Windows daemon starts with no console</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Would these tests fail if any way Rerail starts the daemon gave it no console again, or if a child were started around the helper?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it once <code>Unit tests (Windows, 2/2)</code> passes on a rerun: tests, docs, a comment and two source lines no caller can observe, and each test failed when we put back what it guards.</p>
+  <div class="big">
+    <div><b class="w">263 lines</b><span>in 5 files. 9 ship, 176 run in every test run, 78 are tests and text.</span></div><div><b class="w">Fast lane</b><span>A code owner or the automated reviewer approves.</span></div><div><b class="w">Waits on a CI rerun</b><span>One Windows unit job failed on another file&#x27;s test.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/678">GitHub</a> on 13 November 2026, at head b9088adf5.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>The daemon&#x27;s console</b></td><td class="in" data-l="Intended">The daemon &quot;never starts without a console&quot;, so a child started without <code>windowsHide</code> &quot;opens no window either&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">No test of main starts a process as the daemon is started and reads its console. <span class="tagx">reading main&#x27;s tests</span></td><td class="now" data-l="Now"><b>Closes the gap</b> with a Windows probe, started through <code>launchDetached</code>, that reports its console and the console hosts under two Gits.</td></tr><tr><td class="k"><span class="lb">A</span><b>The start paths</b></td><td class="in" data-l="Intended"><code>launchDetached</code> &quot;is the one way a detached process starts on Windows&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">Sent through Node&#x27;s spawn, 3 of the 4 start functions failed no test in main&#x27;s <code>daemon-control.test.ts</code>. <span class="tagx">one run, Linux x64</span></td><td class="now" data-l="Now"><b>Closes the gap</b> with one test per start function, on every OS.</td></tr><tr><td class="k"><span class="lb">B</span><b>The exit reason</b></td><td class="in" data-l="Intended"><code>exitReason</code> gives &quot;Why the launched process is gone, or undefined while it runs.&quot; <span class="tagx">code comment</span></td><td class="fo" data-l="Found">On Windows a second ask after the exit threw. Only the probe&#x27;s test asks twice. <span class="tagx">test runs, Windows 11</span></td><td class="now" data-l="Now"><b>Closes the gap.</b> <code>launchDetached</code> keeps the first reason for every later ask.</td></tr></tbody></table>
+<figcaption>Found on 12 and 13 November 2026, on Windows 11 and Linux x64.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. The daemon&#x27;s console</td><td data-l="Where main states the intent"><code>docs/windows.md</code> lines 79 and 80: &quot;On Windows the daemon owns a console that has no window, and every console program it starts shares that console. It never starts without a console.&quot; Lines 84 and 85: &quot;A child started without `windowsHide`, by a library Rerail does not control for example, then shares the hidden console and opens no window either.&quot; This pull request rewrites the first sentence: see <a href="#asks">part 9</a>.</td><td data-l="The cause, and what was measured">Rerail 0.1.3 started its daemon through the native spawn with <code>DETACHED_PROCESS</code> (<code>native/src/process.rs</code> at v0.1.3, line 250), which gives a Windows process no console, so each Git it ran opened a window (#507). #503 changed the flag to <code>CREATE_NO_WINDOW</code>. Main&#x27;s launch test (<code>test/runtime/daemon-control.test.ts</code> line 810) hands <code>launchDetached</code> a stand-in spawn and compares the launch it received. The Rust test at <code>native/src/process.rs</code> line 338 compares flag numbers. Neither asks Windows.</td></tr><tr><td class="k">A. The start paths</td><td data-l="Where main states the intent"><code>docs/windows.md</code> lines 90 to 93: &quot;`launchDetached` (`src/runtime/daemon-control.ts`) is the one way a detached process starts on Windows: the daemon for `rerail daemon start`, the `rerail daemon start` a session&#x27;s autostart runs (so the SQLite probe, npm and the managed-version dispatch it runs open no window either), and the replacement a daemon starts near its heap limit (`relaunchDaemon`).&quot;</td><td data-l="The cause, and what was measured"><code>startDaemon</code> and <code>startDaemonForPackage</code> reach <code>launchDetached</code> through <code>spawnDaemon</code> (<code>src/runtime/daemon-control.ts</code> line 987), and <code>relaunchDaemon</code> through <code>launchDaemonProcess</code> (line 983). Main tests <code>launchDetached</code> itself and <code>autostartDaemon</code> (the test file, lines 810 and 861). Its older start test (line 831) gives its stand-in machine both spawns and counts a launch from either, so it passed when each function went through Node&#x27;s spawn. On Windows, main&#x27;s <code>windows-daemon-launch.test.ts</code> starts a real daemon through <code>startDaemon</code> and checks an inherited pipe. No run tried it against Node&#x27;s spawn.</td></tr><tr><td class="k">B. The exit reason</td><td data-l="Where main states the intent"><code>src/runtime/daemon-control.ts</code> line 895, the comment on <code>LaunchedDaemon.exitReason</code>: &quot;Why the launched process is gone, or undefined while it runs.&quot; <code>docs/windows.md</code> lines 97 and 98 add that the exit code comes from the handle the native module kept, &quot;even once Windows has given its pid to another process&quot;.</td><td data-l="The cause, and what was measured">The native module drops the process and its handle once it has given the exit code (<code>native/src/process.rs</code> line 328), and a later read fails: &quot;process {pid} was not started by spawnDetached in this process&quot; (line 315). Line 957 of <code>daemon-control.ts</code> reads the handle on every ask. <code>readyDaemon</code> (line 1013) stops at the first reason. With main&#x27;s source the exit-code test fails on Linux x64 (1 run) and on Windows 11 (2 of 2 runs).</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 245" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Console guard tests, low risk, 176 lines; B, Exit reason kept, low risk, 9 lines. Read first: console-probe.ts, daemon-control.ts, check-owned-builtins.mjs. To skim: 60 lines of tests and 18 lines of one docs page, `docs/windows.md`." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk low"/><text x="49" y="38" class="t s">Low risk, 176 lines</text><text x="336" y="38" text-anchor="end" class="t s">runs in every test run</text><text x="128" y="59" text-anchor="end" class="t s">console-probe.ts</text><g><title>console-probe.ts: 172 changed lines, low risk</title><path d="M134 50h47.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-47.6z" class="rk low"/></g><text x="190.6" y="59" class="t n">172</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">owned-builtins check</text><g><title>owned-builtins check: 4 changed lines, low risk</title><path d="M134 67h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk low"/></g><text x="140.2" y="76" class="t n">4</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">3</text><rect x="4.5" y="90.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="104" text-anchor="middle" class="t b">B</text><rect x="30" y="95" width="14" height="10" rx="2" class="rk low"/><text x="49" y="104" class="t s">Low risk, 9 lines</text><text x="128" y="125" text-anchor="end" class="t s">daemon-control.ts</text><g><title>daemon-control.ts: 9 changed lines, low risk</title><path d="M134 116h0a2.7 2.7 0 0 1 2.7 2.7v5.6a2.7 2.7 0 0 1 -2.7 2.7h-0z" class="rk low"/></g><text x="141.7" y="125" class="t n">9</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">2</text><line x1="4" y1="139" x2="336" y2="139" class="ar thin"/><text x="4" y="159" class="t b">Skim: tests and text</text><text x="128" y="179" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 45 changed lines, skim</title><path d="M134 170h9.5a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-9.5z" class="rk skim"/></g><text x="152.5" y="179" class="t n">45</text><text x="128" y="196" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 15 changed lines, skim</title><path d="M134 187h0.5a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-0.5z" class="rk skim"/></g><text x="143.5" y="196" class="t n">15</text><text x="128" y="213" text-anchor="end" class="t s">Windows docs</text><g><title>One docs page, `docs/windows.md`: 18 lines</title><path d="M134 204h1.4a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-1.4z" class="rk skim"/></g><text x="144.4" y="213" class="t n">18</text><rect x="4" y="229" width="14" height="10" rx="2" class="rk high"/><text x="22" y="238" class="t s">High</text><rect x="62.8" y="229" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="238" class="t s">Medium</text><rect x="133" y="229" width="14" height="10" rx="2" class="rk low"/><text x="151" y="238" class="t s">Low risk</text><rect x="214.6" y="229" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="238" class="t s">Skim</text></svg>
+<figcaption>Only step 2 ships: 9 lines.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>console-probe.ts</code>: <code>probeScript</code>, <code>consoleHostsUnder</code>, <code>childOf</code></b><span class="min">6 min</span><span class="x">Could the count read <code>[0, 1]</code> in a process with no console?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>daemon-control.ts</code>: <code>launchDetached</code></b><span class="min">2 min</span><span class="x">Can the kept reason differ from a fresh read?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>check-owned-builtins.mjs</code>: the <code>child-process</code> comment</b><span class="min">1 min</span><span class="x">Main&#x27;s rule refuses a child started around the helper in <code>src</code>. Only its comment changes: is it true since #503?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">4 min</span><span class="x"><code>daemon-control.test.ts</code>: <code>launchProbe</code> and the start-path tests. The exit-code stand-in now throws after its code. <code>docs/windows.md</code>: <a href="#asks">part 9</a> rules on one sentence.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 191" role="img" aria-label="The changes by risk, high on top, against six checks. A, Console guard, low risk: fails without the fix holds with a limit. B, Exit reason, low risk: the first five checks hold. CI at this head does not hold yet for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="82" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Console guard</text><g><title>Console guard, fails without the fix: With this head&#x27;s `launchDetached` on Node&#x27;s detached spawn, which gives no console, the probe test fails in 2 of 2 runs on Windows 11: `{ attached: false, consoleHosts: [1, 1] }`. The limit: Rerail 0.1.3 got no console from `DETACHED_PROCESS` in the native spawn, which no run put back. The start-path tests cannot see that flag: their native spawn is a stand-in.</title><circle cx="150" cy="52" r="7.4" class="ml"/><path d="M150 44.6A7.4 7.4 0 0 0 150 59.4Z" class="mlf"/></g><g><title>Console guard, independent review: An independent check put four things back under these tests: a launch with no console, each start function sent through Node&#x27;s spawn, a child started around the helper in `src`, and main&#x27;s exit-reason line. Each failed the tests that guard it, and no other new test. The automated reviewer&#x27;s full review of this head: 0 blockers, 0 follow-ups, 0 nits.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Console guard, users lose nothing: Nothing ships: test support, tests, docs and a comment. On Windows the probe test starts one Node process, two Gits and one PowerShell read of the process table, and kills a probe still running 10 s after it was told to end. It took 1.1 s on a Windows 11 desktop and 3.8 s on CI&#x27;s runner, one run each.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Console guard, rules scan: nothing new: 40 checks, no finding: the scan the automated reviewer runs, with rules from main, against the merge base a9101752c.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Console guard, Windows 11: no new failure: `daemon-control.test.ts` passed in 20 of 20 runs in a row on Windows 11 with Node 24.21.0, while up to 5 other test runs used the machine: 45 passed and 2 skipped in each.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Console guard, CI at this head: The pull request&#x27;s 33 checks at b9088adf5, read on 13 November 2026 (CI is run 43507062446): 23 pass, 8 are skipped, 2 fail. The 2 are `Unit tests (Windows, 2/2)` and `CI result`, which reports it. The job failed 1 test, in `claude-status.test.ts`, which this change does not touch, and passed this change&#x27;s test file, the probe included. Not rerun.</title><circle cx="320" cy="52" r="7.4" class="mo"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Exit reason</text><g><title>Exit reason, fails without the fix: With main&#x27;s `daemon-control.ts` the exit-code test fails on Linux x64 (1 run) and on Windows 11 (2 of 2 runs): &quot;process 3492977 was not started by spawnDetached in this process&quot;. With only the fix&#x27;s line taken out, the exit-code test and the probe test fail on Windows 11 in 2 of 2 runs.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Exit reason, independent review: An independent check took the fix&#x27;s line out and reran on Windows 11: the exit-code test and the probe test failed in 2 of 2 runs, and no other. The automated reviewer&#x27;s full review of this head checked the kept answer against the native module: 0 blockers, 0 follow-ups, 0 nits.</title><circle cx="184" cy="84" r="8" class="mh"/><path d="M180 84l3 3l5 -6" class="mt"/></g><g><title>Exit reason, users lose nothing: `readyDaemon`, the only caller of `exitReason` in `src`, stops at the first reason, and the package exports neither `launchDetached` nor `LaunchedDaemon`. No command, format or stored data changes. The 12 test files that import the changed modules pass on Linux x64: 316 passed, 2 skipped, 0 failed.</title><circle cx="218" cy="84" r="8" class="mh"/><path d="M214 84l3 3l5 -6" class="mt"/></g><g><title>Exit reason, rules scan: nothing new: No finding in the touched files. `launchDetached` counts 2 and `detachedExitReason` 4, at main and here.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Exit reason, Windows 11: no new failure: The 12 test files that this branch changes or that import `daemon-control.ts` or the structure check pass on Windows 11 with Node 24.21.0: 306 passed, 12 skipped, 0 failed, and no failure outside main&#x27;s results on that machine.</title><circle cx="286" cy="84" r="8" class="mh"/><path d="M282 84l3 3l5 -6" class="mt"/></g><g><title>Exit reason, CI at this head: The pull request&#x27;s 33 checks at b9088adf5, read on 13 November 2026 (CI is run 43507062446): 23 pass, 8 are skipped, 2 fail. The 2 are `Unit tests (Windows, 2/2)` and `CI result`, which reports it. The job failed 1 test, in `claude-status.test.ts`, which this change does not touch, and passed this change&#x27;s test file, the probe included. Not rerun.</title><circle cx="320" cy="84" r="7.4" class="mo"/></g><text x="8" y="121" class="t s">1  fails without the fix</text><text x="168" y="121" class="t s">2  independent review</text><text x="8" y="137" class="t s">3  users lose nothing</text><text x="168" y="137" class="t s">4  rules scan: nothing new</text><text x="8" y="153" class="t s">5  Windows 11: no new failure</text><text x="168" y="153" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="177" r="8" class="mh"/><path d="M10 177l3 3l5 -6" class="mt"/></g><text x="28" y="181" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="177" r="7.4" class="ml"/><path d="M92 169.6A7.4 7.4 0 0 0 92 184.4Z" class="mlf"/></g><text x="106" y="181" class="t s">holds with a limit</text><g><title>does not hold yet</title><circle cx="244.1" cy="177" r="7.4" class="mo"/></g><text x="258.1" y="181" class="t s">not yet</text></svg>
+<figcaption>Start at check 6: CI has not passed.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">A. Console guard</td><td data-l="Check">fails without the fix</td><td data-l="Its limit, or why it does not hold yet">With this head&#x27;s <code>launchDetached</code> on Node&#x27;s detached spawn, which gives no console, the probe test fails in 2 of 2 runs on Windows 11: <code>{ attached: false, consoleHosts: [1, 1] }</code>. The limit: Rerail 0.1.3 got no console from <code>DETACHED_PROCESS</code> in the native spawn, which no run put back. The start-path tests cannot see that flag: their native spawn is a stand-in.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="Its limit, or why it does not hold yet">The pull request&#x27;s 33 checks at b9088adf5, read on 13 November 2026 (CI is run 43507062446): 23 pass, 8 are skipped, 2 fail. The 2 are <code>Unit tests (Windows, 2/2)</code> and <code>CI result</code>, which reports it. The job failed 1 test, in <code>claude-status.test.ts</code>, which this change does not touch, and passed this change&#x27;s test file, the probe included. Not rerun.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Console guard tests</b><span class="chip low"><i></i>Low risk</span><span class="sx">Start functions a stand-in test holds to the native spawn on every OS: 1 of 4 at main, 4 here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>If a later change starts the daemon with no console again, each Git it runs opens a window that takes focus, as with Rerail 0.1.3 (#507). At main the first to learn of it is a person at their desktop.</dd>
+<dt>Who meets it</dt><dd>Every person who runs Rerail on Windows, once such a change lands. With 0.1.3 a Windows Terminal window opened every few seconds. Source: #507, which #503 closed.</dd>
+<dt>What it does</dt><dd><code>runConsoleProbe</code> writes a script and has the test start it through <code>launchDetached</code>. The script says whether <code>CONOUT$</code> opens and starts two Gits, one without <code>windowsHide</code> and one with it. <code>consoleHostsUnder</code> counts <code>conhost.exe</code> under each in one read of the process table. Three tests start the daemon by <code>startDaemon</code>, <code>startDaemonForPackage</code> and <code>relaunchDaemon</code> on a stand-in Windows machine whose Node spawn throws.</dd>
+<dt>Risk</dt><dd>Low. Nothing ships. A wrong probe costs contributors: a test that cannot fail gives false cover, and one that fails at random blocks CI.</dd>
+<dt>Check</dt><dd>Can <code>[0, 1]</code> come from a process with no console? There the first Git gets a console host of its own: <code>[1, 1]</code> in 2 of 2 runs. Does <code>childOf</code> leave out only a host whose parent pid went to a later process? <code>endProbe</code> kills a probe 10 s after <code>done</code>, and the two Gits end when their input closes. The probe&#x27;s own <code>spawn</code> is test code: the structure check covers <code>src</code>. In the test, <code>launchProbe</code> calls the real <code>launchDetached</code>.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Of the four functions that start the daemon, a stand-in test that runs on every OS holds 1 to the native spawn at main and 4 with this change. Main&#x27;s Windows-only launch test starts a real daemon through startDaemon. Tests that start a process as the daemon is started and read its console: none at main, 1 here, on Windows." class="dg pic"><text x="4" y="17" class="t b">Start functions held on every OS</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Start functions held on every OS, main: 1 of 4</title><path d="M80 24h34a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-34z" class="rk was"/></g><text x="124" y="34" class="t n">1 of 4</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Start functions held on every OS, this change: 4 of 4</title><path d="M80 41h148a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-148z" class="rk now"/></g><text x="238" y="51" class="t n">4 of 4</text><text x="4" y="75" class="t b">Tests that read the console</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Tests that read the console, main: none</title><path d="M80 82h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="92" class="t n">none</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Tests that read the console, this change: 1, on Windows</title><path d="M80 99h34a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-34z" class="rk now"/></g><text x="124" y="109" class="t n">1, on Windows</text></svg><figcaption>Method: each of the four start functions was sent through Node&#x27;s spawn under this head&#x27;s tests on Linux x64, one run. The three new start-path tests and main&#x27;s autostart test failed. Main&#x27;s launch test, exit-code test and older start test passed. The probe test and main&#x27;s launch test with a real daemon run on Windows only, so neither ran.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Exit reason kept</b><span class="chip low"><i></i>Low risk</span><span class="sx">A second ask after the exit: throws at main, gives the same reason here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>On Windows, asking a launched process&#x27;s exit reason again after it has exited throws. No person meets it: <code>readyDaemon</code> stops at the first reason. The probe&#x27;s test asks again when it ends its probe.</dd>
+<dt>Who meets it</dt><dd>No user today. The next caller that asks twice, and this pull request&#x27;s probe test, whose <code>endProbe</code> asks until the probe is gone and once more. Source: a read of <code>src</code> at main, and the test runs.</dd>
+<dt>What it does</dt><dd>On Windows <code>launchDetached</code> holds the first reason <code>detachedExitReason</code> gives in a local, <code>exited</code>, and returns it on every later ask (<code>??=</code>). While the process runs the reason is undefined, so each ask still reads the handle. The macOS and Linux branch already keeps the reason its exit event gave. Two doc comments say what the handle does.</dd>
+<dt>Risk</dt><dd>Low. Two lines in the daemon launch. <code>readyDaemon</code>, the only caller in <code>src</code>, stops at the first reason, so no command&#x27;s output changes.</dd>
+<dt>Check</dt><dd>Does <code>??=</code> keep only a reason, never the undefined of a running process? With a native binary built before the module kept a handle, <code>detachedExitReason</code> answers <code>exited</code> from the pid alone. Once kept, that answer stays if Windows gives the pid to another process, where main would answer undefined again. Is the kept answer the one you want there?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Of two asks for the exit reason after the process is gone, main answers 1 and throws on the second. This change answers both with the same reason." class="dg pic"><text x="4" y="17" class="t b">Asks answered after the exit</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Asks answered after the exit, main: 1, then throws</title><path d="M80 24h59.3333a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-59.3333z" class="rk was"/></g><text x="149.333" y="34" class="t n">1, then throws</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Asks answered after the exit, this change: 2 of 2</title><path d="M80 41h122.667a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-122.667z" class="rk now"/></g><text x="212.667" y="51" class="t n">2 of 2</text></svg><figcaption>Method: the exit-code test&#x27;s stand-in closes its handle once it has given the code, as the native module does, and is asked three times: once while the process runs and twice after. With main&#x27;s source the third ask throws, on Linux x64 (1 run) and on Windows 11 (2 of 2 runs).</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Read what Windows did, or check the request&#x27;s flags?</h3>
+<p><b>We chose</b> a real process read from Windows.</p>
+<p><b>Would change our mind:</b> a Windows build where the probe passes and a window still opens.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A real process, read from Windows <span class='tag new'>chosen</span></td><td data-l="What a user gets">A failure when the launch gives no console, whatever the code believes.</td><td data-l="Cost">172 lines of test support, one PowerShell read of the process table, and 1.1 s on a Windows 11 desktop or 3.8 s on CI&#x27;s runner. Windows only.</td><td data-l="What it breaks">Nothing. It does not run on a fork&#x27;s pull request, which CI&#x27;s unit jobs skip.</td></tr><tr><td class="k">Flags and arguments only, as main does today</td><td data-l="What a user gets">Tests on every OS that start nothing.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">They check the request, not the result.</td></tr><tr><td class="k">Start a built daemon and watch the desktop for windows</td><td data-l="What a user gets">The thing a person sees.</td><td data-l="Cost">A tracer of windows and a signed-in desktop. Not built.</td><td data-l="What it breaks">Nothing known.</td></tr></tbody></table></div><p><b>Evidence.</b> With this head&#x27;s <code>launchDetached</code> on Node&#x27;s detached spawn, which gives no console, the probe test failed in 2 of 2 runs on Windows 11. At this head it passed in 20 of 20. A console host counts under a Git only when it started after it (<code>childOf</code>), so a pid Windows gave to another process is not counted. Rerail 0.1.3 got no console from <code>DETACHED_PROCESS</code> in the native spawn. No run put that flag back or ran the 0.1.3 package.</p></details></div>
+<div class="dblock"><h3>Which two Gits does the probe start?</h3>
+<p><b>We chose</b> one without <code>windowsHide</code>, one with it: only the first tells the two launches apart.</p>
+<p><b>Would change our mind:</b> a Windows whose console host is not <code>conhost.exe</code>.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">First Git without <code>windowsHide</code>, second with it <span class='tag new'>chosen</span></td><td data-l="What a user gets">Two signals and a control: <code>attached</code>, and the count under the first Git, 0 when it shares the process&#x27;s console and 1, with a window, when the process has none.</td><td data-l="Cost">The probe starts one child with Node&#x27;s own <code>spawn</code>, as a library could. Test code may: the structure check covers <code>src</code>.</td><td data-l="What it breaks">Nothing.</td></tr><tr><td class="k">Both Gits through the helper</td><td data-l="What a user gets">The path Rerail&#x27;s own children take.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks"><code>windowsHide</code> gives each child a hidden console of its own, so the count reads <code>[1, 1]</code> with a daemon console and without one. It could not fail.</td></tr><tr><td class="k"><code>attached</code> alone</td><td data-l="What a user gets">A shorter probe.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">One signal, and nothing about what a child gets.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">No console: a start through Node&#x27;s detached spawn</div><svg viewBox="0 0 340 75" role="img" aria-label="With a start through Node&#x27;s detached spawn, which gives a process no console as Rerail 0.1.3&#x27;s native spawn did, the probe has no console, and each of its two Gits has one console host. The Git started without windowsHide gets a console of its own, with a window." class="dg "><rect x="8" y="6" width="324" height="63" rx="8" class="bx mono"/><rect x="16" y="13" width="38" height="15" rx="3" class="bx acc"/><text x="20" y="24" class="t s">false</text><text x="60" y="24" class="t s">attached: the probe has no console</text><rect x="16" y="30" width="15" height="15" rx="3" class="bx acc"/><text x="20" y="41" class="t s">1</text><text x="37" y="41" class="t s">console host under the Git without windowsHide</text><rect x="16" y="47" width="15" height="15" rx="3" class="bx acc"/><text x="20" y="58" class="t s">1</text><text x="37" y="58" class="t s">console host under the Git with windowsHide</text></svg></div><div class="pn after"><div class="pt">main and this head: the native spawn</div><svg viewBox="0 0 340 75" role="img" aria-label="With main&#x27;s launch and at this head the probe has a console with no window. The Git started without windowsHide shares it and has no console host. The Git started with windowsHide has one, hidden." class="dg "><rect x="8" y="6" width="324" height="63" rx="8" class="bx mono"/><rect x="16" y="13" width="32" height="15" rx="3" class="bx acc"/><text x="20" y="24" class="t s">true</text><text x="54" y="24" class="t s">attached: a console with no window</text><rect x="16" y="30" width="15" height="15" rx="3" class="bx acc"/><text x="20" y="41" class="t s">0</text><text x="37" y="41" class="t s">console hosts under the Git without windowsHide</text><rect x="16" y="47" width="15" height="15" rx="3" class="bx acc"/><text x="20" y="58" class="t s">1</text><text x="37" y="58" class="t s">console host under the Git with windowsHide</text></svg></div></div><p><b>Evidence.</b> <code>[1, 1]</code> with a start through Node&#x27;s detached spawn, and <code>[0, 1]</code> with main&#x27;s launch and at this head, each in 2 of 2 runs on Windows 11. Main&#x27;s launch was measured with the probe&#x27;s end made to ask once, since main&#x27;s source throws on the second ask. The description, under &quot;Decisions&quot;, draws the two launches.</p></details></div>
+<div class="dblock"><h3>Where is the first exit reason kept?</h3>
+<p><b>We chose</b> in <code>launchDetached</code>: 2 lines, as the macOS and Linux branch does.</p>
+<p><b>Would change our mind:</b> a second caller of the native <code>detachedExitCode</code>.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Keep it in <code>launchDetached</code> <span class='tag new'>chosen</span></td><td data-l="What a user gets">The same reason on every ask, as the macOS and Linux branch gives.</td><td data-l="Cost">2 lines of TypeScript.</td><td data-l="What it breaks">Nothing: <code>readyDaemon</code> stops at the first answer.</td></tr><tr><td class="k">Keep the code in the native module after it closes the handle</td><td data-l="What a user gets">The same, for any caller of <code>detachedExitCode</code>.</td><td data-l="Cost">Rust code and a native build for each platform.</td><td data-l="What it breaks">Nothing known.</td></tr><tr><td class="k">Make the test ask once</td><td data-l="What a user gets">No source change.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">The throw stays for the next caller that asks again after an exit.</td></tr></tbody></table></div><p><b>Evidence.</b> The exit-code test&#x27;s stand-in closes its handle as the native module does (<code>native/src/process.rs</code>) and is asked three times. It fails on main&#x27;s source on Linux x64 and on Windows 11, and passes here. In <code>src</code> at main, <code>detachedExitCode</code> has one caller: the wrapper <code>launchDetached</code> reads through.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 292" role="img" aria-label="Pull request #678 is based on main at a9101752c and needs no other change. One change of ours not yet open, in which the helper&#x27;s children share the daemon&#x27;s console, is not ready and would come after it. In trial merges it conflicts with the draft #657 in two import lists of one test file, and merges clean with 8 other open pull requests and with main two commits on, at c438bc813." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at a9101752c</text><text x="14" y="38" class="t s">needs no other change</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#678 Console guard tests</text><text x="170" y="116" text-anchor="middle" class="t s">tests, docs, two source lines</text><line x1="170" y1="127" x2="170" y2="151" class="ar dash" marker-end="url(#ah)"/><text x="176" y="143" class="t s">would come after</text><rect x="4" y="152" width="332" height="50" rx="8" class="bx "/><text x="14" y="171" class="t b">Children share the console</text><text x="14" y="186" class="t s">not open, not ready</text><text x="4" y="222" class="t b">Trial merges with open work</text><rect x="4" y="230" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="247" class="t b">#657, a draft</text><text x="12" y="263" class="t s">import lists:</text><text x="12" y="277" class="t s">1 conflict</text><rect x="116" y="230" width="108" height="58" rx="8" class="bx good"/><text x="124" y="247" class="t b">8 other open</text><text x="124" y="263" class="t s">pull requests:</text><text x="124" y="277" class="t s">clean</text><rect x="228" y="230" width="108" height="58" rx="8" class="bx good"/><text x="236" y="247" class="t b">main today</text><text x="236" y="263" class="t s">2 commits on:</text><text x="236" y="277" class="t s">clean</text></svg></figure>
+<div><p>Nothing has to merge first: it stands on main at a9101752c.</p>
+<p>Main has since taken #529 and #659: a trial merge is clean. Our draft #657 conflicts in two import lists.</p>
+<details class="ev"><summary>Open pull requests that share a file</summary><p>Trial merges of b9088adf5, read on 13 November 2026. #657 edits <code>daemon-control.ts</code> and its test file. The merge conflicts in the test file&#x27;s two import lists only, and whichever lands second keeps both lists. The start-path tests have not run on that merge. #650, #652, #656, #672, #673, #676, #677 and the team&#x27;s #667 each edit one of these files in other lines, and each merge is clean. The description, under &quot;How it fits&quot;, has one row per pull request and the head each merge used.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>CI at this head</b> has not passed: one Windows unit job failed, on another file&#x27;s test.</li>
+<li><b>One start path has no test:</b> the <code>startDaemonForPackage</code> branch that replaces another package&#x27;s healthy daemon.</li>
+<li><b>Rerail 0.1.3&#x27;s own launch</b> was not put back: <code>DETACHED_PROCESS</code> in the native spawn. Node&#x27;s detached spawn stands in.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, six limits that stay</summary><ul class="facts">
+<li><b>A new start path.</b> A new way to start the daemon that calls none of the four start functions or <code>launchDetached</code> is not caught. A row of the <code>owned-builtins</code> check that lets only <code>launchDetached</code> pass <code>detached: true</code> would refuse it in <code>src</code> before any test. Not built here.</li>
+<li><b>A fork&#x27;s pull request.</b> CI&#x27;s unit jobs skip it, so the probe does not run there. A Windows job without the pack test data that runs <code>npx vitest run test/runtime/daemon-control.test.ts</code> would run it. Not built here.</li>
+<li><b>The merge with #657.</b> The start-path tests have not run on it. Whichever lands second keeps both import lists.</li>
+<li><b>The other branch of <code>startDaemonForPackage</code>.</b> It calls the same <code>spawnDaemon</code> as the tested branch. A test of it needs a stand-in machine with a healthy daemon from another package root. Main&#x27;s test of that branch starts a real daemon and checks its pid and package root, not its start.</li>
+<li><b>Repeated runs on Linux.</b> This head did not run 20 times there: the four tests of the change that run on Linux use stand-ins and no timing.</li>
+<li><b>Our own whole <code>npm test</code></b> did not run. CI ran it.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A child that a dependency starts detached, or with a new console, inside the daemon gets no console, or one with a window, whatever the daemon has. The probe covers a child started with neither.</li>
+<li>A console that has a window: the probe reads whether a console exists. The Rust test <code>starts_the_daemon_with_a_hidden_console_not_without_one</code> holds the flag.</li>
+<li>Windows from processes Rerail does not start: a coding agent&#x27;s hook process, the CLI in a terminal, Git hooks, credential helpers. And <code>spawnShown</code>, which shows one by design.</li>
+<li>Each Git the helper starts still gets a hidden console host of its own. The control Git measures it (1), and it stays as main designs it.</li>
+<li>A Windows whose console host is not <code>conhost.exe</code>: every count reads 0, and the control Git fails the test.</li>
+<li>Main&#x27;s test &quot;goes through the native spawn on Windows, whose hidden console the daemon&#x27;s Git and npm share, never Node&#x27;s detached spawn&quot; keeps its name. It checks the arguments handed to the native spawn, not the sharing.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<ol class="lines">
+<li><div><b>Main&#x27;s docs say every child of the daemon shares its console; the helper&#x27;s get their own. Correct the sentence?</b> We recommend yes, as here: no code changes, and sharing is a later change.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; for the runs and CI, &quot;Decisions&quot; for the options, &quot;What is not covered&quot; for each gap.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">The pull request&#x27;s checks at b9088adf5 (CI is run 43507062446), read on 13 November 2026</td><td data-l="Result">33 checks: 23 pass, 8 are skipped, 2 fail. The 2 are <code>Unit tests (Windows, 2/2)</code> and <code>CI result</code>, which reports it. That job failed 1 test, in <code>test/hosts/claude/claude-status.test.ts</code>, passed 4,255 and skipped 44. It ran this pull request&#x27;s test file on Windows Server 2025: 47 tests, 2 skipped, none failed, the probe test in 3,775 ms. Not rerun.</td></tr><tr><td class="k">Windows 11, Node 24.21.0</td><td data-l="What ran"><code>test/runtime/daemon-control.test.ts</code> at this head, 20 runs in a row, while up to 5 other test runs used the machine</td><td data-l="Result">20 of 20 pass: 45 passed and 2 skipped in each, 8 to 14 s a run.</td></tr><tr><td class="k">Windows 11, Node 24.21.0</td><td data-l="What ran">The 12 test files that this branch changes or that import <code>daemon-control.ts</code> or the structure check</td><td data-l="Result">12 files passed: 306 passed, 12 skipped, 0 failed. Against main&#x27;s results on that machine: no new failure, none flaky, none with another message. The probe test took 1,085 ms.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The same 12 files, 4 workers</td><td data-l="Result">11 files passed, 1 skipped: 316 passed, 2 skipped, 0 failed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">This head with <code>launchDetached</code> on Node&#x27;s detached spawn on Windows too, which gives the process no console: the test file, 2 runs</td><td data-l="Result">2 of 2 runs fail, 7 tests each: the probe test, which reads <code>{ attached: false, consoleHosts: [1, 1] }</code>, the three start-path tests, and main&#x27;s autostart, launch and exit-code tests.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Each of the four start functions sent through Node&#x27;s spawn, and a value import of <code>node:child_process</code> added to <code>src/engine/git.ts</code>, the test file and the structure check&#x27;s test: 1 run</td><td data-l="Result">5 failed, 121 passed, 1 skipped: the three start-path tests, main&#x27;s autostart test, and the structure check&#x27;s test (<code>src/engine/git.ts:2 [child-process]</code>).</td></tr><tr><td class="k">Windows 11, Linux x64</td><td data-l="What ran">This head with the fix&#x27;s line taken out (Windows 11, 2 runs), and with main&#x27;s <code>daemon-control.ts</code> (Linux x64, the file, 1 run)</td><td data-l="Result">Windows 11: 2 of 2 runs fail, the exit-code test and the probe test, each with &quot;was not started by spawnDetached in this process&quot;. Linux x64: 1 failed, the exit-code test, 45 passed, 1 skipped.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The rules scan as the automated reviewer runs it, with rules from main, against the merge base a9101752c</td><td data-l="Result">40 checks, no finding. Every function&#x27;s complexity number in <code>daemon-control.ts</code> is main&#x27;s.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>An older native binary keeps <code>exited</code>.</b> A read of the diff. Where the native binary keeps no handle, <code>detachedExitReason</code> answers <code>exited</code> once no process holds the pid. This head keeps that answer. At main a later ask would answer undefined again if Windows gave the pid to another process. <code>readyDaemon</code> stops at the first reason, so no caller sees either. The description does not say it; part 5&#x27;s card for B asks about it.</li>
+<li><b>How Rerail 0.1.3 lost its console.</b> At v0.1.3 the daemon started through the native spawn, whose <code>CreateProcessW</code> call passed <code>DETACHED_PROCESS</code> (<code>native/src/process.rs</code> line 250). Only the autostart launcher used Node&#x27;s spawn. The description, the message of bcee02b8b and a comment in <code>test/runtime/daemon-control.test.ts</code> say Node&#x27;s detached spawn started that daemon. Each needs the correction.</li>
+<li><b>One ask, and a narrower count.</b> The description asks for no ruling. Part 9 asks one: the docs sentence on sharing. The description says three of the four start functions fail no test of main. That was measured on Linux x64 against <code>daemon-control.test.ts</code> and the structure check&#x27;s test. Main&#x27;s Windows-only test of a real daemon was not in that run.</li>
+<li><b>Who approves.</b> The description says a merge needs a code owner&#x27;s review. The automated reviewer&#x27;s review of this head gives one reason for not approving: CI was pending. This report&#x27;s lane tile names both.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>The pull request, its diff, its checks and the automated reviewer&#x27;s review on GitHub, read on 13 November 2026. Rerail at main (c438bc813) for each quoted intent, the same files as at the merge base a9101752c, and at v0.1.3 for that release&#x27;s launch. Our run records for the runs at this head and for each put-back run. The description for the trial merges.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
