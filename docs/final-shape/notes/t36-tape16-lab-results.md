@@ -526,7 +526,33 @@ What this means for format 16:
   columns on Metal" below builds that form. Until then, the double decode is a read of unchanged
   data, and the engine could remove it.
 
+### The pack, 121 rules
+
+The same counts for 121 of the pack's 175 rules (the run was stopped there), each rule alone over
+the whole repository:
+
+| reads per restored node | kind | field | flags | named | span | parent | children | classes | points, prev, size |
+|---|---|---|---|---|---|---|---|---|---|
+| all 121 rules | 2.49 | 0.33 | 0.76 | 1.00 | 0.96 | 0.00 | 1.17 | 0.01 | 0 |
+| median rule | 2.06 | 0.04 | 1.00 | 1.01 | 0.01 | 0.00 | 0.05 | 0.01 | 0 |
+| 90th percentile rule | 2.93 | 0.59 | 1.00 | 1.03 | 1.84 | 0.00 | 2.18 | 0.02 | 0 |
+| heaviest rule | 11.47 | 2.68 | 1.50 | 3.62 | 11.12 | 0.01 | 13.18 | 0.12 | 0 |
+
+The seven rules' finding holds. Kind and flags are swept, and the rest is sparse in the median rule.
+Points, previous siblings and sizes are never read. Tree walks are heavier than the seven showed:
+`rr/bootstrap-engine-invariants` makes 13 children reads and 11 span reads a node, and
+`schema-bootstrap-contracts` 7.3 and 5.9. Through `TapeDoc` these walks read children and spans,
+not parents (parent reads stay under 0.01 a node in every rule).
+
+19 rules have no counts. 12 ran past the 2-minute cap, 5 aborted under strict SQL (below), and 2 were
+cut off when the run was stopped.
+
 ## Open items found along the way
+
+- **The tape cache trips the strict-SQL abort.** The E7 runs had to set `RERAIL_TAPE_CACHE=off` and
+  use a fresh output directory per rule, because a warm store aborts (the next item). Every run then
+  parsed and decoded the whole repository from scratch: 20–116 s and 2–8 GB a rule. Measurement
+  runs must keep their caches, so the abort has to be fixed, not avoided.
 
 - **Strict SQL against atom lookup.** On a warm store, every rule of the `datalog` candidates and of
   `rr` aborts under `RERAIL_SQL_STRICT`: `SELECT id FROM atom_key WHERE h IN rarray(?1)` runs inside
@@ -536,10 +562,16 @@ What this means for format 16:
 - **A library clash in the pack.** The `rr` candidate directory as a whole fails because `pc_base` is
   declared by two library files (`docs/rule-syntax/lib/data-layer/purity-calls.rr` and
   `lib/python/pytest-collect.rr`).
+- **Functions with no native step.** Under strict SQL, strata that use a function the native engine
+  has no step for fall back to SQL and abort. Examples:
+  - `connection-mode-split`: `@prefix($mn, 21) != 1`, stratum `mode_split_hit`.
+  - `regex-sql-parsing`: `@rx($v, 20) != 1`, stratum `rsp_g2`.
+  - `rr/cached-pure-lazy-allowlist`: the head `walk_qualname($f, @cat($p, @nfkc($x)))` has no native
+    form.
+  - `rr/lazy-adapter-ownership`: stratum `rr_mall84` uses a native fact operator over input relations.
 
 ## Not yet measured
 
-- E7 over the whole pack, which needs the strict-SQL item fixed (or a fresh store per run) and runs
-  past 2 minutes.
-- A GPU decode of the format-16 records straight into the columns the readers take, instead of
-  `TapeDoc`'s records.
+- The 12 pack rules that run past 2 minutes on the whole repository. The 121 counted already answer
+  the format question, so they are not worth a longer run.
+- A trace of the columns pipeline's span pass, which looks bound by its longest task.
