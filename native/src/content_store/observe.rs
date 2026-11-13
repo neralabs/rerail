@@ -115,6 +115,7 @@ struct Entry {
     /// A file's bytes' sha256, or a directory's listing's.
     digest: [u8; 32],
     listing: Option<Listing>,
+    entry_types: Option<EntryTypes>,
     recorded_ns: i64,
 }
 
@@ -196,6 +197,8 @@ pub struct Observer {
     /// What the store held as the observer opened, and its writer (`Kept`): `None` without a store.
     db: Option<Kept>,
     entries: HashMap<PathBuf, Entry>,
+    /// Listings whose symlink targets were classified during this run.
+    directory_epochs: HashMap<PathBuf, u64>,
     /// Paths whose entry changed since the last `flush`.
     dirty: Vec<PathBuf>,
     /// Git blob → sha256 of its bytes, seen this process (and in `git_alias`).
@@ -263,19 +266,36 @@ fn listing_digest(entries: &[(String, bool)]) -> [u8; 32] {
     h.finalize().into()
 }
 
-fn encode_listing(entries: &[(String, bool)]) -> Option<Vec<u8>> {
-    if entries.iter().any(|(n, _)| n.contains('\n')) {
-        return None;
+// A fixed-width type column accompanies each name. Legacy boolean-only rows are cache misses.
+fn encode_listing(entries: &[(String, bool)], types: &[EntryType]) -> Option<Vec<u8>> {
+    if entries.len() != types.len() { return None; }
+    let mut out = b"\0DLM1".to_vec();
+    for ((name, is_dir), ty) in entries.iter().zip(types) {
+        let size = u32::try_from(name.len()).ok()?;
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.push(u8::from(*is_dir) | u8::from(ty.is_file) << 1 | u8::from(ty.is_symlink) << 2);
+        out.extend_from_slice(&ty.errno.to_le_bytes());
     }
-    Some(entries.iter().map(|(n, d)| format!("{}{n}", if *d { 'd' } else { 'f' })).collect::<Vec<_>>().join("\n").into_bytes())
+    Some(out)
 }
 
-fn decode_listing(bytes: &[u8]) -> Option<Vec<(String, bool)>> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    if text.is_empty() {
-        return Some(Vec::new());
+fn decode_listing(bytes: &[u8]) -> Option<(Vec<(String, bool)>, Vec<EntryType>)> {
+    let mut rest = bytes.strip_prefix(b"\0DLM1")?;
+    let (mut entries, mut types) = (Vec::new(), Vec::new());
+    while !rest.is_empty() {
+        let size = u32::from_le_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+        rest = rest.get(4..)?;
+        let name = std::str::from_utf8(rest.get(..size)?).ok()?.to_owned();
+        rest = rest.get(size..)?;
+        let flags = *rest.first()?;
+        if flags & !7 != 0 { return None; }
+        let errno = i32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        entries.push((name, flags & 1 != 0));
+        types.push(EntryType { is_file: flags & 2 != 0, is_symlink: flags & 4 != 0, errno });
+        rest = rest.get(5..)?;
     }
-    text.split('\n').map(|l| Some((l.get(1..)?.to_owned(), l.starts_with('d')))).collect()
+    Some((entries, types))
 }
 
 const SCHEMA: &str = "
@@ -334,7 +354,7 @@ impl Observer {
                 .collect();
             super::journal::prepare(&roots, dir);
         }
-        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, cookies }
+        Observer { db, entries, directory_epochs: HashMap::new(), dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, cookies }
     }
 
     /// Waits until everything this observer queued is in its file: a process's end, or a test's next observer.
@@ -519,7 +539,7 @@ impl Observer {
             let key = blob.key_bytes();
             if let Some(d) = self.alias(&key) {
                 self.counts.git += 1;
-                self.remember(path, Entry { kind: Kind::File, stat: now, digest: d, listing: None, recorded_ns: started });
+                self.remember(path, Entry { kind: Kind::File, stat: now, digest: d, listing: None, entry_types: None, recorded_ns: started });
                 return Some(d);
             }
             let (_, d) = self.hash(path, now, started)?;
@@ -714,52 +734,75 @@ impl Observer {
         let digest: [u8; 32] = Sha256::digest(&bytes).into();
         let changed = self.entries.get(path).is_none_or(|e| e.digest != digest || e.stat != stat || e.kind != Kind::File);
         if changed || self.entries.get(path).is_some_and(|e| !e.holds(&stat)) {
-            self.remember(path, Entry { kind: Kind::File, stat, digest, listing: None, recorded_ns: started });
+            self.remember(path, Entry { kind: Kind::File, stat, digest, listing: None, entry_types: None, recorded_ns: started });
         }
         Some((bytes, digest))
     }
 
-    /// The entries of the directory at `dir` (`None`: not a readable directory), listed only when its stat changed.
-    /// An entry is a directory when what it names is one, symlinks followed.
+    /// The entries of `dir`, sharing preparation with the type columns. Links follow their targets for is_dir.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
-        let dir = &self.abs(dir);
-        if let Some(listing) = self.trusted(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
-            self.counts.reused += 1;
-            return Some(listing);
-        }
-        let started = now_ns();
-        let (kind, now) = self.stat(dir)?;
-        if kind != Kind::Dir {
-            return None;
-        }
-        if let Some(listing) = self.known(dir).filter(|e| e.kind == Kind::Dir && e.holds(&now)).and_then(|e| e.listing) {
-            self.counts.reused += 1;
-            return Some(listing);
-        }
-        self.counts.listed += 1;
-        let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .map(|e| {
-                let is_dir = match e.file_type() {
-                    Ok(t) if t.is_symlink() => e.path().is_dir(),
-                    Ok(t) => t.is_dir(),
-                    Err(_) => false,
-                };
-                (e.file_name().to_string_lossy().into_owned(), is_dir)
-            })
-            .collect();
-        entries.sort();
-        let listing: Listing = Arc::new(entries);
-        if encode_listing(&listing).is_some() {
-            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
-        }
-        Some(listing)
+        self.listing_types(dir).map(|(names, _)| names)
     }
 
-    /// The same names as `listing`, with file, symlink and target-error columns.
-    pub fn listing_types(&mut self, _dir: &Path) -> Option<(Listing, EntryTypes)> {
-        None
+    /// Names and fixed-width classification columns from one directory scan. Symlink targets are refreshed once
+    /// per run, since a target elsewhere can change without changing this directory's stat.
+    pub fn listing_types(&mut self, dir: &Path) -> Option<(Listing, EntryTypes)> {
+        let dir = self.abs(dir);
+        if let Some(entry) = self.trusted(&dir).filter(|e| e.kind == Kind::Dir && e.listing.is_some() && e.entry_types.is_some()) {
+            self.counts.reused += 1;
+            return self.refresh_directory(&dir, entry);
+        }
+        let started = now_ns();
+        let (kind, now) = self.stat(&dir)?;
+        if kind != Kind::Dir { return None; }
+        if let Some(entry) = self.known(&dir).filter(|e| e.kind == Kind::Dir && e.holds(&now) && e.listing.is_some() && e.entry_types.is_some()) {
+            self.counts.reused += 1;
+            return self.refresh_directory(&dir, entry);
+        }
+        self.counts.listed += 1;
+        let mut rows: Vec<_> = std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).map(|e| {
+            let (is_dir, ty) = match e.file_type() {
+                Ok(t) if t.is_symlink() => self.link_type(&e.path()),
+                Ok(t) => (t.is_dir(), EntryType { is_file: t.is_file(), is_symlink: false, errno: 0 }),
+                Err(e) => (false, EntryType { is_file: false, is_symlink: false, errno: e.raw_os_error().unwrap_or(-1) }),
+            };
+            (e.file_name().to_string_lossy().into_owned(), is_dir, ty)
+        }).collect();
+        rows.sort_by(|a,b| a.0.cmp(&b.0));
+        let names: Listing = Arc::new(rows.iter().map(|(n,d,_)| (n.clone(), *d)).collect());
+        let types: EntryTypes = Arc::new(rows.into_iter().map(|(_,_,t)| t).collect());
+        self.remember(&dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&names),
+            listing: Some(names.clone()), entry_types: Some(types.clone()), recorded_ns: started });
+        self.directory_epochs.insert(dir, self.flushes);
+        Some((names, types))
+    }
+
+    fn link_type(&mut self, path: &Path) -> (bool, EntryType) {
+        self.counts.stats += 1;
+        match std::fs::metadata(path) {
+            Ok(m) => (m.is_dir(), EntryType { is_file: m.is_file(), is_symlink: true, errno: 0 }),
+            Err(e) => (false, EntryType { is_file: false, is_symlink: true, errno: e.raw_os_error().unwrap_or(-1) }),
+        }
+    }
+
+    fn refresh_directory(&mut self, dir: &Path, mut entry: Entry) -> Option<(Listing, EntryTypes)> {
+        let mut names = entry.listing.take()?;
+        let mut types = entry.entry_types.take()?;
+        let mut changed = false;
+        if self.open == 0 || self.directory_epochs.get(dir) != Some(&self.flushes) {
+            for i in 0..types.len() {
+                if !types[i].is_symlink { continue; }
+                let (is_dir, ty) = self.link_type(&dir.join(&names[i].0));
+                if names[i].1 != is_dir { Arc::make_mut(&mut names)[i].1 = is_dir; changed = true; }
+                if types[i] != ty { Arc::make_mut(&mut types)[i] = ty; changed = true; }
+            }
+            self.directory_epochs.insert(dir.to_owned(), self.flushes);
+        }
+        if changed {
+            entry.digest = listing_digest(&names);entry.listing = Some(names.clone());entry.entry_types = Some(types.clone());
+            self.remember(dir, entry);
+        }
+        Some((names, types))
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -821,7 +864,7 @@ impl Observer {
             .iter()
             .filter_map(|path| {
                 let e = self.entries.get(path)?;
-                Some((path.to_string_lossy().into_owned(), e.kind.code(), e.stat, e.digest.to_vec(), e.listing.as_ref().and_then(|l| encode_listing(l)), e.recorded_ns))
+                Some((path.to_string_lossy().into_owned(), e.kind.code(), e.stat, e.digest.to_vec(), e.listing.as_ref().zip(e.entry_types.as_ref()).and_then(|(l,t)| encode_listing(l,t)), e.recorded_ns))
             })
             .collect();
         let aliases = std::mem::take(&mut self.new_aliases);
@@ -917,12 +960,12 @@ fn read_all(path: &Path, entries: &mut HashMap<PathBuf, Entry>, aliases: &mut Ha
         })
     {
         for (path, kind, [dev, ino, size, mtime_ns, ctime_ns], digest, listing, recorded_ns) in rows.flatten() {
-            let listing = match listing.map(|b| decode_listing(&b)) {
+            let (listing, entry_types) = match listing.map(|b| decode_listing(&b)) {
                 Some(None) => continue,
-                Some(Some(l)) => Some(Arc::new(l)),
-                None => None,
+                Some(Some((l,t))) => (Some(Arc::new(l)), Some(Arc::new(t))),
+                None => (None, None),
             };
-            entries.insert(PathBuf::from(path), Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, recorded_ns });
+            entries.insert(PathBuf::from(path), Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, entry_types, recorded_ns });
         }
     }
     if let Ok(mut st) = db.prepare("SELECT blob, digest FROM git_alias")
@@ -1399,9 +1442,14 @@ mod tests {
     #[test]
     fn listings_round_trip_through_the_store_encoding() {
         let l = vec![("a".to_owned(), true), ("b.py".to_owned(), false)];
-        assert_eq!(decode_listing(&encode_listing(&l).unwrap()).unwrap(), l);
-        assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
-        assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
+        let types = vec![EntryType { is_file: false, is_symlink: false, errno: 0 }, EntryType { is_file: true, is_symlink: false, errno: 0 }];
+        assert_eq!(decode_listing(&encode_listing(&l, &types).unwrap()).unwrap(), (l, types));
+        assert_eq!(decode_listing(&encode_listing(&[], &[]).unwrap()).unwrap(), (Vec::new(), Vec::new()));
+        let l = vec![("é\nfile".to_owned(), false)];
+        let types = vec![EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT }];
+        assert_eq!(decode_listing(&encode_listing(&l, &types).unwrap()).unwrap(), (l, types));
+        assert!(decode_listing(b"ffile.py").is_none(), "old rows cannot invent metadata");
+        assert!(decode_listing(b"\0DLM1\xff").is_none(), "malformed lengths fail closed");
     }
 }
 
