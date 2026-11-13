@@ -104,6 +104,18 @@ fn python_matchers(
     })
 }
 
+/// The nodes of `tape` W's matcher matches at (`GrammarMatcher::match_root` at each node), as a file
+/// evaluation reads them: the file's scope table built once and shared by its nodes
+/// (`FileScopeSlot`, as W's wave installs it), not once per node.
+fn ws_roots(grammar: &GrammarMatcher, tape: &TapeDoc) -> BTreeSet<u32> {
+    let root = Root::doc(tape.clone());
+    let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+    let mut work = usize::MAX;
+    (0..tape.transducer_len() as u32)
+        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+        .collect()
+}
+
 #[test]
 fn lowered_python_clauses_match_where_ws_matcher_does() {
     let tapes = fixtures();
@@ -138,26 +150,28 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
                 }
             };
             lowered += 1;
+            // Each fixture is a file of its own, W's matcher and the lowering both: the fixtures run in parallel,
+            // and are read in order, to the first that differs.
+            let runs = {
+                use rayon::prelude::*;
+                tapes
+                    .par_iter()
+                    .map(|tape| {
+                        let started = std::time::Instant::now();
+                        let expected = ws_roots(grammar, tape);
+                        let oracle = started.elapsed();
+                        let started = std::time::Instant::now();
+                        let actual = program.roots(tape);
+                        (expected, actual, oracle, started.elapsed())
+                    })
+                    .collect::<Vec<_>>()
+            };
             let mut first = None;
             let mut clause_time = std::time::Duration::ZERO;
-            for (index, tape) in tapes.iter().enumerate() {
-                let started = std::time::Instant::now();
-                let root = Root::doc(tape.clone());
-                let mut work = usize::MAX;
-                let expected = (0..tape.transducer_len() as u32)
-                    .filter(|&ordinal| {
-                        grammar
-                            .match_root(node_at(&root, ordinal), &mut work)
-                            .ok()
-                            .flatten()
-                            .is_some()
-                    })
-                    .collect::<BTreeSet<_>>();
-                oracle_time += started.elapsed();
-                let started = std::time::Instant::now();
-                let actual = program.roots(tape);
-                lowered_time += started.elapsed();
-                clause_time += started.elapsed();
+            for (index, (tape, (expected, actual, oracle, lowering))) in tapes.iter().zip(runs).enumerate() {
+                oracle_time += oracle;
+                lowered_time += lowering;
+                clause_time += lowering;
                 matched_nodes += expected.len();
                 match actual {
                     Ok(actual) if actual == expected => {}
@@ -243,16 +257,10 @@ fn the_gate_catches_a_widened_walk() {
                 continue;
             }
             let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
-            let differs = tapes.iter().any(|tape| {
-                let root = Root::doc(tape.clone());
-                let mut work = usize::MAX;
-                let expected = (0..tape.transducer_len() as u32)
-                    .filter(|&ordinal| {
-                        grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some()
-                    })
-                    .collect::<BTreeSet<_>>();
-                program.roots(tape).ok() != Some(expected)
-            });
+            let differs = {
+                use rayon::prelude::*;
+                tapes.par_iter().any(|tape| program.roots(tape).ok() != Some(ws_roots(grammar, tape)))
+            };
             caught += usize::from(differs);
             if caught >= 3 {
                 return;
