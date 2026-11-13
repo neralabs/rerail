@@ -25,7 +25,7 @@ pub use super::Prepared;
 use super::lower;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front::Value;
-use crate::code_rule_dsl::logic::program_facts::{self, Cell, Facts, Rows};
+use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::strings::Vocabulary;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
@@ -137,9 +137,10 @@ pub fn facts_of(prepared: &Prepared) -> Facts {
 }
 
 /// `prepared` as facts, a group at a time: each of its programs', then the rest. Made one by one as they are written
-/// (`remember`), so the writer holds one program's facts at a time, not both's (about 0.47 GB of the Python pack's
-/// peak at once when the split's two were written too, a row a `Vec` of `Value`s).
+/// (`remember`), so the writer holds one program's facts at a time, not all four's (about 0.47 GB of the Python pack's
+/// peak at once, a row a `Vec` of `Value`s).
 fn groups(prepared: &Prepared) -> impl Iterator<Item = Facts> + '_ {
+    // The split too: a function of the lowered program, but about 0.6 s of the Python pack's to make again.
     // Not the split's two programs: each is a part of the lowered program's rules (`file_local::assemble`), so the
     // rest keeps what the split found (about 0.6 s of the Python pack's to find again), and the parts are made from
     // the lowered program on reading. Written whole, they were 36% of a dl1 batch's stored rows, all read again.
@@ -236,26 +237,32 @@ fn bad(what: impl std::fmt::Display) -> String {
     format!("prepared facts: {what}")
 }
 
-fn int(v: &impl Cell) -> Result<i64, String> {
-    v.int().ok_or_else(|| bad(format!("{:?} where a number goes", v.str().unwrap_or_default())))
+fn int(v: &Value) -> Result<i64, String> {
+    match v {
+        Value::Int(i) => Ok(*i),
+        Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
+    }
 }
 
-fn text(v: &impl Cell) -> Result<String, String> {
-    v.str().map(str::to_owned).ok_or_else(|| bad(format!("{} where a string goes", v.int().unwrap_or_default())))
+fn text(v: &Value) -> Result<String, String> {
+    match v {
+        Value::Str(x) => Ok(x.clone()),
+        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
+    }
 }
 
 /// The rows of `rel` by their first column (an index): each row less that column, in order.
-fn indexed<'a, C: Cell>(facts: &Rows<'a, C>, rel: &str) -> Result<Vec<(i64, &'a [C])>, String> {
-    let mut rows: Vec<(i64, &[C])> = facts.get(rel).into_iter().flatten().map(|&r| Ok((int(&r[0])?, &r[1..]))).collect::<Result<_, String>>()?;
+fn indexed<'a>(facts: &'a Facts, rel: &str) -> Result<Vec<(i64, &'a [Value])>, String> {
+    let mut rows: Vec<(i64, &[Value])> = facts.get(rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, &r[1..]))).collect::<Result<_, String>>()?;
     rows.sort_by_key(|(k, _)| *k);
     Ok(rows)
 }
 
 /// The rows of `rel` grouped by their first column (an index), each group in the order of its second (an index), each
 /// row less both.
-fn nested<'a, C: Cell>(facts: &Rows<'a, C>, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [C]>>, String> {
-    let mut out: BTreeMap<i64, Vec<(i64, &[C])>> = BTreeMap::new();
-    for &r in facts.get(rel).into_iter().flatten() {
+fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Value]>>, String> {
+    let mut out: BTreeMap<i64, Vec<(i64, &[Value])>> = BTreeMap::new();
+    for r in facts.get(rel).into_iter().flatten() {
         out.entry(int(&r[0])?).or_default().push((int(&r[1])?, &r[2..]));
     }
     Ok(out
@@ -268,16 +275,27 @@ fn nested<'a, C: Cell>(facts: &Rows<'a, C>, rel: &str) -> Result<BTreeMap<i64, V
 }
 
 /// The prepared program `facts` holds, for `dialect`.
-#[cfg(any(test, feature = "test-hooks"))]
 pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
-    prepared_from(&program_facts::rows_of(facts), dialect)
+    // Its programs' rows, grouped by program in one pass (`Grouped`).
+    prepared_from(facts, &program_facts::Grouped::of(facts), dialect)
 }
 
-/// The prepared program whose rows are `facts`, for `dialect`: read off a store's bytes in place (`lookup`), or off
-/// facts (`prepared_of`).
-pub fn prepared_from<C: Cell>(facts: &Rows<'_, C>, dialect: GrammarDialect) -> Result<Prepared, String> {
-    // Its programs' rows, grouped by program in one pass (`Grouped`).
-    let grouped = program_facts::Grouped::of(facts);
+/// The prepared program the encoded parts `parts` hold (`program_facts::encode`), read in place: its programs off the
+/// encodings' rows (`decode_view`), no row copied out; its other facts (`prepared_*`, a small part) as owned facts.
+pub fn prepared_of_encoded(parts: &[Vec<u8>], dialect: GrammarDialect) -> Result<Prepared, String> {
+    let views = parts.iter().map(|b| program_facts::decode_view(b)).collect::<Result<Vec<_>, String>>()?;
+    let program = program_facts::schema();
+    let mut rest = Facts::new();
+    for view in &views {
+        for (rel, rows) in view.owned(|r| !program.contains_key(r)) {
+            rest.entry(rel).or_default().extend(rows);
+        }
+    }
+    prepared_from(&rest, &program_facts::Grouped::of_views(&views), dialect)
+}
+
+/// The prepared program of `facts` (its facts other than its programs') and `grouped` (its programs' rows).
+fn prepared_from<C: program_facts::Cell>(facts: &Facts, grouped: &program_facts::Grouped<'_, C>, dialect: GrammarDialect) -> Result<Prepared, String> {
     let (prog, program) = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read the programs off the facts".into());
         (grouped.program("front")?, grouped.program("lowered")?)
@@ -392,23 +410,38 @@ fn invalid(e: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(e.to_string())
 }
 
-/// The document's facts, encoded (`program_facts::encode`), as the store keeps them; read off its tape when they are
-/// not kept, or no longer decode (`kept` false), and kept then.
-fn document_entry(store: &ContentStore, document: SourceId, kept: bool) -> StoreResult<Option<Vec<u8>>> {
+/// The document's facts as the store keeps them, encoded (`program_facts::encode`); read off its tape, and kept, when
+/// they are not kept (`document_facts`).
+fn document_encoded(store: &ContentStore, document: SourceId) -> StoreResult<Option<Vec<u8>>> {
     let set = facts_plan();
-    if kept {
-        let mut memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
-        if let Some(result) = memo.results.remove(&set.plans[0]) {
-            return Ok(Some(result.entry));
-        }
+    let memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
+    // Read as it is: a part that does not decode makes the lookup miss (`prepared_of_encoded`), and the run prepares.
+    if let Some(result) = memo.results.into_iter().find(|(p, _)| *p == set.plans[0]).map(|(_, r)| r) {
+        return Ok(Some(result.entry));
+    }
+    Ok(document_facts(store, document, None)?.map(|facts| program_facts::encode(&facts)))
+}
+
+/// The document's facts as the store keeps them; read off its tape when they are not kept (and kept then). `text` is
+/// the document's, when the caller has it.
+fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) -> StoreResult<Option<Facts>> {
+    let set = facts_plan();
+    let memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
+    if let Some(result) = memo.results.get(&set.plans[0])
+        && let Ok(facts) = program_facts::decode(&result.entry)
+    {
+        return Ok(Some(facts));
     }
     // Read off the document's tape (decision 0062): the tape the store keeps for it, made now if it has none.
-    let text = String::from_utf8(store.get_source(document)?).map_err(invalid)?;
+    let text = match text {
+        Some(t) => t.to_owned(),
+        None => String::from_utf8(store.get_source(document)?).map_err(invalid)?,
+    };
     let Ok(facts) = crate::code_rule_dsl::logic::rr::parse_stored(PATH, text).map(|p| p.facts) else { return Ok(None) };
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-    store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
-    Ok(Some(entry))
+    store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
+    Ok(Some(facts))
 }
 
 /// The most rows a part of a stored program's facts holds: each part is its own document, and its tape is parsed
@@ -452,49 +485,35 @@ pub fn parts(facts: Facts) -> impl Iterator<Item = Facts> {
 /// did, or when what it stored no longer reads. With it, the sources of its parts' documents.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
     super::memo::off();
+    let start = std::time::Instant::now();
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
     if result.entry.is_empty() || result.entry.len() % 32 != 0 {
         return Ok(None);
     }
-    // Each part's bytes, read in place (`program_facts::Decoded`): its rows' strings are borrowed from them, and only
-    // those the program keeps are copied.
-    let mut entries = Vec::new();
     let mut documents = Vec::new();
+    let mut parts: Vec<Vec<u8>> = Vec::new();
     for digest in result.entry.chunks(32) {
         let digest: [u8; 32] = digest.try_into().expect("32 bytes");
         let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
-        let entry = {
+        let part = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read a part's facts".into());
-            document_entry(store, document, true)?
+            document_encoded(store, document)?
         };
-        let Some(entry) = entry else { return Ok(None) };
-        entries.push(entry);
+        let Some(part) = part else { return Ok(None) };
+        parts.push(part);
         documents.push(document);
     }
-    fn read(entries: &[Vec<u8>]) -> Option<Vec<program_facts::Decoded<'_>>> {
-        entries.iter().map(|e| program_facts::Decoded::of(e)).collect::<Result<Vec<_>, _>>().ok()
+    let read = start.elapsed();
+    let at = std::time::Instant::now();
+    let got = prepared_of_encoded(&parts, dialect);
+    if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
+        eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {} parts, {:.1} MB encoded; read {:.3} s, to a program {:.3} s{}",
+            super::phases::current().unwrap_or_else(|| "main".into()), parts.len(), parts.iter().map(Vec::len).sum::<usize>() as f64 / 1e6, read.as_secs_f64(), at.elapsed().as_secs_f64(),
+            got.as_ref().err().map(|e| format!("; not read: {e}")).unwrap_or_default());
     }
-    let parts = match read(&entries) {
-        Some(parts) => parts,
-        // A part whose kept bytes no longer decode is read off its tape again.
-        None => {
-            for (entry, &document) in entries.iter_mut().zip(&documents) {
-                if program_facts::Decoded::of(entry).is_err() {
-                    let Some(again) = document_entry(store, document, false)? else { return Ok(None) };
-                    *entry = again;
-                }
-            }
-            let Some(parts) = read(&entries) else { return Ok(None) };
-            parts
-        }
-    };
-    let mut rows = Rows::new();
-    for part in &parts {
-        part.rows_into(&mut rows);
-    }
-    Ok(prepared_from(&rows, dialect).ok().map(|p| (p, documents)))
+    Ok(got.ok().map(|p| (p, documents)))
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).

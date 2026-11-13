@@ -44,7 +44,7 @@ own namespace, so two rules reading the same answers held two copies.
      same way.
 2. **Bridged answers are one shared fact family, handed over as rows.**
    - `bridge::is_bridged(rel)` recognises `typing_<program>__<output>`. `corpus::combine` does not namespace it,
-     as it does not namespace `core.rr`'s relations (0047, core names): the answers are the same whichever rule
+     as it does not namespace `core.rr`'s relations (0141, core names): the answers are the same whichever rule
      reads them.
    - `bridge::facts` returns rows (`front::Value`), which the runner adds to the combined program. Nothing is
      printed or parsed again, and each program runs once however many rules read it.

@@ -333,6 +333,53 @@ impl Node {
     }
 }
 
+/// A node's key in the tape's code table (`rerail_tape_format::Writer`): kind and field, ERROR's
+/// as the engine writes it (`ERROR_CODE` and the error flag), a comment's with the extra flag.
+#[inline(always)]
+pub fn code(kind: u16, field: u16, extra: bool) -> u32 {
+    use rerail_tape_format::{CODE_ERROR, CODE_EXTRA, ERROR_CODE};
+    if kind == ERROR {
+        u32::from(ERROR_CODE) | u32::from(CODE_ERROR) << 16
+    } else {
+        rerail_tape_format::key(kind, field, u8::from(extra) * CODE_EXTRA)
+    }
+}
+
+/// A key's kind and field (`code`).
+pub fn kind_field(key: u32) -> (u16, u16) {
+    if key >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0 { (ERROR, 0) } else { ((key & 0x3ff) as u16, (key >> 10 & 0x3f) as u16) }
+}
+
+/// The engine's tape of `nodes` (this parser's, in preorder) over `src`: its bytes, as the
+/// engine encodes a `.rr` file (`code_rule_dsl::tape`). Each node given to the writer in order and
+/// closed where the next is not inside it. The lean parser's tape is checked against it.
+pub fn image(nodes: &[Node], src: &str) -> Vec<u8> {
+    use rerail_tape_format::{Redo, Widths, Writer};
+    let mut widths = Widths::guess(src.len());
+    loop {
+        let mut w = Writer::new(rerail_tape_format::RR_TAG, widths, nodes.len());
+        let mut open: Vec<(usize, u32)> = Vec::new();
+        for (i, n) in nodes.iter().enumerate() {
+            while let Some(&(o, end)) = open.last() {
+                if n.parent == Some(o as u32) {
+                    break;
+                }
+                w.close(o, end);
+                open.pop();
+            }
+            w.push(code(n.kind, n.field, n.extra), n.start);
+            open.push((i, n.end));
+        }
+        while let Some((o, end)) = open.pop() {
+            w.close(o, end);
+        }
+        match w.finish(src.as_bytes()) {
+            Ok(bytes) => return bytes,
+            Err(Redo(x)) => widths = x,
+        }
+    }
+}
+
 /// `tree` in preorder, each comment of `comments` a child of the innermost node whose span holds it, at its place in
 /// source order. A comment inside a leaf (a `json_object`, a `raw_text`) is part of the leaf's text.
 pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
@@ -376,4 +423,15 @@ pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
     // Comments after the last statement belong to the file.
     walk.comments_before(0, usize::MAX);
     walk.out
+}
+
+/// The nodes of a `.rr` image (`image`, or the lean parser's `lean::tape`): `image`'s inverse.
+pub fn nodes(bytes: &[u8]) -> Result<Vec<Node>, String> {
+    Ok(rerail_tape_format::decode(bytes)?
+        .into_iter()
+        .map(|d| {
+            let (kind, field) = kind_field(d.key);
+            Node { kind, field, start: d.start, end: d.end, parent: d.parent, extra: d.key >> 16 & u32::from(rerail_tape_format::CODE_EXTRA) != 0 }
+        })
+        .collect())
 }

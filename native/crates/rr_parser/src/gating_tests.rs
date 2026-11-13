@@ -1,32 +1,41 @@
-//! Gated regions on `.rr`'s grammar (tier 1's `gating_tests` has the small ones): its `\\u`
-//! check behind its gate.
+//! `.rr`'s `\\u` checks: tier 2's, at the string (tier 1's `gating_tests` has the gated regions).
 
 use rerail_compiler::native_cpu_block::State;
-use rerail_compiler::block_native::{BlockNative, Pass};
+use rerail_compiler::block_native::Pass;
 
-/// Each pass's regions, as the whole program's values: the gate, and what it skips (its
-/// members, and the vector values only they read).
-fn regions(native: &BlockNative) -> Vec<(usize, Vec<usize>)> {
-    let passes = native.passes();
-    let mut out = Vec::new();
-    for (k, pass) in passes.passes.iter().enumerate() {
-        let Pass::Forward { body, .. } = pass else { continue };
-        let origin = &passes.origins[k];
-        let plan = State::of(body).plan;
-        for r in &plan.regions {
-            out.push((origin[r.gate] as usize, r.members.iter().chain(&r.vectors).map(|&m| origin[m] as usize).collect()));
-        }
-    }
-    out
-}
-
+/// `.rr`'s `\\u` check is tier 2's (`CHECK`, a local check at the string token): tier 1 makes
+/// the escapes' mask alone, none of the digits' values; the check is the escape's ops.
 #[test]
-fn rr_gates_its_unicode_escape_check() {
+fn rr_checks_its_unicode_escapes_at_the_string() {
     let c = super::compiled().expect("compiles");
-    let regions = regions(&c.native);
-    let op = |name: &str| usize::from(c.values.iter().find(|v| v.name == name).unwrap_or_else(|| panic!("no `{name}`")).op);
     for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
-        assert!(regions.iter().any(|(_, m)| m.contains(&op(name))), "`{name}` is not gated: {} regions", regions.len());
+        assert!(!c.values.iter().any(|v| v.name == name), "`{name}` is still tier 1's");
+    }
+    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone.
+    assert_eq!(c.program.local_checks.len(), 2, "two local checks");
+    let json = |v: &str| format!(".policy {{\"a\": [1, \"{v}\"]}}");
+    for (src, ok) in [(json("\\u0041"), true), (json("\\u{41}"), false), (json("\\u12"), false), ("r(x) :- x = \"\\u{41}\".".to_owned(), true)] {
+        assert_eq!(super::compiled_tape(&src).is_some(), ok, "{src}");
+        assert_eq!(super::tape(&src), super::engine_columns(&super::rr::engine_tape(&src)), "{src}");
+    }
+    assert!(c.words.contains(" CHECK"), "tier 2 checks at the string");
+    // The words refuse a bad escape and take a good one, as the engine's tape says.
+    for (src, ok) in [("r(x) :- x = \"\\u0041\".", true), ("r(x) :- x = \"\\u{1F600}\".", true), ("r(x) :- x = \"\\uD800\".", false), ("r(x) :- x = \"a\\u12\".", false), ("r(x) :- x = \"\\u{110000}\".", false)] {
+        assert_eq!(super::compiled_tape(src).is_some(), ok, "{src}");
+        assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src}");
+    }
+    // A string past a word of 64 bytes, its escape in the second word.
+    let long = format!("r(x) :- x = \"{}\\uD800\".", "a".repeat(70));
+    assert!(super::compiled_tape(&long).is_none());
+    let long = format!("r(x) :- x = \"{}\\u0041\".", "a".repeat(70));
+    assert!(super::compiled_tape(&long).is_some());
+    // The check word-parallel: an escape at every place across two words' edges, its digits
+    // in the next word, good and bad, as the engine's tape says.
+    for pad in 40..140 {
+        for esc in ["\\u0041", "\\uD800", "\\u12", "\\u{41}", "\\u{110000}", "\\\\u12"] {
+            let src = format!("r(x) :- x = \"{}{esc}\".", "a".repeat(pad));
+            assert_eq!(super::tape(&src), super::engine_columns(&super::rr::engine_tape(&src)), "{src}");
+        }
     }
 }
 

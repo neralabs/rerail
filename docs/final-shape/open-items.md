@@ -1514,18 +1514,18 @@ tokens have no field.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
-## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0141)
 
 - Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
   T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
   `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
   a derived table whose columns are `c0, c1`: "names no column in scope".
 - Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
-**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+**Closed by 0141:** both. The planner names a column by `input_columns` only for an input
 (`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
 read `kind` and `docof` as inputs. The nine tests run again.
 Typing-support first closed it by renaming (`plan::private_derived_inputs`: a derived relation under a base
-relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0047's mechanism, not both.
+relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0141's mechanism, not both.
 
 ## O82. Metal runs abort in a debug test build
 
@@ -3206,6 +3206,12 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
+**Seen again (2026-11-12), after the hub at 026a650ac.** `rr_embed_req`, the embed requests a policy writes as an
+output, is now written empty where it had rows: on dl1, `public-api-triples` had 22 `annotation` requests, now none;
+on dl10, two policies. Every `violation.csv` is unchanged, CPU and device, and the `.rr` parser (engine or lean)
+makes no difference. Likely this item's cause reached by the hub's memo and cross-part changes (041942a64); not yet
+traced.
+
 ## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
@@ -3242,30 +3248,30 @@ already. A process keeps each seed's graph while its modules' stats hold.
 
 ## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
 
-Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+Decision 0142 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
 locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
 `facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
 edited key file stales one entry.
 
 ## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
 
-Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+Decision 0142 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
 check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
 content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
 
 ## O-artifact-store. One stamp per artifact, lost on a branch switch
 
-Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+Decision 0142 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
 directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
 
 ## O-artifact-imports. An entry's inputs are globs, not its imports
 
-Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+Decision 0142 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
 a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
@@ -3426,14 +3432,14 @@ names no import binds; a run of `sym_of` over the data layer within the run and 
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
 provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
-it again. Decision 0095 §6.
+it again. Decision 0142 §6.
 
 ## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
 `HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
 the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
-`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0142 §6.
 
 
 ## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
@@ -3739,6 +3745,39 @@ after a filter the CPU applies one step later.
 
 **Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
 
+## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
+
+Found at O125 step 07 (decision 0101, "Measured: the `ifn__ins` order"). `ifn__ins` is in a recursive maintained
+component of 183 relations. Its rule driven by `fv`'s delta was first planned while `pv__ins`, a relation of the
+same component, held few rows, so probing it by class looked cheap: `fv → pv__ins by class → icall`. Once
+`pv__ins` grew, the drift check replanned to `fv → icall by name → pv__ins checked`, which does no work past the
+delta (273 + 160 units). The first plan ran 12 delta batches before that: 83,862 units, 1.6% of the step's
+5.39 M. It is not skew: `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637 against an actual 452.
+
+Two ways to remove it, either or both:
+
+- Price a relation of the component by what it will hold, not what it holds when planned: the last run's size
+  of the same piece (`pv__ins`), or a bound from the deltas that feed it (`pv`'s).
+- Check the drift between a wave's batches, not only between waves, so any wrong first plan runs one batch.
+
+**Closure:** at O125 step 07 the first plan of `ifn__ins` (delta `fv`) is icall first, or the plan that probes
+`pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
+full run's.
+
+**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
+a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
+floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
+(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
+SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
+planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
+
+At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
+`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
+from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
+open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
+is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
+as the joins it plans (4.7 s), against decision 0122.
+
 ## O-test-store-cost. A test's own store costs 5–21% more instructions per suite
 
 **Seen (2026-11-11), decision 0118.** Against one store per process: `logic::rr::` 740 G instructions against 668 G,
@@ -3766,7 +3805,7 @@ compiled only there.
 
 **Closed.** Step 22 of the ladder (`22-test-blocks.bitlex`), now `rerail-rr-parser`'s grammar, reads `.test` and
 `.fixtures` blocks to the engine's tape, as rules and as one machine, and refuses what the engine refuses
-(decision 0119 §4). `rule_files_with_tests_are_the_engines` checks the two files with tests; the ladder's step 22
+(decision 0130 §4). `rule_files_with_tests_are_the_engines` checks the two files with tests; the ladder's step 22
 passes (`RERAIL_LADDER=22`). Two fixes outside the grammar came with it:
 - The reference (`tools/bitlex/src/tree.rs`) refused a file where a mark that is not hidden came after a nested
   level's last token, though its caller takes it. It now ends the level there, as the machine does and as its
@@ -3778,7 +3817,7 @@ passes (`RERAIL_LADDER=22`). Two fixes outside the grammar came with it:
 The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348; one machine, 266 states and
 2,590 arms to 271 and 2,621.
 
-**Seen (2026-11-12), decision 0119.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
+**Seen (2026-11-12), decision 0130.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
 `.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
 compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
 file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
@@ -3794,11 +3833,11 @@ are at most 64 MB of text, and has a larger store look them up by key during the
 reports". The machine's default store (`$TMPDIR/rerail-tape-cache.sqlite`) holds 4.9 M atoms, 421 MB of text.
 On the same binary and rule, with a one-file corpus: on that store, strict stops (exit 134, at an
 `atom_segment` read inside the waves); on a new store, the run passes and reports B101. `test-rr` uses a store
-of its own (decision 0119 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
+of its own (decision 0130 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
 
 ## O-store-atoms-grow (closed 2026-11-12). The machine's default store's atoms only grow
 
-**Closed** by decision 0120: there is no machine-wide default store. A run's default store is its project's for
+**Closed** by decision 0131: there is no machine-wide default store. A run's default store is its project's for
 this build, and other builds' stores are removed after a day. The one-file B101 run passes under
 `RERAIL_SQL_STRICT=1` on it, with a 1.4 MB store. Atoms that no kept row names are still never collected inside
 one store; a project's store for one build stays near its corpus's size.
@@ -3815,7 +3854,7 @@ CLI's default store is per build as testing mode's is; then a strict run on the 
 corpus> <out>` with `RERAIL_SQL_STRICT=1` stops at `SELECT id FROM atom_key WHERE h IN rarray(?1)`. The read is
 `atoms::find`, from `intern_atoms` while a chunk builds its matchers (`facts::vtab::syntax::with_matchers`,
 `run_observed`'s `cut_chunk`). `test-rr` runs through `run-rr`, so it stops the same way. Without strict SQL, both
-run and their results are right. Decision 0119's work does not touch that path. Whether it fails on the hub was not
+run and their results are right. Decision 0130's work does not touch that path. Whether it fails on the hub was not
 checked.
 
 **Closure:** a chunk's matchers intern their atoms before the first wave, or from what the run read then, and
@@ -3826,10 +3865,10 @@ checked.
 **Closed.** The cause was the store, not the runs. `test-rr`, and the addon's `testRr`, used the machine's store
 (`$TMPDIR/rerail-tape-cache.sqlite`, 4.4 GB), which every engine run on the machine writes. Its WAL was being
 written by another process while the tests failed, and the addon's first test failed the same way. Testing mode now
-has a store of its own per build (decision 0119 §7). Then `test-rr docs/rule-syntax` passed six times in a row, and
+has a store of its own per build (decision 0130 §7). Then `test-rr docs/rule-syntax` passed six times in a row, and
 the addon's `testRr` three times.
 
-**Seen (2026-11-12), decision 0119.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
+**Seen (2026-11-12), decision 0130.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
 after another in one process, on the CLI's default store. Once in four tries, one test failed with "a write queued
 behind the run failed: … the batch's commit: content store writer is busy". The other three tries passed all six.
 A run's writes may lag it (decision: SQLite durable, memory ahead), so the next run's write can meet the last one's.
@@ -3932,6 +3971,12 @@ launches), a closure not recognized (the stratum placed on device rounds), and a
 
 **Closure:** make the assertion name which of the three it was, then fix that one at its root.
 
+**Closed (2026-11-12): the count was read on the wrong thread.** None of the three. A level's closures run as a
+component's job on an executor thread, and they did go out as one wave of three, but the wave was counted on the
+job's thread while the test read the run's thread. A job now carries its waves back to the thread that takes it
+(`wave::since`, the `Strand`, `absorb` / `absorb_forms`): 4dde583e2 on `investigate-bend-vs-datalog`, merged into
+the hub. On the hub, 10 of 10 alone.
+
 ## O-metal-slice-cpu. The Metal backends take three times the CPU backends' process CPU on the slice
 
 **Seen (2026-11-12)** in `slice::tests::the_backends_find_the_same_keys_on_real_files`, once the Metal backends
@@ -4002,8 +4047,9 @@ without (206 G against 187 G instructions on dl1).
    (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
    no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
    looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
-   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
-   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+   (decision 0104). The check is now made before the first wave (`retain::kept_inputs_stored`; the column
+   mismatch no longer arises, since `retain::group_col` takes the split's locations first), and a refused run decodes
+   every hit whole as it finds it. The one policy fails on its second run without this.
 2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
    (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
    their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
@@ -4251,6 +4297,59 @@ saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results
 neither kept nor cached is determinized only where it pays: the run keeps it in its store (decision 0075), or
 reads at least 64 documents; otherwise it runs on the lazy DFA. dl1 210.8 G → 196.8 G; `Vocabulary::compile`
 4.4% → below 1%; findings unchanged.
+## O-tape-pack-cost. Packing a tape costs 30 times simdjson's parse
+
+**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB, 7.2 M nodes), simdjson parses and builds
+the tree in 1.1 G instructions; the tape from it takes 32.6 G (4,530 a node) in a debug build.
+
+**Measured why (`json_parse_costs`):**
+- **Most of it is the debug build.** `TapeImage::finish` and `pack` are generic over the budget closure, so they
+  are compiled in the caller's crate (`rerail-lang-json`), unoptimized. With `rerail-lang` and `rerail-lang-json`
+  at `-O3`, the same step is 5.0 G (697 a node): the packing 3.9 G (543 a node), 3.5 times the tree. The debug
+  profile's top frames are std's `precondition_check`s and iterator adapters.
+- **What is left, optimized** (profile): `finish`/`pack`'s loops 29% (each node's code folded through an
+  `FxHashMap` of `Code`, sizes summed from parents, parents checked, block minima, widths); the three column
+  writes 23% (`put_cell`, a `Vec::extend_from_slice` of 2–4 bytes a cell); the tree 13%; SHA-256 of the source
+  11%; simdjson 10%; the tree copied into `Pending` records (with an `Option<(String, bool)>` alias each) 7%.
+
+**JSON closed (2026-11-12, 0134):** simdjson writes the columns itself (`rerail_simdjson::tape`,
+`TapeImage::written`): the tape 1.89 G, against 32.6 G packed. **Still open for the parsers that pack:** tree-sitter's
+trees (every other language) and the Bitlex path (O-bitlex-writes-tape).
+
+**Closure:** the tape packed in code that is optimized in every build (not generic over the budget, or in a crate
+optimized as a dependency is), written from a parser's rows straight into the columns: sizes known from the
+parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
+cells written at fixed widths. Measured as the tape within 2 times the tree in a debug build.
+
+## O-bitlex-writes-tape. Bitlex does not write the tape: doc 12 §2.2 and doc 13 §7 step 3 were never built
+
+**Seen (2026-11-12).** Doc 12 §2.2 (decided): "the output is our v9np tape, written directly, by a final extract
+pass whose sizes come from the passes before it"; doc 13 §7 step 3: "the CPU executors write the tape … byte for
+byte". Neither exists, on this branch or on `Parser-generators` (33e9b514f): tier 2 writes `NodeRow`s
+(`native_cpu_stream::Columns`), and `json_parser::tape::encode_columns` copies them into `Pending` records and runs
+the engine's `TapeImage::finish`/`pack`, a second packing (O-tape-pack-cost: 31.5 of 35.6 G on the repository's JSON
+in a debug build). simdjson's first hookup copied that route; it now writes the columns itself (0134).
+
+**Why the table:** on 2026-11-08 tier 2 wrote the v9np columns (decision 0054; doc 19 §4, "four stores, a table probe
+and three ORs a node"). Doc 20 deleted those backends the same day, because the format, widths and first-use
+numbering were held in the backend, not stated by any instruction. The node table replaced them, generic but one
+step short: the tape writing was never stated in the program (doc 13 §2–§3 gives each column as one write at
+`ord`). Doc 34 then made the table 24-byte rows.
+
+**Closure:** the executors' last pass writes the v9np columns (codes, sizes, base and offsets, tails) from the
+records, with the sizes the passes before it found; no `Pending`, no `finish`. Tapes equal `TapeImage::encode`'s
+byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
+the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
+
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+
+**Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
+editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
+In this repository 1 of 2,201 files is refused; JavaScript repositories have more.
+
+**Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
+its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
+the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
@@ -4363,11 +4462,11 @@ What is not an opportunity: reprobes (0.05 s with the indexes they open) and the
 each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
 own cost, not replanning's.
 
-**Closed (2026-11-12, decision 0124 §1).** All five are built. A live replan keeps the re-priced order when its work
+**Closed (2026-11-12, decision 0132 §1).** All five are built. A live replan keeps the re-priced order when its work
 is under what a search costs (`search_rows`), or when it has one positive atom. Its distributions are compared in
 proportion, the state before the last is kept, and a live search's EXPLAIN is made only when its order is taken.
 Live searches went from 1,162 (0.40 s) to 558 (0.04 s) per edit. Planning fell from 4.5% to 3.1% of the edit's
-CPU, and the join work is the same in each later run (8,766,423). 0124 also makes the cold search a third
+CPU, and the join work is the same in each later run (8,766,423). 0132 also makes the cold search a third
 cheaper, with the same plans, and sizes greedy-first, classifiers and bulk planning.
 
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
@@ -4414,7 +4513,7 @@ route. The whole-run cutoff is not involved: the full runs don't ask for it. `RE
 "0 relations differ" in the inputs, so the stale rows come in after them, from rows kept by owner
 or from the kept part's derived frames. The statistics keeper does count c.py as changed, under both
 memo keys. The test passed once right after the merge, under heavy load, so the route may depend on timing
-(write-behind, 0114). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
+(write-behind, 0147). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
 a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
 `impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
 the owner range that was not marked dead.
@@ -4486,9 +4585,9 @@ is about 21% of a warm step's CPU, but in instructions planning is not a big roc
 
 **Merged with O-replan-churn's form (2026-11-12).** Both branches had built the kept-plan rule. The merged engine
 keeps one form, O-replan-churn's (`plan_rule_reused`: re-priced under `REPLAN_ROWS`, whatever the distributions;
-`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0124).
+`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0132).
 `RERAIL_REPLAN_CHEAP` is gone. The live bound is a search's cost, not `REPLAN_ROWS`: a live search that changes the
-order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0124 §1). The step 01-03
+order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0132 §1). The step 01-03
 figures above were measured with the flat bound.
 
 **Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
@@ -4555,39 +4654,6 @@ optimisation. No optimized build has been measured. That is deliberate: they are
 **Closure:** once the rocks above have a first version, one optimized build is measured on O125, cold and step
 01, beside the debug one. That gives the ratio, and the targets are set against the optimized figures.
 
-## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
-
-Found at O125 step 07 (decision 0101, "Measured: the `ifn__ins` order"). `ifn__ins` is in a recursive maintained
-component of 183 relations. Its rule driven by `fv`'s delta was first planned while `pv__ins`, a relation of the
-same component, held few rows, so probing it by class looked cheap: `fv → pv__ins by class → icall`. Once
-`pv__ins` grew, the drift check replanned to `fv → icall by name → pv__ins checked`, which does no work past the
-delta (273 + 160 units). The first plan ran 12 delta batches before that: 83,862 units, 1.6% of the step's
-5.39 M. It is not skew: `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637 against an actual 452.
-
-Two ways to remove it, either or both:
-
-- Price a relation of the component by what it will hold, not what it holds when planned: the last run's size
-  of the same piece (`pv__ins`), or a bound from the deltas that feed it (`pv`'s).
-- Check the drift between a wave's batches, not only between waves, so any wrong first plan runs one batch.
-
-**Closure:** at O125 step 07 the first plan of `ifn__ins` (delta `fv`) is icall first, or the plan that probes
-`pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
-full run's.
-
-**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
-a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
-floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
-(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
-SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
-planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
-
-At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
-`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
-from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
-open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
-is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
-as the joins it plans (4.7 s), against decision 0122.
-
 ## O-rr-tests-sigill. One run of `logic::rr::` and `logic::plan::corpus::tests::` died of SIGILL
 
 **Seen (2026-11-12), after merging the hub into `More-ergonomic-rule-syntax`.** `cargo test -p rerail-engine
@@ -4599,11 +4665,11 @@ does not say which test was running when it died.
 **Closure:** the test that dies is found (a run with `--test-threads 1` and its whole output kept), and the cause
 is fixed, or it does not recur in ten runs.
 
-## O-search-cost. One cost of a search, measured once (0122, 0124)
+## O-search-cost. One cost of a search, measured once (0122, 0132)
 
 **Seen (2026-11-12, at the merge of phased-facts).** Two branches priced a join-order search in rows of join work
 and both prices are in the engine: 0122's `SEARCH_WORK` (250 rows: 0.16 ms a search at 0.74 µs a row, O125 step
-07) gates kept orders, the first wave's whole plans and a run's probe replans; 0124's `search_rows` (400 rows plus
+07) gates kept orders, the first wave's whole plans and a run's probe replans; 0132's `search_rows` (400 rows plus
 one per candidate: 0.3 ms plus 0.7 µs a candidate, the P3 bench) gates the re-priced live replan. They are one
 quantity. A long body's search costs many times a short one's (`fgp`: 11,665 rows), so a flat price keeps too few
 long rules' orders and searches short ones it could keep.
@@ -4611,3 +4677,53 @@ long rules' orders and searches short ones it could keep.
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
+
+## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive
+
+**Seen (2026-11-12, once in about ten runs of `logic::rr::` with `phase0::`, at four threads, under load).**
+`phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed its third part: for `python/conditions.rr`,
+the graph kept for the file's text (`keep_text`, from the file's graph) had another digest than `derive` gave the
+same seed. It passed alone three times, and in eight more runs of its chunk (at 4 and 20 threads). The kept file
+graph comes from `KEPT`, which other tests in the process fill. Suspects: a module's digest taken while another
+run had begun phase 0's observer (`observe::begin`), or a graph cut (`Graph::of`) from a run batched with other
+seeds. The message now prints each graph's module digests, so the next failure shows which.
+
+**Seen again (2026-11-13, after the roll-up of 473167aa5 and 128796c88):** once in seven runs of its chunk at four
+threads, under load (average 59); the same file and the same part (`kept includes` `python/env.rr`). The run kept
+only the first 200 characters of the message, so the digests were lost; the chunk runner now keeps each chunk's
+whole log.
+
+**Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
+recur in ten runs of the chunk.
+
+## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
+
+**Closed (2026-11-12) by [decision 0137](decisions/0137-join-shape-directives.md):** `.shape B after A` and `.shape B bound x` on a written rule shape it and every derived form; EXPLAIN marks a shaped plan; a profiled run reports a directive whose order is the planner's own; the DP takes no cross product priced from a default size. Test: `a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms`.
+
+Found at O125 step 07 (2026-11-12). `pv__ins`, driven by `pv`'s delta, crossed `pv` with `retparam` (no shared
+variable: 1,553 -> 159,959 rows) and read its 15-row input delta `posarg__plus` last, about 1.08 M rows of work
+for none. The cause was missing statistics, not a misjudgement: in a driven session the run's model is made from
+the base program, which reads no input delta, so every `r__plus` and `r__minus` was priced at the default's 1,000
+rows (fixed in 6b04cb8d2; `plan::unsized_deltas`, asserted zero by
+`a_session_maintains_a_recursive_cross_file_stratum`). Join work went 6.85 -> 3.54 M.
+
+The next case like it should be fixable from the `.rr` alone. Today the only planner overrides are the relation
+qualifiers of decision 0099 (`inline`, `magic`, `reach` and their negations); nothing fixes a join's order or
+shape. What is wanted:
+
+1. **A directive on the rule as written, carried into every form made from it.** One written rule is planned many
+   times: once per delta that can drive it, in its maintenance forms (`__ins`, `__del`, `__redo`) and in guest
+   hiding's copies. The bad plan above was `pv__ins`'s, a rule no one writes. So the directive constrains the
+   written body: "join `posarg` straight after `pv`", or "`retparam` only once `$f` is bound". The planner maps it
+   onto each derived form (there `posarg__plus` is `posarg`'s delta). A whole fixed order is not the shape: it is
+   wrong for most of the forms.
+2. **Explained and checked.** EXPLAIN marks a plan a directive shaped; the profile flags a directive whose plan is
+   no cheaper than the planner's own, so stale ones are removed.
+3. **Each use opens the item that fixes its cause.** A directive here would have hidden the missing statistics, and
+   the next delta reader would have hit them unseen.
+4. **Beside it, a planner guard:** a step that shares no variable with what is bound is a cross product, taken only
+   on a size that was measured, never on a default.
+
+**Closure:** a `.rr` directive on a written rule shapes its plan and every derived form's (a test where it changes
+a maintained form's order, and EXPLAIN shows it); the profile reports a directive that saves nothing; the planner
+takes no cross product priced from a default size (a guard test).

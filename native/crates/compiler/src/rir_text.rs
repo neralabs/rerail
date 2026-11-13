@@ -70,6 +70,49 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
     }
 }
 
+pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
+    use std::fmt::Write as _;
+    for m in marks {
+        let _ = write!(out, "  tokenmark {}", m.order);
+        for e in &m.elems {
+            let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
+            for s in &e.words {
+                let _ = write!(out, " s{s}");
+            }
+        }
+        out.push('\n');
+    }
+}
+
+pub fn count_rows(out: &mut String, counts: &[u16]) {
+    use std::fmt::Write as _;
+    for (at, m) in counts.iter().enumerate() {
+        let _ = writeln!(out, "  tokencount {at} max {m}");
+    }
+}
+
+pub fn local_check_rows(out: &mut String, checks: &[crate::program::LocalCheck]) {
+    use crate::program::LocalOp;
+    use std::fmt::Write as _;
+    for c in checks {
+        let _ = write!(out, "  localcheck m{} d{}", c.mask, c.delay);
+        for op in &c.ops {
+            let _ = match *op {
+                LocalOp::Bytes(s) => write!(out, " b{:x}.{:x}.{:x}.{:x}", s[0], s[1], s[2], s[3]),
+                LocalOp::Const(p) => write!(out, " c{p:x}"),
+                LocalOp::Within(d) => write!(out, " w{d}"),
+                LocalOp::Not(a) => write!(out, " n{a}"),
+                LocalOp::And(a, b) => write!(out, " a{a}.{b}"),
+                LocalOp::Or(a, b) => write!(out, " o{a}.{b}"),
+                LocalOp::Xor(a, b) => write!(out, " x{a}.{b}"),
+                LocalOp::AndNot(a, b) => write!(out, " m{a}.{b}"),
+                LocalOp::Prev(a, k) => write!(out, " p{a}.{k}"),
+            };
+        }
+        out.push('\n');
+    }
+}
+
 pub fn rule_rows(out: &mut String, rules: &[u16]) {
     use std::fmt::Write as _;
     for (at, p) in rules.iter().enumerate() {

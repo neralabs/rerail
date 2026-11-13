@@ -452,14 +452,8 @@ mod fsevents {
     pub(super) fn volume(path: &Path) -> Option<[u8; 16]> {
         use std::os::unix::fs::MetadataExt as _;
         let dev = std::fs::metadata(path).ok()?.dev() as i32;
-        // Asked of the system once a device, for the process: each root a run watches asks it.
-        static BY_DEV: Mutex<Vec<(i32, Option<[u8; 16]>)>> = Mutex::new(Vec::new());
-        if let Some((_, v)) = BY_DEV.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| *d == dev) {
-            return *v;
-        }
-        let v = uuid_of(dev);
-        BY_DEV.lock().unwrap_or_else(|e| e.into_inner()).push((dev, v));
-        v
+        // Asked once a root by the observer, which keeps it with the root (`Observer::volumes`).
+        uuid_of(dev)
     }
 
     fn uuid_of(dev: i32) -> Option<[u8; 16]> {

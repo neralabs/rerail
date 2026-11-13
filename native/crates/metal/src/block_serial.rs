@@ -1381,6 +1381,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .enumerate()
                 .map(|(k, &(o, w))| {
                     let word = if w == 0 { String::new() } else { format!(" && word == {w}u") };
+                    if o == rerail_compiler::records::WORD_ALONE {
+                        return format!(" if (word == {w}u) marks |= {}u;", 1u32 << k);
+                    }
                     format!(" if (((out[f.out_base + {o}u * f.groups + s / 64u] >> (s % 64u)) & 1ul) != 0ul{word}) marks |= {}u;", 1u32 << k)
                 })
                 .collect::<String>(),

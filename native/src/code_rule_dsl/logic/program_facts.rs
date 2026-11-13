@@ -28,59 +28,92 @@ use std::collections::BTreeMap;
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
-/// A value of a row as the reader takes it: a program's `Value`, or a `Ref` read straight off `encode`'s bytes.
+/// A value of a fact row, as a reader takes it: owned (`Value`), or borrowed from encoded facts (`V`).
 pub trait Cell {
-    fn int(&self) -> Option<i64>;
-    fn str(&self) -> Option<&str>;
+    fn int(&self) -> Result<i64, String>;
+    fn str(&self) -> Result<&str, String>;
 }
 
 impl Cell for Value {
-    fn int(&self) -> Option<i64> {
+    fn int(&self) -> Result<i64, String> {
         match self {
-            Value::Int(i) => Some(*i),
-            Value::Str(_) => None,
+            Value::Int(i) => Ok(*i),
+            Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
         }
     }
-
-    fn str(&self) -> Option<&str> {
+    fn str(&self) -> Result<&str, String> {
         match self {
-            Value::Str(x) => Some(x),
-            Value::Int(_) => None,
+            Value::Str(x) => Ok(x),
+            Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
         }
     }
 }
 
-/// A value read off `encode`'s bytes (`Decoded`), its string borrowed from them: a stored program is read into its
-/// `Program` without first copying every string of its rows (a warm batch's decoded rows were most of reading one).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Ref<'a> {
+/// A value of encoded facts (`encode`), its string borrowed from the encoding's table.
+#[derive(Clone, Copy, Debug)]
+pub enum V<'b> {
     Int(i64),
-    Str(&'a str),
+    Str(&'b str),
 }
 
-impl Cell for Ref<'_> {
-    fn int(&self) -> Option<i64> {
+impl Cell for V<'_> {
+    fn int(&self) -> Result<i64, String> {
         match self {
-            Ref::Int(i) => Some(*i),
-            Ref::Str(_) => None,
+            V::Int(i) => Ok(*i),
+            V::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
         }
     }
-
-    fn str(&self) -> Option<&str> {
+    fn str(&self) -> Result<&str, String> {
         match self {
-            Ref::Str(x) => Some(x),
-            Ref::Int(_) => None,
+            V::Str(x) => Ok(x),
+            V::Int(i) => Err(bad(format!("{i} where a string goes"))),
         }
     }
 }
 
-/// Rows by relation, each a slice of its values: what the reader reads, of `Facts` (`rows_of`) or of bytes
-/// (`Decoded::rows_into`).
-pub type Rows<'a, C> = BTreeMap<&'a str, Vec<&'a [C]>>;
+impl V<'_> {
+    pub fn owned(&self) -> Value {
+        match self {
+            V::Int(i) => Value::Int(*i),
+            V::Str(x) => Value::Str((*x).to_owned()),
+        }
+    }
+}
 
-/// `facts`' rows as the reader reads them.
-pub fn rows_of(facts: &Facts) -> Rows<'_, Value> {
-    facts.iter().map(|(rel, rows)| (rel.as_str(), rows.iter().map(Vec::as_slice).collect())).collect()
+/// One relation of encoded facts, read in place: its values in one list, and where each row starts.
+pub struct ViewRel<'b> {
+    pub name: &'b str,
+    values: Vec<V<'b>>,
+    starts: Vec<u32>,
+}
+
+impl<'b> ViewRel<'b> {
+    pub fn rows(&self) -> impl Iterator<Item = &[V<'b>]> + '_ {
+        (0..self.starts.len()).map(move |i| {
+            let end = self.starts.get(i + 1).map_or(self.values.len(), |e| *e as usize);
+            &self.values[self.starts[i] as usize..end]
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.starts.len()
+    }
+}
+
+/// Encoded facts (`encode`) read in place (`decode_view`): no row and no string is copied out.
+pub struct View<'b> {
+    pub rels: Vec<ViewRel<'b>>,
+}
+
+impl View<'_> {
+    /// The relations `keep` names, as owned facts.
+    pub fn owned(&self, keep: impl Fn(&str) -> bool) -> Facts {
+        let mut out = Facts::new();
+        for rel in self.rels.iter().filter(|r| keep(r.name)) {
+            out.entry(rel.name.to_owned()).or_default().extend(rel.rows().map(|r| r.iter().map(V::owned).collect()));
+        }
+        out
+    }
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
@@ -440,37 +473,102 @@ fn bad(what: impl std::fmt::Display) -> String {
 }
 
 /// One program's rows of the schema, by relation, and the ids they index.
-struct Reader<'a, C> {
-    rows: Rows<'a, C>,
-    terms: rustc_hash::FxHashMap<i64, &'a [C]>,
-    call_args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
-    atoms: rustc_hash::FxHashMap<i64, &'a [C]>,
-    args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
+struct Reader<'a, C: Cell> {
+    rows: BTreeMap<&'a str, Vec<&'a [C]>>,
+    terms: Dense<&'a [C]>,
+    call_args: Kids,
+    atoms: Dense<&'a [C]>,
+    args: Kids,
+    /// Each rule's body literals, in order.
+    bodies: Kids,
+}
+
+/// Rows by id: a vector when the ids are dense (as `Writer` numbers them), else a map. Any numbering reads back.
+enum Dense<T> {
+    Vec(Vec<Option<T>>),
+    Map(rustc_hash::FxHashMap<i64, T>),
+}
+
+impl<T> Dense<T> {
+    fn of(items: Vec<(i64, T)>) -> Self {
+        let n = items.len();
+        match items.iter().map(|(k, _)| *k).max() {
+            Some(max) if items.iter().all(|(k, _)| *k >= 0) && (max as usize) < 2 * n + 64 => {
+                let mut v: Vec<Option<T>> = (0..=max as usize).map(|_| None).collect();
+                for (k, t) in items {
+                    v[k as usize] = Some(t);
+                }
+                Dense::Vec(v)
+            }
+            None => Dense::Vec(Vec::new()),
+            _ => Dense::Map(items.into_iter().collect()),
+        }
+    }
+
+    fn get(&self, k: i64) -> Option<&T> {
+        match self {
+            Dense::Vec(v) => usize::try_from(k).ok().and_then(|k| v.get(k)).and_then(Option::as_ref),
+            Dense::Map(m) => m.get(&k),
+        }
+    }
+
+    fn take(&mut self, k: i64) -> Option<T> {
+        match self {
+            Dense::Vec(v) => usize::try_from(k).ok().and_then(|k| v.get_mut(k)).and_then(Option::take),
+            Dense::Map(m) => m.remove(&k),
+        }
+    }
+}
+
+/// An owner's children (`arg(a, i, t)`, `call_arg(t, i, u)`, `body(r, k, l)`): each owner's, ordered by index, as
+/// one sorted list and the owner's range of it.
+struct Kids {
+    children: Vec<i64>,
+    at: Dense<(u32, u32)>,
+}
+
+impl Kids {
+    fn of<C: Cell>(rows: &[&[C]]) -> Result<Self, String> {
+        let mut all: Vec<(i64, i64, i64)> = rows.iter().map(|r| Ok((int(&r[0])?, int(&r[1])?, int(&r[2])?))).collect::<Result<_, String>>()?;
+        all.sort_unstable();
+        let mut at: Vec<(i64, (u32, u32))> = Vec::new();
+        for (i, (owner, _, _)) in all.iter().enumerate() {
+            match at.last_mut() {
+                Some((o, (_, n))) if o == owner => *n += 1,
+                _ => at.push((*owner, (i as u32, 1))),
+            }
+        }
+        Ok(Kids { children: all.into_iter().map(|(_, _, c)| c).collect(), at: Dense::of(at) })
+    }
+
+    fn of_owner(&self, owner: i64) -> &[i64] {
+        self.at.get(owner).map_or(&[], |&(s, n)| &self.children[s as usize..(s + n) as usize])
+    }
 }
 
 /// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
 /// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
-pub(in crate::code_rule_dsl) struct Grouped<'a, C>(BTreeMap<&'a str, Rows<'a, C>>);
+pub(in crate::code_rule_dsl) struct Grouped<'a, C: Cell = Value>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [C]>>>);
 
-impl<'a, C: Cell> Grouped<'a, C> {
-    pub(in crate::code_rule_dsl) fn of(rows: &Rows<'a, C>) -> Self {
-        let mut by: BTreeMap<&str, Rows<'a, C>> = BTreeMap::new();
-        for (&rel, all) in rows {
+impl<'a> Grouped<'a, Value> {
+    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
+        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
+        for (rel, all) in facts {
             // Rows of one program come together in a relation's rows as written: each run of them is added at once,
             // the map looked up when the program changes, not per row.
-            let mut run: Option<(&str, Vec<&[C]>)> = None;
-            let flush = |run: Option<(&'a str, Vec<&'a [C]>)>, by: &mut BTreeMap<&'a str, Rows<'a, C>>| {
+            let mut run: Option<(&str, Vec<&[Value]>)> = None;
+            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
                 if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel).or_default().extend(rows);
+                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
                 }
             };
-            for &row in all {
-                let Some(q) = row.first().and_then(Cell::str) else { continue };
+            for row in all {
+                let Some(Value::Str(q)) = row.first() else { continue };
                 match &mut run {
-                    Some((p, rows)) if *p == q => rows.push(&row[1..]),
+                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
                     _ => {
                         flush(run.take(), &mut by);
-                        run = Some((q, vec![&row[1..]]));
+                        run = Some((q.as_str(), vec![&row[1..]]));
                     }
                 }
             }
@@ -478,7 +576,37 @@ impl<'a, C: Cell> Grouped<'a, C> {
         }
         Grouped(by)
     }
+}
 
+impl<'a, 'b: 'a> Grouped<'a, V<'b>> {
+    /// Each program's rows in `views` (the parts of one document's facts, `decode_view`), as `of` groups owned facts.
+    pub(in crate::code_rule_dsl) fn of_views(views: &'a [View<'b>]) -> Self {
+        let mut by: BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [V<'b>]>>> = BTreeMap::new();
+        for view in views {
+            for rel in &view.rels {
+                let mut run: Option<(&'b str, Vec<&'a [V<'b>]>)> = None;
+                for row in rel.rows() {
+                    let Some(V::Str(q)) = row.first() else { continue };
+                    match &mut run {
+                        Some((p, rows)) if *p == *q => rows.push(&row[1..]),
+                        _ => {
+                            if let Some((p, rows)) = run.take() {
+                                by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
+                            }
+                            run = Some((q, vec![&row[1..]]));
+                        }
+                    }
+                }
+                if let Some((p, rows)) = run {
+                    by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
+                }
+            }
+        }
+        Grouped(by)
+    }
+}
+
+impl<'a, C: Cell> Grouped<'a, C> {
     /// Program `p`, as it was written.
     pub(in crate::code_rule_dsl) fn program(&self, p: &str) -> Result<Program, String> {
         let rows = self.0.get(p).cloned().unwrap_or_default();
@@ -486,17 +614,17 @@ impl<'a, C: Cell> Grouped<'a, C> {
     }
 }
 
-fn int(v: &impl Cell) -> Result<i64, String> {
-    v.int().ok_or_else(|| bad(format!("{:?} where a number goes", v.str().unwrap_or_default())))
+fn int<C: Cell>(v: &C) -> Result<i64, String> {
+    v.int()
 }
 
-/// A string value, borrowed: for a kind matched on, or a key, not kept.
-fn str_of(v: &impl Cell) -> Result<&str, String> {
-    v.str().ok_or_else(|| bad(format!("{} where a string goes", v.int().unwrap_or_default())))
+/// A string value, borrowed: for a kind matched on, not kept.
+fn str_of<C: Cell>(v: &C) -> Result<&str, String> {
+    v.str()
 }
 
-fn text(v: &impl Cell) -> Result<String, String> {
-    str_of(v).map(str::to_owned)
+fn text<C: Cell>(v: &C) -> Result<String, String> {
+    v.str().map(str::to_owned)
 }
 
 /// `items` by their index column, in order.
@@ -507,7 +635,7 @@ fn ordered<T>(mut items: Vec<(i64, T)>) -> Vec<T> {
 
 impl<'a> Reader<'a, Value> {
     fn of(facts: &'a Facts, p: &str) -> Result<Self, String> {
-        let mut rows: Rows<'a, Value> = BTreeMap::new();
+        let mut rows: BTreeMap<&str, Vec<&[Value]>> = BTreeMap::new();
         for (rel, all) in facts {
             for row in all {
                 if matches!(row.first(), Some(Value::Str(q)) if q == p) {
@@ -520,24 +648,17 @@ impl<'a> Reader<'a, Value> {
 }
 
 impl<'a, C: Cell> Reader<'a, C> {
-    fn from_rows(rows: Rows<'a, C>, p: &str) -> Result<Self, String> {
+    fn from_rows(rows: BTreeMap<&'a str, Vec<&'a [C]>>, p: &str) -> Result<Self, String> {
         if !rows.contains_key("program") {
             return Err(bad(format!("no program {p:?}")));
         }
-        let (mut terms, mut call_args, mut atoms, mut args) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default(), rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default());
-        for &row in rows.get("term").map_or(&[][..], Vec::as_slice) {
-            terms.insert(int(&row[0])?, row);
-        }
-        for &row in rows.get("call_arg").map_or(&[][..], Vec::as_slice) {
-            call_args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
-        }
-        for &row in rows.get("atom").map_or(&[][..], Vec::as_slice) {
-            atoms.insert(int(&row[0])?, row);
-        }
-        for &row in rows.get("arg").map_or(&[][..], Vec::as_slice) {
-            args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
-        }
-        Ok(Reader { rows, terms, call_args, atoms, args })
+        let get = |rel: &str| rows.get(rel).map_or(&[][..], Vec::as_slice);
+        let terms = Dense::of(get("term").iter().map(|row| Ok((int(&row[0])?, *row))).collect::<Result<Vec<_>, String>>()?);
+        let atoms = Dense::of(get("atom").iter().map(|row| Ok((int(&row[0])?, *row))).collect::<Result<Vec<_>, String>>()?);
+        let call_args = Kids::of(get("call_arg"))?;
+        let args = Kids::of(get("arg"))?;
+        let bodies = Kids::of(get("body"))?;
+        Ok(Reader { rows, terms, call_args, atoms, args, bodies })
     }
 
     fn get(&self, rel: &str) -> &[&'a [C]] {
@@ -545,7 +666,7 @@ impl<'a, C: Cell> Reader<'a, C> {
     }
 
     fn term(&self, t: i64) -> Result<Term, String> {
-        let row = self.terms.get(&t).ok_or_else(|| bad(format!("no term {t}")))?;
+        let row = self.terms.get(t).ok_or_else(|| bad(format!("no term {t}")))?;
         Ok(match str_of(&row[1])? {
             "var" => Term::Var(text(&row[3])?),
             "wild" => Term::Wild,
@@ -553,7 +674,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             "str" => Term::Str(text(&row[3])?),
             "top" => Term::Top,
             "call" => {
-                let args = self.call_args.get(&t).map(|a| a.values().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
+                let args = self.call_args.of_owner(t).iter().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()?;
                 Term::Call(text(&row[3])?, args)
             }
             other => return Err(bad(format!("no term kind {other}"))),
@@ -561,8 +682,8 @@ impl<'a, C: Cell> Reader<'a, C> {
     }
 
     fn atom(&self, a: i64) -> Result<Atom, String> {
-        let row = self.atoms.get(&a).ok_or_else(|| bad(format!("no atom {a}")))?;
-        let args = self.args.get(&a).map(|args| args.values().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
+        let row = self.atoms.get(a).ok_or_else(|| bad(format!("no atom {a}")))?;
+        let args = self.args.of_owner(a).iter().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()?;
         Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
@@ -575,15 +696,15 @@ impl<'a, C: Cell> Reader<'a, C> {
         Ok(out)
     }
 
-    fn literals(&self) -> Result<rustc_hash::FxHashMap<i64, Literal>, String> {
-        let mut out = rustc_hash::FxHashMap::default();
+    fn literals(&self) -> Result<Dense<Literal>, String> {
+        let mut out: Vec<(i64, Literal)> = Vec::new();
         for row in self.get("lit_atom") {
-            out.insert(int(&row[0])?, Literal::Atom(self.atom(int(&row[1])?)?));
+            out.push((int(&row[0])?, Literal::Atom(self.atom(int(&row[1])?)?)));
         }
         for row in self.get("lit_cmp") {
             let op = text(&row[2])?;
             let op = super::front::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
-            out.insert(int(&row[0])?, Literal::Cmp { l: self.term(int(&row[1])?)?, op, r: self.term(int(&row[3])?)? });
+            out.push((int(&row[0])?, Literal::Cmp { l: self.term(int(&row[1])?)?, op, r: self.term(int(&row[3])?)? }));
         }
         let over = self.by_id("agg_over")?;
         let join = self.by_id("agg_join")?;
@@ -604,37 +725,34 @@ impl<'a, C: Cell> Reader<'a, C> {
                 other => return Err(bad(format!("no aggregate {other}"))),
             };
             let over = over.get(&l).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            out.insert(l, Literal::Agg { var: text(&row[1])?, op, over, atom: self.atom(int(&row[3])?)? });
+            out.push((l, Literal::Agg { var: text(&row[1])?, op, over, atom: self.atom(int(&row[3])?)? }));
         }
         for row in self.get("lit_nearest") {
-            out.insert(int(&row[0])?, Literal::Nearest { n: text(&row[1])?, a: text(&row[2])?, kindset: text(&row[3])? });
+            out.push((int(&row[0])?, Literal::Nearest { n: text(&row[1])?, a: text(&row[2])?, kindset: text(&row[3])? }));
         }
         let captures = self.by_id("ast_capture")?;
         for row in self.get("lit_ast") {
             let l = int(&row[0])?;
             let captures = ordered(captures.get(&l).into_iter().flatten().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
-            out.insert(l, Literal::Ast { document: text(&row[1])?, node: text(&row[2])?, matcher: text(&row[3])?, captures });
+            out.push((l, Literal::Ast { document: text(&row[1])?, node: text(&row[2])?, matcher: text(&row[3])?, captures }));
         }
-        Ok(out)
+        Ok(Dense::of(out))
     }
 
     fn program(&self) -> Result<Program, String> {
         let mut prog = Program::default();
         let mut literals = self.literals()?;
-        let bodies = self.by_id("body")?;
         let mut rules = Vec::new();
         for row in self.get("rule") {
             let r = int(&row[0])?;
-            let body = ordered(
-                bodies.get(&r).into_iter().flatten().map(|b| Ok((int(&b[0])?, literals.remove(&int(&b[1])?).ok_or_else(|| bad(format!("rule {r}: a literal twice or none")))?))).collect::<Result<Vec<_>, String>>()?,
-            );
+            let body = self.bodies.of_owner(r).iter().map(|l| literals.take(*l).ok_or_else(|| bad(format!("rule {r}: a literal twice or none")))).collect::<Result<Vec<_>, String>>()?;
             rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body }));
         }
         prog.rules = ordered(rules);
         let decls = self.by_id_text("decl")?;
         for row in self.get("relation") {
             let rel = text(&row[0])?;
-            let cols = ordered(decls.get(rel.as_str()).into_iter().flatten().map(|d| Ok((int(&d[0])?, (text(&d[1])?, text(&d[2])?)))).collect::<Result<Vec<_>, String>>()?);
+            let cols = ordered(decls.get(&rel).into_iter().flatten().map(|d| Ok((int(&d[0])?, (text(&d[1])?, text(&d[2])?)))).collect::<Result<Vec<_>, String>>()?);
             if cols.len() as i64 != int(&row[1])? {
                 return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
             }
@@ -651,8 +769,8 @@ impl<'a, C: Cell> Reader<'a, C> {
         let widens = self.by_id_text("lattice_widen")?;
         for row in self.get("lattice") {
             let rel = text(&row[0])?;
-            let merge = merges.get(rel.as_str()).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            let widen = widens.get(rel.as_str()).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
+            let merge = merges.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
+            let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
             prog.lattice.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
         }
         // Keyed by the relation's name as the rows hold it, borrowed.
@@ -684,7 +802,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         let kinds = self.by_id_text("kindset_kind")?;
         for row in self.get("kindset") {
             let set = text(&row[0])?;
-            let members = ordered(kinds.get(set.as_str()).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let members = ordered(kinds.get(&set).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.kindsets.insert(set, members);
         }
         prog.demand_dropped = ordered(self.get("demand_dropped").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
@@ -720,13 +838,13 @@ impl<'a, C: Cell> Reader<'a, C> {
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
             let rel = text(&row[0])?;
-            let roots = roots.get(rel.as_str()).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
+            let roots = roots.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
             prog.natives.insert(rel, Native::DfsFirst { edge: text(&row[1])?, target: text(&row[2])?, roots });
         }
         let groups = self.by_id_text("native_group")?;
         for row in self.get("native_match") {
             let rel = text(&row[0])?;
-            let groups = ordered(groups.get(rel.as_str()).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
         }
         for row in self.get("native_python_candidates") {
@@ -790,10 +908,10 @@ impl<'a, C: Cell> Reader<'a, C> {
     }
 
     /// Rows of `rel` keyed by their first column (a name), each row less that column.
-    fn by_id_text(&self, rel: &str) -> Result<BTreeMap<&'a str, Vec<&'a [C]>>, String> {
-        let mut out: BTreeMap<&str, Vec<&[C]>> = BTreeMap::new();
-        for &row in self.get(rel) {
-            out.entry(str_of(&row[0])?).or_default().push(&row[1..]);
+    fn by_id_text(&self, rel: &str) -> Result<BTreeMap<String, Vec<&'a [C]>>, String> {
+        let mut out: BTreeMap<String, Vec<&[C]>> = BTreeMap::new();
+        for row in self.get(rel) {
+            out.entry(text(&row[0])?).or_default().push(&row[1..]);
         }
         Ok(out)
     }
@@ -867,98 +985,96 @@ pub fn encode(facts: &Facts) -> Vec<u8> {
     out
 }
 
-/// Bytes `encode` made, read in place: each relation's rows, their values one flat list, the strings borrowed from
-/// the bytes. Nothing is copied but the values' tags and numbers; `rows_into` gives the reader its slices.
-pub struct Decoded<'a> {
-    cells: Vec<Ref<'a>>,
-    /// Each relation, and where each of its rows ends in `cells`.
-    rels: Vec<(&'a str, Vec<usize>)>,
-}
-
-impl<'a> Decoded<'a> {
-    pub fn of(bytes: &'a [u8]) -> Result<Self, String> {
-        struct At<'a>(&'a [u8], usize);
-        impl<'a> At<'a> {
-            fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
-                let out = self.0.get(self.1..self.1.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
-                self.1 += n;
-                Ok(out)
-            }
-            fn u64(&mut self) -> Result<u64, String> {
-                Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
-            }
-            fn len(&mut self) -> Result<usize, String> {
-                usize::try_from(self.u64()?).map_err(|e| bad(e))
-            }
-        }
-        let mut at = At(bytes, 0);
-        let count = at.len()?;
-        let mut table: Vec<&'a str> = Vec::with_capacity(count.min(1 << 20));
-        for _ in 0..count {
-            let n = at.len()?;
-            table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?);
-        }
-        let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
-        // Each value is at least nine bytes: what is left bounds the cells.
-        let mut cells = Vec::with_capacity((bytes.len() - at.1) / 9);
-        let rels_n = at.len()?;
-        let mut rels = Vec::with_capacity(rels_n.min(1 << 16));
-        for _ in 0..rels_n {
-            let rel = string(at.u64()?)?;
-            let rows_n = at.len()?;
-            let mut ends = Vec::with_capacity(rows_n.min(1 << 20));
-            for _ in 0..rows_n {
-                for _ in 0..at.len()? {
-                    cells.push(match at.take(1)?[0] {
-                        0 => Ref::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
-                        1 => Ref::Str(string(at.u64()?)?),
-                        tag => return Err(bad(format!("no value tag {tag}"))),
-                    });
-                }
-                ends.push(cells.len());
-            }
-            rels.push((rel, ends));
-        }
-        if at.1 != bytes.len() {
-            return Err(bad("bytes after the facts"));
-        }
-        Ok(Decoded { cells, rels })
-    }
-
-    /// Each relation's rows, added to `into` after those it holds: the parts of one stored program read as one.
-    pub fn rows_into<'b>(&'b self, into: &mut Rows<'b, Ref<'a>>) {
-        let mut start = 0;
-        for (rel, ends) in &self.rels {
-            let rows = into.entry(*rel).or_default();
-            rows.reserve(ends.len());
-            for &end in ends {
-                rows.push(&self.cells[start..end]);
-                start = end;
-            }
-        }
-    }
-}
-
 /// Bytes `encode` made, as facts.
 pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
-    let decoded = Decoded::of(bytes)?;
-    let mut start = 0;
+    struct At<'a>(&'a [u8], usize);
+    impl At<'_> {
+        fn take(&mut self, n: usize) -> Result<&[u8], String> {
+            let out = self.0.get(self.1..self.1 + n).ok_or_else(|| bad("truncated"))?;
+            self.1 += n;
+            Ok(out)
+        }
+        fn u64(&mut self) -> Result<u64, String> {
+            Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+        }
+        fn len(&mut self) -> Result<usize, String> {
+            usize::try_from(self.u64()?).map_err(|e| bad(e))
+        }
+    }
+    let mut at = At(bytes, 0);
+    let count = at.len()?;
+    let mut table = Vec::with_capacity(count.min(1 << 20));
+    for _ in 0..count {
+        let n = at.len()?;
+        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
+    }
+    let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
     let mut facts = Facts::new();
-    for (rel, ends) in &decoded.rels {
-        let rows = ends
-            .iter()
-            .map(|&end| {
-                let row = decoded.cells[start..end].iter().map(|c| match c {
-                    Ref::Int(i) => Value::Int(*i),
-                    Ref::Str(x) => Value::Str((*x).to_owned()),
+    for _ in 0..at.len()? {
+        let rel = string(at.u64()?)?;
+        let rows_n = at.len()?;
+        let mut rows = Vec::with_capacity(rows_n.min(1 << 20));
+        for _ in 0..rows_n {
+            let width = at.len()?;
+            let mut row = Vec::with_capacity(width.min(64));
+            for _ in 0..width {
+                row.push(match at.take(1)?[0] {
+                    0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
+                    1 => Value::Str(string(at.u64()?)?),
+                    tag => return Err(bad(format!("no value tag {tag}"))),
                 });
-                start = end;
-                row.collect()
-            })
-            .collect();
-        facts.insert((*rel).to_owned(), rows);
+            }
+            rows.push(row);
+        }
+        facts.insert(rel, rows);
+    }
+    if at.1 != bytes.len() {
+        return Err(bad("bytes after the facts"));
     }
     Ok(facts)
+}
+
+/// Bytes `encode` made, read in place: the facts `decode` reads, their strings borrowed from `bytes`.
+pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
+    let mut at = 0usize;
+    // A corrupt length is refused, not added past the end (`checked_add`).
+    let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
+        let out = bytes.get(*at..at.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
+        *at += n;
+        Ok(out)
+    };
+    let u64_at = |at: &mut usize| -> Result<u64, String> { Ok(u64::from_le_bytes(take(at, 8)?.try_into().expect("eight bytes"))) };
+    let count = u64_at(&mut at)? as usize;
+    let mut table: Vec<&str> = Vec::with_capacity(count.min(1 << 20));
+    for _ in 0..count {
+        let n = u64_at(&mut at)? as usize;
+        table.push(std::str::from_utf8(take(&mut at, n)?).map_err(|e| bad(e))?);
+    }
+    let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
+    let mut rels = Vec::new();
+    for _ in 0..u64_at(&mut at)? {
+        let name = string(u64_at(&mut at)?)?;
+        let rows_n = u64_at(&mut at)? as usize;
+        // Each value is at least nine bytes, so a relation's rows hold no more values than its row count leaves room for.
+        let mut values = Vec::with_capacity(rows_n.min((bytes.len() - at) / 9));
+        let mut starts = Vec::with_capacity(rows_n.min(1 << 24));
+        for _ in 0..rows_n {
+            starts.push(u32::try_from(values.len()).map_err(|e| bad(e))?);
+            let width = u64_at(&mut at)? as usize;
+            for _ in 0..width {
+                values.push(match take(&mut at, 1)?[0] {
+                    0 => V::Int(i64::from_le_bytes(take(&mut at, 8)?.try_into().expect("eight bytes"))),
+                    1 => V::Str(string(u64_at(&mut at)?)?),
+                    tag => return Err(bad(format!("no value tag {tag}"))),
+                });
+            }
+        }
+        rels.push(ViewRel { name, values, starts });
+    }
+    if at != bytes.len() {
+        return Err(bad("bytes after the facts"));
+    }
+    Ok(View { rels })
 }
 
 #[cfg(test)]
@@ -1004,6 +1120,46 @@ pub mod tests {
         let got = super::encode(&facts);
         assert_eq!(got, want);
         assert_eq!(super::decode(&got).unwrap(), facts);
+    }
+
+    /// A program read in place off its encoded facts (`decode_view`, `Grouped::of_views`) is the program read off the
+    /// facts decoded: in any order of rows, and with ids that are not dense (a map, not a vector, indexes them).
+    #[test]
+    fn a_program_reads_back_the_same_in_place() {
+        use super::{Facts, Grouped, Value};
+        let prog = crate::code_rule_dsl::logic::rr::parse(
+            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
+             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
+        )
+        .unwrap();
+        let mut facts = Facts::new();
+        super::write(&mut facts, "q", &prog);
+        let owned = super::program(&facts, "q").unwrap();
+        let bytes = super::encode(&facts);
+        let views = [super::decode_view(&bytes).unwrap()];
+        let viewed = Grouped::of_views(&views).program("q").unwrap();
+        assert_eq!(format!("{viewed:?}"), format!("{owned:?}"));
+        assert_eq!(format!("{owned:?}"), format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()));
+        // Ids spread out (each times 1000) and rows reversed: read back the same.
+        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
+        let mut far = Facts::new();
+        for (rel, rows) in &facts {
+            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
+            let ids: &[usize] = match rel.as_str() {
+                "term" | "atom" => &[1],
+                "arg" | "call_arg" | "body" => &[1, 3],
+                "rule" | "lit_atom" => &[1, 2],
+                "lit_cmp" => &[1, 2, 4],
+                "lit_agg" => &[1, 4],
+                _ => &[],
+            };
+            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
+            rows.reverse();
+            far.insert(rel.clone(), rows);
+        }
+        let bytes = super::encode(&far);
+        let views = [super::decode_view(&bytes).unwrap()];
+        assert_eq!(format!("{:?}", Grouped::of_views(&views).program("q").unwrap()), format!("{owned:?}"));
     }
 
     /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same

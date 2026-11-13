@@ -1838,6 +1838,119 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((ours, theirs))
 }
 
+/// The repository's `.rr` files (outside `.git`, `target` and `node_modules`), with their text.
+fn rr_files() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// A `.rr` file's tape as it was made before the parsers wrote rows: the statement parser's tree, packed
+/// (`Pending` records, `TapeImage::finish`).
+fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
+    let nodes = rerail_rr_syntax::engine_tape(source)
+        .into_iter()
+        .map(|n| {
+            let error = n.is_error();
+            Pending {
+                kf: if error { ERROR_CODE } else { n.kind | (n.field << 10) },
+                parent: n.parent,
+                start: n.start,
+                length: n.end - n.start,
+                size: 1,
+                extra: n.extra,
+                error,
+                missing: false,
+                kind_alias: None,
+            }
+        })
+        .collect();
+    TapeImage::finish(nodes, Vec::new(), grammar, source, &|| false).unwrap().to_bytes().unwrap()
+}
+
+/// A `.rr` file's tape from the lean parser's bytes (the engine's path, `encode_rr`, decision 0140) equals the
+/// statement parser's tree packed by the engine's own passes, byte for byte: every `.rr` file of the repository.
+#[test]
+fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut checked = 0;
+    for (path, source) in rr_files() {
+        let packed = packed_rr_tape(&grammar, &source);
+        let lean = TapeImage::encode_rr(&grammar, &source, &|| false).unwrap().to_bytes().unwrap();
+        assert!(lean == packed, "{path}: the lean parser's tape is not the statement parser's");
+        checked += 1;
+    }
+    eprintln!("{checked} files");
+    assert!(checked > 1000, "{checked}");
+}
+
+/// What a `.rr` tape costs, in instructions retired and thread CPU time, over the repository's `.rr` files
+/// the compiled parser takes: the lean parser's rows and its tape (the engine's path), the compiled Bitlex
+/// parser's rows, and the statement parser's tree and its tape. With `RERAIL_RR_COST_LOOP` set to a step's name, runs that step
+/// alone for 20 s (for a profiler).
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn rr_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
+    let all = files.len();
+    files.retain(|f| rr_parser::compiled_tape(f).is_some());
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
+        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().rows.len())),
+        ("statement parser: tree", Box::new(|f| rerail_rr_syntax::engine_tape(f).len())),
+        ("statement parser: the tape, packed (before)", Box::new(|f| packed_rr_tape(&grammar, f).len())),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_RR_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
+        }
+        std::hint::black_box(n);
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
+        }
+    }
+    let mb = bytes as f64 / 1e6;
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:44} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
+    }
+    eprintln!("{} of {all} files (the compiled parser takes them), {mb:.1} MB, {nodes} nodes", files.len());
+}
+
 /// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
 /// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
 /// tree-sitter-json.
@@ -1865,6 +1978,97 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
     for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
         assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(invalid).is_none(), "accepted {invalid:?}");
     }
+}
+
+/// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
+/// refuses the file (`Ok` of each tape's bytes otherwise).
+fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false)
+        .map_err(|why| why.to_string())?
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    Ok((ours, theirs))
+}
+
+/// JSON's tapes from simdjson (the engine's JSON parser) are tree-sitter-json's, byte for byte: kinds,
+/// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
+/// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
+/// tree-sitter-json; the refused files are only counted.
+#[test]
+fn json_tapes_from_simdjson_are_tree_sitters() {
+    for source in [
+        "{}",
+        "[]",
+        "null\n",
+        "true",
+        " -0.5e-3 ",
+        "\"\"",
+        "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
+        "[1, -2.5e10, 0, 3.0E-2]",
+        "\u{feff}{\"bom\": true}",
+        "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
+        "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
+        "[\"\\\\\", \"\\\\\\\"\", \"a\\tb\\u0041c\", \"\\ud83d\\ude00\", \"é \\/ ü\", \"  \"]",
+        "{\"\": {\"\": []}, \"k\\\"\": \"v\"}",
+        "[[],{},[{}],{\"a\":[]}]\r\n",
+    ] {
+        let (ours, theirs) = simdjson_tapes(source).unwrap_or_else(|why| panic!("refused {source:?}: {why}"));
+        assert!(ours == theirs, "the tapes of {source:?} differ");
+    }
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", "", "// c\n{}", "{\"a\": 1,}"] {
+        assert!(simdjson_tapes(invalid).is_err(), "accepted {invalid:?}");
+    }
+    // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are simdjson's alone.
+    for source in ["1e+2", "[1.5E+3]"] {
+        let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false).is_ok_and(|t| t.is_ok()), "refused {source:?}");
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let (mut equal, mut refused, mut corrected, mut bytes) = (0, 0, 0, 0);
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    for path in &files {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match simdjson_tapes(&source) {
+            Err(_) => refused += 1,
+            Ok((ours, theirs)) if ours == theirs => {
+                equal += 1;
+                bytes += source.len();
+            }
+            // tree-sitter-json finds an error in a file simdjson accepts (it refuses an exponent's `+`, which JSON
+            // allows: `1e+2`). The tape is then the Bitlex parser's, a reading of its own.
+            Ok((ours, _)) => {
+                assert!(parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()), "the tapes of {} differ", path.display());
+                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::columns(&source)
+                    .map(|c| crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_columns(&grammar, &source, &c, &|| false).unwrap().to_bytes().unwrap());
+                assert!(bitlex.is_none_or(|b| b == ours), "{}: tree-sitter errs, and simdjson's tape is not the Bitlex parser's", path.display());
+                corrected += 1;
+            }
+        }
+    }
+    eprintln!("{equal} files ({bytes} bytes) equal tree-sitter-json's tapes; {corrected} where tree-sitter finds an error; {refused} refused");
+    assert!(equal > 1000, "{equal} files");
 }
 
 /// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
@@ -1921,4 +2125,128 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let mut corrupt = nested.clone();
     corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
     assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+}
+
+
+/// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
+/// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
+/// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn json_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
+                files.extend(std::fs::read_to_string(&p).ok());
+            }
+        }
+    }
+    let all = files.len();
+    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::columns(f).is_some());
+    let bytes: usize = files.iter().map(String::len).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let kinds = &jp::simdjson::kinds().unwrap().0;
+    let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("simdjson: stage 1 alone", Box::new(|f| rerail_simdjson::stage1_only(f.as_bytes(), false) as usize)),
+        ("simdjson: stage 1, SHA-256 in it", Box::new(|f| rerail_simdjson::stage1_only(f.as_bytes(), true) as usize)),
+        ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
+        ("simdjson: DOM parse, columns from index", Box::new(|f| rerail_simdjson::tape_from_index(f.as_bytes(), kinds).unwrap().node_count())),
+        ("simdjson: stage 1 (hashed), stage 2", Box::new(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count())),
+        // Through `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
+        ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::simdjson::Simdjson.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("bitlex: parse (node table)", Box::new(|f| jp::columns(f).unwrap().rows.len())),
+        ("bitlex: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("tree-sitter-json: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter-json: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+        ("the tape's source digest (SHA-256)", Box::new(|f| { use sha2::Digest; std::hint::black_box(sha2::Sha256::digest(f.as_bytes()))[0] as usize })),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_JSON_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
+        }
+        std::hint::black_box(n);
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
+        }
+    }
+    let mb = bytes as f64 / 1e6;
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:36} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
+    }
+    eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; simdjson's kernel {}", files.len(), rerail_simdjson::implementation());
+}
+
+/// The lean `.rr` parser writes the engine's tape (decision 0140): its bytes are the engine's
+/// image of every `.rr` file in the repository, and of a prefix of each (an unfinished file).
+/// The language tag it writes is the registry's.
+#[test]
+fn lean_rr_tape_is_the_engines_image() {
+    assert_eq!(crate::code_rule_dsl::language::tape_tag(GrammarDialect::Rr), Some(rerail_tape_format::RR_TAG));
+    assert_eq!(super::wire::CHECKPOINT_STRIDE, rerail_tape_format::CHECKPOINT_STRIDE);
+    let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+            }
+        }
+    }
+    assert!(files.len() > 1000, "{} files", files.len());
+    // And tapes whose columns need 4 bytes, which the lean parser parses again at them.
+    let long = "x".repeat(70_000);
+    files.push(("a 70,000-byte string".into(), format!("r(\"{long}\").\n")));
+    files.push(("a 70,000-byte comment".into(), format!("r(1).\n/* {long} */\nr(2).\nr(3).\n")));
+    files.push(("20,000 facts".into(), "r(1).\n".repeat(20_000)));
+    for (path, text) in &files {
+        let mut half = text.len() / 2;
+        while !text.is_char_boundary(half) {
+            half -= 1;
+        }
+        for src in [text.as_str(), &text[..half]] {
+            let engine = packed_rr_tape(&grammar, src);
+            let lean = rerail_rr_syntax::lean::tape(src);
+            if lean != engine {
+                let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                panic!("{path} ({} bytes): tapes of {} / {} bytes differ from byte {k}: {}", src.len(), lean.len(), engine.len(), rerail_tape_format::place(&engine, k));
+            }
+        }
+    }
 }

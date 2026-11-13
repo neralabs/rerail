@@ -157,11 +157,11 @@ fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
 /// them was 2.7 s of a one-file edit. A relation declared `<phase>__<x>`, for a phase program, names that phase:
 /// a superset of what `wanted` finds (it also counts one a rule of the reader makes), so the record names as many
 /// files or more, and the record and its check list them the same way.
-pub(super) fn phase_files(programs: &[String], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
+/// `read`: the programs' texts, read once by the run (`Texts::names`); a phase program found here is read here.
+pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
     let (mut seen, mut out) = (BTreeSet::new(), Vec::new());
-    let mut todo: Vec<String> = programs.to_vec();
-    while let Some(text) = todo.pop() {
-        let (names, own) = crate::code_rule_dsl::logic::rr::declared_names(&text)?;
+    let mut todo: Vec<(Vec<String>, Option<String>)> = read.iter().map(|t| (t.names.clone(), t.phase.clone())).collect();
+    while let Some((names, own)) = todo.pop() {
         let phases: BTreeSet<&str> = names
             .iter()
             .filter_map(|rel| rel.split_once(SEP))
@@ -177,7 +177,7 @@ pub(super) fn phase_files(programs: &[String], dir: Option<&Path>) -> Result<Vec
             out.extend(crate::code_rule_dsl::logic::rr::included_files(&raw)?);
             out.push(path);
             if let Some(src) = source(name, dir)? {
-                todo.push(src);
+                todo.push(crate::code_rule_dsl::logic::rr::declared_names(&src)?);
             }
         }
     }

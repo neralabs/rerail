@@ -252,7 +252,8 @@ fn split_constants(
     prev: Option<&std::collections::BTreeSet<String>>,
 ) -> std::collections::BTreeSet<String> {
     use crate::code_rule_dsl::logic::front::Literal;
-    let candidate = |r: &str| !prog.natives.contains_key(r) && !prog.lattice.contains_key(r) && !prog.inputs.iter().any(|i| i == r);
+    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    let candidate = |r: &str| !prog.natives.contains_key(r) && !prog.lattice.contains_key(r) && !inputs.contains(r);
     let mut constant: std::collections::BTreeSet<String> = derived
         .iter()
         .filter(|r| match prev.filter(|_| !scope.contains(**r)) {
@@ -273,7 +274,7 @@ fn split_constants(
         let still = index.rules_of(rel).all(|r| {
             r.body.iter().all(|l| match l {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !prog.inputs.iter().any(|x| x == &a.rel))
+                    constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !inputs.contains(a.rel.as_str()))
                 }
                 Literal::Cmp { .. } => true,
                 _ => false,
@@ -1246,11 +1247,15 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base:
     }
     // A view's base: a view is a semi-join exactly when its base is.
     let mut view_of: BTreeMap<String, String> = BTreeMap::new();
+    let mut heads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for rule in &cross.rules {
+        *heads.entry(rule.head.rel.as_str()).or_default() += 1;
+    }
     for rule in &cross.rules {
         let [Literal::Atom(a)] = rule.body.as_slice() else { continue };
         let Some(Term::Var(n)) = key.get(a.rel.as_str()).and_then(|&k| a.args.get(k)).filter(|_| !a.neg) else { continue };
         let Some(at) = rule.head.args.iter().position(|t| matches!(t, Term::Var(v) if v == n)) else { continue };
-        let sole = cross.rules.iter().filter(|r| r.head.rel == rule.head.rel).count() == 1;
+        let sole = heads.get(rule.head.rel.as_str()) == Some(&1);
         if sole && !key.contains_key(rule.head.rel.as_str()) && !view_of.contains_key(a.rel.as_str()) {
             key.insert(rule.head.rel.to_string(), at);
             view_of.insert(rule.head.rel.to_string(), a.rel.to_string());

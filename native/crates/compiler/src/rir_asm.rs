@@ -59,6 +59,8 @@ pub const OPCODES: &[(u8, &str)] = &[
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
+    (COUNT, "COUNT"),
+    (CHECK, "CHECK"),
 ];
 
 /// How an opcode's operand prints.
@@ -434,6 +436,65 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.word_kinds.push((s, k));
         }
+        "localcheck" => {
+            use crate::program::LocalOp;
+            let mask: u16 = line.number("m")?;
+            let delay: u8 = line.number("d")?;
+            let mut ops = Vec::new();
+            while let Some(w) = line.peek_word() {
+                line.word()?;
+                let bad = || format!("a bad local op `{w}`");
+                let (tag, rest) = w.split_at(1);
+                let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
+                let v = nums(rest)?;
+                let two = |v: &[u64]| -> Result<(u16, u16), String> { if v.len() == 2 { Ok((v[0] as u16, v[1] as u16)) } else { Err(bad()) } };
+                ops.push(match tag {
+                    "b" if v.len() == 4 => LocalOp::Bytes([v[0], v[1], v[2], v[3]]),
+                    "c" if v.len() == 1 => LocalOp::Const(v[0]),
+                    "w" if v.len() == 1 => LocalOp::Within(v[0] as u8),
+                    "n" if v.len() == 1 => LocalOp::Not(v[0] as u16),
+                    "a" => { let (a, b) = two(&v)?; LocalOp::And(a, b) }
+                    "o" => { let (a, b) = two(&v)?; LocalOp::Or(a, b) }
+                    "x" => { let (a, b) = two(&v)?; LocalOp::Xor(a, b) }
+                    "m" => { let (a, b) = two(&v)?; LocalOp::AndNot(a, b) }
+                    "p" => { let (a, k) = two(&v)?; LocalOp::Prev(a, k as u8) }
+                    _ => return Err(bad()),
+                });
+            }
+            parts.local_checks.push(crate::program::LocalCheck { mask, delay, ops });
+        }
+        "tokencount" => {
+            let at: usize = line.number("")?;
+            if at != parts.counts.len() {
+                return Err(format!("tokencount {at} out of order"));
+            }
+            if line.word()? != "max" {
+                return Err("tokencount N max M".into());
+            }
+            parts.counts.push(line.number("")?);
+        }
+        "tokenmark" => {
+            let order: u8 = line.number("")?;
+            if parts.token_marks.last().is_some_and(|m| m.order >= order) {
+                return Err(format!("tokenmark {order} out of order"));
+            }
+            let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            while let Some(w) = line.peek_word() {
+                line.word()?;
+                if let Some(o) = w.strip_prefix('o') {
+                    let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new() });
+                } else if let Some(s) = w.strip_prefix('s') {
+                    let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
+                    elems.last_mut().ok_or("a word before its element")?.words.push(s);
+                } else {
+                    return Err(format!("a bad token mark's part `{w}`"));
+                }
+            }
+            parts.token_marks.push(crate::program::TokenMark { order, elems });
+        }
         "tokenextra" => {
             let b: u8 = line.number("b")?;
             let k = line.kind()?;
@@ -675,6 +736,9 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::mark_word_rows(out, &program.mark_words);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
+    crate::rir_text::token_mark_rows(out, &program.token_marks);
+    crate::rir_text::count_rows(out, &program.counts);
+    crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
 }
 

@@ -273,6 +273,61 @@ pub struct Program {
     /// Relations run as one component though no rule makes them one (decision 0101 §3, `maintain::together`): a
     /// maintained stratum's pieces at one level, ordered inside it by unit gates (`gates`), each in one set.
     pub together: Vec<BTreeSet<String>>,
+    /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
+    /// made from them.
+    pub shapes: Vec<Shape>,
+}
+
+/// A join shape directive written after a rule (`.shape posarg after pv`, `.shape retparam bound f`): in the rules of
+/// `head`, and in every form made from them (their deltas' and maintenance's, `shape_base`), the literal of `lit` is
+/// joined only once `wait` holds. A rule's driving delta is never held back. The planner searches within it, so a
+/// directive narrows the search; it does not fix an order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shape {
+    pub head: String,
+    pub lit: String,
+    pub wait: ShapeWait,
+    /// As written, for the profile.
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShapeWait {
+    /// Once a literal of this relation is joined.
+    After(String),
+    /// Once these variables are bound.
+    Bound(Vec<String>),
+}
+
+/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins`, `pv__sup3` and
+/// `pv__old` are `pv`'s.
+pub fn shape_base(rel: &str) -> &str {
+    const SUFFIXES: [&str; 13] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__lost", "__cand", "__chk", "__live", "__prev"];
+    let mut r = rel;
+    loop {
+        if let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
+            r = s;
+            continue;
+        }
+        if let Some(i) = r.rfind("__sup").filter(|&i| i > 0 && r[i + 5..].bytes().all(|b| b.is_ascii_digit()) && r.len() > i + 5) {
+            r = &r[..i];
+            continue;
+        }
+        return r;
+    }
+}
+
+impl Shape {
+    /// `B after A` or `B bound x, y` (the directive's text), on the rules of `head`.
+    pub fn parse(head: &str, text: &str) -> Result<Shape, String> {
+        let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).collect();
+        let wait = match words.as_slice() {
+            [_, "after", a] => ShapeWait::After((*a).to_owned()),
+            [_, "bound", vars @ ..] if !vars.is_empty() => ShapeWait::Bound(vars.iter().map(|v| v.trim_start_matches('$').to_owned()).collect()),
+            _ => return Err(format!("`.shape {text}`: write `.shape <relation> after <relation>` or `.shape <relation> bound <variable>, …`")),
+        };
+        Ok(Shape { head: head.to_owned(), lit: words[0].to_owned(), wait, text: text.trim().to_owned() })
+    }
 }
 
 /// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,

@@ -109,7 +109,7 @@ fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<
 }
 
 /// The holds (`object_pins`) of runs whose process is gone: a run killed (a watchdog, a crash) never releases its
-/// hold, which kept its plans live, and their memos (decision 0108), for the lease's 6 hours. A run's owner names its
+/// hold, which kept its plans live, and their memos (decision 0146), for the lease's 6 hours. A run's owner names its
 /// process (`corpus-run:<pid>:…`); a process of this host that no longer exists holds nothing. A pid used again by
 /// another process keeps the hold to its lease, as before.
 fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>> {
@@ -373,7 +373,7 @@ impl ContentStore {
                 .optional()?;
             let set_lane = |manifest: i64| -> rusqlite::Result<()> {
                 if let Some(lane) = &lane {
-                    tx.prepare_cached("INSERT OR REPLACE INTO corpus_manifest_lanes(manifest_id, lane) VALUES (?1, ?2)")?.execute(params![manifest, &lane[..]])?;
+                    tx.prepare_cached("UPDATE corpus_manifests SET lane = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &lane[..]])?;
                 }
                 Ok(())
             };
@@ -488,9 +488,8 @@ impl ContentStore {
         }
         let displaced: Option<i64> = connection
             .query_row(
-                "SELECT 1 FROM corpus_manifests m LEFT JOIN corpus_manifest_lanes l ON l.manifest_id=m.manifest_id WHERE m.last_run > ?1 \
-                 AND (SELECT count(*) FROM corpus_manifests o LEFT JOIN corpus_manifest_lanes ol ON ol.manifest_id=o.manifest_id \
-                      WHERE o.root_id=m.root_id AND ol.lane IS l.lane) > ?2 LIMIT 1",
+                "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 \
+                 AND (SELECT count(*) FROM corpus_manifests o WHERE o.root_id=m.root_id AND o.lane IS m.lane) > ?2 LIMIT 1",
                 params![decided_run, policy.protected_runs as i64],
                 |r| r.get(0),
             )
@@ -530,8 +529,8 @@ impl ContentStore {
         self.immediate_transaction(|tx| {
             let manifests = tx
                 .prepare(
-                    "SELECT m.manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, l.lane FROM corpus_manifests m \
-                     LEFT JOIN corpus_manifest_lanes l ON l.manifest_id=m.manifest_id ORDER BY last_run DESC",
+                    "SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, lane FROM corpus_manifests \
+                     ORDER BY last_run DESC",
                 )?
                 .query_map([], |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?), r.get::<_, Option<Vec<u8>>>(7)?)))?
                 .collect::<Result<Vec<((i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>), Option<Vec<u8>>)>, _>>()?
@@ -589,7 +588,7 @@ impl ContentStore {
             }
             // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
             // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
-            // build and the program, and its memo (decision 0108: a space of frames, the size of every file's
+            // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
             let mut protection = Protection::default();
@@ -616,7 +615,6 @@ impl ContentStore {
             // Each set in one statement, whatever its size.
             let evicted_json = serde_json::to_string(&evicted).expect("integers");
             tx.prepare_cached("DELETE FROM corpus_manifest_plans WHERE manifest_id IN (SELECT value FROM json_each(?1))")?.execute([&evicted_json])?;
-            tx.prepare_cached("DELETE FROM corpus_manifest_lanes WHERE manifest_id IN (SELECT value FROM json_each(?1))")?.execute([&evicted_json])?;
             tx.prepare_cached("DELETE FROM corpus_manifests WHERE manifest_id IN (SELECT value FROM json_each(?1))")?.execute([&evicted_json])?;
             tx.prepare_cached(
                 "DELETE FROM corpus_live WHERE (source_id, grammar_version, tape_format) IN \
@@ -708,19 +706,20 @@ impl ContentStore {
                     params![plan, PLAN_ROWS_PER_PASS],
                 )?;
                 if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0108): its frames' space.
+                    // The plan's per-file memo (decision 0146): its frames' space.
                     let mut frames_gone = 0;
                     if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
                         let space = super::frames::local_space(&digest);
                         let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
                         if frames > 0 {
                             frames_gone = tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+                            tx.execute("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
                             tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
                         }
                     }
                     tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                     tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is frames now (decision 0108), not rows.
+                    // A dead plan collected is work done, though its memo is frames now (decision 0146), not rows.
                     return Ok(n + frames_gone + 1);
                 }
                 Ok(n)

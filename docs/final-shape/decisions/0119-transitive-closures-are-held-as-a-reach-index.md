@@ -156,3 +156,19 @@ The cold run, every part cold (the rebuilt binary invalidates the per-file memo)
 37–70. Most of it is per-file work the cone does not touch: `local/…/stratum walk` 22.3 s, and executor joins
 not attributed to a part. This bench does not show whether cold CPU is back to t32's 66.6 s. That needs a cold
 run of the cross-file part alone, with the per-file memo warm.
+
+## Built: a closure the demand puts in a cycle is rows again (2026-11-12)
+
+`find` takes a closure only when nothing it reads reads it back, but it runs before the magic-set rewrites
+(decision 0145), and those add readers. At O125, once hiding's copies were folded (decision 0058), `anc` had the
+form: its seeds and its edge `base` did not read it. Then the demand made `magic_found_bbf`, which reads `anc` and
+feeds `found`, which `base` reads. So `anc` sat inside a recursive component of 44 relations, and a native operator's
+stratum has no maintained form: the whole component was derived from its reads at every edit (1.6 s of step 07's
+2.9 s cross-file CPU, against 0.02 s maintained).
+
+After the demand, `reach_form::undo_in_cycles` finds each closure now in a cycle with other relations and makes it
+rows again: its seeds' rules are its own again, its recursive rule reads it, and a relation made through it is rows
+too. One declared `reach` is an error instead. Test: `a_closure_a_later_rewrite_puts_in_a_cycle_is_rows_again`.
+
+At O125 step 07 (outputs equal to a full run's): session CPU 4.6 -> 2.6 s, its cross-file part 2.9 -> 0.9 s (load
+9-15); the replay's instructions 389.1 -> 371.8 G, most of them the cold run's.

@@ -319,6 +319,102 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
 }
 
+/// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
+/// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
+/// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
+/// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
+/// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
+/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
+/// `merge_to_fixpoint`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
+/// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
+    if bound != crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
+        return 0;
+    }
+    let own = |g: &str| dialect_label(g) == label;
+    // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `hide` names them: `g` with non-alphanumerics as `_`).
+    let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| own(g)).collect();
+    let own_mid = |mut mid: &str| -> bool {
+        if mid.is_empty() {
+            return false;
+        }
+        while !mid.is_empty() {
+            let Some(rest) = grammars.iter().find_map(|g| mid.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))) else { return false };
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let Some(rest) = rest[digits..].strip_prefix('_').filter(|_| digits > 0) else { return false };
+            mid = rest;
+        }
+        true
+    };
+    let mut folded: HashMap<String, String> = HashMap::default();
+    for rel in prog.decls.keys().filter(|r| r.starts_with("rr_in_")) {
+        let tail = &rel["rr_in_".len()..];
+        // The longest original that leaves an own prefix.
+        let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(mid));
+        if let Some((_, orig)) = orig {
+            folded.insert(rel.clone(), orig.to_owned());
+        }
+    }
+    let sets: HashMap<String, String> = prog
+        .kindsets
+        .keys()
+        .filter_map(|k| {
+            let tail = k.strip_prefix("rr_in_")?;
+            grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| prog.kindsets.contains_key(*set)).map(|set| (k.clone(), set.to_owned()))
+        })
+        .collect();
+    if folded.is_empty() && sets.is_empty() {
+        return 0;
+    }
+    prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    let plain = format!("{label}:");
+    let unqualify = |a: &mut Atom| {
+        let col = match a.rel.as_str() {
+            "kind" | "field" => Some(1),
+            "node" => Some(2),
+            _ => None,
+        };
+        if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+            && let Some(name) = s.strip_prefix(plain.as_str())
+        {
+            *s = name.to_owned();
+        }
+    };
+    for rule in &mut prog.rules {
+        for l in &mut rule.body {
+            match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                    if let Some(orig) = folded.get(a.rel.as_str()) {
+                        a.rel = orig.clone().into();
+                    }
+                    unqualify(a);
+                }
+                Literal::Nearest { kindset, .. } => {
+                    if let Some(set) = sets.get(kindset.as_str()) {
+                        *kindset = set.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for rel in folded.keys() {
+        prog.decls.remove(rel);
+        prog.qualifiers.remove(rel);
+    }
+    for k in sets.keys() {
+        prog.kindsets.remove(k);
+    }
+    for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
+        for rel in list.iter_mut() {
+            if let Some(orig) = folded.get(rel.as_str()) {
+                *rel = orig.clone();
+            }
+        }
+    }
+    folded.len() + sets.len()
+}
+
 /// Which rules' analysis can find anything (O-combine-hiding-single): one with a seed, or a positive atom of a guest
 /// relation (`ENTRIES`) or of a relation such a rule makes, transitively. Any other rule reads no scoped column and
 /// enters no guest, so its analysis is empty, and is not made: in a policy most rules are such.
@@ -589,5 +685,34 @@ pub mod tests {
         let p = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
         let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
         assert!(out.contains("rr_in_sql_0_none("), "{out}");
+    }
+    /// A copy for a guest in the run's own language (an annotation in a Python run, its guests shown) is its
+    /// original: folded once the language is known, its reader reads the original and its clone repeats its rule.
+    /// In another language's run, or with guests hidden, the copies stay.
+    #[test]
+    fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
+        let text = concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl val(n: node)\nval(n) :- e(n).\nval(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+            ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
+        );
+        let hidden = |label: &str, bound: u32| {
+            let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+            hide(&mut p, bound);
+            let made = p.decls.keys().filter(|r| r.starts_with("rr_in_")).count();
+            let folded = fold_own(&mut p, label, bound);
+            super::super::merge_to_fixpoint(&mut p);
+            (made, folded, p)
+        };
+        let (made, folded, p) = hidden("python", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS);
+        assert!(made > 0, "hiding made the annotation's copies");
+        assert_eq!(folded, made);
+        assert!(p.rules.iter().all(|r| !r.to_string().contains("rr_in_") && !r.to_string().contains("python:")), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert_eq!(outs.len(), 2, "each clone repeats its rule: {outs:#?}");
+        assert_eq!(hidden("rust", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS).1, 0, "another language's run keeps them");
+        assert_eq!(hidden("python", 1 << 30).1, 0, "guests hidden keep them");
     }
 }

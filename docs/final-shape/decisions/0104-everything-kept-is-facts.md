@@ -334,7 +334,7 @@ Each cache is listed with its step in `facts_only.rs`.
 |---|---|---|---|
 | 1 | the run's constants, the whole-run cutoff, the observer's record, the derivation tables (7 tables, 2 maps) | the observer's base facts and rules over them | final-rerail-shape-rr-align, which owns it |
 | 2 | rule files and programs: parsed files, libraries, phase 0's graph, the combined and prepared programs, the planning choices (7 maps) | phase 0's facts. A rule file is loaded on a `load` request. The combined program, the prepared program and the choices are answers keyed by the program's facts (0074) and the build | this branch |
-| 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch. The per-file memo is done: frames in its plan's space, keyed by content and path (0108; t32 5.1–5.2 measured) |
+| 3 | a document's facts: the per-file memo, manifests, the cross-file memo, the first slice's kept matches, guest parses, the session's held rows (21 tables, 2 maps) | a document's facts in its phase's space, keyed by its content facts and the program's facts | this branch. The per-file memo is done: frames in its plan's space, keyed by content and path (0146; t32 5.1–5.2 measured) |
 | 4 | the kept strata (2 tables, 1 map) | the cross program's own relations, kept and maintained from the delta of its input facts | final-rerail-shape-rr-align: the 2 tables are moved to the store's frames (notes/t33, K1); K4 is built (fe23a4986): a new process loads the session's retained state from the frames, maintains it from the delta of its inputs, and writes back what changed. The cone of requests still reruns as whole strata |
 | 5 | the phase store (5 tables) | a phase's exports as its space's facts | the typing branch (investigate-bend-vs-datalog), as its plan already says |
 | 6 | planning: kept plans, derived values, observed steps, the tables a chunk builds ahead, compiled plans, the statistics (14 tables, 7 maps) | planner facts. Statistics are maintained aggregates over the base facts. A plan is an answer keyed by its rule's facts and the statistics it read | this branch |
@@ -343,6 +343,24 @@ Each cache is listed with its step in `facts_only.rs`.
 
 Step 2 comes first here, because every other step reads programs. A program as facts is the key
 that steps 3, 4, 6 and 7 join.
+
+**Two caches that were no cache's work (2026-11-12).** Two in-process maps by a program's text came
+in from the hub, and the guard listed neither. Both kept a value the run already held a step
+earlier, so they were removed, not moved to facts:
+
+- **`rr.rs` `LOWERED`** kept a lowered program by the text it prints as. `run-rr` read and lowered
+  the file, printed it, and handed the run only the print. The run then parsed and lowered it again.
+  Now `run_program` hands the program it read to `run_dialects` and to the run of that text
+  (`corpus::run_read`). The run's combine holds that program instead of its print lowered a second
+  time. A dialect run whose text names another language is lowered for that grammar, as before. The
+  map's other reason (lowering a printed program was no identity) went with the hub's idempotent
+  lowering (5db161b00).
+- **`rr.rs` `SEEDS`** kept a text's include seed by the text. A run asked for it up to five times:
+  for phase 0's graphs, for each combine's digest (with and without the typing facts), and for the
+  cutoff's combine. Now the run reads each seed once, when it fetches the graphs. It hands the graphs'
+  digests to every combine it makes (`run_handed` → `combine_keyed`, `reuse::reused`).
+
+Neither was keyed by anything the run did not already have, so no rule pair replaces them.
 
 ## Compatibility
 

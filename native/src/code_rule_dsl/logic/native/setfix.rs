@@ -1568,7 +1568,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // Join probes, natively; seed joins in the first wave only (none when the device ran the fixpoint).
         // The whole plans run this wave, by head: a spec says what a body derives, not where, so two rules with one
-        // body and different heads (a magic relation and its reader's, decision 0108's demand) are two runs.
+        // body and different heads (a magic relation and its reader's, decision 0145's demand) are two runs.
         let mut wholes_run: Vec<(usize, &Arc<JoinSpec>)> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
@@ -1770,7 +1770,7 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
     Ok(out)
 }
 
-/// Holds back request rows the caller does not answer yet (a load past the budget's current level, decision 0108):
+/// Holds back request rows the caller does not answer yet (a load past the budget's current level, decision 0145):
 /// they are asked again once the run is otherwise quiet. Until then they are as rows not yet asked.
 pub fn defer(conn: impl Scoped, name: &str, table: &str, rows: Vec<Vec<i64>>) -> Result<()> {
     let conn = conn.db();

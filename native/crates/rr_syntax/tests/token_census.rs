@@ -43,7 +43,7 @@ fn token_census() {
     let mut gaps: BTreeMap<(String, String, String), BTreeMap<String, usize>> = BTreeMap::new();
     let (mut tokens, mut nodes) = (0usize, 0usize);
     for (_, src) in &files {
-        let t = rerail_rr_syntax::tape(src);
+        let t = rerail_rr_syntax::engine_tape(src);
         nodes += t.len();
         let mut children: Vec<Vec<u32>> = vec![Vec::new(); t.len()];
         for (i, n) in t.iter().enumerate() {

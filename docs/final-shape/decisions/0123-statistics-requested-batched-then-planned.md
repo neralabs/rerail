@@ -109,6 +109,8 @@ batch and the plans.
   search.
 - **A flaky test found on the way, not caused by this.** `closures_of_one_level_launch_in_one_wave` fails about one
   run in ten at the last commit too (4 of 32). With the scoreboard on (0113), the level's three closures sometimes
-  run as component jobs on executor threads. There they cannot wait for the level's wave, and each runs its launches
-  at once; the test counts waves on its own thread and sees none. So a level's launches are sometimes not one wave,
-  which is a gap between 0113 and 0095 §5, not only in the test. `RERAIL_STRANDS=off` passes 8 of 8.
+  run as one component's job on an executor thread. **Closed (2026-11-12):** the job still flushed them as one wave
+  of three (a component's members share a wave, `run_members`); only the count was the job thread's, and the test
+  read the run's. A job now moves its waves to the thread that takes it back (`wave::since`, `wave::credit`, carried
+  in its `Strand`): 30 of 30 with strands on. So it was not a gap between 0113 and 0095 §5. Strata of one level in
+  different components (`RERAIL_STRATA_MERGE=off`) still flush a wave each.

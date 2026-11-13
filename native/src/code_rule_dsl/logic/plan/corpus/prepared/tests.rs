@@ -83,15 +83,10 @@
             crate::code_rule_dsl::logic::front::Value::Int(_) => None,
         }).collect();
         assert_eq!(programs, ["front", "lowered"].into_iter().collect(), "the programs stored");
-        // Read in place off the stored bytes (`program_facts::Decoded`), as a lookup reads it, in two parts: the same.
+        // Read in place off the stored bytes (`program_facts::decode_view`), as a lookup reads it, in two parts: the same.
         let (first, second): (crate::code_rule_dsl::logic::program_facts::Facts, crate::code_rule_dsl::logic::program_facts::Facts) = facts.clone().into_iter().partition(|(rel, _)| rel.as_str() < "m");
         let bytes = [crate::code_rule_dsl::logic::program_facts::encode(&first), crate::code_rule_dsl::logic::program_facts::encode(&second)];
-        let parts: Vec<_> = bytes.iter().map(|b| crate::code_rule_dsl::logic::program_facts::Decoded::of(b).unwrap()).collect();
-        let mut rows = crate::code_rule_dsl::logic::program_facts::Rows::new();
-        for part in &parts {
-            part.rows_into(&mut rows);
-        }
-        let in_place = super::prepared_from(&rows, dialect).unwrap();
+        let in_place = super::prepared_of_encoded(&bytes, dialect).unwrap();
         assert_eq!(format!("{:?}", in_place.prog), format!("{:?}", prepared.prog), "the front program, read in place");
         assert_eq!(format!("{:?}", in_place.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program, read in place");
         assert_eq!(format!("{:?}", in_place.split.local), format!("{:?}", prepared.split.local), "the split's local program, read in place");

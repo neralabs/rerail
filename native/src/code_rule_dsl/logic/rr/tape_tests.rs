@@ -60,7 +60,7 @@ fn the_decisions_example_has_the_decisions_tree() {
           arguments: argument_list
             argument: variable c
 "#;
-    assert_eq!(render(src, &tape(src)), expected);
+    assert_eq!(render(src, &rerail_rr_syntax::engine_tape(src)), expected);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn terms_bodies_and_directives_read_as_the_decision_names_them() {
 .mode block
 r(x, y) :- (a(x) ; b(x)), y = -1, z = -x, n ~ `eval($X)`, w = count : { c(_) }, s = join v by i sep "," : { d(v, i) }, q = @f(x) + 2 * 3.
 "#;
-    let tree = render(src, &tape(src));
+    let tree = render(src, &rerail_rr_syntax::engine_tape(src));
     for line in [
         // Implied tokens are left out; `.input`, `safe`, `count`, `join` and the operators are stored.
         "include\n    path: string \"core.rr\"",
@@ -103,7 +103,7 @@ r(x, y) :- (a(x) ; b(x)), y = -1, z = -x, n ~ `eval($X)`, w = count : { c(_) }, 
 #[test]
 fn a_bad_statement_is_one_error_and_parsing_resumes() {
     let src = ".decl a(x: number)\na(1) :- b(.\n.decl c(x: number)\nc(2).\nd(,) .\ne(3).\n";
-    let nodes = tape(src);
+    let nodes = rerail_rr_syntax::engine_tape(src);
     let errors: Vec<&str> = nodes.iter().filter(|n| n.is_error()).map(|n| &src[n.start as usize..n.end as usize]).collect();
     assert_eq!(errors, ["a(1) :- b(.", "d(,) ."]);
     let statements: Vec<&str> = nodes.iter().filter(|n| n.parent == Some(0)).map(|n| KIND_NAMES.get(usize::from(n.kind)).copied().unwrap_or("ERROR")).collect();
@@ -114,7 +114,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
     assert!(message.starts_with("line 2: expected a term"), "{message}");
     // An unterminated string runs to the end of the file.
     let src = "a(1).\nb(\"x).\nc(2).\n";
-    let nodes = tape(src);
+    let nodes = rerail_rr_syntax::engine_tape(src);
     let last = nodes.iter().rev().find(|n| n.parent == Some(0)).unwrap();
     assert!(last.is_error() && last.end as usize == src.len(), "{}", render(src, &nodes));
     assert_eq!(syntax_error(src).unwrap().1, "unterminated string at line 2");
@@ -142,7 +142,7 @@ fn every_rule_file_tapes_and_its_leaves_cover_it() {
     let mut refused = 0;
     for path in &files {
         let src = std::fs::read_to_string(path).unwrap();
-        let nodes = tape(&src);
+        let nodes = rerail_rr_syntax::engine_tape(&src);
         let parses = syntax::Parser::new(&src).and_then(|mut p| p.statements()).is_ok();
         let errors = nodes.iter().any(Node::is_error);
         assert_eq!(errors, !parses, "{}", path.display());
@@ -376,7 +376,7 @@ fn statements_from_the_tape_are_the_parsers() {
             }
             let src = std::fs::read_to_string(&path).unwrap();
             let parsed = syntax::Parser::new(&src).and_then(|mut p| p.statements());
-            let taped = from_tape::statements(&src, &tape(&src));
+            let taped = from_tape::statements(&src, &crate::code_rule_dsl::logic::rr::nodes(&src));
             match (parsed, taped) {
                 (Ok(parsed), Ok(taped)) => {
                     assert_eq!(parsed.len(), taped.len(), "{}", path.display());

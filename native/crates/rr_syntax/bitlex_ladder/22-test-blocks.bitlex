@@ -8,7 +8,7 @@
 #       .expect B101 at "a.py":1
 #   .end
 #
-# The engine's parser (logic/rr/syntax.rs) is the reference (decision 0119). A `.test` or a
+# The engine's parser (logic/rr/syntax.rs) is the reference (decision 0130). A `.test` or a
 # `.fixtures` block runs to its `.end`; its statements are a file's, but for another block:
 # blocks do not nest. Its `.`, its word, `uses` and its `,`, and the `.end` are implied; its
 # name, `exactly` and each set `uses` names are stored. What this step adds:
@@ -217,28 +217,8 @@ mask io_run     = fill(io_past & blank, solid)
 mask io_next    = (io_past & solid) | (prev(io_run) & ~io_run)
 escape "an I/O directive with no relation, and no `.` after it" when (io_next & hash) | ((io_last | io_run) & last_byte)
 
-# --- A `.violation`'s continuation words ----------------------------------------------------
-
-# What the bytes past a point start, past blanks and comments: a name, a string, a `{`.
+# A name's first byte: a `.end`'s word starts at one.
 mask id_first   = alpha & ident & ~prev(ident)
-mask id_ahead   = back_fill(id_first, solid)
-mask str_ahead  = back_fill(o_str, solid)
-mask brace_ahead = back_fill(code & lbrace, solid)
-# A name, then a string: from the name's last byte back to its first.
-mask id_str_end = ident & ~next(ident) & next(str_ahead)
-mask id_str     = id_first & back_fill(id_str_end, ~ident)
-mask id_str_ahead = back_fill(id_str, solid)
-# A `{` before a name and a `}`: a column of one name.
-mask rbrace_ahead = back_fill(code & rbrace, solid)
-mask id_rb_end  = ident & ~next(ident) & next(rbrace_ahead)
-mask id_rb      = id_first & back_fill(id_rb_end, ~ident)
-# `fix` before a name, `suppress` before a name and a string, `options` and `over` before a `{`.
-mask fix_w      = id_first & c_f & next(c_i) & next(c_x, 2) & ~next(ident, 3)
-mask suppress_w = id_first & c_s & next(u) & next(c_p, 2) & next(c_p, 3) & next(c_r, 4) & next(c_e, 5)
-                & next(c_s, 6) & next(c_s, 7) & ~next(ident, 8)
-mask options_w  = id_first & c_o & next(c_p) & next(c_t, 2) & next(c_i, 3) & next(c_o, 4) & next(c_n, 5)
-                & next(c_s, 6) & ~next(ident, 7)
-mask over_w     = id_first & c_o & next(c_v) & next(c_e, 2) & next(c_r, 3) & ~next(ident, 4)
 
 # --- Punctuation -------------------------------------------------------------------------------
 
@@ -280,35 +260,24 @@ mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) 
 mask after_comma = fill(code & comma & p_start, starts_g)
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
+# The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
+# before, `after`) follow, comments between them skipped. Tier 2 reads them from the records.
 # Before a `.violation`'s continuation word, where the tokens after it are the engine's.
-mark fix_on      = fix_w & next(id_ahead, 3)
-mark suppress_on = suppress_w & next(id_str_ahead, 8)
-mark options_on  = options_w & next(brace_ahead, 7)
-mark over_on     = over_w & next(brace_ahead, 4)
+mark fix_on      = tokens "fix" identifier
+mark suppress_on = tokens "suppress" identifier string
+mark options_on  = tokens "options" "{"
+mark over_on     = tokens "over" "{"
 # `policy` after a statement's `.`, then a `{`: a policy document, whose `.` is implied; any
 # other `.policy` is a setting's, whose `.` is stored.
-mask policy_w    = id_first & c_p & next(c_o) & next(c_l, 2) & next(c_i, 3) & next(c_c, 4) & next(c_y, 5) & ~next(ident, 6)
-mask after_dot   = fill(code & dot & p_start, starts_g)
-mark policy_on   = policy_w & prev(after_dot) & next(brace_ahead, 6)
+mark policy_on   = tokens after "." "policy" "{"
 # A `{` around one name: a column's name, not its raw text.
-mark one_name    = code & lbrace & next(back_fill(id_rb, solid))
+mark one_name    = tokens "{" identifier "}"
 # A `(` whose next token is `)`.
-mark empty_parens = code & lparen & next(back_fill(code & rparen, solid))
+mark empty_parens = tokens "(" ")"
 # `min`, `max`, `sum`, `mean` or `join`, then `()` and a `:` (not `:-`): the engine reads an
 # aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
 # file is refused wherever it is.
-mask agg_word   = id_first & ((c_m & next(c_i) & next(c_n, 2) & ~next(ident, 3))
-                             | (c_m & next(c_a) & next(c_x, 2) & ~next(ident, 3))
-                             | (c_s & next(u) & next(c_m, 2) & ~next(ident, 3))
-                             | (c_m & next(c_e) & next(c_a, 2) & next(c_n, 3) & ~next(ident, 4))
-                             | (c_j & next(c_o) & next(c_i, 2) & next(c_n, 3) & ~next(ident, 4)))
-mask agg_span   = fill(agg_word, ~ident)
-mask agg_last   = agg_span & ~next(agg_span)
-mask agg_past   = prev(agg_last)
-mask agg_run    = fill(agg_past & blank, solid)
-mask agg_next   = (agg_past & solid) | (prev(agg_run) & ~agg_run)
-mask rp_colon   = code & rparen & next(back_fill(code & colon & ~two_start, solid))
-mark no_value   = agg_next & code & lparen & next(back_fill(rp_colon, solid))
+mark no_value   = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
 mark newline     = lf & ~after_comma, end
 # A `.end`'s `.`: a `.` before the word `end`, past blanks and comments. After the line
 # breaks' marks, which a statement before it takes.
@@ -332,7 +301,7 @@ tree rr {
                               | line (directive | name: identifier | name: ('policy' as identifier))
                               | name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
                               | name: ('policy' as identifier) ((argument: word | setting_punctuation)+ (argument: json | newline) | newline))
-  # A `.test` or a `.fixtures` block (decision 0119): the node opened as a setting at the `.` is
+  # A `.test` or a `.fixtures` block (decision 0130): the node opened as a setting at the `.` is
   # the block. Its statements are a file's, read with `in_block` set: no block opens there.
   flag in_block
   choice test_tail      = drop retag test_block 'test' name: identifier [modifier: ('exactly' as identifier)] ['uses' argument: identifier (',' argument: identifier)*] block_body

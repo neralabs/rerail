@@ -329,7 +329,9 @@ impl<'a> Board<'a> {
                 let mut strand = strand;
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
+                let before = super::super::lanes::wave::flushed_now();
                 let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                strand.2 = super::super::lanes::wave::since(before);
                 (strand, n, stop, times, reserved)
             }));
         }
@@ -416,6 +418,7 @@ impl<'a> Board<'a> {
         let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
         let mut nap = 20e-6f64;
         loop {
+            let seen = stream.ended();
             match &self.comps[c].state {
                 State::Done(..) => break,
                 State::Job(h) if !stream.done(h) && !stream.queued(h) => {}
@@ -432,7 +435,8 @@ impl<'a> Board<'a> {
                 nap = 20e-6;
                 continue;
             }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+            // Woken when a job ends (one of a component's, which `collect` then retires), not after a nap.
+            stream.pause(seen, nap);
             nap = (nap * 2.0).min(1e-3);
         }
         let comp = &mut self.comps[c];

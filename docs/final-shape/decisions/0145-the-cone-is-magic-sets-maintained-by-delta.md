@@ -2,6 +2,8 @@
 
 Status: built (2026-11-10). The join half and the delta half (rounds) are both built (below).
 
+Numbered 0108 where it was written; renumbered 0145 in the hub (2026-11-13) because another record had 0108.
+
 ## Intro
 
 **The problem.** Rules read the file system through two relations, `dir_entry(dir, name,

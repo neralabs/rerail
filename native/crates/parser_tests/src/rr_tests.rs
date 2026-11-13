@@ -275,7 +275,7 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\": \"\\u{41}\"}", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
-    // A rule file's tests (decision 0119): a fixture set, a test that uses it, with `exactly`, its
+    // A rule file's tests (decision 0130): a fixture set, a test that uses it, with `exactly`, its
     // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
     (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rr\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
     (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "22"),
@@ -291,7 +291,7 @@ type Named = (String, String, usize, usize, usize);
 
 /// The engine's tree of `src`, by names, and whether it holds an `ERROR`.
 fn engine(src: &str) -> (Vec<Named>, bool) {
-    let tape = rr::tape(src);
+    let tape = rr::engine_tape(src);
     let mut size = vec![1usize; tape.len()];
     for i in (0..tape.len()).rev() {
         if let Some(p) = tape[i].parent {
@@ -345,7 +345,7 @@ fn without_tokens(nodes: Vec<Named>) -> Vec<Named> {
 }
 
 /// The engine's tree against the step's, for a document the step parses.
-/// The step that reads a rule file's tests (decision 0119).
+/// The step that reads a rule file's tests (decision 0130).
 const TEST_BLOCKS: &str = "22";
 
 /// Whether a line of `src` starts with `.test`, `.fixtures` or `.end`, the lines of a test block.

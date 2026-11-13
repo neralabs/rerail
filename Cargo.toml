@@ -1,5 +1,5 @@
 [workspace]
-members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/rr_aot_gen"]
+members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/rr_aot_gen", "native/crates/simdjson"]
 # The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
@@ -14,6 +14,10 @@ ast-grep-core = { path = "native/vendor/ast-grep-core-0.51.0" }
 # Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
 # builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.
 [profile.dev.package."*"]
+opt-level = 3
+
+# simdjson's tree (`rerail-simdjson`) runs a step per token of every JSON file: optimized as a dependency's code.
+[profile.dev.package.rerail-simdjson]
 opt-level = 3
 
 # Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the

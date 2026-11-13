@@ -4462,7 +4462,7 @@ impl CodeRuleDslRuntime {
     }
 
     /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
-    /// 0119, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
     /// calls it for a `.rr` file.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
@@ -4878,7 +4878,9 @@ pub(crate) fn install_languages() {
             parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
         }
         if cfg!(feature = "lang-json") {
-            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::tape::Bitlex));
+            // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            #[cfg(not(target_family = "wasm"))]
+            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::simdjson::Simdjson));
         }
         tape::install_parsers(parsers);
     }

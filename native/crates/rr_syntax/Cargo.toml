@@ -73,6 +73,8 @@ unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 # A `.policy` block's document, as the engine reads it.
 serde_json = "1.0"
+# The engine's tape, which the lean parser writes.
+rerail-tape-format = { path = "../tape_format" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
