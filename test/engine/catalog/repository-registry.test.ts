@@ -75,15 +75,16 @@ function settingOwners(database: RerailDatabase): unknown[] {
 }
 
 /**
- * A stopped, set-up repository with `rows` (path, own on/off) recorded straight into the table in that order, one
- * millisecond apart, in spellings `recordCheckout` would not write but older builds and other tools left.
+ * A stopped, set-up repository with `rows` (path, own on/off) recorded straight into the table in that order, in
+ * spellings `recordCheckout` would not write but older builds and other tools left. The clock reads `times`, by
+ * default one millisecond more for each row.
  */
-async function recordedRows(rows: ReadonlyArray<readonly [string, boolean | null]>) {
+async function recordedRows(rows: ReadonlyArray<readonly [string, boolean | null]>, times = rows.map((_, index) => index + 1)) {
   const database = open(join(await temporary("rerail-registry-listed-"), "rerail.sqlite"));
   const repositoryKey = "remote:github.com/acme/web";
   database.insert(repositories).values({ repositoryKey, displayName: "web", configuredAt: 1, started: false, createdAt: 1, updatedAt: 1 }).run();
   database.insert(checkouts).values(rows.map(([checkoutPath, started], index) => ({
-    checkoutPath, repositoryKey, cloneId: "clone", started, createdAt: index + 1, lastSeenAt: 1,
+    checkoutPath, repositoryKey, cloneId: "clone", started, createdAt: times[index]!, lastSeenAt: 1,
   }))).run();
   return { database, repositoryKey };
 }
@@ -155,6 +156,14 @@ function mainAnswers(database: RerailDatabase): Map<string, string> {
   ]));
 }
 
+/** Each recorded checkout's answer, by path, as the runtime's readers give it. */
+function runtimeAnswers(database: RerailDatabase): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    answerOf(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+  ]));
+}
+
 /** mulberry32: the same numbers from the same seed on every run. */
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
@@ -210,17 +219,37 @@ function spelledPaths(next: () => number, roots: readonly string[], folders: Rea
   return [...paths];
 }
 
-/** `count` times read from a clock that never goes back and moves on a millisecond after a row with chance `tick`. */
-function recordingTimes(count: number, tick: number, next: () => number): number[] {
+/**
+ * How the clock moves between two recordings: on a millisecond with chance `tick`, and back by up to a second with
+ * chance `back`, as a clock set back by hand or by a time sync does.
+ */
+interface Clock {
+  readonly tick: number;
+  readonly back: number;
+}
+
+/**
+ * The clocks of random trees, by seed: every row in one millisecond, about half of them in the millisecond of the row
+ * before, each in a millisecond of its own, and one that goes back now and then.
+ */
+const CLOCKS: readonly Clock[] = [{ tick: 0, back: 0 }, { tick: 0.5, back: 0 }, { tick: 1, back: 0 }, { tick: 1, back: 0.5 }];
+
+/** How far `clock` moves after a recording. */
+function clockStep(clock: Clock, next: () => number): number {
+  if (next() < clock.back) return -1 - Math.floor(next() * 1_000);
+  return next() < clock.tick ? 1 : 0;
+}
+
+/** `count` times read from `clock`, one per recording. */
+function recordingTimes(count: number, clock: Clock, next: () => number): number[] {
   const times: number[] = [];
-  for (let clock = 1_000; times.length < count; clock += next() < tick ? 1 : 0) times.push(clock);
+  for (let now = 1_000_000; times.length < count; now += clockStep(clock, next)) times.push(now);
   return times;
 }
 
 /**
  * Two repositories and their checkouts in random folders and spellings under `roots`, now and then one at the
- * filesystem's root, recorded in a random order. By seed, every row is recorded in one millisecond, about half of them
- * in the millisecond of the row before, or each in a millisecond of its own.
+ * filesystem's root, recorded in a random order by one of {@link CLOCKS}.
  */
 function randomTree(seed: number, roots: readonly string[]): RandomTree {
   const next = seeded(seed);
@@ -228,7 +257,7 @@ function randomTree(seed: number, roots: readonly string[]): RandomTree {
   const folders: string[][] = [[]];
   for (let index = 0; index < 7; index += 1) folders.push([...pick(folders), pick(TREE_NAMES)]);
   const paths = shuffled([...spelledPaths(next, roots, folders), ...pick([[], [], [parse(roots[0]!).root]])], next);
-  const times = recordingTimes(paths.length, [0, 0.5, 1][seed % 3]!, next);
+  const times = recordingTimes(paths.length, CLOCKS[seed % CLOCKS.length]!, next);
   return {
     repositories: ["k1", "k2"].map(repositoryKey => ({
       repositoryKey, displayName: repositoryKey, started: pick(ON_OFF), configuredAt: pick([1, null]), createdAt: 1, updatedAt: 1,
@@ -239,40 +268,33 @@ function randomTree(seed: number, roots: readonly string[]): RandomTree {
   };
 }
 
-/** Puts `tree`'s rows in place of every repository and checkout row, the checkouts recorded in the order of `order`. */
-function recordTree(database: RerailDatabase, tree: RandomTree, order: RandomTree["checkouts"]): void {
+/** Puts `tree`'s rows in place of every repository and checkout row, the checkouts recorded in their order. */
+function recordTree(database: RerailDatabase, tree: RandomTree): void {
   database.transaction(transaction => {
     transaction.delete(checkouts).run();
     transaction.delete(repositories).run();
     transaction.insert(repositories).values([...tree.repositories]).run();
-    transaction.insert(checkouts).values([...order]).run();
+    transaction.insert(checkouts).values([...tree.checkouts]).run();
   });
 }
 
-/** `rows` in the order they were recorded, those of one millisecond in path order, as the listing reader ties them. */
-function tiesByPath(rows: RandomTree["checkouts"]): RandomTree["checkouts"] {
-  return [...rows].sort((left, right) => left.createdAt - right.createdAt || (left.checkoutPath < right.checkoutPath ? -1 : 1));
+/** Each checkout `reader` answers otherwise than `expected` has it, with the seed of its tree. */
+function differences(seed: number, reader: string, answers: Map<string, string>, expected: Map<string, string>): string[] {
+  const differing = answers.size === expected.size ? [] : [`seed ${seed}: ${reader} answers ${answers.size} checkouts of ${expected.size}`];
+  for (const [path, answer] of answers) {
+    if (answer !== expected.get(path)) differing.push(`seed ${seed}, ${reader}, ${path}: ${answer}, where main gives ${expected.get(path)}`);
+  }
+  return differing;
 }
 
-/**
- * The listing reader's answers for `tree` against main's readers: each checkout it answers otherwise than main does
- * with the rows of each millisecond recorded in path order, and how many of its answers differ from main's on the rows
- * as they were recorded.
- */
-function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): { differing: string[]; moved: number } {
-  recordTree(database, tree, tree.checkouts);
-  const listed = listedAnswers(database);
-  const asRecorded = mainAnswers(database);
-  // main's readers again, the rows of each millisecond recorded in path order: the one order the listing changes.
-  recordTree(database, tree, tiesByPath(tree.checkouts));
+/** Each checkout of `tree` that the dashboard's listing reader or the runtime's readers answer otherwise than main's. */
+function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): string[] {
+  recordTree(database, tree);
   const expected = mainAnswers(database);
-  const differing: string[] = listed.size === expected.size ? [] : [`seed ${seed}: ${listed.size} checkouts listed, ${expected.size} recorded`];
-  let moved = 0;
-  for (const [path, answer] of listed) {
-    if (answer !== expected.get(path)) differing.push(`seed ${seed}, ${path}: ${answer}, where main gives ${expected.get(path)}`);
-    if (answer !== asRecorded.get(path)) moved += 1;
-  }
-  return { differing, moved };
+  return [
+    ...differences(seed, "listing", listedAnswers(database), expected),
+    ...differences(seed, "runtime", runtimeAnswers(database), expected),
+  ];
 }
 
 describe("the repository registry", () => {
@@ -366,33 +388,30 @@ describe("the repository registry", () => {
       [`${base}${sep}.${sep}wt`, `${base}${sep}wt${sep}.`],
       ...process.platform === "win32" ? [[join(base, "wt"), join(base, "WT")] as const] : [],
     ];
+    // The clock moving on between the recordings, standing still, and set back.
+    const clocks = [[1, 2, 3], [1, 1, 1], [2_000, 1_000, 3_000]];
     for (const [one, other] of spellings) {
       for (const [first, second] of [[one, other], [other, one]] as const) {
-        // Stopped as the spelling recorded first, started as the other one.
-        const { database, repositoryKey } = await recordedRows([[first, false], [second, true], [inner, null]]);
-        const { listed, runtime } = bothReads(database, repositoryKey);
-        expect(runtime.get(inner), `${first} then ${second}`).toEqual([false, "parent", first]);
-        expect(listed.get(inner), `${first} then ${second}`).toEqual([false, "parent", first]);
+        for (const times of clocks) {
+          // Stopped as the spelling recorded first, started as the other one.
+          const { database, repositoryKey } = await recordedRows([[first, false], [second, true], [inner, null]], times);
+          const { listed, runtime } = bothReads(database, repositoryKey);
+          expect(runtime.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+          expect(listed.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+        }
       }
     }
   });
 
-  it("gives each checkout in the dashboard's listing the state and parent main gave it, but rows of one millisecond tie by path", async () => {
+  it("gives each checkout, in the dashboard's listing and in the runtime, the state and parent main gave it, whatever the clock did", async () => {
     const database = open(join(await temporary("rerail-registry-main-"), "rerail.sqlite"));
     // These rows need not survive a crash, so no transaction waits for the disk.
     database.$client.pragma("synchronous = OFF");
     const base = join(parse(tmpdir()).root, "rerail-listed");
     const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
     const differing: string[] = [];
-    let moved = 0;
-    for (let seed = 1; seed <= 150; seed += 1) {
-      const compared = comparedWithMain(database, seed, randomTree(seed, roots));
-      differing.push(...compared.differing);
-      moved += compared.moved;
-    }
+    for (let seed = 1; seed <= 200; seed += 1) differing.push(...comparedWithMain(database, seed, randomTree(seed, roots)));
     expect(differing).toEqual([]);
-    // Rows of one millisecond tied as nearest parents, where main took the row recorded first: the order that moved.
-    expect(moved).toBeGreaterThan(0);
   }, 30_000);
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {

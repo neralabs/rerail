@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse, resolve } from "node:path";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
@@ -329,25 +329,33 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   return [other.repositoryKey, ...other.aliases];
 }
 
-type ContainingCheckout = Pick<CheckoutRecord, "checkoutPath" | "createdAt">;
+/**
+ * A recorded checkout and its row's rowid. SQLite gives a row it records a rowid above every row the table holds, so
+ * rowids keep the order checkouts were recorded in, whatever the clock said when each was.
+ */
+export interface RecordedCheckout extends CheckoutRecord {
+  readonly rowid: number;
+}
+
+/** The columns of a checkout row, and its rowid. */
+const recordedCheckoutColumns = { ...getTableColumns(checkouts), rowid: sql<number>`rowid` };
+
+type ContainingCheckout = Pick<RecordedCheckout, "checkoutPath" | "rowid">;
 
 /**
  * The order of a checkout's containing checkouts, nearest first: the longer path is nearer. Two paths of one length
  * that both hold it are one folder recorded under two spellings (on Windows, letter case), or two folders when one
- * row was recorded unresolved (a `.` segment, a trailing separator). The one recorded first comes first, as SQLite's
- * row order gave it before every reader shared this order; rows recorded in the same millisecond go by path, so the
- * order never depends on how a reader got its rows.
+ * row was recorded unresolved (a `.` segment, a trailing separator). The row recorded first comes first, by rowid,
+ * the order SQLite reads a repository's checkouts in: so the order never depends on the clock or on how a reader got
+ * its rows.
  */
 function nearestFirst(left: ContainingCheckout, right: ContainingCheckout): number {
-  const nearer = right.checkoutPath.length - left.checkoutPath.length;
-  if (nearer !== 0) return nearer;
-  if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt;
-  return left.checkoutPath < right.checkoutPath ? -1 : left.checkoutPath > right.checkoutPath ? 1 : 0;
+  return right.checkoutPath.length - left.checkoutPath.length || left.rowid - right.rowid;
 }
 
 /** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
-export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
-  return db.select().from(checkouts)
+export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): RecordedCheckout[] {
+  return db.select(recordedCheckoutColumns).from(checkouts)
     .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
     .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
     .sort(nearestFirst);
@@ -393,13 +401,13 @@ export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "che
 }
 
 export interface RepositoryListing extends RepositoryRecord {
-  readonly checkouts: readonly CheckoutRecord[];
+  readonly checkouts: readonly RecordedCheckout[];
 }
 
 /** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
 export function listRepositories(db: Reader): RepositoryListing[] {
-  const byRepository = new Map<RepositoryKey, CheckoutRecord[]>();
-  for (const row of db.select().from(checkouts).orderBy(checkouts.checkoutPath).all()) {
+  const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
+  for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
   return db.select().from(repositories).all()
@@ -440,14 +448,14 @@ function folderAndAbove(path: string): string[] {
  * listing and each checkout's folder depth, not a few statements and a read of every checkout per checkout.
  */
 export function listedCheckoutStates(repository: RepositoryListing): (checkoutPath: string) => ListedCheckoutState {
-  const byFolder = new Map<string, CheckoutRecord[]>();
+  const byFolder = new Map<string, RecordedCheckout[]>();
   for (const row of repository.checkouts) {
     const key = listedFolderKey(row.checkoutPath);
     byFolder.set(key, [...(byFolder.get(key) ?? []), row]);
   }
   return checkoutPath => {
     let own: boolean | null = null;
-    const parents: CheckoutRecord[] = [];
+    const parents: RecordedCheckout[] = [];
     for (const folder of folderAndAbove(checkoutPath)) {
       for (const row of byFolder.get(listedFolderKey(folder)) ?? []) {
         if (row.checkoutPath === checkoutPath) own = row.started;
