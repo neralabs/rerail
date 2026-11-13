@@ -2488,6 +2488,17 @@ impl Lowerer {
                 members.entry(*g).or_default().push(l.clone());
             }
         }
+        // A cover of two or more asked variables ties them through variables not asked (c414's `call_nkwargs(c, n),
+        // call_nkwargs(s, n)`): alone it is every pair with the same `n`, 38.8 M rows on 50 files where the context
+        // reaches a handful. Its body leads with the whole groups that bind its variables, so it holds only the
+        // bindings the context can reach, still a row per binding.
+        let whole_binding: Vec<(BTreeSet<String>, Vec<Lit>)> = whole
+            .iter()
+            .map(|&g| {
+                let lits = context.iter().zip(&groups).filter(|(_, h)| **h == g).map(|(l, _)| l.clone()).collect();
+                (asked_in(g, true), lits)
+            })
+            .collect();
         let mut out = Vec::new();
         for (l, g) in context.into_iter().zip(groups) {
             if whole.contains(&g) || (left.contains(&g) && membership(&l)) {
@@ -2501,6 +2512,13 @@ impl Lowerer {
             let Some(lits) = members.remove(&g) else { continue };
             let cols = projected.iter().find(|(p, _)| *p == g).map(|(_, c)| c.clone()).expect("a projected group");
             let rel = self.fresh("cover");
+            let lits = if cols.len() > 1 {
+                let mut narrowed: Vec<Lit> = whole_binding.iter().filter(|(b, _)| cols.iter().any(|c| b.contains(c))).flat_map(|(_, l)| l.iter().cloned()).collect();
+                narrowed.extend(lits);
+                narrowed
+            } else {
+                lits
+            };
             let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
             let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
             self.prog.decls.insert(rel.clone(), types);

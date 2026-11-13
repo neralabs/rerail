@@ -451,6 +451,22 @@ fn a_context_joins_a_later_group_by_what_it_binds() {
     assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
 }
 
+/// A later group tying two asked variables through one not asked (c414's `same_keywords`: `double(c, s), call_nkwargs(c,
+/// n), call_nkwargs(s, n)`, counted) is a cover narrowed by the group that binds them, not every pair with the same `n`.
+#[test]
+fn a_cover_of_two_variables_is_narrowed_by_what_binds_them() {
+    let p = parse(concat!(
+        ".decl double(c: node, s: node)\n.decl nk(c: node, n: number)\n.decl kw(s: node, x: symbol)\n.decl km(c: node, s: node, x: symbol)\n",
+        ".input double, nk, kw, km\n",
+        ".decl same(c: node, s: node)\n.output same\n",
+        "same(c, s) :- double(c, s), nk(c, n), nk(s, n), count : { kw(s, x), !km(c, s, x) } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let cover: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("double(")), "{cover:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
