@@ -439,18 +439,21 @@ function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension
 
 /**
  * Opens again, in its lane, the session the idle close suspended (`RerailRuntime.resumeSession`), making its runtime
- * again when that has closed, so a scan just queued for it runs now. A session that is not suspended is left alone; a
- * failure is reported, and the scan waits for the session's next event.
+ * again when that has closed, so a scan just queued for it runs now. A session that is not suspended is left alone, and
+ * so is one whose end, or an event that opened it, took its suspension while this waited for the lane; a failure is
+ * reported, and the scan waits for the session's next event.
  */
 async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
   const entry = state.suspended.get(sessionId);
   if (entry === undefined) return;
   const { runtimeKey, runtimeOptions, suspension } = entry;
   keepRuntime(state, runtimeKey);
-  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), () => {
+  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
+    // Asked again in the lane: an end that ran first has closed the session's record, which must stay closed.
+    if (state.suspended.get(sessionId) !== entry) return;
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     noteSessionUse(state, sessionId, runtimeKey, now());
-    return runtime.resumeSession(suspension.descriptor);
+    await runtime.resumeSession(suspension.descriptor);
   });
   track(state, resuming);
   try {
