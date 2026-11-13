@@ -509,6 +509,9 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
 /// (`RERAIL_S7_FIXTURES`, default 150), each cold in its own store.
 #[test]
 fn the_backends_find_the_same_keys_on_real_files() {
+    // Two cold audits of 250 files with every Python clause: 5 minutes on 4 idle cores, 13 on CI's 4-vCPU runner (2
+    // cores, hyperthreaded) beside the other tests of its leg. More than a test's 10 minutes, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let policies = policies();
     let dir = temp("phase4");
     let (paths, _) = sample(&dir);
