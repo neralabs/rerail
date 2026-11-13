@@ -148,14 +148,26 @@ impl Interner {
         held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
     }
 
-    /// The pending atoms from `from` on as one segment: their end offsets (u32, little-endian, relative to the
-    /// segment's first byte), their bytes, and each one's (hash, id).
-    fn segment(&self, from: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>) {
-        let i = from - self.base();
-        let start = if i == 0 { 0 } else { self.ends[i - 1] };
-        let ends = self.ends[i..].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
-        let keys = self.hashes[i..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
-        (ends, self.buf[start as usize..].to_vec(), keys)
+    /// The pending atoms from `from` on as segments of about `most` bytes each (one atom at least): each its first
+    /// id, its end offsets (u32, little-endian, relative to the segment's first byte) and its bytes; and each atom's
+    /// (hash, id). One segment of every pending atom passed SQLite's largest blob (1 GB) at the end of a run over
+    /// posthog's 30,000 files.
+    fn segments(&self, from: usize, most: usize) -> (Vec<(usize, Vec<u8>, Vec<u8>)>, Vec<(u64, Sym)>) {
+        let at = |i: usize| if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        let mut out = Vec::new();
+        let mut i = from - self.base();
+        while i < self.ends.len() {
+            let start = at(i);
+            let mut j = i + 1;
+            while j < self.ends.len() && self.ends[j] as usize - start <= most {
+                j += 1;
+            }
+            let ends = self.ends[i..j].iter().flat_map(|&end| (end - start as u32).to_le_bytes()).collect();
+            out.push((self.base() + i, ends, self.buf[start..self.ends[j - 1] as usize].to_vec()));
+            i = j;
+        }
+        let keys = self.hashes[from - self.base()..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
+        (out, keys)
     }
 
     /// The pending atoms below `upto` are stored now: held as a segment of their own.
@@ -246,6 +258,10 @@ impl Interner {
         Ok(())
     }
 }
+
+/// The most bytes of strings a segment holds (SQLite's largest blob is 1 GB); 1 MB in tests, so a test of the split
+/// writes a few MB.
+const SEGMENT_BYTES: usize = if cfg!(test) { 1 << 20 } else { 64 << 20 };
 
 /// More pending atoms than this, more pending bytes, or atoms pending this long, make a flush due
 /// (decision 0049 §4.2): what a crash can lose.
@@ -1063,7 +1079,7 @@ impl Atoms {
             .query_row([], |row| row.get(0))
             .optional()?
             .unwrap_or(0);
-        let (from, ends, bytes, mut keys, upto) = {
+        let (from, segments, mut keys, upto) = {
             let state = self.state.read();
             let (end, len, base) = (end as usize, state.atoms.len(), state.atoms.base());
             if self.diverged() {
@@ -1086,17 +1102,20 @@ impl Atoms {
             if end >= len {
                 return Ok(end);
             }
-            let (ends, bytes, keys) = state.atoms.segment(end);
-            (end, ends, bytes, keys, len)
+            let (segments, keys) = state.atoms.segments(end, SEGMENT_BYTES);
+            (end, segments, keys, len)
         };
-        let size = (ends.len() + bytes.len()) as u64;
+        let size: u64 = segments.iter().map(|(_, e, b)| (e.len() + b.len()) as u64).sum();
         // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
         if key_end(connection).is_none_or(|upto| upto < from) {
             key_segments(connection)?;
         }
-        connection
-            .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
-            .execute(rusqlite::params![from as i64, ends, bytes])?;
+        let count = segments.len() as u64;
+        for (first, ends, bytes) in segments {
+            connection
+                .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
+                .execute(rusqlite::params![first as i64, ends, bytes])?;
+        }
         // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
         // (decision 0111 §1).
         if key_end(connection) == Some(from) {
@@ -1110,7 +1129,7 @@ impl Atoms {
         self.wrote.store(upto, Ordering::Release);
         // Counted when written; a transaction that then rolls back still counts.
         let mut written = self.written.lock();
-        *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
+        *written = (written.0 + count, written.1 + (upto - from) as u64, written.2 + size);
         Ok(upto)
     }
 

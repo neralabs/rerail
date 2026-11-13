@@ -415,3 +415,32 @@ fn atoms_another_process_stored_past_this_ones_end_are_a_divergence() {
     drop(store);
     assert_eq!(segments(&path), [(0, 1), (1, 1), (2, 1)], "nor at its close");
 }
+
+/// Pending atoms are written as segments of at most `SEGMENT_BYTES` each (one atom at least), so a run's strings past
+/// SQLite's largest blob still store: split here at 10 bytes, and read back whole.
+#[test]
+fn pending_atoms_are_written_in_segments_of_bounded_size() {
+    let mut interner = super::Interner::default();
+    for s in ["aaaa", "bbbb", "cccc", "dddddddddddddd", "e"] {
+        interner.intern(s);
+    }
+    let (cut, keys) = interner.segments(1, 10);
+    let shape: Vec<(usize, usize, Vec<u8>)> = cut.iter().map(|(first, ends, bytes)| (*first, ends.len() / 4, bytes.clone())).collect();
+    assert_eq!(shape, [(1, 2, b"aaaabbbb".to_vec()), (3, 1, b"cccc".to_vec()), (4, 1, b"dddddddddddddd".to_vec()), (5, 1, b"e".to_vec())]);
+    assert_eq!(keys.len(), 5);
+    let path = path("segments");
+    let store = ContentStore::open(&path).unwrap();
+    let words: Vec<String> = (0..300).map(|i| format!("{i:0>10000}")).collect();
+    let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    // A transaction that waits for the store (`flush_atoms` gives way to another writer).
+    store.immediate_transaction(|_| Ok(())).unwrap();
+    assert!(segments_of(&path) > 3, "3 MB of strings in segments of 1 MB: {:?}", segments(&path));
+    drop(store);
+    let store = ContentStore::open(&elsewhere(&path, "segments-again")).unwrap();
+    assert_eq!(store.atom_value(ids[299]).unwrap().as_deref(), Some(words[299].as_str()));
+    assert_eq!(store.atom(&words[170]).unwrap(), Some(ids[170]));
+}
+
+fn segments_of(path: &std::path::Path) -> usize {
+    segments(path).len()
+}
