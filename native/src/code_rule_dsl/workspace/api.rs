@@ -236,6 +236,7 @@ impl CodeRuleDslWorkspace {
                                     producer.violation.project.clear();
                                     producer.violation.each = None;
                                     producer.violation.node_regexes.clear();
+                                    producer.violation.gap_tests.clear();
                                 }
                                 id
                             })

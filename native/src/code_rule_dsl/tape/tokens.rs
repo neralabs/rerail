@@ -610,6 +610,8 @@ impl TokenGrammar {
             Some(state)
         };
         let kept_of = |implied: &[Label]| implied.iter().filter(|label| automaton.kept.contains(label)).copied().collect::<Vec<_>>();
+        // An implied word whose kept tokens are stored: the tokens the tape left out.
+        let dropped = |implied: &[Label]| implied.iter().filter(|label| !automaton.kept.contains(label)).copied().collect::<Vec<_>>();
         let mut gaps = Gaps::default();
         let (mut state, mut pending) = (0u32, Vec::<Label>::new());
         for (named, child, field) in children {
@@ -633,12 +635,14 @@ impl TokenGrammar {
                     None => return None,
                 }
             } else {
-                // A stored gap, or an implied one whose kept tokens ([`kept`]) are stored.
-                match walk(state, &pending) {
+                // A stored gap, which reaches the child; or an implied one whose kept tokens
+                // ([`kept`]) are stored and the rest left out (`for (k in o)`: `for` is kept, `(`
+                // is not), where the stored tokens alone walk only part of the way.
+                match walk(state, &pending).filter(|to| automaton.moves[*to as usize].contains_key(&label)) {
                     Some(to) => state = to,
                     None => {
                         let implied = automaton.implied.to.get(&(state, label)).filter(|implied| kept_of(implied) == pending)?;
-                        *gaps.before.last_mut()? = word(implied);
+                        *gaps.before.last_mut()? = word(&dropped(implied));
                         state = walk(state, implied)?;
                     }
                 }
@@ -647,8 +651,9 @@ impl TokenGrammar {
             state = *automaton.moves[state as usize].get(&label)?;
         }
         let end = automaton.implied.end[state as usize].as_deref();
-        if pending.is_empty() || walk(state, &pending).is_none() && end.is_some_and(|implied| kept_of(implied) == pending) {
-            gaps.end = end.map(word).unwrap_or_default();
+        let stored_end = walk(state, &pending).is_some_and(|to| automaton.accepting[to as usize]);
+        if pending.is_empty() || !stored_end && end.is_some_and(|implied| kept_of(implied) == pending) {
+            gaps.end = end.map(|implied| word(&dropped(implied))).unwrap_or_default();
         }
         Some(gaps)
     }

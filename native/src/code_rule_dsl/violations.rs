@@ -371,6 +371,44 @@ fn node_regexes_utility<'a>(
     }
 }
 
+/// Gap tests whose token regex has named groups that test the witness node itself: reached as
+/// `node_regexes` are, through `all`, `any`, utilities and constraints, where the compiler puts a
+/// neighbour relation's gap test beside the relation's own walk (`compile::ast_rule`). `seen`
+/// holds the utilities walked.
+fn node_gap_tests<'a>(
+    matcher: &'a AstMatcher,
+    utils: &'a UtilTable,
+    seen: &mut Vec<usize>,
+    tests: &mut Vec<&'a crate::code_rule_dsl::matcher::gap::GapTest>,
+) {
+    let utility = |index: usize, seen: &mut Vec<usize>, tests: &mut Vec<&'a crate::code_rule_dsl::matcher::gap::GapTest>| {
+        if !seen.contains(&index) {
+            seen.push(index);
+            if let Some(rule) = utils.rule(index) {
+                node_gap_tests(rule, utils, seen, tests);
+            }
+        }
+    };
+    match matcher {
+        AstMatcher::All(items) | AstMatcher::Any(items) => {
+            for item in items {
+                node_gap_tests(item, utils, seen, tests);
+            }
+        }
+        AstMatcher::Util(util) => utility(util.index, seen, tests),
+        AstMatcher::Call(call) => utility(call.util.index, seen, tests),
+        AstMatcher::Constrained(core) => node_gap_tests(&core.rule, utils, seen, tests),
+        AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Gap(test))
+            if !test.stored
+                && test.regex.capture_names().flatten().next().is_some()
+                && !tests.iter().any(|known| std::ptr::eq(*known, &**test)) =>
+        {
+            tests.push(test);
+        }
+        _ => {}
+    }
+}
+
 fn describe(names: &BTreeSet<&str>) -> String {
     if names.is_empty() {
         "the query binds no captures".to_owned()
@@ -426,6 +464,23 @@ pub(super) fn bind(
                     violation
                         .node_regexes
                         .push((grammar.language, regexes.into_iter().cloned().collect()));
+                }
+            }
+            for grammar in matchers.iter() {
+                let mut tests = Vec::new();
+                node_gap_tests(&grammar.matcher, &grammar.utils, &mut Vec::new(), &mut tests);
+                for test in &tests {
+                    node_groups.extend(
+                        test.regex
+                            .capture_names()
+                            .flatten()
+                            .filter(|name| !names.contains(name)),
+                    );
+                }
+                if !tests.is_empty() {
+                    violation
+                        .gap_tests
+                        .push((grammar.language, tests.into_iter().cloned().collect()));
                 }
             }
             if let Some(each) = &violation.each {
@@ -733,25 +788,17 @@ fn ast_capture_text<'e, D: Doc>(
 pub type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
 
 /// Named groups of the same-node regexes that match the witness text, each name once, first
-/// regex first.
+/// regex first; then those of the gap tests on the witness (`gap_tests`), over the token each
+/// finds.
 pub(super) fn node_groups<D: Doc>(
     violation: &ViolationSpec,
     language: GrammarDialect,
     node: &Node<'_, D>,
 ) -> Vec<NodeGroup> {
-    let Some((_, regexes)) = violation
-        .node_regexes
-        .iter()
-        .find(|(dialect, _)| *dialect == language)
-    else {
-        return Vec::new();
-    };
-    let text = node.text();
-    let start = node.range().start;
     let mut groups: Vec<NodeGroup> = Vec::new();
-    for regex in regexes {
-        let Some(found) = regex.captures(&text) else {
-            continue;
+    let mut add = |regex: &Regex, text: &str, start: usize| {
+        let Some(found) = regex.captures(text) else {
+            return;
         };
         for name in regex.capture_names().flatten() {
             if let Some(group) = found.name(name)
@@ -762,6 +809,28 @@ pub(super) fn node_groups<D: Doc>(
                     std::sync::Arc::from(group.as_str()),
                     start + group.start()..start + group.end(),
                 ));
+            }
+        }
+    };
+    if let Some((_, regexes)) = violation
+        .node_regexes
+        .iter()
+        .find(|(dialect, _)| *dialect == language)
+    {
+        let text = node.text();
+        let start = node.range().start;
+        for regex in regexes {
+            add(regex, &text, start);
+        }
+    }
+    if let Some((_, tests)) = violation
+        .gap_tests
+        .iter()
+        .find(|(dialect, _)| *dialect == language)
+    {
+        for test in tests {
+            if let Some((range, text)) = test.token(node) {
+                add(&test.regex, &text, range.start);
             }
         }
     }

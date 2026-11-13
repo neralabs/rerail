@@ -623,6 +623,19 @@
         }
     }
 
+    /// A tape leaves out the tokens its grammar implies (RER-131): `tokens` reads them back from the
+    /// text between leaves and from a leaf whose kind has children, as a full tree's leaves.
+    #[test]
+    fn tokens_compare_reads_the_tokens_a_tape_leaves_out() {
+        let rule = compiled(json!({ "rule": {
+            "pattern": "f($A, $B)",
+            "compare": { "left": "A", "op": "eq", "right": "B", "text": "tokens" },
+        } }));
+        let source = "f([ ], []);\nf(g(\na // c\n).p, g(a)\n.p);\nf(g(a).p, g(a.p));\n";
+        let result = evaluate_file(&rule, "typescript", "a.ts", source);
+        assert_eq!(matched_texts(&result, source).iter().map(|text| text.lines().next().unwrap_or_default()).collect::<Vec<_>>(), ["f([ ], []) A=[ ] B=[]", "f(g("]);
+    }
+
     /// `node` tells two captures apart by identity: the same node, not the same text.
     #[test]
     fn node_compares_captures_by_identity() {

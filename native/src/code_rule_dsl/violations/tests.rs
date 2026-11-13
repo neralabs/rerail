@@ -226,6 +226,26 @@
         assert_eq!(end["id"], span["id"]);
     }
 
+    /// A tape leaves out the tokens its grammar implies (RER-131). A gap test's regex group binds
+    /// the implied token's place in the source, past the extras beside it.
+    #[test]
+    fn gap_test_groups_anchor_at_the_implied_token() {
+        let source = "const f = (a) /* c */ => a;\n";
+        let rule = json!({ "kind": "formal_parameters", "precedes": { "regex": "^(?<ARROW>=>)$", "stopBy": { "not": { "kind": "comment" } } } });
+        let found = only(&compile(ast(rule), violation("capture.ARROW", "m")).unwrap(), source);
+        assert_eq!(point(&found["span"]), (0, 22, 0, 24));
+    }
+
+    /// A neighbour relation to a bare token regex reads the next stored node only where no implied
+    /// token stands between: after `i = j++` in `for (;; i = j++);` comes `)`, not the body's `;`.
+    #[test]
+    fn a_token_neighbour_is_not_the_stored_node_past_an_implied_token() {
+        let source = "for (;; i = j++);\nfor (i = 0; ; ) x();\n";
+        let rule = json!({ "kind": "assignment_expression", "precedes": { "regex": "^;$" } });
+        let found = only(&compile(ast(rule), violation("witness.start", "m")).unwrap(), source);
+        assert_eq!(point(&found["span"]), (1, 5, 1, 5));
+    }
+
     #[test]
     fn capture_anchors_point_at_the_capture() {
         let source = "foo(first, second, third);\n";

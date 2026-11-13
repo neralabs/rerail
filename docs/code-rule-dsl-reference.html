@@ -1113,6 +1113,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </ul></li>
 <li><span class="key"><a class="kl" href="#kind"><b class="k">kind</b></a><span class="q">?</span></span><span class="t">Kind</span><span class="d">The node's tree-sitter kind</span></li>
 <li><span class="key"><a class="kl" href="#regex"><b class="k">regex</b></a><span class="q">?</span></span><span class="t">Str</span><span class="d">A Rust regex the node's source text must match</span></li>
+<li><span class="key"><a class="kl" href="#regex"><b class="k">stored</b></a><span class="q">?</span></span><span class="t">Str <span class="c">beside regex</span></span><span class="d">Why the token regex tests is stored where the rule looks</span></li>
 <li><span class="key"><a class="kl" href="#nthChild"><b class="k">nthChild</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-NthChild">NthChild</a></span><span class="d">The node's 1-based position among its parent's named children</span></li>
 <li><span class="key"><a class="kl" href="#capture"><b class="k">capture</b></a><span class="q">?</span></span><span class="t">NAME <span class="c">inside parse only</span></span><span class="d">Inside parse only: binds the parsed node under a name for the host rule</span></li>
 <li class="grp">composite</li>
@@ -1163,7 +1164,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <ul class="keys" style="--kw:9ch">
 <li><span class="key"><a class="kl" href="#stopBy"><b class="k">stopBy</b></a><span class="q">?</span></span><span class="t"><span class="lit">"neighbor"</span> | <span class="lit">"end"</span> | <a class="nt" href="#g-AstRule">AstRule</a></span><span class="d">How far the walk goes: the nearest node, every node, or up to a stop rule</span></li>
 <li><span class="key"><a class="kl" href="#field"><b class="k">field</b></a><span class="q">?</span></span><span class="t">Str <span class="c">inside and has only</span></span><span class="d">Restricts has and inside to one grammar field</span></li>
-<li class="inline"><a class="kl" href="#relations"><span class="grp">and every <a class="nt" href="#g-AstRule">AstRule</a> key:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">Any AstRule key, applied to the related node</span></li>
+<li class="inline"><a class="kl" href="#relations"><span class="grp">and every <a class="nt" href="#g-AstRule">AstRule</a> key:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">stored</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">Any AstRule key, applied to the related node</span></li>
 </ul>
 </details>
 <details class="prod" id="g-NthChild" data-zod="codeRuleNthChildSchema"><summary><span class="nt">NthChild</span><span class="about">A node's position among its parent's named children, optionally counted over a rule</span></summary>
@@ -1302,7 +1303,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <ul class="keys" style="--kw:14ch">
 <li><span class="key"><a class="kl" href="#parse"><b class="k">grammar</b></a></span><span class="t"><span class="lit">"percentFormat"</span> | <span class="lit">"braceFormat"</span> | <span class="lit">"annotation"</span> | <span class="lit">"eslintDirective"</span> | <span class="lit">"printfFormat"</span> | <span class="lit">"scanfFormat"</span> | <span class="lit">"phpDoc"</span> | <span class="lit">"rustFormat"</span> | <span class="lit">"identifierWords"</span> | <span class="lit">"pythonFString"</span></span><span class="d">The sub-grammar that parses the literal or comment</span></li>
 <li><span class="key"><a class="kl" href="#pythonFString"><b class="k">interpolation</b></a><span class="q">?</span></span><span class="t">Str, up to 1024 bytes <span class="c">pythonFString only</span></span><span class="d">The marker each interpolation stands as in the template's value; {} when omitted</span></li>
-<li class="inline"><a class="kl" href="#parse"><span class="grp">and a rule over the parsed tree, with the <a class="nt" href="#g-AstRule">AstRule</a> keys:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">A rule matched on the parsed tree's root; each grammar admits some keys</span></li>
+<li class="inline"><a class="kl" href="#parse"><span class="grp">and a rule over the parsed tree, with the <a class="nt" href="#g-AstRule">AstRule</a> keys:</span></a> <b class="k">pattern</b><span class="q">?</span>, <b class="k">kind</b><span class="q">?</span>, <b class="k">regex</b><span class="q">?</span>, <b class="k">stored</b><span class="q">?</span>, <b class="k">nthChild</b><span class="q">?</span>, <b class="k">all</b><span class="q">?</span>, <b class="k">any</b><span class="q">?</span>, <b class="k">not</b><span class="q">?</span>, <b class="k">matches</b><span class="q">?</span>, <b class="k">inside</b><span class="q">?</span>, <b class="k">has</b><span class="q">?</span>, <b class="k">precedes</b><span class="q">?</span>, <b class="k">follows</b><span class="q">?</span>, <b class="k">compare</b><span class="q">?</span>, <b class="k">count</b><span class="q">?</span>, <b class="k">resolves</b><span class="q">?</span>, <b class="k">value</b><span class="q">?</span>, <b class="k">arguments</b><span class="q">?</span>, <b class="k">binds</b><span class="q">?</span>, <b class="k">parse</b><span class="q">?</span>, <b class="k">capture</b><span class="q">?</span>, <b class="k">formatArgs</b><span class="q">?</span>, <b class="k">layout</b><span class="q">?</span>, <b class="k">filePath</b><span class="q">?</span>, <b class="k">host</b><span class="q">?</span>, <b class="k">embedded</b><span class="q">?</span>, <b class="k">calls</b><span class="q">?</span>, <b class="k">importTarget</b><span class="q">?</span> <span class="d">A rule matched on the parsed tree's root; each grammar admits some keys</span></li>
 </ul>
 <p class="gnote">Each grammar admits only some keys and kinds (see parse); none admits embedded or importTarget.</p>
 </details>
@@ -1767,8 +1768,9 @@ No query sees:
 <p class="card-grammar">In the grammar: <a class="nt" href="#g-AstRule">AstRule</a></p><div class="semantics"><ul>
 <li>Matches the node's whole source text; for a parsed tree's node, its decoded text.</li>
 <li>Named groups of a regex on the witness itself (not under a relation or negation) feed the violation: <code>capture.NAME</code> anchors, <code>$NAME</code> in messages, <code>fix.range</code>, <code>each</code>, <a href="#transform">transform</a> sources.</li>
+<li>A kindless token test (a <code>regex</code> with no <code>kind</code> or <code>pattern</code>) must read a token the syntax tree keeps where the rule looks. A token its node implies (a statement's keyword) is left out, so the rule must ask the named node (<code>kind</code>), or reach the token through a gap (<code>has</code>, <code>follows</code> or <code>precedes</code> to it), or say beside the <code>regex</code>, in <code>stored</code>, why the token is stored there (an optional or alternative token: an array hole's comma, a trailing comma, a modifier). Otherwise the rule does not compile.</li>
 </ul></div><details class="facets-more"><summary>Details: shape, composition, captures, unknown, syntax errors, languages, limits</summary>
-<dl class="facets"><dt>Shape</dt><dd><div class="shape">"regex": Str</div></dd><dt>Composition</dt><dd>Atomic. Usually beside <code>kind</code>, or alone on a kindless rule to reach an anonymous token (<code>{ "regex": "^==$" }</code>).</dd><dt>Captures</dt><dd>Named groups, as above; no metavariables.</dd><dt>Unknown</dt><dd>never unknown.</dd><dt>Syntax errors</dt><dd><span class="b ok">sound</span></dd><dt>Languages</dt><dd><span class="b py">python</span> <span class="b ts">typescript</span></dd><dt>Limits</dt><dd><code>regex</code> crate syntax: no look-around or backreferences (<a href="#value"><code>value.regex</code></a> has backreferences).</dd></dl>
+<dl class="facets"><dt>Shape</dt><dd><div class="shape">"regex": Str, "stored"?: Str</div></dd><dt>Composition</dt><dd>Atomic. Usually beside <code>kind</code>, or alone on a kindless rule to reach an anonymous token the tree keeps (<code>{ "regex": "^==$" }</code>); <code>stored</code> only beside <code>regex</code>.</dd><dt>Captures</dt><dd>Named groups, as above; no metavariables.</dd><dt>Unknown</dt><dd>never unknown.</dd><dt>Syntax errors</dt><dd><span class="b ok">sound</span></dd><dt>Languages</dt><dd><span class="b py">python</span> <span class="b ts">typescript</span></dd><dt>Limits</dt><dd><code>regex</code> crate syntax: no look-around or backreferences (<a href="#value"><code>value.regex</code></a> has backreferences).</dd></dl>
 </details>
 <figure class="ex-fig" data-kind="clause"><figcaption>Ruff's <code>E742</code>: a named group <code>NAME</code> read by the message.</figcaption><div class="src"><span class="src-path">ruff/E742.json</span> <span class="src-at"><code>/checks/0</code> · Ruff conformance port</span></div><pre class="ex" data-kind="clause">{
   "id": "ambiguous-class-name",
@@ -2389,18 +2391,30 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 }</pre></figure>
 
 
-<figure class="ex-fig" data-kind="clause"><figcaption>ESLint's <code>no-with</code>: a kindless token rule <code>inside</code> a statement.</figcaption><div class="src"><span class="src-path">eslint/eslint/no-with.json</span> <span class="src-at"><code>/checks/0</code> · ESLint conformance port</span></div><pre class="ex" data-kind="clause">{
-  "id": "with-statement",
+<figure class="ex-fig" data-src="repo:packs/sql/rules/sqlfluff-am01-ambiguous-distinct.json#/clauses/0" data-kind="clause"><figcaption>SQLFluff's <code>AM01</code>: <code>DISTINCT</code> <code>inside</code> a <code>SELECT</code> that <code>precedes</code> a <code>FROM</code> with a <code>GROUP BY</code>.</figcaption><div class="src"><span class="src-path">packs/sql/rules/sqlfluff-am01-ambiguous-distinct.json</span> <span class="src-at"><code>/clauses/0</code> · this repository</span></div><pre class="ex" data-kind="clause">{
+  "id": "distinct-with-group-by",
   "forbid": {
     "ast": {
-      "language": "typescript",
-      "rule": { "regex": "^with$", "inside": { "kind": "with_statement" } }
+      "language": "sql",
+      "rule": {
+        "kind": "keyword_distinct",
+        "inside": {
+          "kind": "select",
+          "stopBy": "neighbor",
+          "precedes": { "kind": "from", "has": { "kind": "group_by" } }
+        }
+      }
     }
   },
   "violation": {
-    "anchor": "witness.span",
-    "code": "NO_WITH",
-    "message": "Unexpected use of 'with' statement."
+    "anchor": "witness.start",
+    "code": "AM01",
+    "message": "Remove DISTINCT from this SELECT; its GROUP BY already makes the rows unique.",
+    "suppress": {
+      "sqlfluff": {
+        "rules": ["AM01", "L021", "all", "ambiguous", "ambiguous.distinct", "core"]
+      }
+    }
   }
 }</pre></figure>
 
@@ -2445,6 +2459,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
       "language": "typescript",
       "rule": {
         "regex": "^,$",
+        "stored": "a comma after `[` or a comma: a hole, stored",
         "inside": { "kind": "array" },
         "follows": { "regex": "^[\\[,]$", "stopBy": { "not": { "kind": "comment" } } }
       }

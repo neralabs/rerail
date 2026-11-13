@@ -170,6 +170,7 @@ impl CallsState {
                 // A seed only answers which definitions match: nothing is reported or suppressed.
                 producer.violation.each = None;
                 producer.violation.node_regexes.clear();
+                producer.violation.gap_tests.clear();
                 producer.violation.suppress = None;
                 producer.violation.ignored_by = None;
                 producer.violation.group_transform = None;

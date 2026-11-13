@@ -23,6 +23,9 @@ pub struct Count {
     pub min: usize,
     pub max: Option<usize>,
     pub binding: Option<CountBinding>,
+    /// The relation's rule as a bare token regex: the implied tokens it matches along the walk,
+    /// which the tape leaves out, count too (t31).
+    pub gap: Option<super::gap::GapTest>,
 }
 
 /// `as` and `offset`: a count that holds binds `offset` plus the exact count, in decimal, as a
@@ -54,7 +57,7 @@ impl Count {
     ) -> bool {
         let three = THREE_VALUED.get();
         let saved = three && UNKNOWN.replace(false);
-        let mut found = 0usize;
+        let mut found = self.gap.as_ref().map_or(0, |gap| gap.count(node));
         let mut unknown = 0usize;
         // To the end, a rule looking for a sibling with the same key as a capture bound outside
         // it is tested at the siblings it may match only (`Related::same_key_siblings`).

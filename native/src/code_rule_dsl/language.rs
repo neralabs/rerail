@@ -81,7 +81,7 @@ impl Language for GrammarDialect {
             Some(pattern) => pattern,
             None => {
                 let (doc, shape) = crate::code_rule_dsl::tape::pattern_doc(*self, builder.source()).map_err(PatternError::Parse)?;
-                let ends = |node: usize| shape.ends.get(node).copied().unwrap_or(false);
+                let ends = |node: usize| shape.ends.get(node).cloned().flatten();
                 let single = |node: usize| shape.single.get(node).copied().unwrap_or(false);
                 builder.build_doc(doc, &ast_grep_core::matcher::PatternShape { ends: Some(&ends), single: Some(&single) })
             }

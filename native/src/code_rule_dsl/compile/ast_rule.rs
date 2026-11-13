@@ -637,7 +637,12 @@ pub fn compile_ast_rule(
                 _ => None,
             };
             let gap = gap_test(key, relation, language, past);
-            terms.push(with_gap(
+            // A token the tape may leave out on the way to the next stored child (`gap_split`).
+            let split = match gap {
+                None => gap_split(key, relation, language),
+                Some(_) => None,
+            };
+            let term = with_gap(
                 match compiled {
                     (AstMatcher::Never, _, _) => AstMatcher::Never,
                     (inner, stop, None) => constructor(Related::new(inner), stop),
@@ -659,7 +664,22 @@ pub fn compile_ast_rule(
                     },
                 },
                 gap,
-            ));
+            );
+            let term = match split {
+                None => term,
+                Some((test, nested)) => {
+                    let (inner, stop, _) = compile_relation(&nested, language, &format!("{relation_path}/{key}"), gaps, utils)?;
+                    let walk = AstMatcher::All(vec![
+                        AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Gap(Box::new(test))),
+                        constructor(Related::new(inner), stop),
+                    ]);
+                    match term {
+                        AstMatcher::Never => walk,
+                        term => AstMatcher::Any(vec![term, walk]),
+                    }
+                }
+            };
+            terms.push(term);
             group_paths.push(relation_path);
         }
     }
@@ -827,11 +847,21 @@ pub fn compile_ast_rule(
             .iter()
             .find_map(|(name, constructor)| (*name == spec.key).then_some(*constructor))
             .expect("count_bounds returns a relation key");
+        // Implied tokens a bare token regex counts are counted in the gaps (t31).
+        let past = match &stop {
+            StopBy::Rule(rule) => match rule.as_ref() {
+                AstMatcher::Not(inner) => Some(inner.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let gap = gap_test(spec.key, spec.relation, language, past);
         terms.push(AstMatcher::Count(Box::new(Count {
             relation: constructor(Related::new(inner), stop),
             min: spec.min,
             max: spec.max,
             binding: spec.binding,
+            gap,
         })));
     }
     if let Some(compare) = rule.get("compare") {
@@ -846,6 +876,10 @@ pub fn compile_ast_rule(
                 language,
                 utils,
             )?;
+        }
+        // A tape leaves out the tokens its grammar implies; `tokens` reads them back from it.
+        if comparison.text == CompareText::Tokens {
+            comparison.implied = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language);
         }
         // A transform variable is text: it compares as `source` or `unquoted` text only.
         if let Some(transform) = utils.transform.as_ref().filter(|transform| {
@@ -1031,15 +1065,29 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         }
         Some(format!("(?:{regex})"))
     };
-    let target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut target: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    // The token's own relations to the tokens beside it (`not: {follows: {regex: "^,$"}}`): read
+    // over the parent's children and implied words (`TokenCondition`).
+    let mut token = Vec::new();
+    for key in ["follows", "precedes", "not"] {
+        let Some(value) = target.get(key) else { continue };
+        let condition = match key {
+            "not" => value.as_object().filter(|not| not.len() == 1).and_then(|not| not.iter().next()).and_then(|(key, value)| token_condition(key, value, true)),
+            _ => token_condition(key, value, false),
+        };
+        if let Some(condition) = condition {
+            token.push(condition);
+            target.remove(key);
+        }
+    }
     // `{not: {kind: comment}}` beside the regex holds on every implied token: none is an extra.
     let not_extra = |rule: &Value| {
         rule.as_object().filter(|rule| rule.len() == 1).and_then(|rule| rule.get("not")?.as_object()).filter(|not| not.len() == 1).and_then(|not| not.get("kind")?.as_str()).is_some_and(|kind| grammar.is_extra(kind))
     };
     let regexes: Vec<String> = match bare(&Value::Object(target.clone())) {
         Some(regex) => vec![regex],
-        None if target.len() == 1 && target.contains_key("any") => target.get("any")?.as_array()?.iter().filter_map(bare).collect(),
-        None if target.len() == 1 && target.contains_key("all") => {
+        None if token.is_empty() && target.len() == 1 && target.contains_key("any") => target.get("any")?.as_array()?.iter().filter_map(bare).collect(),
+        None if token.is_empty() && target.len() == 1 && target.contains_key("all") => {
             let items = target.get("all")?.as_array()?;
             let regexes: Vec<String> = items.iter().filter_map(bare).collect();
             if regexes.len() != 1 || !items.iter().all(|item| bare(item).is_some() || not_extra(item)) {
@@ -1079,7 +1127,56 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
-    Some(GapTest { place, regex, grammar, dialect: language, past })
+    Some(GapTest { place, regex, grammar, dialect: language, past, token, stored: false })
+}
+
+/// A token's relation to a token regex beside it, under the same parent (`follows: {regex: "^,$",
+/// stopBy: end}`), as a `TokenCondition`; `None` where it says more than the regex.
+fn token_condition(key: &str, relation: &Value, negated: bool) -> Option<crate::code_rule_dsl::matcher::gap::TokenCondition> {
+    use crate::code_rule_dsl::matcher::gap::{Place, TokenCondition};
+    let object = relation.as_object()?;
+    if !object.keys().all(|key| key == "regex" || key == "stopBy") {
+        return None;
+    }
+    let place = match (key, object.get("stopBy").map(|stop| stop.as_str())) {
+        ("follows", None | Some(Some("neighbor"))) => Place::Before,
+        ("follows", Some(Some("end"))) => Place::Earlier,
+        ("precedes", None | Some(Some("neighbor"))) => Place::After,
+        ("precedes", Some(Some("end"))) => Place::Later,
+        _ => return None,
+    };
+    Some(TokenCondition::Token { negated, place, regex: Regex::new(object.get("regex")?.as_str()?).ok()? })
+}
+
+/// A neighbour relation to a token the tape may leave out, which goes on to the next stored
+/// child the same way (`precedes: {regex: "^=$", precedes: X}`): the gap test of the token,
+/// with nothing between it and the child, and the relation's own walk to X, which on a tape
+/// without the token is the node's neighbour. `None` unless the relation says that and no more.
+pub(in crate::code_rule_dsl) fn gap_split(key: &str, relation: &Value, language: GrammarDialect) -> Option<(crate::code_rule_dsl::matcher::gap::GapTest, Value)> {
+    use crate::code_rule_dsl::matcher::gap::{Place, TokenCondition};
+    let object = relation.as_object()?;
+    let place = match key {
+        "follows" => Place::Before,
+        "precedes" => Place::After,
+        _ => return None,
+    };
+    if object.get("stopBy").is_some_and(|stop| stop != "neighbor") || object.contains_key("field") {
+        return None;
+    }
+    let nested = object.get(key)?;
+    if !object.keys().all(|name| matches!(name.as_str(), "regex" | "stopBy") || name == key) || token_condition(key, nested, false).is_some() {
+        return None;
+    }
+    if nested.as_object()?.get("stopBy").is_some_and(|stop| stop != "neighbor") || nested.get("field").is_some() {
+        return None;
+    }
+    let regex = Regex::new(&format!("(?:{})", object.get("regex")?.as_str()?)).ok()?;
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
+    if !grammar.tests_implied(&regex) {
+        return None;
+    }
+    let token = vec![TokenCondition::Stored(place.clone())];
+    Some((crate::code_rule_dsl::matcher::gap::GapTest { place, regex, grammar, dialect: language, past: None, token, stored: false }, nested.clone()))
 }
 
 /// A relation's term, or it or the gap test.
@@ -1088,6 +1185,12 @@ fn with_gap(term: AstMatcher, gap: Option<crate::code_rule_dsl::matcher::gap::Ga
     match (term, gap) {
         (term, None) => term,
         (AstMatcher::Never, Some(gap)) => AstMatcher::Semantic(Semantic::Gap(Box::new(gap))),
+        // A neighbour's own walk reads the next stored node, which on a full tree is the neighbour
+        // only where no implied token stands between.
+        (term, Some(gap)) if matches!(gap.place, crate::code_rule_dsl::matcher::gap::Place::Before | crate::code_rule_dsl::matcher::gap::Place::After) => {
+            let stored = crate::code_rule_dsl::matcher::gap::GapTest { stored: true, ..gap.clone() };
+            AstMatcher::Any(vec![AstMatcher::All(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(stored)))]), AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))])
+        }
         (term, Some(gap)) => AstMatcher::Any(vec![term, AstMatcher::Semantic(Semantic::Gap(Box::new(gap)))]),
     }
 }

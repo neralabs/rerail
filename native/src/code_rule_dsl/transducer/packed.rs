@@ -1556,15 +1556,26 @@ impl Slotted {
                     });
                 }
                 let mut skipped_anonymous = 0_usize;
+                let mut end_word: Option<&str> = None;
                 while goal < goals.len() && goals[goal].is_trivial() {
+                    // The end-of-children goal stands for the implied tokens after the pattern's
+                    // last child; a candidate keeps them only where its gap is not that word, and
+                    // those it keeps are the goal's (`ast_grep_core`'s `may_match_ellipsis_impl`).
+                    match &goals[goal] {
+                        Self::Terminal { text, .. } if goals[goal].is_children_end() => end_word = Some(text),
+                        _ => skipped_anonymous += 1,
+                    }
                     goal += 1;
-                    skipped_anonymous += 1;
                 }
                 if goal == goals.len() {
-                    let end = candidates
-                        .len()
-                        .saturating_sub(skipped_anonymous)
-                        .max(candidate);
+                    let mut rest = candidates.len();
+                    for token in end_word.into_iter().flat_map(|word| word.split('\u{1f}').filter(|token| !token.is_empty())).collect::<Vec<_>>().into_iter().rev() {
+                        match rest.checked_sub(1).map(|last| candidates[last]) {
+                            Some(last) if rest > candidate && !tape.transducer_is_named(last) && tape.transducer_text(last) == token.as_bytes() => rest -= 1,
+                            _ => break,
+                        }
+                    }
+                    let end = rest.saturating_sub(skipped_anonymous).max(candidate);
                     return name.is_none_or(|name| {
                         bindings.bind_multi(name, &candidates[candidate..end], tape)
                     });

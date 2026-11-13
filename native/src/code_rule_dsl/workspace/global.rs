@@ -39,6 +39,7 @@ pub(super) fn compile_query_plan(
             // configuration can neither suppress that answer nor enumerate regex groups.
             clause.violation.each = None;
             clause.violation.node_regexes.clear();
+            clause.violation.gap_tests.clear();
             clause.violation.suppress = None;
             clause.violation.ignored_by = None;
             clause.violation.group_transform = None;

@@ -256,6 +256,7 @@ pub fn parse_comparison(value: &Value, path: &str) -> Result<Comparison> {
         reading: None,
         transform: None,
         commute,
+        implied: None,
     })
 }
 

@@ -1689,6 +1689,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         fix: None,
         fix_template: None,
         node_regexes: Vec::new(),
+        gap_tests: Vec::new(),
         each: violation
             .get("each")
             .map(|each| non_empty_str(Some(each), &format!("{path}/each")).map(str::to_owned))
