@@ -239,10 +239,15 @@ its copies too. The audit history itself is never rewritten. Two rows that come 
 (last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
 a start state either row held is kept.
 
-A folder that is gone keeps its key: the file system holds no spelling for it, and a session opened there as `c:\…`
-still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database still
-opens. So does a folder on a network share (`\\host\share\…`), which the step does not look up: a host that does not
-answer would hold the database for about 21 seconds. On macOS and Linux the step copies nothing.
+A folder on a drive that is absent when the step runs (a disk not attached, a locked drive, a virtual disk not mounted)
+keeps its key, and the table holds it with no new spelling: each later time this version opens the database for
+writing (as the daemon does when it starts), it looks such a key up again and copies its rows once the drive is back. A
+folder that is gone from a drive that is there keeps its key: the file system holds no spelling for it, and a session
+opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key,
+and the database still opens. So does a folder on a network share (`\\host\share\…`) or on a drive mapped to one, which
+the step does not look up: a host that does not answer would hold the database for about 21 seconds. The step reads
+each drive's root once to tell a mapped drive from a local one; a root that takes a second or more to answer counts as
+mapped. On macOS and Linux the step copies nothing.
 
 Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
 runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version

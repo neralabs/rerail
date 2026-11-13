@@ -12,7 +12,7 @@
  */
 import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
-import { currentPathKey, respellPathKeys } from "./path-key-spelling.js";
+import { currentPathKey, onLocalDrives, respellPathKeys, respellReturnedKeys } from "./path-key-spelling.js";
 import { schemaMigrations } from "./schema.js";
 
 /** One change to the shape of an existing table. Ids and order never change once released. */
@@ -32,6 +32,12 @@ export interface Migration {
    * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both.
    */
   up(database: RerailDatabase): void;
+  /**
+   * Runs at every later writable open of the file, inside the same write transaction, after the DDL: for what `up` had
+   * to leave until something outside the file changed (a folder absent when it ran). It must cost next to nothing when
+   * nothing is left, since every writable open pays it.
+   */
+  later?(database: RerailDatabase): void;
 }
 
 /** The step that keeps each rule provenance once. */
@@ -155,11 +161,16 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // this step (after a downgrade, or on another agent host sharing the file) reads all it read before; the new table
     // `path_key_spellings` records each spelling that moved, and this build's lists leave its rows out, so each folder
     // is listed once. The audit history is never rewritten: the list of repository audits reads where an audit ran
-    // through that table. A folder that is gone, and a key on a network share, keep their spelling.
+    // through that table. A key on a drive absent now (a disk not attached) is recorded with no key and looked up again
+    // at each later writable open until the drive is back (`later`). A folder that is gone, and a key on a network share
+    // or a drive mapped to one, keep their spelling.
     // Elsewhere keys keep their spelling and the step copies nothing. No floor: an older build ignores the new table.
     id: "path-keys-as-stored",
     up(database) {
-      respellPathKeys(database, stored => currentPathKey(stored));
+      respellPathKeys(database, onLocalDrives(stored => currentPathKey(stored)));
+    },
+    later(database) {
+      respellReturnedKeys(database, onLocalDrives(stored => currentPathKey(stored)));
     },
   },
 ];
@@ -301,6 +312,12 @@ export function rebuildTable(database: RerailDatabase, table: string, ddl: strin
   const copied = columns.map(column => identifier(column.name)).join(", ");
   database.run(sql.raw(`INSERT INTO ${identifier(table)} (${copied}) SELECT ${copied} FROM ${identifier(previous)}`));
   database.run(sql.raw(`DROP TABLE ${identifier(previous)}`));
+}
+
+/** Runs the `later` work of `migrations` (`Migration.later`) on a file a writer holds, unless it is new: then none is left. */
+export function migrateLater(database: RerailDatabase, migrations: readonly Migration[], fresh: boolean): void {
+  if (fresh) return;
+  for (const migration of migrations) migration.later?.(database);
 }
 
 /**

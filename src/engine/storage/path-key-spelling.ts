@@ -9,15 +9,18 @@
  * `path-keys-as-stored` step (`migrations.ts`) runs it once per file, inside the open's write transaction: it writes a
  * few rows per moved folder and never rewrites the audit history.
  */
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { resolve, win32 } from "node:path";
 import { sql } from "drizzle-orm";
 import { physicalPath } from "../catalog/checkout-control.js";
 import type { RerailDatabase } from "./database.js";
 import { holdsTable } from "./table-probe.js";
 
-/** The key this build gives a folder an earlier build keyed as a path. */
-export type PathKeyOf = (stored: string) => string;
+/**
+ * The key this build gives a folder an earlier build keyed as a path, or undefined while the drive that holds it is
+ * absent.
+ */
+export type PathKeyOf = (stored: string) => string | undefined;
 
 /** A column that holds a path, its names written out here, as a migration step's are, so later schema changes leave it. */
 interface PathColumn {
@@ -79,18 +82,83 @@ export function currentPathKey(stored: string, platform: NodeJS.Platform = proce
   return platform === "win32" && existsSync(stored) ? physicalPath(stored, platform) : stored;
 }
 
+/** What a drive's root says of the keys on it: looked up, left as they are, or waiting for the drive. */
+type DriveAnswer = "local" | "network" | "absent";
+
+/** A drive root that takes this long to answer is taken for a network one, whose every lookup can wait as long. */
+const SLOW_DRIVE_MS = 1_000;
+
+/** How {@link onLocalDrives} reads a drive's root: injected by tests. */
+export interface DriveProbe {
+  readonly realpath: (root: string) => string;
+  readonly now: () => number;
+}
+
+const THIS_COMPUTER: DriveProbe = { realpath: root => realpathSync.native(root), now: () => Date.now() };
+
+/**
+ * `keyOf` on Windows for the keys of a drive whose root resolves to a local volume, each drive's root read once. A key
+ * on a drive whose root resolves to a network share (a mapped drive), or answers only after {@link SLOW_DRIVE_MS},
+ * stays as it is, as a key on a share does ({@link looksUp}): a lookup there waits on the network, about 21 s for a
+ * host that does not answer, while the open holds the database's write lock. A key on a drive that is absent (a disk not
+ * attached, a locked volume) is undefined, to be looked up again at a later open: its folder can come back as it was.
+ */
+export function onLocalDrives(keyOf: PathKeyOf, platform: NodeJS.Platform = process.platform, probe = THIS_COMPUTER): PathKeyOf {
+  if (platform !== "win32") return keyOf;
+  const drives = new Map<string, DriveAnswer>();
+  return stored => {
+    const root = win32.parse(stored).root;
+    let drive = drives.get(root);
+    if (drive === undefined) {
+      drive = driveAnswer(root, probe);
+      drives.set(root, drive);
+    }
+    if (drive === "network") return stored;
+    return drive === "absent" ? undefined : keyOf(stored);
+  };
+}
+
+function driveAnswer(root: string, probe: DriveProbe): DriveAnswer {
+  const started = probe.now();
+  let resolved: string | undefined;
+  try {
+    resolved = probe.realpath(root);
+  } catch {
+    resolved = undefined;
+  }
+  if (probe.now() - started >= SLOW_DRIVE_MS || resolved?.startsWith("\\\\") === true) return "network";
+  return resolved === undefined ? "absent" : "local";
+}
+
 /**
  * Copies the rows under every path key the file holds to `keyOf(key)` where that differs, merging the rows that come to
  * one key (the newer stays, `PathKeyedTable.newer`, and a checkout keeps a start state either row had), and records each
- * spelling that moved in `path_key_spellings`. A key `keyOf` cannot resolve (it throws: a folder Rerail may not read)
- * stays as it is, so the open never fails on one folder, and so does a key the step does not look up ({@link looksUp}).
- * `keyOf` runs once per distinct key, the audit history's included, and must give back unchanged a key it returned, as
- * a realpath does: rows copied to a key that would itself move could stay short of the last one.
+ * spelling that moved in `path_key_spellings`, where also goes, with no key, each key on a drive that is absent. A key
+ * `keyOf` cannot resolve (it throws: a folder Rerail may not read) stays as it is, so the open never fails on one folder,
+ * and so does a key the step does not look up ({@link looksUp}). `keyOf` runs once per distinct key, the audit
+ * history's included, and must give back unchanged a key it returned, as a realpath does: rows copied to a key that would
+ * itself move could stay short of the last one.
  */
 export function respellPathKeys(database: RerailDatabase, keyOf: PathKeyOf): void {
   database.run(sql.raw(PATH_KEY_SPELLINGS_TABLE));
   const respelled = onceEach(keyOf);
   for (const stored of storedPathKeys(database)) moveKey(database, stored, respelled(stored));
+}
+
+/**
+ * Looks again at the keys whose drive was absent when they were looked up, and copies the rows of each folder that is
+ * back to its key; a key whose drive is back and that keeps its spelling waits no more. One read of a table that is
+ * empty at nearly every open.
+ */
+export function respellReturnedKeys(database: RerailDatabase, keyOf: PathKeyOf): void {
+  const waiting = database.all<{ stored: string }>(sql`SELECT stored FROM path_key_spellings WHERE current IS NULL`);
+  if (waiting.length === 0) return;
+  const respelled = onceEach(keyOf);
+  for (const { stored } of waiting) {
+    const key = respelled(stored);
+    if (key === stored) database.run(sql`DELETE FROM path_key_spellings WHERE stored = ${stored}`);
+    else if (key !== undefined) moveKey(database, stored, key);
+  }
 }
 
 /** Every distinct path a keyed table or the audit history holds, each once. */
@@ -102,12 +170,15 @@ function storedPathKeys(database: RerailDatabase): Set<string> {
   return keys;
 }
 
-/** Records that `stored` moved to `key`, and copies there the rows each keyed table holds under it. */
-function moveKey(database: RerailDatabase, stored: string, key: string): void {
+/**
+ * Records where `stored` stands now: `key` when its folder's key moved, none while its folder is absent. A key that
+ * moved has the rows each keyed table holds under it copied there.
+ */
+function moveKey(database: RerailDatabase, stored: string, key: string | undefined): void {
   if (key === stored) return;
-  database.run(sql`INSERT INTO path_key_spellings (stored, current) VALUES (${stored}, ${key})
+  database.run(sql`INSERT INTO path_key_spellings (stored, current) VALUES (${stored}, ${key ?? null})
     ON CONFLICT (stored) DO UPDATE SET current = excluded.current`);
-  copyToKey(database, { from: stored, to: key });
+  if (key !== undefined) copyToKey(database, { from: stored, to: key });
 }
 
 function copyToKey(database: RerailDatabase, rows: { from: string; to: string }): void {
@@ -118,27 +189,23 @@ function copyToKey(database: RerailDatabase, rows: { from: string; to: string })
 
 /** `keyOf` behind {@link looksUp}, run once per distinct key, each answer kept. */
 function onceEach(keyOf: PathKeyOf): PathKeyOf {
-  const keys = new Map<string, string>();
+  const keys = new Map<string, string | undefined>();
   return stored => {
-    let key = keys.get(stored);
-    if (key === undefined) {
-      key = looksUp(stored) ? keyOrStored(keyOf, stored) : stored;
-      keys.set(stored, key);
-    }
-    return key;
+    if (!keys.has(stored)) keys.set(stored, looksUp(stored) ? keyOrStored(keyOf, stored) : stored);
+    return keys.get(stored);
   };
 }
 
 /**
  * Whether the step looks `stored` up. Only a whole path, as Rerail writes every key: `resolve` changes a relative path,
  * or `/work/app` on Windows, which names no drive. Never a path on a network share (`\\host\share\...`): a lookup there
- * waits on the network, about 21 s for a host that does not answer, while the open holds the database's write lock.
+ * waits on the network, while the open holds the database's write lock.
  */
 function looksUp(stored: string): boolean {
   return resolve(stored) === stored && !stored.startsWith("\\\\");
 }
 
-function keyOrStored(keyOf: PathKeyOf, stored: string): string {
+function keyOrStored(keyOf: PathKeyOf, stored: string): string | undefined {
   try {
     return keyOf(stored);
   } catch {

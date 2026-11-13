@@ -10,23 +10,25 @@ import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { currentPathKey } from "../../../src/engine/storage/path-key-spelling.js";
+import { currentPathKey, onLocalDrives } from "../../../src/engine/storage/path-key-spelling.js";
 import { setCheckoutStarted, SqlitePresentationPreferenceStore, workspaceStartState } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 type PathKeySpelling = typeof import("../../../src/engine/storage/path-key-spelling.js");
 
 // The key a stored path moves to, which each test sets: on Linux and macOS the stored spelling is the one this build
-// gives, so a test stands in for Windows with a spelling of its own. The Windows tests use the real one.
+// gives, so a test stands in for Windows with a spelling of its own. The Windows tests use the real one. A test stands in
+// for a drive that is not attached through `onLocalDrives`.
 vi.mock("../../../src/engine/storage/path-key-spelling.js", async importOriginal => {
   const original = await importOriginal<PathKeySpelling>();
-  return { ...original, currentPathKey: vi.fn(original.currentPathKey) };
+  return { ...original, currentPathKey: vi.fn(original.currentPathKey), onLocalDrives: vi.fn(original.onLocalDrives) };
 });
 
 const STEP = "path-keys-as-stored";
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.mocked(currentPathKey).mockReset();
+  vi.mocked(onLocalDrives).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
@@ -324,6 +326,48 @@ describe("path keys an earlier build stored under another spelling", () => {
     } finally {
       database.$client.close();
     }
+  });
+
+  // The step ran once per file: a folder on a disk not attached at the first open kept its earlier spelling for good,
+  // and this build read its start state, settings, audit and preference as unset once the disk was back.
+  it("copy the rows of a folder whose drive was absent as the step ran at a later open, once the drive is back", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    vi.mocked(onLocalDrives).mockImplementation(keyOf => path => (path === stored ? undefined : keyOf(path)));
+    openRerailDatabase(databasePath).$client.close();
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+
+    // The drive is back; the daemon's start opens the file for writing.
+    vi.mocked(onLocalDrives).mockImplementation(actual.onLocalDrives);
+    openRerailDatabase(databasePath).$client.close();
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "completed", auditId: "audit-1" }));
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
+  });
+
+  // A key on a drive mapped to a network share was looked up at the first open, and with the share not answering each
+  // distinct key waited on the network while the open held the database's write lock.
+  it("look a key up only on a local drive, reading each drive's root once, and wait for a drive that is absent", () => {
+    const roots: string[] = [];
+    let clock = 0;
+    const probe = {
+      realpath: (root: string): string => {
+        roots.push(root);
+        // `Y:` answers only after 1.5 s, as a mapped drive whose host is gone; `E:` is a disk not attached.
+        clock += root === "Y:\\" ? 1_500 : 1;
+        if (root === "E:\\") throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+        return root === "Z:\\" ? "\\\\server\\share\\" : root;
+      },
+      now: () => clock,
+    };
+    const keyOf = onLocalDrives(stored => stored.toUpperCase(), "win32", probe);
+
+    expect(["C:\\a", "C:\\b", "Z:\\c", "Z:\\d", "Y:\\e", "E:\\f"].map(keyOf)).toEqual(["C:\\A", "C:\\B", "Z:\\c", "Z:\\d", "Y:\\e", undefined]);
+    expect(roots).toEqual(["C:\\", "Z:\\", "Y:\\", "E:\\"]);
+    expect(onLocalDrives(stored => stored.toUpperCase(), "linux", probe)("/a")).toBe("/A");
   });
 
   it.runIf(process.platform === "win32")("copy, on Windows, from a lower-case drive letter and another case to the stored spelling", async () => {
