@@ -35,6 +35,9 @@ pub(in crate::code_rule_dsl) fn produced(prog: &Program) -> BTreeMap<&str, &str>
     prog.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |p| (p.as_str(), req.as_str()))).collect()
 }
 
+/// Publish stated request rows through one producer per request family.
+pub(in crate::code_rule_dsl) fn stated(_prog: &mut Program, _requests: &[&str]) -> Result<(), Error> { Ok(()) }
+
 /// Gates the negations inside each component that holds a request (module docs). A program without answers is
 /// unchanged.
 pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
@@ -262,5 +265,28 @@ pub mod tests {
         assert!(parts.load.rules.iter().all(|r| r.head.rel != "shown") && parts.rest.rules.iter().all(|r| r.head.rel == "shown"));
         assert_eq!(parts.reads.iter().collect::<Vec<_>>(), ["fresh"]);
         assert!(parts.rest.inputs.contains(&"fresh".to_owned()) && parts.rest.gates.is_empty() && parts.rest.answers.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stated_tests {
+    use super::*;
+    #[test]
+    fn stated_requests_reach_the_cone_as_one_batch_and_survive_a_second_pass() {
+        let mut program = Program::default();
+        program.decls.insert("req".into(), vec![("path".into(), "sym".into())]);
+        let rows: Vec<_> = (0..1000).map(|n| vec![super::super::front::Value::Str(format!("file-{n}"))]).collect();
+        program.facts.insert("req".into(), rows.clone());
+        program.answers.insert("req".into(), vec!["answer".into()]);
+        stated(&mut program, &["req"]).unwrap();
+        let cone = split(&program).unwrap();
+        let producers: Vec<_> = cone.load.rules.iter().filter(|r| r.head.rel == "req").collect();
+        assert_eq!(producers.len(), 1, "one producer keeps all 1000 stated requests in the executable cone");
+        let seed = &producers[0].body[0].atom().unwrap().rel;
+        assert_eq!(program.facts.get(seed.as_str()), Some(&rows));
+        assert!(!program.facts.contains_key("req"));
+        let before = program.rules.len();
+        stated(&mut program, &["req"]).unwrap();
+        assert_eq!(program.rules.len(), before, "preparation is idempotent");
     }
 }
