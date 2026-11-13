@@ -11,15 +11,21 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
-import { homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
+import { forgetHomeDaemonHolder, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
-import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import {
+  DAEMON_ACCESS_TOKEN_FILE,
+  DAEMON_LOG_FILE,
+  DAEMON_STATE_FILE,
+  defaultRerailHome,
+  RERAIL_DATABASE_FILE,
+} from "../engine/storage/rerail-home.js";
 import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
 
@@ -737,16 +743,29 @@ async function startUnderLock(home: string, start: () => Promise<StartDaemonResu
 }
 
 /**
- * Whether a daemon holds `home`, its daemon.json or not. As for the main instance ({@link mainInstanceHolderRuns}), the
- * pid rule answers first and loads nothing: the holder records its pid beside the lock and removes the record when it
- * lets go, so a home whose daemon stopped, was killed or never ran is answered without the engine. Asking the lock
- * loads the engine from the running version's folder, and Windows keeps a loaded DLL from being deleted: the uninstall,
- * which stops the daemon before it removes `versions/`, could not have removed it. Only a recorded holder that runs is
- * asked about by its lock, which tells a live holder from a pid Windows has given to another process.
+ * Whether the holder `pid` recorded in `home` may still be the home's daemon, asked without loading anything: a live
+ * process, and on Windows only while the engine pipe of the home's database is there, under its own name or its
+ * fallback, which the daemon binds before daemon.json can name it and holds until it exits. Windows ends a daemon
+ * without its exit handler at a logoff, a restart or a stop's kill, so its record outlives it and soon names a pid
+ * Windows has given to another process. A daemon that has taken the lock and not yet bound its pipe is not counted:
+ * a start then launches another, which exits naming it.
+ */
+function homeHolderMayRun(home: string, pid: number, machine: DaemonMachine): boolean {
+  if (!processAlive(pid, machine.kill)) return false;
+  return machine.platform !== "win32" || databasePipeListed(join(home, RERAIL_DATABASE_FILE), () => machine.pipes());
+}
+
+/**
+ * Whether a daemon holds `home`, its daemon.json or not. As for the main instance ({@link mainInstanceHolderRuns}), a
+ * rule that loads nothing answers first ({@link homeHolderMayRun}): the holder records its pid beside the lock and
+ * removes the record when it lets go, so a home whose daemon stopped, was killed or never ran is answered without the
+ * engine. Asking the lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
+ * deleted: the uninstall, which stops the daemon before it removes `versions/`, could not have removed it. Only a holder
+ * that may run is asked about by its lock, which tells it from a process that took its pid since.
  */
 function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
   const pid = homeDaemonHolder(home);
-  if (pid === undefined || !processAlive(pid, machine.kill)) return false;
+  if (pid === undefined || !homeHolderMayRun(home, pid, machine)) return false;
   return machine.homeDaemonLockHeld(home) ?? true;
 }
 
@@ -1289,10 +1308,14 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
     // The state file stays, so a later stop can find the process again.
     if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
   }
-  // The daemon removes its own state file and main-instance record on a clean shutdown; one killed, as Windows
-  // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
+  // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
+  // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
+  // cache, or have a later stop ask the home's lock, which loads the engine.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
-  if (machine.platform === "win32") machine.forgetMainInstanceHolder(pid);
+  if (machine.platform === "win32") {
+    machine.forgetMainInstanceHolder(pid);
+    forgetHomeDaemonHolder(home, pid);
+  }
 }
 
 /**

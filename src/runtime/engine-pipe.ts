@@ -64,6 +64,18 @@ export function pipeListed(path: string, pipes: () => readonly string[] = listPi
   return listed(pipes)?.some(pipe => pipe.toLowerCase() === name) ?? true;
 }
 
+/**
+ * Whether the engine pipe of the Rerail database at `databasePath` is among `pipes`, under its own name or the fallback
+ * its engine moves to ({@link fallbackPipe}), whatever its case; pipes that cannot be listed count as holding it.
+ */
+export function databasePipeListed(databasePath: string, pipes: () => readonly string[] = listPipes): boolean {
+  const name = pipeNameOf(enginePipeName(databasePath)).toLowerCase();
+  return listed(pipes)?.some(pipe => {
+    const listedName = pipe.toLowerCase();
+    return listedName === name || listedName.startsWith(`${name}-`);
+  }) ?? true;
+}
+
 /** Whether some Rerail engine pipe is among `pipes`; pipes that cannot be listed count as holding one. */
 export function enginePipeListed(pipes: () => readonly string[] = listPipes): boolean {
   return listed(pipes)?.some(isEnginePipe) ?? true;

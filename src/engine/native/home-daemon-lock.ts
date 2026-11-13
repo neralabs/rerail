@@ -10,7 +10,8 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
  * `locks/daemon.lock` in its home for its whole life, taken before it opens the database or binds a socket or a port;
  * the OS drops it however the process ends, so a held lock means a daemon runs in the home whether or not `daemon.json`
  * names it. The holder records its pid beside the lock (`locks/daemon.json`), since Windows' `LockFileEx` keeps other
- * processes from reading a locked file; the record names the holder in a message and decides nothing.
+ * processes from reading a locked file. The record names the holder in a message, and tells a start or a stop whether
+ * the lock is worth asking, which loads the engine; the lock alone says whether a daemon holds the home.
  */
 const LOCK_FILE = "daemon.lock";
 const HOLDER_FILE = "daemon.json";
@@ -49,6 +50,14 @@ export function homeDaemonHolder(home: string): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Removes the holder's record in `home` when it names `pid`, a daemon that ended without its exit handler, which removes
+ * the record on every other exit. Windows ends a process that way at a kill, and soon gives its pid to another process.
+ */
+export function forgetHomeDaemonHolder(home: string, pid: number): void {
+  if (homeDaemonHolder(home) === pid) rmSync(join(home, LOCKS_DIR, HOLDER_FILE), { force: true });
 }
 
 /**
