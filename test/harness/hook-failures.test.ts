@@ -127,9 +127,10 @@ describe("the hook failure log", () => {
     hookFailureLines(readHookFailures(rerailHome, since), lastRecordedAt);
   // An event recorded after every failure below: the line counts them without the lead.
   const afterEveryFailure = 60_000;
-  // The number of hook events `rerail status` says could not be recorded in `rerailHome`; 0 when it says nothing.
-  const statusCount = (rerailHome: string): number =>
-    Number(/^Hooks: (\d+) hook events? could not be recorded /u.exec(statusSays(rerailHome, 0, afterEveryFailure)[0] ?? "")?.[1] ?? 0);
+  // The number of hook events a line of `rerail status` says could not be recorded; 0 when it says nothing.
+  const countOf = (line: string | undefined): number => Number(/^Hooks: (\d+) hook events? could not be recorded /u.exec(line ?? "")?.[1] ?? 0);
+  // That number for `rerailHome`.
+  const statusCount = (rerailHome: string): number => countOf(statusSays(rerailHome, 0, afterEveryFailure)[0]);
 
   it("counts the failures it moved aside with the newest ones, over the whole period when those reach back that far", async () => {
     const rerailHome = await home();
@@ -275,6 +276,18 @@ describe("the hook failure log", () => {
     recordLast(rerailHome, 10_000);
     expect(statusSays(rerailHome, 0, afterEveryFailure)).toEqual([expect.stringMatching(
       /^Hooks: 4 hook events could not be recorded since 1970-01-01T00:00:07\.000Z, as far back as the log goes; /u,
+    )]);
+  });
+
+  // #503's writer moves the full log to `.1` with no start line, and a hook was stopped holding an older log.
+  it("says since when it counts from the oldest failure of a .1 with no start, not from an older log a hook was stopped holding", async () => {
+    const rerailHome = await home();
+    const lines = (...ats: number[]): string => ats.map(at => `${JSON.stringify(failure(at))}\n`).join("");
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.${2 ** 31 - 1}.${randomUUID()}.old`), lines(2_000));
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), lines(5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), lines(7_000));
+    expect(statusSays(rerailHome, 0, afterEveryFailure)).toEqual([expect.stringMatching(
+      /^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u,
     )]);
   });
 
@@ -424,6 +437,22 @@ describe("the hook failure log", () => {
       await stopHookProcesses(hooks);
     }
   });
+
+  // Status reads the live log before it lists the others: a log hooks take as it lists them, and move on from name to
+  // name, was met already.
+  it("counts the live log hooks take and move from name to name at each listing while status reads", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      const names = readdir(...args);
+      if (String(args[0]) !== HOME) return names;
+      const from = globalThis.logAt ?? HOME + "/${HOOK_FAILURES_FILE}";
+      globalThis.logAt = HOME + "/${HOOK_FAILURES_FILE}." + process.pid + "." + crypto.randomUUID() + ".old";
+      fs.renameSync(from, globalThis.logAt);
+      return names;
+    }`);
+    expect(countOf(said)).toBe(full);
+  });
 });
 
 interface HookProcess {
@@ -492,14 +521,37 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
   return await recordWithWrapped(rerailHome, at, { renameSync: wrapRename, appendFileSync: wrapAppend });
 }
 
+/** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync", string>>;
+
 /** {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it. */
-async function recordWithWrapped(rerailHome: string, at: number | undefined, wraps: Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync", string>>): Promise<string> {
+async function recordWithWrapped(rerailHome: string, at: number | undefined, wraps: Wraps): Promise<string> {
+  const record = `hookFailures.recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: HOME, now: ${at}, env: {} });`;
+  return await outputOf(rerailHome, record, wraps);
+}
+
+/**
+ * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), when a process of
+ * its own reads them whose `fs.readdirSync` is the function `wrapListing`, a function's source, makes of the real one: a
+ * hook moving the log while status lists the Rerail home, `HOME` in that source.
+ */
+async function statusWhileListing(rerailHome: string, wrapListing: string): Promise<string> {
+  const say = "fs.writeSync(1, hookFailures.hookFailureLines(hookFailures.readHookFailures(HOME, 0), Number.MAX_SAFE_INTEGER).join(\"\"));";
+  return await outputOf(rerailHome, say, { readdirSync: wrapListing });
+}
+
+/**
+ * What `code` wrote to its standard output, run in a process of its own once `wraps` are in place, with
+ * `hookFailures` the hook failure module and `HOME` the Rerail home `rerailHome`.
+ */
+async function outputOf(rerailHome: string, code: string, wraps: Wraps): Promise<string> {
   const program = `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+const HOME = ${JSON.stringify(rerailHome)};
 ${Object.entries(wraps).map(([name, wrap]) => `fs.${name} = (${wrap})(fs.${name});`).join("\n")}
 syncBuiltinESMExports();
-const { recordHookFailure } = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
-recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: ${JSON.stringify(rerailHome)}, now: ${at}, env: {} });
+const hookFailures = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
+${code}
 `;
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
     cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
