@@ -6454,13 +6454,17 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "9a203197ec7189c52b0875e8d283b23ac692cde8",
+    "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Hub with batched directory metadata and lossless internal constant/dependency boundaries",
+    "status": "Integration hub with generic filesystem metadata, typed read errors, stated requests and load aliases",
     "nativeExtensions": [
       {
+        "path": "native/src/code_rule_dsl/logic/answers.rs",
+        "sha256": "006dc54fec21bfda3732e0309d56fe178f996f3c5567cfe0b360bdd9d64a46ed"
+      },
+      {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "d17093efa0a22f6b8d25bb6276e2132b09f1917fa002c62f490c6f84ba57c62a"
+        "sha256": "00f0d5babdc36f6dee62847d31b053009aba9e15b83bccc7235112a29433b723"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
@@ -6641,53 +6645,86 @@
         "userCpuSeconds": 1337.61,
         "systemCpuSeconds": 53.93,
         "buildRepair": "Rebuilt only rerail-logic after both linkers reported missing symbols in its cached archive. The normal Apple linker then succeeded. No compiler or linker override is used by the accepted artifact."
+      },
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "a169e2f3a517c8faf88c5608348ba05357e648d2",
+        "upstreamCommit": "9a203197ec7189c52b0875e8d283b23ac692cde8",
+        "sourceTrees": {
+          "native": "1a8508a782e6802c26361cf2f5c6ad11e88e300d",
+          "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
+          "Cargo.lock": "4ba1e0708340b1af0c4b34dedbf6c04c37983926"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-f654f7d63c26713d",
+        "sha256": "f654f7d63c26713d8fbe3163274dd2fab89b1bff40a545c40b24a5206e919e7a",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "wallSeconds": 110.11,
+            "userCpuSeconds": 929.66,
+            "systemCpuSeconds": 24.57,
+            "status": "deadline"
+          },
+          {
+            "wallSeconds": 24.58,
+            "userCpuSeconds": 136.26,
+            "systemCpuSeconds": 4.85,
+            "status": "passed"
+          }
+        ],
+        "wallSeconds": 134.69,
+        "userCpuSeconds": 1065.92,
+        "systemCpuSeconds": 29.42
       }
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "9a203197ec7189c52b0875e8d283b23ac692cde8",
-      "engineCommit": "a169e2f3a517c8faf88c5608348ba05357e648d2",
+      "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
+      "engineCommit": "f2cc53964c7c1f061a66457ec0e551658f367892",
       "sourceTrees": {
-        "native": "1a8508a782e6802c26361cf2f5c6ad11e88e300d",
+        "native": "e688042848677bac75ed15df1a290ac8668a3692",
         "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
         "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
         "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
         "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
-        "Cargo.lock": "4ba1e0708340b1af0c4b34dedbf6c04c37983926"
+        "Cargo.lock": "fafa0a3fcc672093bfc2348b7a3ae41b56027b31"
       }
     },
     "cliArtifact": {
       "format": "rerail.root-engine-build/v1",
-      "engineCommit": "a169e2f3a517c8faf88c5608348ba05357e648d2",
-      "upstreamCommit": "9a203197ec7189c52b0875e8d283b23ac692cde8",
+      "engineCommit": "f2cc53964c7c1f061a66457ec0e551658f367892",
+      "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
       "sourceTrees": {
-        "native": "1a8508a782e6802c26361cf2f5c6ad11e88e300d",
+        "native": "e688042848677bac75ed15df1a290ac8668a3692",
         "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
         "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
         "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
         "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
-        "Cargo.lock": "4ba1e0708340b1af0c4b34dedbf6c04c37983926"
+        "Cargo.lock": "fafa0a3fcc672093bfc2348b7a3ae41b56027b31"
       },
-      "path": ".rerail/modern-engine-alignment/cli-f654f7d63c26713d",
-      "sha256": "f654f7d63c26713d8fbe3163274dd2fab89b1bff40a545c40b24a5206e919e7a",
+      "path": ".rerail/modern-engine-alignment/cli-f8361430776ea8bc",
+      "sha256": "f8361430776ea8bce931d7f2c8eb3866f1983fc8d4f084f51364183c94dc1cf2",
       "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
       "buildAttempts": [
         {
-          "wallSeconds": 110.11,
-          "userCpuSeconds": 929.66,
-          "systemCpuSeconds": 24.57,
+          "wallSeconds": 110.01,
+          "userCpuSeconds": 628.13,
+          "systemCpuSeconds": 40.24,
           "status": "deadline"
         },
         {
-          "wallSeconds": 24.58,
-          "userCpuSeconds": 136.26,
-          "systemCpuSeconds": 4.85,
+          "wallSeconds": 36.82,
+          "userCpuSeconds": 114.65,
+          "systemCpuSeconds": 8.4,
           "status": "passed"
         }
       ],
-      "wallSeconds": 134.69,
-      "userCpuSeconds": 1065.92,
-      "systemCpuSeconds": 29.42
+      "wallSeconds": 146.83,
+      "userCpuSeconds": 742.78,
+      "systemCpuSeconds": 48.64
     }
   },
   "engineSourceSnapshots": [
