@@ -177,7 +177,12 @@ function copyBack(taken: string, path: string): void {
   }
 }
 
-/** {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading. */
+/**
+ * {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading. One window is left: a hook that
+ * writes into the log after the second read below loses its line. No two hooks copy one file: a hook holds a log under
+ * its own name only by taking the live name, and a hook whose give-back put the file back there copies nothing, so of
+ * the hooks that take one file in turn, only the last can copy it.
+ */
 function copyLines(descriptor: number, taken: string, path: string): void {
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
   unlinkSync(taken);
