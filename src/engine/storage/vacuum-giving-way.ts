@@ -9,7 +9,10 @@
  * (`cutWal`), and the write that waited goes through. Each attempt starts once no other connection has committed to the
  * file for a while, twice as long after each one that gave way, up to `LONGEST_QUIET_MS`, so the `VACUUM` runs in the
  * first quiet moment long enough for it; once it has waited `noticeMs` it says so, once, with what its attempts did
- * meanwhile.
+ * meanwhile. A write in another process (a hook recording a steer it delivered, a `rerail` command, an older daemon)
+ * stalls no thread this watches, and waits for the lock up to its own 5 s busy timeout: so each attempt also ends once
+ * its `VACUUM` has held the lock `TRY_MS` without committing, and after `BOUNDED_TRIES` such attempts the `VACUUM` stops
+ * and leaves the space to `rerail scrub`.
  */
 import type { ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -23,6 +26,20 @@ export const GIVE_WAY_MS = 500;
 
 /** How often the watch asks the watched thread whether it is answering. */
 const PING_MS = 50;
+
+/**
+ * How long one attempt's `VACUUM` may hold the write lock before the attempt ends it: under the 5 s every Rerail
+ * connection waits for that lock (`busy_timeout`, `database.ts`), with room for the process to end and for the waiting
+ * write's busy handler, which sleeps up to 100 ms between two tries, to take the lock. Measured against a `VACUUM` that
+ * held it 6.2 s on Linux and 8.4 s on Windows 11, past which another process's write failed at 5.0 and 5.6 s.
+ */
+export const TRY_MS = 4_000;
+
+/**
+ * How many attempts may end at `TRY_MS` before the `VACUUM` stops: one that needs longer needs longer every time, and
+ * each such attempt holds every other process's writes up to `TRY_MS`.
+ */
+export const BOUNDED_TRIES = 3;
 
 /** How long no other connection may commit before the first attempt; each attempt that gives way doubles it. */
 const FIRST_QUIET_MS = 2_000;
@@ -92,7 +109,10 @@ export type Waiting =
 
 /** The attempts so far, as `vacuumGivingWay` counts them. */
 interface Attempts {
+  /** Attempts that did not commit, whatever ended them. */
   gaveWay: number;
+  /** Those of them that ended at `TRY_MS`. */
+  tooLong: number;
   /** The quiet the next attempt waits for. */
   quietMs: number;
   running: boolean;
@@ -104,11 +124,18 @@ export class VacuumNotRun extends Error {}
 /** The reason a stop gives. */
 export const STOPPED = "Rerail stopped before VACUUM finished";
 
+/** The reason three attempts that each ended at `TRY_MS` give for the `VACUUM` that stops after them. */
+export const TOO_LONG = `its VACUUM held the write lock ${TRY_MS / 1_000} s without finishing ${BOUNDED_TRIES} times, and `
+  + "was ended each time so that a write of another process, which waits 5 s at most, goes through";
+
 /**
- * One attempt: it gave the free pages back (or found none left), it gave way to the watched thread or a stop, or
- * another connection held the lock as it began.
+ * One attempt: it gave the free pages back (or found none left), it gave way to the watched thread or a stop, it held
+ * the lock `TRY_MS` without committing, or another connection held the lock as it began.
  */
-type Attempt = "shrunk" | "gave-way" | "busy";
+type Attempt = "shrunk" | "gave-way" | "too-long" | "busy";
+
+/** What ended an attempt before its process did: a stop, a stall of the watched thread, or `TRY_MS`. */
+type EndedBy = "stop" | "stall" | "bound";
 
 /**
  * The watch over the thread at the other end of `port`, which answers each `PING` with `PONG` (the daemon's thread,
@@ -137,24 +164,34 @@ export function watchThread(port: MessagePort): ThreadWatch {
 /**
  * Runs `VACUUM` on the database at `path`, giving way to the thread `way.watch` watches, until it commits: each attempt
  * waits until no connection but `client`, the caller's, has committed for a while (`quietFor`), then runs in a process
- * of its own that ends once the thread stops answering (`vacuumOnce`), and stderr says when the next one runs. Resolves
- * once the file holds no free page; throws `VacuumNotRun` once `way.signal` stops it or `way.blocked` gives a reason, and
- * what `vacuum-process.ts` reported when `VACUUM` failed.
+ * of its own that ends once the thread stops answering or its `VACUUM` has held the lock `TRY_MS` (`vacuumOnce`), and
+ * stderr says when the next one runs. Resolves once the file holds no free page; throws `VacuumNotRun` once `way.signal`
+ * stops it, `way.blocked` gives a reason or `BOUNDED_TRIES` attempts ended at `TRY_MS`, and what `vacuum-process.ts`
+ * reported when `VACUUM` failed.
  */
 export async function vacuumGivingWay(client: Database.Database, path: string, way: GivingWay): Promise<void> {
-  const attempts: Attempts = { gaveWay: 0, quietMs: FIRST_QUIET_MS, running: false };
+  const attempts: Attempts = { gaveWay: 0, tooLong: 0, quietMs: FIRST_QUIET_MS, running: false };
   const notice = setTimeout(() => way.waitedLong(waitingOf(attempts)), way.noticeMs);
   try {
     for (;;) {
       const attempt = await nextAttempt(client, path, way, attempts);
       if (attempt === "shrunk") return;
-      attempts.gaveWay += 1;
-      attempts.quietMs = Math.min(2 * attempts.quietMs, LONGEST_QUIET_MS);
+      countNotRun(attempts, attempt);
       process.stderr.write(notRunLine(path, attempt, attempts.quietMs));
     }
   } finally {
     clearTimeout(notice);
   }
+}
+
+/**
+ * Counts an attempt that did not commit and doubles the quiet the next one waits for; throws `VacuumNotRun` with
+ * `TOO_LONG` once `BOUNDED_TRIES` attempts have ended at `TRY_MS`.
+ */
+function countNotRun(attempts: Attempts, attempt: Exclude<Attempt, "shrunk">): void {
+  attempts.gaveWay += 1;
+  if (attempt === "too-long" && (attempts.tooLong += 1) >= BOUNDED_TRIES) throw new VacuumNotRun(TOO_LONG);
+  attempts.quietMs = Math.min(2 * attempts.quietMs, LONGEST_QUIET_MS);
 }
 
 /** What `attempts` did so far, as `GivingWay.waitedLong` hears it. */
@@ -185,13 +222,17 @@ function stoppedOr(attempt: Attempt, signal: AbortSignal | undefined): Attempt {
   return attempt;
 }
 
+/** Why an attempt did not commit, in words. */
+const NOT_RUN_BECAUSE: Readonly<Record<Exclude<Attempt, "shrunk">, string>> = {
+  busy: "another connection held the write lock as it began",
+  "gave-way": `the daemon's thread did not answer for ${GIVE_WAY_MS / 1_000} s, as when a write of its own waits for that lock`,
+  "too-long": `it held the write lock ${TRY_MS / 1_000} s without finishing, and a write of another process waits 5 s at most`,
+};
+
 /** The line for an attempt that did not commit, with why, and how long the next one waits. */
-function notRunLine(path: string, attempt: "gave-way" | "busy", quietMs: number): string {
-  const why = attempt === "busy"
-    ? "another connection held the write lock as it began"
-    : `the daemon's thread did not answer for ${GIVE_WAY_MS / 1_000} s, as when a write of its own waits for that lock`;
-  return `rerail: ${path}: VACUUM gave way (${why}), and runs again once no other connection has written to the file `
-    + `for ${quietMs / 1_000} s.\n`;
+function notRunLine(path: string, attempt: Exclude<Attempt, "shrunk">, quietMs: number): string {
+  return `rerail: ${path}: VACUUM gave way (${NOT_RUN_BECAUSE[attempt]}), and runs again once no other connection has `
+    + `written to the file for ${quietMs / 1_000} s.\n`;
 }
 
 /**
@@ -211,22 +252,26 @@ async function quietFor(client: Database.Database, quietMs: number, signal: Abor
 }
 
 /**
- * One attempt in a process of its own, which a stop ends, and a stall of the watched thread too until the `VACUUM` has
- * committed (`attemptEnd`). Ended before it committed, it cuts the WAL back on `client` (`cutWal`) before the write that
- * waited takes the lock.
+ * One attempt in a process of its own, which a stop ends, and, until the `VACUUM` has committed, a stall of the watched
+ * thread or `TRY_MS` of holding the lock, counted from the moment the process says it holds it (`attemptEnd`). Ended
+ * before it committed, it cuts the WAL back on `client` (`cutWal`) before the write that waited takes the lock.
  */
 async function vacuumOnce(client: Database.Database, path: string, { watch, signal }: GivingWay): Promise<Attempt> {
   const child = startVacuumProcess(path);
-  const committed = committedBy(child, client);
+  const bound: { timer?: NodeJS.Timeout } = {};
+  const committed = committedBy(child, client, () => {
+    bound.timer = setTimeout(() => attempt.end("bound"), TRY_MS);
+  });
   const attempt = attemptEnd(child, client, committed);
-  const unwatch = watch(() => attempt.end(false));
-  const unlisten = onAbort(signal, () => attempt.end(true));
+  const unwatch = watch(() => attempt.end("stall"));
+  const unlisten = onAbort(signal, () => attempt.end("stop"));
   try {
     const { code, errors } = await exitOf(child);
-    const outcome = attemptOf(committed(), attempt.ended(), code);
+    const outcome = attemptOf(committed(), attempt.endedBy(), code);
     if (outcome === undefined) throw new Error(errors || `the VACUUM process exited with code ${code}`);
     return outcome;
   } finally {
+    clearTimeout(bound.timer);
     unwatch();
     unlisten();
   }
@@ -237,16 +282,19 @@ async function vacuumOnce(client: Database.Database, path: string, { watch, sign
  * page count falls; but another connection's `VACUUM` (`rerail scrub`, `rerail reset`) lowers it too, at any moment
  * before `child` takes the write lock. So a fall counts only below the page count `child` read while it held that lock
  * and wrote on stdout just before its `VACUUM` (`HOLDING`, `saidHolding` in `vacuum-process.ts`), which no commit of
- * another connection before that read reaches. Until `child` has written that line, its `VACUUM` has not begun.
+ * another connection before that read reaches. Until `child` has written that line, its `VACUUM` has not begun; once it
+ * has, `holding` runs, once.
  */
-function committedBy(child: ChildProcess, client: Database.Database): () => boolean {
+function committedBy(child: ChildProcess, client: Database.Database, holding: () => void): () => boolean {
   let said = "";
-  let holding: number | undefined;
+  let pages: number | undefined;
   child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    if (pages !== undefined) return;
     said += chunk;
-    holding ??= pagesHeld(said);
+    pages = pagesHeld(said);
+    if (pages !== undefined) holding();
   });
-  return () => holding !== undefined && pragmaNumber(client, "page_count") < holding;
+  return () => pages !== undefined && pragmaNumber(client, "page_count") < pages;
 }
 
 /** The page count of the first whole `HOLDING` line in `said`, or undefined while there is none. */
@@ -256,25 +304,25 @@ function pagesHeld(said: string): number | undefined {
 }
 
 /**
- * What ends an attempt early, and whether it did. A stop always ends it. A stall of the watched thread ends it only
- * while the `VACUUM` has not committed: once it has, it holds the write lock no more, its process only writes the WAL
- * into the file without that lock, and whatever the thread waits for is not the `VACUUM`. Ending kills the process,
- * then cuts the WAL back (`cutWal`).
+ * What ends an attempt early, and what did. A stop always ends it. A stall of the watched thread, or `TRY_MS` of holding
+ * the lock, ends it only while the `VACUUM` has not committed: once it has, it holds the write lock no more, its process
+ * only writes the WAL into the file without that lock, and whatever waits is not waiting for the `VACUUM`. Ending kills
+ * the process, then cuts the WAL back (`cutWal`).
  */
 function attemptEnd(
   child: ChildProcess,
   client: Database.Database,
   committed: () => boolean,
-): { readonly end: (stopping: boolean) => void; readonly ended: () => boolean } {
-  let ended = false;
+): { readonly end: (by: EndedBy) => void; readonly endedBy: () => EndedBy | undefined } {
+  let endedBy: EndedBy | undefined;
   return {
-    end: stopping => {
-      if (ended || (!stopping && committed())) return;
-      ended = true;
+    end: by => {
+      if (endedBy !== undefined || (by !== "stop" && committed())) return;
+      endedBy = by;
       child.kill("SIGKILL");
       cutWal(client, committed);
     },
-    ended: () => ended,
+    endedBy: () => endedBy,
   };
 }
 
@@ -307,10 +355,11 @@ function exitOf(child: ChildProcess): Promise<{ code: number | null; errors: str
   });
 }
 
-/** An attempt by whether its `VACUUM` committed, whether a stall or stop ended it, and its process's exit code. */
-function attemptOf(committed: boolean, ended: boolean, code: number | null): Attempt | undefined {
+/** An attempt by whether its `VACUUM` committed, what ended it early if anything did, and its process's exit code. */
+function attemptOf(committed: boolean, endedBy: EndedBy | undefined, code: number | null): Attempt | undefined {
   if (committed || code === 0) return "shrunk";
-  if (ended) return "gave-way";
+  if (endedBy === "bound") return "too-long";
+  if (endedBy !== undefined) return "gave-way";
   return code === BUSY_EXIT ? "busy" : undefined;
 }
 

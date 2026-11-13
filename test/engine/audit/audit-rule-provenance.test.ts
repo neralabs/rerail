@@ -1,6 +1,7 @@
 import type * as ChildProcessModule from "node:child_process";
-import type { SpawnOptions } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -188,6 +189,41 @@ function timedWrite(database: Database.Database): { failure: string | undefined;
     return { failure: (error as { code?: string }).code ?? String(error), waitedMs: performance.now() - began };
   }
 }
+
+/** A process that writes once to the database at its first argument, waiting 5 s at most, and prints how it went. */
+const ANOTHER_WRITE = `
+const Database = require("better-sqlite3");
+const database = new Database(process.argv[1], { timeout: 5000 });
+const began = performance.now();
+let failure = null;
+try {
+  database.exec("CREATE TABLE IF NOT EXISTS other_writes (at); INSERT INTO other_writes VALUES (1)");
+} catch (error) {
+  failure = error.code ?? String(error);
+}
+process.stdout.write(JSON.stringify({ failure, waitedMs: performance.now() - began }));
+database.close();
+`;
+
+/**
+ * One write in a process of its own with the 5 s busy timeout every Rerail writer has, as a hook recording a steer it
+ * delivered or a `rerail` command writes: what it threw, if anything, and how long it took. This thread keeps running
+ * meanwhile.
+ */
+async function writeInAnotherProcess(path: string): Promise<{ failure: string | null; waitedMs: number }> {
+  const child = spawn(process.execPath, ["-e", ANOTHER_WRITE, path], { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"], windowsHide: true });
+  let said = "";
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    said += chunk;
+  });
+  await once(child, "close");
+  return JSON.parse(said) as { failure: string | null; waitedMs: number };
+}
+
+/** The giving-way options of a `VACUUM` whose watched thread always answers, as an idle daemon's does. */
+const ALWAYS_ANSWERS = {
+  watch: (() => () => undefined) satisfies ThreadWatch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
+};
 
 /** An audit an older Rerail sharing the file records now, its provenance in its row; when it began. */
 function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[]): number {
@@ -896,6 +932,58 @@ describe("audit rule provenance", () => {
     expect({ vacuumed: existsSync(held), logged }).toEqual({ vacuumed: false, logged: "" });
     expect(pageBytes(path).free).toBe(0);
   }, 60_000);
+
+  it("ends a try whose VACUUM has held the write lock 4 s, so a write of another process, which waits 5 s at most, goes through", async () => {
+    // The first VACUUM a try's process runs would hold the write lock 6 s, as one of a large file does. The watched
+    // thread always answers: the write comes from another process, which no watch sees.
+    const { path, held, client, close } = await fileToVacuum(6_000);
+    let wrote: { failure: string | null; waitedMs: number } | undefined;
+    let logged: string;
+    try {
+      ({ logged } = await stderrWhile(async () => {
+        const vacuuming = vacuumGivingWay(client, path, ALWAYS_ANSWERS);
+        await untilExists(held, 60_000);
+        wrote = await writeInAnotherProcess(path);
+        await vacuuming;
+      }));
+    } finally {
+      close();
+    }
+
+    // The try ended 4 s into its hold, and the write went through inside its 5 s. Before, the VACUUM held the lock the
+    // whole 6 s, and the write failed with SQLITE_BUSY after 5 s. The next try, held no longer, gave the space back.
+    expect({ failure: wrote?.failure, inBusyTimeout: (wrote?.waitedMs ?? Number.POSITIVE_INFINITY) < 5_000 }, `the write waited ${Math.round(wrote?.waitedMs ?? -1)} ms`)
+      .toEqual({ failure: null, inBusyTimeout: true });
+    expect(logged).toContain("VACUUM gave way (it held the write lock 4 s without finishing");
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
+
+  it("stops after three tries that each held the write lock 4 s, and says to run rerail scrub", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // Each of the first three VACUUMs would hold the write lock 6 s.
+    const held = join(dirname(path), "vacuum-held");
+    const restore = slowVacuumNext({ held, holdMs: 6_000, holds: 3 });
+    let logged: string;
+    try {
+      ({ logged } = await stderrWhile(async () => {
+        expect(await move(path, { watch: ALWAYS_ANSWERS.watch })).toBe(30);
+      }));
+    } finally {
+      restore();
+    }
+
+    const lines = logged.split("\n");
+    expect(lines.filter(line => line.includes("VACUUM gave way (it held the write lock 4 s without finishing"))).toHaveLength(2);
+    const told = lines.filter(line => line.includes("rerail scrub"));
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain(`rerail: ${path} keeps its size`);
+    expect(told[0]).toContain("its VACUUM held the write lock 4 s without finishing 3 times");
+    expect([held, `${held}.2`, `${held}.3`].map(marker => existsSync(marker))).toEqual([true, true, true]);
+    // The audits stay moved; the space stays in the file for new history, or for `rerail scrub`.
+    expect(inlineAudits(path)).toBe(0);
+    expect(pageBytes(path).free).toBeGreaterThan(0);
+  }, 90_000);
 
   it("says once, naming rerail scrub, when writes keep its VACUUM from starting past its bound, and VACUUMs once they stop", async () => {
     const path = await fileOfTheBuildBefore();

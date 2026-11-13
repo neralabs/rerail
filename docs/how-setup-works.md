@@ -594,14 +594,18 @@ long without giving way. A try that finds the space already given back runs no `
 quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
 try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
 start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
-Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a `rerail`
-command, or a daemon of another Rerail version sharing the database) waits for it as for any write, up to 5 s, then
-fails with `database is locked`.
+
+Another process that writes while a `VACUUM` runs (a hook recording a steer it delivered, a `rerail` command, or a
+daemon of another Rerail version sharing the database) waits for the write lock as for any write, and fails with
+`database is locked` after 5 s. So the daemon also ends a try whose `VACUUM` has held the lock 4 s without committing,
+and that write goes through. After three such tries the daemon stops, leaves the free space in the file, and says in
+`daemon.log` to run `rerail scrub`, which runs `VACUUM` once without that bound; the next daemon start tries again.
+Stopping the daemon ends a running `VACUUM` at once.
 
 The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
 another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a
-disk has less free space than `VACUUM` writes to it (checked again before each try), or when it stops before a `VACUUM`
-has finished. `VACUUM` writes a copy of the database's pages in use, not its free ones, to the folder SQLite uses for
+disk has less free space than `VACUUM` writes to it (checked again before each try), after three tries that each held
+the lock 4 s, or when it stops before a `VACUUM` has finished. `VACUUM` writes a copy of the database's pages in use, not its free ones, to the folder SQLite uses for
 temporary files (on Linux and macOS the first of `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp` and `/tmp` it may
 write in; on Windows the system's temporary folder), and another through the WAL beside the database, so the disk of
 each folder needs room for one copy, and a disk that holds both folders room for two. The file then keeps its size,
