@@ -34,4 +34,6 @@ pub mod writer;
 pub mod gpu;
 #[cfg(target_os = "macos")]
 pub mod scan;
+#[cfg(target_os = "macos")]
+pub mod columns;
 

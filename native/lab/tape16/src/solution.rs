@@ -379,8 +379,10 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
                 }
                 _ => &compressed,
             };
-            let back: Vec<Block> = (0..compressed.len())
-                .map(|b| layout::unlay(&codec::decompress_in(s.codec, &compressed, b, &dict, laid[b].len()), s.layout, s.extras))
+            let lens: Vec<usize> = laid.iter().map(Vec::len).collect();
+            let back: Vec<Block> = codec::decompress_file(s.codec, compressed, &dict, &lens)
+                .iter()
+                .map(|b| layout::unlay(b, s.layout, s.extras))
                 .collect();
             events::decode(&blocks::join(&back), p.tag, &corpus.candidates, tree.source_len)
         });
@@ -408,14 +410,30 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
                 }
                 let i = ((rng >> 20) % n as u64) as usize;
                 let reads = kind_reads(s.layout, n, i, s.extras);
-                // With the entropy stage, the blocks the read may touch are decoded first: block k, and for
-                // cross-block spans every block before it (an upper bound: a segment could decode alone).
+                // With the entropy stage, span LZ decodes only the checkpoint segments the read reaches (in
+                // this block, and in any block a span names). The other LZ codecs decode the blocks the read
+                // may touch first.
+                match (&coded, &tables, s.codec) {
+                    (Some(cd), Some(t), Codec::LpSpan { ptr, cross, .. }) => {
+                        let first = if cross { 0 } else { k };
+                        let mut srcs = crate::span::coded_sources(&cd[first..=k], t);
+                        for &(off, len) in &reads {
+                            crate::span::read(&mut srcs, k - first, &dict.pool, ptr, off, len, &mut out);
+                            std::hint::black_box(&out);
+                        }
+                        if reads.is_empty() {
+                            let all = crate::span::decode(&mut srcs, k - first, &dict.pool, ptr);
+                            std::hint::black_box(layout::unlay(&all, s.layout, s.extras).opens[i].kind);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
                 let plain: Vec<Vec<u8>>;
                 let (compressed, kb) = match (&coded, &tables) {
                     (Some(cd), Some(t)) => {
-                        let first = if matches!(s.codec, Codec::LpSpan { cross: true, .. }) { 0 } else { k };
-                        plain = cd[first..=k].iter().map(|c| huff::decode_block(c, &t.0, &t.1)).collect();
-                        (&plain, k - first)
+                        plain = cd[k..=k].iter().map(|c| huff::decode_block(c, &t.0, &t.1)).collect();
+                        (&plain, 0)
                     }
                     _ => (&compressed, k),
                 };

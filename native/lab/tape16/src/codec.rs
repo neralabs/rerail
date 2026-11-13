@@ -1,7 +1,7 @@
 //! The codecs T1 compares, over a block's laid-out bytes, with an optional dictionary (T4).
 
 use crate::lp::{self, Dict, Refs};
-use crate::span;
+use crate::span::{self, Ptr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Codec {
@@ -15,8 +15,8 @@ pub enum Codec {
     /// Literal-pool LZ that may also replay earlier sequences (pointers into the compressed block).
     LpReplay,
     /// Span LZ (`span`): copies of runs of compressed sequences, nested to `depth`, reaching earlier blocks
-    /// of the file when `cross`.
-    LpSpan { depth: u8, cross: bool },
+    /// of the file when `cross`, its pointers in the form `ptr`.
+    LpSpan { depth: u8, cross: bool, ptr: Ptr },
 }
 
 impl Codec {
@@ -27,7 +27,7 @@ impl Codec {
             Codec::LzOutput => "lz-out".into(),
             Codec::LpLz => "lp-lz".into(),
             Codec::LpReplay => "lp-replay".into(),
-            Codec::LpSpan { depth, cross } => format!("span{depth}{}", if cross { "x" } else { "" }),
+            Codec::LpSpan { depth, cross, ptr } => format!("span{depth}{}{}", if cross { "x" } else { "" }, ptr.name()),
         }
     }
     pub const ALL: [Codec; 8] = [
@@ -36,10 +36,14 @@ impl Codec {
         Codec::LzOutput,
         Codec::LpLz,
         Codec::LpReplay,
-        Codec::LpSpan { depth: 1, cross: false },
-        Codec::LpSpan { depth: 4, cross: false },
-        Codec::LpSpan { depth: 4, cross: true },
+        Codec::span(1, false),
+        Codec::span(4, false),
+        Codec::span(4, true),
     ];
+    /// Span LZ with the first pointer form.
+    pub const fn span(depth: u8, cross: bool) -> Codec {
+        Codec::LpSpan { depth, cross, ptr: Ptr::Full }
+    }
     /// Whether one byte can be read without decoding the block before it.
     pub fn random_access(self) -> bool {
         matches!(self, Codec::Raw | Codec::LpLz | Codec::LpReplay | Codec::LpSpan { .. })
@@ -120,7 +124,7 @@ pub fn compress(codec: Codec, data: &[u8], dict: &Dictionary, k: usize) -> Vec<u
         Codec::LzOutput => lp::compress(data, &dict.pool, Refs::Output, k),
         Codec::LpLz => lp::compress(data, &dict.pool, Refs::Literals, k),
         Codec::LpReplay => lp::compress(data, &dict.pool, Refs::Replay, k),
-        Codec::LpSpan { depth, .. } => span::compress_file(&[data.to_vec()], &dict.pool, k, depth, false).remove(0),
+        Codec::LpSpan { depth, ptr, .. } => span::compress_file(&[data.to_vec()], &dict.pool, k, depth, false, ptr).remove(0),
     }
 }
 
@@ -137,7 +141,7 @@ pub fn decompress(codec: Codec, c: &[u8], dict: &Dictionary, len_hint: usize) ->
         Codec::LzOutput => lp::decompress(c, &dict.pool, Refs::Output),
         Codec::LpLz => lp::decompress(c, &dict.pool, Refs::Literals),
         Codec::LpReplay => lp::decompress(c, &dict.pool, Refs::Replay),
-        Codec::LpSpan { .. } => span::decompress(&[c.to_vec()], 0, &dict.pool),
+        Codec::LpSpan { ptr, .. } => span::decompress(&[c.to_vec()], 0, &dict.pool, ptr),
     }
 }
 
@@ -149,7 +153,7 @@ pub fn read_at(codec: Codec, c: &[u8], dict: &Dictionary, len_hint: usize, offse
             out.extend_from_slice(&c[offset..offset + len]);
         }
         Codec::LpLz | Codec::LpReplay => lp::read_at(c, &dict.pool, offset, len, out),
-        Codec::LpSpan { .. } => span::read_at(&[c.to_vec()], 0, &dict.pool, offset, len, out),
+        Codec::LpSpan { ptr, .. } => span::read_at(&[c.to_vec()], 0, &dict.pool, ptr, offset, len, out),
         _ => {
             let all = decompress(codec, c, dict, len_hint);
             out.clear();
@@ -162,7 +166,7 @@ pub fn read_at(codec: Codec, c: &[u8], dict: &Dictionary, len_hint: usize, offse
 /// block's compressed sequences; every other codec compresses each block alone.
 pub fn compress_file(codec: Codec, blocks: &[Vec<u8>], dict: &Dictionary, k: usize) -> Vec<Vec<u8>> {
     match codec {
-        Codec::LpSpan { depth, cross } => span::compress_file(blocks, &dict.pool, k, depth, cross),
+        Codec::LpSpan { depth, cross, ptr } => span::compress_file(blocks, &dict.pool, k, depth, cross, ptr),
         _ => blocks.iter().map(|b| compress(codec, b, dict, k)).collect(),
     }
 }
@@ -170,7 +174,7 @@ pub fn compress_file(codec: Codec, blocks: &[Vec<u8>], dict: &Dictionary, k: usi
 /// Block `b` of a file compressed by `compress_file`.
 pub fn decompress_in(codec: Codec, blocks: &[Vec<u8>], b: usize, dict: &Dictionary, len_hint: usize) -> Vec<u8> {
     match codec {
-        Codec::LpSpan { .. } => span::decompress(blocks, b, &dict.pool),
+        Codec::LpSpan { ptr, .. } => span::decompress(blocks, b, &dict.pool, ptr),
         _ => decompress(codec, &blocks[b], dict, len_hint),
     }
 }
@@ -179,7 +183,16 @@ pub fn decompress_in(codec: Codec, blocks: &[Vec<u8>], b: usize, dict: &Dictiona
 #[allow(clippy::too_many_arguments)]
 pub fn read_at_in(codec: Codec, blocks: &[Vec<u8>], b: usize, dict: &Dictionary, len_hint: usize, offset: usize, len: usize, out: &mut Vec<u8>) {
     match codec {
-        Codec::LpSpan { .. } => span::read_at(blocks, b, &dict.pool, offset, len, out),
+        Codec::LpSpan { ptr, .. } => span::read_at(blocks, b, &dict.pool, ptr, offset, len, out),
         _ => read_at(codec, &blocks[b], dict, len_hint, offset, len, out),
+    }
+}
+
+/// Every block of a file compressed by `compress_file`, in order (span LZ shares what it learns of earlier
+/// blocks).
+pub fn decompress_file(codec: Codec, blocks: &[Vec<u8>], dict: &Dictionary, lens: &[usize]) -> Vec<Vec<u8>> {
+    match codec {
+        Codec::LpSpan { ptr, .. } => span::decode_file(&mut span::sources(blocks), &dict.pool, ptr),
+        _ => (0..blocks.len()).map(|b| decompress_in(codec, blocks, b, dict, lens[b])).collect(),
     }
 }

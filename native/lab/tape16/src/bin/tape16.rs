@@ -14,6 +14,7 @@
 
 use rerail_tape_lab::blocks::{self, Cut};
 use rerail_tape_lab::codec::{self, Codec};
+use rerail_tape_lab::span::Ptr;
 use rerail_tape_lab::layout::{Extras, Layout};
 use rerail_tape_lab::solution::{self, Corpus, Dicts, Solution};
 use rerail_tape_lab::{capture, edits, events, layout, report, text};
@@ -91,22 +92,33 @@ fn grid(full: bool, axis: &str) -> Vec<Solution> {
         push(Solution { codec: Codec::Zstd, ..b }, &mut v);
         push(Solution { codec: Codec::Zstd, cut: Cut::Target(1024), dict: 16 * 1024, ..b }, &mut v);
         push(Solution { codec: Codec::LzOutput, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
-        push(Solution { codec: Codec::LpSpan { depth: 4, cross: true }, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
-        push(Solution { codec: Codec::LpSpan { depth: 4, cross: true }, cut: Cut::Target(256), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        push(Solution { codec: Codec::span(4, true), cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        push(Solution { codec: Codec::span(4, true), cut: Cut::Target(256), dict: 16 * 1024, entropy: true, ..b }, &mut v);
     }
     if axis == "dictcut" {
         for cut in [Cut::Target(256), Cut::Target(1024)] {
             for dict in [0, 16 * 1024, 64 * 1024] {
                 push(Solution { codec: Codec::Zstd, cut, dict, ..b }, &mut v);
-                for codec in [Codec::LzOutput, Codec::LpSpan { depth: 4, cross: true }] {
+                for codec in [Codec::LzOutput, Codec::span(4, true)] {
                     push(Solution { codec, cut, dict, entropy: true, ..b }, &mut v);
                 }
             }
         }
     }
+    if axis == "span" {
+        // How a span names its target: the pointer forms, with and without the entropy stage.
+        for cut in [Cut::Whole, Cut::Target(1024), Cut::Target(256)] {
+            for ptr in Ptr::ALL {
+                for entropy in [false, true] {
+                    push(Solution { codec: Codec::LpSpan { depth: 4, cross: true, ptr }, cut, dict: 16 * 1024, entropy, ..b }, &mut v);
+                }
+            }
+            push(Solution { codec: Codec::LzOutput, cut, dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        }
+    }
     if axis == "huff" {
         for cut in [Cut::Whole, Cut::Target(1024)] {
-            for codec in [Codec::LzOutput, Codec::LpLz, Codec::LpReplay, Codec::LpSpan { depth: 4, cross: false }, Codec::LpSpan { depth: 4, cross: true }] {
+            for codec in [Codec::LzOutput, Codec::LpLz, Codec::LpReplay, Codec::span(4, false), Codec::span(4, true)] {
                 for entropy in [false, true] {
                     push(Solution { codec, cut, entropy, ..b }, &mut v);
                 }
@@ -369,24 +381,29 @@ fn cmd_keys(path: &str) {
 }
 
 #[cfg(target_os = "macos")]
-fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut) {
+/// `lang`: one language only (its name, as the tables print it); `codecs`: only codecs whose name holds it.
+fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut, lang: Option<&str>, only: Option<&str>) {
     use rerail_tape_lab::lp::Refs;
     let corpus = load(path);
     let mut dicts = Dicts::default();
     println!("Blocks: {}, dictionary {dict_kb} KB, K {k}\n", cut.name());
     println!("| language | codec | threads | MB out | GPU µs | GB/s | CPU decode µs | correct |");
     println!("|---|---|---|---|---|---|---|---|");
-    let tags: std::collections::BTreeSet<u8> = corpus.files.iter().map(|p| p.tag).collect();
+    let tags: std::collections::BTreeSet<u8> =
+        corpus.files.iter().map(|p| p.tag).filter(|&t| lang.is_none_or(|l| capture::language(t) == l)).collect();
     let codecs = [
         Codec::LpLz,
         Codec::LpReplay,
-        Codec::LpSpan { depth: 1, cross: false },
-        Codec::LpSpan { depth: 4, cross: false },
-        Codec::LpSpan { depth: 4, cross: true },
+        Codec::span(1, false),
+        Codec::span(4, false),
+        Codec::span(4, true),
+        Codec::LpSpan { depth: 4, cross: true, ptr: Ptr::Split },
+        Codec::LpSpan { depth: 4, cross: true, ptr: Ptr::SplitNoLen },
+        Codec::LpSpan { depth: 4, cross: true, ptr: Ptr::Seq },
         Codec::LzOutput,
     ];
     for tag in tags {
-        for c in codecs {
+        for c in codecs.into_iter().filter(|c| only.is_none_or(|o| c.name().contains(o))) {
             let s = Solution { codec: c, dict: dict_kb * 1024, k, cut, ..base() };
             let dict = dicts.get(&corpus, tag, &s);
             // Per file: its blocks laid out, and compressed as one file (a span may reach an earlier block).
@@ -399,50 +416,54 @@ fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut) {
             let comp: Vec<Vec<Vec<u8>>> = files.iter().map(|f| codec::compress_file(c, f, &dict, k)).collect();
             let (_, cpu) = rerail_tape_lab::measure::cost(|| {
                 for (cf, lf) in comp.iter().zip(&files) {
-                    for b in 0..cf.len() {
-                        std::hint::black_box(codec::decompress_in(c, cf, b, &dict, lf[b].len()));
-                    }
+                    let lens: Vec<usize> = lf.iter().map(Vec::len).collect();
+                    std::hint::black_box(codec::decompress_file(c, cf, &dict, &lens));
                 }
             });
             drop(files);
             // Each run in its own pool: Metal's command buffers are autoreleased, and hold their buffers.
-            let run = metal::objc::rc::autoreleasepool(|| match c {
-                Codec::LpSpan { .. } => rerail_tape_lab::gpu::decode_span(&comp, &dict.bytes),
-                Codec::LpLz => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Literals),
-                Codec::LpReplay => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Replay),
-                _ => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Output),
-            });
-            if let Codec::LpSpan { .. } = c {
-                let t = dicts.tables(&corpus, tag, &Solution { entropy: true, ..s });
-                let coded: Vec<Vec<Vec<u8>>> = comp.iter().map(|f| f.iter().map(|b| rerail_tape_lab::huff::encode(b, &t.0, &t.1)).collect()).collect();
-                match metal::objc::rc::autoreleasepool(|| rerail_tape_lab::gpu::decode_span_huff(&coded, &dict.bytes, &t.0, &t.1)) {
+            // The sequence-index form runs twice: walking from checkpoints, and with the index pass.
+            let modes: &[bool] = if matches!(c, Codec::LpSpan { ptr: Ptr::Seq, .. }) { &[false, true] } else { &[false] };
+            for &index in modes {
+                let label = if index { format!("{}+index", c.name()) } else { c.name() };
+                let run = metal::objc::rc::autoreleasepool(|| match c {
+                    Codec::LpSpan { ptr, .. } => rerail_tape_lab::gpu::decode_span(&comp, &dict.bytes, ptr, index),
+                    Codec::LpLz => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Literals),
+                    Codec::LpReplay => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Replay),
+                    _ => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Output),
+                });
+                if let Codec::LpSpan { ptr, .. } = c {
+                    let t = dicts.tables(&corpus, tag, &Solution { entropy: true, ..s });
+                    let coded: Vec<Vec<Vec<u8>>> = comp.iter().map(|f| f.iter().map(|b| rerail_tape_lab::huff::encode(b, &t.0, &t.1)).collect()).collect();
+                    match metal::objc::rc::autoreleasepool(|| rerail_tape_lab::gpu::decode_span_huff(&coded, &dict.bytes, &t.0, &t.1, ptr, index)) {
+                        Ok(g) => println!(
+                            "| {} | {label}+huff | {} | {:.2} | {:.0} + {:.0}{} | {:.2} | | {} |",
+                            capture::language(tag),
+                            g.threads,
+                            g.bytes_out as f64 / 1e6,
+                            g.huff_seconds * 1e6,
+                            g.lz_seconds * 1e6,
+                            if index { format!(" (index {:.0})", g.index_seconds * 1e6) } else { String::new() },
+                            g.bytes_out as f64 / (g.huff_seconds + g.lz_seconds).max(1e-9) / 1e9,
+                            g.correct
+                        ),
+                        Err(e) => println!("| {} | {label}+huff | error: {e} |", capture::language(tag)),
+                    }
+                }
+                match run {
                     Ok(g) => println!(
-                        "| {} | {}+huff | {} | {:.2} | {:.0} + {:.0} | {:.2} | | {} |",
+                        "| {} | {label} | {} | {:.2} | {:.0}{} | {:.2} | {:.0} | {} |",
                         capture::language(tag),
-                        c.name(),
                         g.threads,
                         g.bytes_out as f64 / 1e6,
-                        g.huff_seconds * 1e6,
-                        g.lz_seconds * 1e6,
-                        g.bytes_out as f64 / (g.huff_seconds + g.lz_seconds).max(1e-9) / 1e9,
+                        g.gpu_seconds * 1e6,
+                        if index { format!(" (index {:.0})", g.index_seconds * 1e6) } else { String::new() },
+                        g.bytes_out as f64 / g.gpu_seconds.max(1e-9) / 1e9,
+                        cpu.nanos as f64 / 1000.0,
                         g.correct
                     ),
-                    Err(e) => println!("| {} | {}+huff | error: {e} |", capture::language(tag), c.name()),
+                    Err(e) => println!("| {} | {label} | error: {e} |", capture::language(tag)),
                 }
-            }
-            match run {
-                Ok(g) => println!(
-                    "| {} | {} | {} | {:.2} | {:.0} | {:.2} | {:.0} | {} |",
-                    capture::language(tag),
-                    c.name(),
-                    g.threads,
-                    g.bytes_out as f64 / 1e6,
-                    g.gpu_seconds * 1e6,
-                    g.bytes_out as f64 / g.gpu_seconds.max(1e-9) / 1e9,
-                    cpu.nanos as f64 / 1000.0,
-                    g.correct
-                ),
-                Err(e) => println!("| {} | {} | error: {e} |", capture::language(tag), c.name()),
             }
         }
     }
@@ -486,7 +507,8 @@ fn cmd_scan(path: &str) {
                     for i in 0..t.len() {
                         let g = base + i;
                         let parent = if t.parent[i] == u32::MAX { u32::MAX } else { t.parent[i] + base as u32 };
-                        if d.start[g] != t.nodes[i].start || d.end[g] != t.nodes[i].end || d.depth[g] != depth[i] || d.parent[g] != parent {
+                        let sub = (g + t.size[i] as usize) as u32;
+                        if d.start[g] != t.nodes[i].start || d.end[g] != t.nodes[i].end || d.depth[g] != depth[i] || d.parent[g] != parent || d.sub[g] != sub {
                             ok = false;
                         }
                     }
@@ -509,6 +531,93 @@ fn cmd_scan(path: &str) {
             }
             Err(e) => println!("| {} | error: {e} |", cut.name()),
         }
+    }
+}
+
+/// E7's reader form on the GPU: format 16 (span LZ, sequence-index pointers, Huffman, byte planes) decoded
+/// straight into columns (kind, field, flags, membership, start, end, parent, subtree end), per language,
+/// checked against the tree; against the same decode on one CPU thread into a tree.
+#[cfg(target_os = "macos")]
+fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
+    use rerail_tape_lab::columns;
+    let corpus = load(path);
+    let mut dicts = Dicts::default();
+    let s = Solution { codec: Codec::LpSpan { depth: 4, cross: true, ptr: Ptr::Seq }, cut, dict: 16 * 1024, entropy: true, ..base() };
+    println!("{path}: {}\n", s.name());
+    print!("| language | nodes | blocks | threads | MB in | MB laid |");
+    for p in columns::PASSES {
+        print!(" {p} µs |");
+    }
+    println!(" GPU total µs | GPU ns/node | CPU ms (one thread, into a tree) | CPU ns/node | correct |");
+    println!("|---|---|---|---|---|---|{}---|---|---|---|---|", "---|".repeat(columns::PASSES.len()));
+    let tags: std::collections::BTreeSet<u8> =
+        corpus.files.iter().filter(|p| p.test).map(|p| p.tag).filter(|&t| lang.is_none_or(|l| capture::language(t) == l)).collect();
+    for tag in tags {
+        let dict = dicts.get(&corpus, tag, &s);
+        let t = dicts.tables(&corpus, tag, &s);
+        let test: Vec<&solution::Prepared> = corpus.files.iter().filter(|p| p.test && p.tag == tag).collect();
+        struct F {
+            coded: Vec<Vec<u8>>,
+            places: Vec<rerail_tape_lab::blocks::Placement>,
+            counts: Vec<(u32, u32)>,
+            lens: Vec<usize>,
+        }
+        let files: Vec<F> = test
+            .iter()
+            .map(|p| {
+                let (bs, places) = blocks::split(&p.events, s.cut);
+                let laid: Vec<Vec<u8>> = bs.iter().map(|b| layout::lay(b, s.layout, s.extras, &[], &[])).collect();
+                let comp = codec::compress_file(s.codec, &laid, &dict, s.k);
+                let coded = comp.iter().map(|b| rerail_tape_lab::huff::encode(b, &t.0, &t.1)).collect();
+                F { coded, places, counts: bs.iter().map(|b| (b.opens.len() as u32, b.trails.len() as u32)).collect(), lens: laid.iter().map(Vec::len).collect() }
+            })
+            .collect();
+        let max_depth = test.iter().map(|p| p.tree(&corpus).depth().into_iter().max().unwrap_or(0)).max().unwrap_or(0) as usize + 1;
+        // The CPU: the same bytes into a tree, one thread (Huffman, span LZ, unlay, events).
+        let (_, cpu) = rerail_tape_lab::measure::cost(|| {
+            for (f, p) in files.iter().zip(&test) {
+                let plain: Vec<Vec<u8>> = f.coded.iter().map(|c| rerail_tape_lab::huff::decode_block(c, &t.0, &t.1)).collect();
+                let back: Vec<rerail_tape_lab::blocks::Block> =
+                    codec::decompress_file(s.codec, &plain, &dict, &f.lens).iter().map(|b| layout::unlay(b, s.layout, s.extras)).collect();
+                std::hint::black_box(events::decode(&blocks::join(&back), p.tag, &corpus.candidates, p.source.len() as u64));
+            }
+        });
+        let ins: Vec<columns::FileIn> = files.iter().map(|f| columns::FileIn { coded: &f.coded, places: &f.places, counts: &f.counts }).collect();
+        let r = metal::objc::rc::autoreleasepool(|| columns::decode(&ins, &dict.bytes, &t, Ptr::Seq, max_depth));
+        let c = match r {
+            Ok(c) => c,
+            Err(e) => {
+                println!("| {} | error: {e} |", capture::language(tag));
+                continue;
+            }
+        };
+        // Checked node by node against the events and the tree.
+        let (mut ok, mut base) = (true, 0usize);
+        for p in &test {
+            let tr = p.tree(&corpus);
+            for (i, o) in p.events.opens.iter().enumerate() {
+                let g = base + i;
+                let parent = if tr.parent[i] == u32::MAX { u32::MAX } else { tr.parent[i] + base as u32 };
+                ok &= c.kind[g] == o.kind && c.field[g] == o.field && c.flags[g] == o.flags && c.memb[g] == o.memb;
+                ok &= c.derived.start[g] == tr.nodes[i].start && c.derived.end[g] == tr.nodes[i].end && c.derived.parent[g] == parent;
+                ok &= c.derived.sub[g] == (g + tr.size[i] as usize) as u32;
+            }
+            base += tr.len();
+        }
+        let nodes = base.max(1);
+        let total: f64 = c.seconds.iter().sum();
+        print!(
+            "| {} | {nodes} | {} | {} | {:.2} | {:.2} |",
+            capture::language(tag),
+            c.derived.blocks,
+            c.threads,
+            c.bytes_in as f64 / 1e6,
+            c.laid_bytes as f64 / 1e6
+        );
+        for x in c.seconds {
+            print!(" {:.0} |", x * 1e6);
+        }
+        println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu.nanos as f64 / 1e6, cpu.nanos as f64 / nodes as f64);
     }
 }
 
@@ -584,10 +693,22 @@ fn main() {
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
         #[cfg(target_os = "macos")]
-        "gpu" => cmd_gpu(path, opt("--dict", 64), opt("--k", 64), match opt("--cut", 0) {
-            0 => Cut::Whole,
-            n => Cut::Target(n),
-        }),
+        "columns" => {
+            let lang = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).map(String::as_str);
+            cmd_columns(path, match opt("--cut", 1024) {
+                0 => Cut::Whole,
+                n => Cut::Target(n),
+            }, lang)
+        }
+        #[cfg(target_os = "macos")]
+        "gpu" => {
+            let text = |f: &str| args.iter().position(|a| a == f).and_then(|i| args.get(i + 1)).map(String::as_str);
+            let cut = match opt("--cut", 0) {
+                0 => Cut::Whole,
+                n => Cut::Target(n),
+            };
+            cmd_gpu(path, opt("--dict", 64), opt("--k", 64), cut, text("--lang"), text("--codecs"))
+        }
         _ => die(&format!("unknown command {cmd}")),
     }
 }

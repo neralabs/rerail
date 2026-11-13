@@ -211,8 +211,8 @@ fn span_codecs_roundtrip_files_of_blocks() {
             }
         }
         // Crossing blocks makes the later blocks smaller.
-        let alone: usize = codec::compress_file(Codec::LpSpan { depth: 4, cross: false }, &blocks, &dict, 64).iter().map(Vec::len).sum();
-        let cross: usize = codec::compress_file(Codec::LpSpan { depth: 4, cross: true }, &blocks, &dict, 64).iter().map(Vec::len).sum();
+        let alone: usize = codec::compress_file(Codec::span(4, false), &blocks, &dict, 64).iter().map(Vec::len).sum();
+        let cross: usize = codec::compress_file(Codec::span(4, true), &blocks, &dict, 64).iter().map(Vec::len).sum();
         assert!(cross < alone, "cross {cross} not under alone {alone}");
     }
 }
@@ -232,12 +232,61 @@ fn the_entropy_stage_gives_back_the_lz_block() {
     let sk = huff::Table::train(&skew);
     for &n in &[1usize, 100, 5000, 40_000] {
         let d = data(&mut rng, n);
-        for codec in [Codec::LpLz, Codec::LpReplay, Codec::LzOutput, Codec::LpSpan { depth: 4, cross: false }] {
+        for codec in [Codec::LpLz, Codec::LpReplay, Codec::LzOutput, Codec::span(4, false)] {
             for k in [1, 16, 64] {
                 let c = codec::compress(codec, &d, &dict, k);
                 for (s, l) in [(&st, &lt), (&sk, &sk)] {
                     let e = huff::encode(&c, s, l);
                     assert_eq!(huff::decode_block(&e, s, l), c, "{} k{k} n{n}", codec.name());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn every_span_pointer_form_round_trips_plain_and_entropy_coded() {
+    use rerail_tape_lab::huff;
+    use rerail_tape_lab::span::{self, Ptr};
+    let mut rng = Rng(11);
+    let dict = Dictionary::new(data(&mut rng, 2000));
+    // A file of blocks sharing content, so spans reach into earlier blocks.
+    let base = data(&mut rng, 6000);
+    let blocks: Vec<Vec<u8>> = (0..6)
+        .map(|_| {
+            let mut b = base.clone();
+            for _ in 0..30 {
+                let i = rng.below(b.len() as u64) as usize;
+                b[i] = rng.below(256) as u8;
+            }
+            b.truncate(1000 + rng.below(5000) as usize);
+            b
+        })
+        .collect();
+    for ptr in Ptr::ALL {
+        for cross in [false, true] {
+            for k in [1, 16, 64] {
+                let codec = Codec::LpSpan { depth: 4, cross, ptr };
+                let c = codec::compress_file(codec, &blocks, &dict, k);
+                let (mut sc, mut lc) = ([0u64; 256], [0u64; 256]);
+                huff::count(&c, &mut sc, &mut lc);
+                let t = (huff::Table::train(&sc), huff::Table::train(&lc));
+                let coded: Vec<Vec<u8>> = c.iter().map(|b| huff::encode(b, &t.0, &t.1)).collect();
+                let name = codec.name();
+                for (b, d) in blocks.iter().enumerate() {
+                    assert_eq!(&codec::decompress_in(codec, &c, b, &dict, d.len()), d, "{name} k{k} block {b}");
+                    assert_eq!(&span::decode(&mut span::coded_sources(&coded, &t), b, &dict.pool, ptr), d, "{name}+huff k{k} block {b}");
+                    let mut out = Vec::new();
+                    for _ in 0..30 {
+                        let off = rng.below(d.len() as u64) as usize;
+                        let len = 1 + rng.below((d.len() - off).min(40) as u64) as usize;
+                        codec::read_at_in(codec, &c, b, &dict, d.len(), off, len, &mut out);
+                        assert_eq!(out, &d[off..off + len], "{name} k{k} block {b} at {off}+{len}");
+                        // Entropy-coded, decoding only the segments the read reaches.
+                        let mut srcs = span::coded_sources(&coded, &t);
+                        span::read(&mut srcs, b, &dict.pool, ptr, off, len, &mut out);
+                        assert_eq!(out, &d[off..off + len], "{name}+huff k{k} block {b} at {off}+{len}");
+                    }
                 }
             }
         }

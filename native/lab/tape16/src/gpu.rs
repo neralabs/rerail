@@ -117,6 +117,8 @@ pub struct GpuRun {
     pub bytes_out: usize,
     /// Warm: the second of two identical dispatches (no compile, buffers resident).
     pub gpu_seconds: f64,
+    /// Span LZ's sequence-index form: the index pass (part of `gpu_seconds`).
+    pub index_seconds: f64,
     pub correct: bool,
 }
 
@@ -153,7 +155,7 @@ pub fn decode(blocks: &[Vec<u8>], dict: &[u8], refs: Refs) -> Result<GpuRun, Str
         expected.extend(lp::decompress(c, &pool, refs));
     }
     if tasks.is_empty() {
-        return Ok(GpuRun { threads: 0, bytes_out: 0, gpu_seconds: 0.0, correct: true });
+        return Ok(GpuRun { threads: 0, bytes_out: 0, gpu_seconds: 0.0, index_seconds: 0.0, correct: true });
     }
     let opts = MTLResourceOptions::StorageModeShared;
     // An empty slice's pointer is dangling: a buffer of one zero byte stands in.
@@ -190,7 +192,7 @@ pub fn decode(blocks: &[Vec<u8>], dict: &[u8], refs: Refs) -> Result<GpuRun, Str
     }
     // SAFETY: the buffer is shared storage of `out_len` bytes and the GPU is done with it.
     let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), out_len) };
-    Ok(GpuRun { threads: tasks.len(), bytes_out: out_len, gpu_seconds: secs, correct: got == &expected[..] })
+    Ok(GpuRun { threads: tasks.len(), bytes_out: out_len, gpu_seconds: secs, index_seconds: 0.0, correct: got == &expected[..] })
 }
 
 /// A completed command buffer's GPU time, in seconds.
@@ -211,16 +213,20 @@ fn gpu_seconds(command: &metal::CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-const SPAN_SOURCE: &str = r#"
+pub(crate) const SPAN_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 
 // One thread per checkpoint segment: its block (global index), output offset, body and literal offsets
-// within the block, and how many sequences it decodes.
-struct Task { uint out; uint block; uint at; uint li; uint nseq; };
-// Each block's first byte in the global sequence and literal buffers.
-struct Block { uint seq_base; uint lit_base; };
-struct Frame { uint block; uint at; uint li; uint left; };
+// within the block, how many sequences it decodes, and the index of its first.
+struct Task { uint out; uint block; uint at; uint li; uint nseq; uint si; };
+// Each block's first byte in the global sequence and literal buffers, its first checkpoint, K, and its
+// first entry in the sequence table (the index pass's output).
+struct Block { uint seq_base; uint lit_base; uint ck_base; uint k; uint tab_base; };
+// A checkpoint's literal and body offsets, for the sequence-index form's walk.
+struct Check { uint li; uint at; };
+struct Frame { uint block; uint at; uint li; uint left; uint si; };
+struct Tok { uint lits; uint op; uint len; uint arg; uint blk; uint at; uint li; uint seq; bool by_seq; };
 
 static inline uint varint(device const uchar* b, thread uint& at) {
     uint v = 0, s = 0;
@@ -233,6 +239,45 @@ static inline uint varint(device const uchar* b, thread uint& at) {
     return v;
 }
 
+// A sequence header (`span::tok`). fmt: 0 full, 1 split, 2 split without lengths, 3 sequence index (found
+// by walking from its checkpoint), 4 sequence index (found in the index pass's table).
+static inline Tok tok(device const uchar* s, thread uint& at, uint b, uint li, uint si, uint fmt) {
+    uint here = at;
+    uchar t = s[at++];
+    Tok k;
+    k.lits = t >> 4;
+    if (k.lits == 15) k.lits += varint(s, at);
+    k.op = t & 15;
+    k.len = 0; k.arg = 0; k.blk = b; k.at = 0; k.li = 0; k.seq = 0; k.by_seq = false;
+    if (k.op == 1) {
+        k.len = varint(s, at) + 8;
+        k.arg = s[at++];
+    } else if (k.op == 2) {
+        k.len = varint(s, at) + 4;
+        k.arg = varint(s, at);
+    } else if (k.op == 4 || k.op == 5) {
+        if (fmt >= 3) {
+            k.by_seq = true;
+            if (k.op == 4) {
+                k.seq = si - (varint(s, at) + 1);
+            } else {
+                k.blk = b - (varint(s, at) + 1);
+                k.seq = varint(s, at);
+            }
+            k.len = varint(s, at) + 1;
+        } else {
+            uint back = fmt == 0 ? varint(s, at) : (k.op == 5 ? varint(s, at) + 1 : 0);
+            k.len = varint(s, at) + 1;
+            uint body = varint(s, at), lit = varint(s, at);
+            if (fmt < 2) varint(s, at); // the span's output length: a reader that skips uses it
+            k.blk = b - back;
+            k.at = back == 0 ? here - body : body;
+            k.li = back == 0 ? li - lit : lit;
+        }
+    }
+    return k;
+}
+
 kernel void decode_span(device const Task* tasks [[buffer(0)]],
                         device const uchar* seqs [[buffer(1)]],
                         device const uchar* lits [[buffer(2)]],
@@ -241,6 +286,9 @@ kernel void decode_span(device const Task* tasks [[buffer(0)]],
                         constant uint& ntasks [[buffer(5)]],
                         constant uint& dict_len [[buffer(6)]],
                         device const Block* blocks [[buffer(7)]],
+                        device const Check* checks [[buffer(8)]],
+                        constant uint& fmt [[buffer(9)]],
+                        device const uint2* tab [[buffer(10)]],
                         uint id [[thread_position_in_grid]]) {
     if (id >= ntasks) return;
     Task t = tasks[id];
@@ -248,81 +296,163 @@ kernel void decode_span(device const Task* tasks [[buffer(0)]],
     // The depth bound (4 in the lab) plus the segment itself.
     Frame st[8];
     int top = 0;
-    st[0] = Frame{t.block, t.at, t.li, t.nseq};
+    st[0] = Frame{t.block, t.at, t.li, t.nseq, t.si};
     while (top >= 0) {
         if (st[top].left == 0) { top--; continue; }
         st[top].left--;
         uint b = st[top].block;
         device const uchar* s = seqs + blocks[b].seq_base;
         device const uchar* l = lits + blocks[b].lit_base;
-        uint at = st[top].at, li = st[top].li;
-        uint here = at;
-        uchar tok = s[at++];
-        uint nl = tok >> 4;
-        if (nl == 15) nl += varint(s, at);
-        uint op = tok & 15;
-        for (uint j = 0; j < nl; j++) out[o + j] = l[li + j];
-        o += nl;
-        if (op == 1) {
-            uint len = varint(s, at) + 8;
-            uchar v = s[at++];
-            for (uint j = 0; j < len; j++) out[o + j] = v;
-            o += len;
-        } else if (op == 2) {
-            uint len = varint(s, at) + 4;
-            uint src = varint(s, at);
-            for (uint j = 0; j < len; j++) {
-                uint q = src + j;
+        uint at = st[top].at, li = st[top].li, si = st[top].si;
+        Tok k = tok(s, at, b, li, si, fmt);
+        for (uint j = 0; j < k.lits; j++) out[o + j] = l[li + j];
+        o += k.lits;
+        if (k.op == 1) {
+            for (uint j = 0; j < k.len; j++) out[o + j] = uchar(k.arg);
+            o += k.len;
+        } else if (k.op == 2) {
+            for (uint j = 0; j < k.len; j++) {
+                uint q = k.arg + j;
                 out[o + j] = q < dict_len ? dict[q] : l[q - dict_len];
             }
-            o += len;
-        }
-        uint span_block = 0, span_at = 0, span_li = 0, span_n = 0;
-        if (op == 4) {
-            uint back = varint(s, at);
-            span_n = varint(s, at) + 1;
-            uint body = varint(s, at), lit = varint(s, at);
-            varint(s, at); // the span's output length: a reader that skips uses it
-            span_block = b - back;
-            span_at = back == 0 ? here - body : body;
-            span_li = back == 0 ? li - lit : lit;
+            o += k.len;
         }
         st[top].at = at;
-        st[top].li = li + nl;
-        if (op == 4 && top < 7) {
+        st[top].li = li + k.lits;
+        st[top].si = si + 1;
+        if ((k.op == 4 || k.op == 5) && top < 7) {
+            uint sat = k.at, sli = k.li, ssi = 0;
+            if (k.by_seq && fmt == 4) {
+                uint2 e = tab[blocks[k.blk].tab_base + k.seq];
+                sat = e.x; sli = e.y; ssi = k.seq;
+            } else if (k.by_seq) {
+                // From the target's checkpoint, at most K - 1 headers on.
+                Block tb = blocks[k.blk];
+                uint ck = k.seq / tb.k;
+                Check c = checks[tb.ck_base + ck];
+                sat = c.at; sli = c.li;
+                device const uchar* ts = seqs + tb.seq_base;
+                for (uint i = ck * tb.k; i < k.seq; i++) {
+                    Tok h = tok(ts, sat, k.blk, sli, i, fmt);
+                    sli += h.lits;
+                }
+                ssi = k.seq;
+            }
             top++;
-            st[top] = Frame{span_block, span_at, span_li, span_n};
+            st[top] = Frame{k.blk, sat, sli, k.len, ssi};
         }
+    }
+}
+
+// The index pass: one thread per checkpoint segment walks its headers once and records each sequence's
+// body and literal offsets, so the span pass finds a sequence-index target without a walk.
+kernel void index_seqs(device const Task* tasks [[buffer(0)]],
+                       device const uchar* seqs [[buffer(1)]],
+                       device const Block* blocks [[buffer(7)]],
+                       constant uint& ntasks [[buffer(5)]],
+                       device uint2* tab [[buffer(10)]],
+                       uint id [[thread_position_in_grid]]) {
+    if (id >= ntasks) return;
+    Task t = tasks[id];
+    Block b = blocks[t.block];
+    device const uchar* s = seqs + b.seq_base;
+    uint at = t.at, li = t.li;
+    for (uint i = 0; i < t.nseq; i++) {
+        tab[b.tab_base + t.si + i] = uint2(at, li);
+        Tok h = tok(s, at, t.block, li, t.si + i, 3);
+        li += h.lits;
     }
 }
 "#;
 
+/// The span pass's inputs: tasks, the block table and checkpoints, and the expected output.
+pub(crate) struct SpanInputs {
+    pub(crate) tasks: Vec<[u32; 6]>,
+    pub(crate) blocks: Vec<[u32; 5]>,
+    pub(crate) checks: Vec<[u32; 2]>,
+    /// Sequences so far: the size of the index pass's table.
+    pub(crate) seqs: u32,
+}
+
+impl SpanInputs {
+    pub(crate) fn new() -> Self {
+        SpanInputs { tasks: Vec::new(), blocks: Vec::new(), checks: Vec::new(), seqs: 0 }
+    }
+    /// A block's tasks and table entries; `checks` are (output, literal, body) offsets.
+    pub(crate) fn add(&mut self, out_base: u32, seq_base: u32, lit_base: u32, checks: &[[u32; 3]], nseq: usize, k: usize) {
+        let g = self.blocks.len() as u32;
+        self.blocks.push([seq_base, lit_base, self.checks.len() as u32, k as u32, self.seqs]);
+        self.seqs += nseq as u32;
+        for (i, ck) in checks.iter().enumerate() {
+            self.checks.push([ck[1], ck[2]]);
+            let n = (nseq - i * k).min(k) as u32;
+            self.tasks.push([out_base + ck[0], g, ck[2], ck[1], n, (i * k) as u32]);
+        }
+    }
+}
+
+/// Encodes the span pass: its buffers 0–9.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_span(enc: &metal::ComputeCommandEncoderRef, pipe: &metal::ComputePipelineState, bufs: [&metal::Buffer; 5], blocks: &metal::Buffer, checks: &metal::Buffer, tab: &metal::Buffer, n: u32, dict_len: u32, fmt: u32) {
+    enc.set_compute_pipeline_state(pipe);
+    for (i, b) in bufs.iter().enumerate() {
+        enc.set_buffer(i as u64, Some(b), 0);
+    }
+    enc.set_bytes(5, 4, (&n as *const u32).cast());
+    enc.set_bytes(6, 4, (&dict_len as *const u32).cast());
+    enc.set_buffer(7, Some(blocks), 0);
+    enc.set_buffer(8, Some(checks), 0);
+    enc.set_bytes(9, 4, (&fmt as *const u32).cast());
+    enc.set_buffer(10, Some(tab), 0);
+    let w = pipe.thread_execution_width().min(64);
+    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+}
+
+/// The index pass alone, in its own command buffer: its GPU seconds.
+pub(crate) fn run_index(queue: &metal::CommandQueue, pipe: &metal::ComputePipelineState, tasks: &metal::Buffer, seqs: &metal::Buffer, blocks: &metal::Buffer, tab: &metal::Buffer, n: u32) -> f64 {
+    let cmd = queue.new_command_buffer();
+    let enc = cmd.new_compute_command_encoder();
+    enc.set_compute_pipeline_state(pipe);
+    enc.set_buffer(0, Some(tasks), 0);
+    enc.set_buffer(1, Some(seqs), 0);
+    enc.set_bytes(5, 4, (&n as *const u32).cast());
+    enc.set_buffer(7, Some(blocks), 0);
+    enc.set_buffer(10, Some(tab), 0);
+    let w = pipe.thread_execution_width().min(64);
+    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+    enc.end_encoding();
+    cmd.commit();
+    cmd.wait_until_completed();
+    gpu_seconds(cmd)
+}
+
+/// The span kernel's mode: the pointer form, and for the sequence-index form whether the index pass runs.
+pub(crate) fn span_mode(ptr: crate::span::Ptr, index: bool) -> u32 {
+    if ptr == crate::span::Ptr::Seq && index { 4 } else { ptr.code() }
+}
+
 /// Span LZ on the GPU: `files` are each file's compressed blocks (`codec::compress_file`), all decoded in one
 /// dispatch, one thread per checkpoint segment of every block.
-pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8]) -> Result<GpuRun, String> {
+pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8], ptr: crate::span::Ptr, index: bool) -> Result<GpuRun, String> {
     let device = Device::system_default().ok_or("no Metal device")?;
     let lib = device.new_library_with_source(SPAN_SOURCE, &metal::CompileOptions::new()).map_err(|e| e.to_string())?;
     let f = lib.get_function("decode_span", None).map_err(|e| e.to_string())?;
     let pipe = device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())?;
+    let fi = lib.get_function("index_seqs", None).map_err(|e| e.to_string())?;
+    let ipipe = device.new_compute_pipeline_state_with_function(&fi).map_err(|e| e.to_string())?;
     let pool = lp::Dict::new(dict.to_vec());
-    let (mut seqs, mut lits, mut tasks, mut table, mut expected) = (Vec::new(), Vec::new(), Vec::<[u32; 5]>::new(), Vec::<[u32; 2]>::new(), Vec::new());
+    let (mut seqs, mut lits, mut inputs, mut expected) = (Vec::new(), Vec::new(), SpanInputs::new(), Vec::new());
     for file in files {
         for (b, c) in file.iter().enumerate() {
             let p = lp::parts(c);
-            let g = table.len() as u32;
-            table.push([seqs.len() as u32, lits.len() as u32]);
+            inputs.add(expected.len() as u32, seqs.len() as u32, lits.len() as u32, &p.checks, p.nseq, p.k);
             seqs.extend_from_slice(p.seqs);
             lits.extend_from_slice(p.lits);
-            let ob = expected.len() as u32;
-            for (i, ck) in p.checks.iter().enumerate() {
-                let nseq = (p.nseq - i * p.k).min(p.k) as u32;
-                tasks.push([ob + ck[0], g, ck[2], ck[1], nseq]);
-            }
-            expected.extend(crate::span::decompress(file, b, &pool));
+            expected.extend(crate::span::decompress(file, b, &pool, ptr));
         }
     }
-    if tasks.is_empty() {
-        return Ok(GpuRun { threads: 0, bytes_out: 0, gpu_seconds: 0.0, correct: true });
+    if inputs.tasks.is_empty() {
+        return Ok(GpuRun { threads: 0, bytes_out: 0, gpu_seconds: 0.0, index_seconds: 0.0, correct: true });
     }
     let opts = MTLResourceOptions::StorageModeShared;
     let buf = |b: &[u8]| {
@@ -331,34 +461,30 @@ pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8]) -> Result<GpuRun, String
     };
     // SAFETY: arrays of u32s as bytes.
     let as_bytes = |v: &[u32]| unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4) };
-    let (bt, bs, bl, bd, bb) = (buf(as_bytes(tasks.as_flattened())), buf(&seqs), buf(&lits), buf(dict), buf(as_bytes(table.as_flattened())));
+    let (bt, bs, bl, bd) = (buf(as_bytes(inputs.tasks.as_flattened())), buf(&seqs), buf(&lits), buf(dict));
+    let (bb, bc) = (buf(as_bytes(inputs.blocks.as_flattened())), buf(as_bytes(inputs.checks.as_flattened())));
     let bo = device.new_buffer(expected.len().max(1) as u64, opts);
+    let btab = device.new_buffer(u64::from(inputs.seqs.max(1)) * 8, opts);
     let queue = device.new_command_queue();
-    let (n, dl) = (tasks.len() as u32, dict.len() as u32);
-    let mut secs = 0.0;
+    let n = inputs.tasks.len() as u32;
+    let mode = span_mode(ptr, index);
+    let (mut secs, mut isecs) = (0.0, 0.0);
     for _ in 0..2 {
+        isecs = if mode == 4 { run_index(&queue, &ipipe, &bt, &bs, &bb, &btab, n) } else { 0.0 };
         let cmd = queue.new_command_buffer();
         let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(&pipe);
-        for (i, b) in [&bt, &bs, &bl, &bd, &bo].iter().enumerate() {
-            enc.set_buffer(i as u64, Some(b), 0);
-        }
-        enc.set_bytes(5, 4, (&n as *const u32).cast());
-        enc.set_bytes(6, 4, (&dl as *const u32).cast());
-        enc.set_buffer(7, Some(&bb), 0);
-        let w = pipe.thread_execution_width().min(64);
-        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+        encode_span(enc, &pipe, [&bt, &bs, &bl, &bd, &bo], &bb, &bc, &btab, n, dict.len() as u32, mode);
         enc.end_encoding();
         cmd.commit();
         cmd.wait_until_completed();
-        secs = gpu_seconds(cmd);
+        secs = gpu_seconds(cmd) + isecs;
     }
     // SAFETY: shared storage of `expected.len()` bytes; the GPU is done with it.
     let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), expected.len()) };
-    Ok(GpuRun { threads: tasks.len(), bytes_out: expected.len(), gpu_seconds: secs, correct: got == &expected[..] })
+    Ok(GpuRun { threads: inputs.tasks.len(), bytes_out: expected.len(), gpu_seconds: secs, index_seconds: isecs, correct: got == &expected[..] })
 }
 
-const HUFF_SOURCE: &str = r#"
+pub(crate) const HUFF_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 
@@ -394,15 +520,16 @@ kernel void huff(device const HTask* tasks [[buffer(0)]],
 pub struct HuffRun {
     pub threads: usize,
     pub bytes_out: usize,
-    /// The Huffman pass and the span pass, warm.
+    /// The Huffman pass and the span pass (with the index pass, when it runs), warm.
     pub huff_seconds: f64,
     pub lz_seconds: f64,
+    pub index_seconds: f64,
     pub correct: bool,
 }
 
 /// Span LZ with the entropy stage on the GPU: a Huffman pass (one thread per checkpoint segment) into the
 /// plain sequences and literals, then the span pass over them. `files` are each file's entropy-coded blocks.
-pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff::Table, lit_t: &crate::huff::Table) -> Result<HuffRun, String> {
+pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff::Table, lit_t: &crate::huff::Table, ptr: crate::span::Ptr, index: bool) -> Result<HuffRun, String> {
     use crate::huff;
     let device = Device::system_default().ok_or("no Metal device")?;
     let pipe = |src: &str, name: &str| -> Result<metal::ComputePipelineState, String> {
@@ -410,37 +537,34 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
         let f = lib.get_function(name, None).map_err(|e| e.to_string())?;
         device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())
     };
-    let (hp, sp) = (pipe(HUFF_SOURCE, "huff")?, pipe(SPAN_SOURCE, "decode_span")?);
+    let (hp, sp, ip) = (pipe(HUFF_SOURCE, "huff")?, pipe(SPAN_SOURCE, "decode_span")?, pipe(SPAN_SOURCE, "index_seqs")?);
     let pool = lp::Dict::new(dict.to_vec());
     let (mut sbits, mut lbits) = (Vec::new(), Vec::new());
-    let (mut htasks, mut tasks, mut table) = (Vec::<[u32; 6]>::new(), Vec::<[u32; 5]>::new(), Vec::<[u32; 2]>::new());
+    let (mut htasks, mut inputs) = (Vec::<[u32; 6]>::new(), SpanInputs::new());
     let (mut nseq, mut nlit) = (0usize, 0usize);
     let mut expected = Vec::new();
     for file in files {
         let plain: Vec<Vec<u8>> = file.iter().map(|c| huff::decode_block(c, seq_t, lit_t)).collect();
         for (b, c) in file.iter().enumerate() {
             let p = huff::coded(c);
-            let g = table.len() as u32;
-            table.push([nseq as u32, nlit as u32]);
+            let plain_checks: Vec<[u32; 3]> = p.checks.iter().map(|c| [c[0], c[1], c[2]]).collect();
+            inputs.add(expected.len() as u32, nseq as u32, nlit as u32, &plain_checks, p.nseq, p.k);
             let (sb, lb) = (sbits.len() as u64 * 8, lbits.len() as u64 * 8);
             sbits.extend_from_slice(p.seq_bits);
             lbits.extend_from_slice(p.lit_bits);
-            let ob = expected.len() as u32;
             for (i, ck) in p.checks.iter().enumerate() {
                 let next = p.checks.get(i + 1);
                 let s_end = next.map_or(p.nseq_bytes, |n| n[2] as usize) as u32;
                 let l_end = next.map_or(p.nlit, |n| n[1] as usize) as u32;
                 htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32]);
-                let n = (p.nseq - i * p.k).min(p.k) as u32;
-                tasks.push([ob + ck[0], g, ck[2], ck[1], n]);
             }
             nseq += p.nseq_bytes;
             nlit += p.nlit;
-            expected.extend(crate::span::decompress(&plain, b, &pool));
+            expected.extend(crate::span::decompress(&plain, b, &pool, ptr));
         }
     }
-    if tasks.is_empty() {
-        return Ok(HuffRun { threads: 0, bytes_out: 0, huff_seconds: 0.0, lz_seconds: 0.0, correct: true });
+    if inputs.tasks.is_empty() {
+        return Ok(HuffRun { threads: 0, bytes_out: 0, huff_seconds: 0.0, lz_seconds: 0.0, index_seconds: 0.0, correct: true });
     }
     sbits.extend_from_slice(&[0; 4]);
     lbits.extend_from_slice(&[0; 4]);
@@ -454,11 +578,14 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
     let as_bytes = |v: &[u32]| unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4) };
     let (bh, bsb, blb, bsl, bll) = (buf(as_bytes(htasks.as_flattened())), buf(&sbits), buf(&lbits), buf(&lut(seq_t)), buf(&lut(lit_t)));
     let (bseq, blit) = (device.new_buffer(nseq.max(1) as u64 + 8, opts), device.new_buffer(nlit.max(1) as u64 + 8, opts));
-    let (bt, bd, bb) = (buf(as_bytes(tasks.as_flattened())), buf(dict), buf(as_bytes(table.as_flattened())));
+    let (bt, bd) = (buf(as_bytes(inputs.tasks.as_flattened())), buf(dict));
+    let (bb, bc) = (buf(as_bytes(inputs.blocks.as_flattened())), buf(as_bytes(inputs.checks.as_flattened())));
     let bo = device.new_buffer(expected.len().max(1) as u64, opts);
+    let btab = device.new_buffer(u64::from(inputs.seqs.max(1)) * 8, opts);
     let queue = device.new_command_queue();
-    let (n, dl) = (tasks.len() as u32, dict.len() as u32);
-    let (mut hs, mut ls) = (0.0, 0.0);
+    let n = inputs.tasks.len() as u32;
+    let mode = span_mode(ptr, index);
+    let (mut hs, mut ls, mut is) = (0.0, 0.0, 0.0);
     for _ in 0..2 {
         // Two command buffers, so each pass has its own GPU time.
         let cmd = queue.new_command_buffer();
@@ -474,23 +601,16 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
         cmd.commit();
         cmd.wait_until_completed();
         hs = gpu_seconds(cmd);
+        is = if mode == 4 { run_index(&queue, &ip, &bt, &bseq, &bb, &btab, n) } else { 0.0 };
         let cmd = queue.new_command_buffer();
         let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(&sp);
-        for (i, b) in [&bt, &bseq, &blit, &bd, &bo].iter().enumerate() {
-            enc.set_buffer(i as u64, Some(b), 0);
-        }
-        enc.set_bytes(5, 4, (&n as *const u32).cast());
-        enc.set_bytes(6, 4, (&dl as *const u32).cast());
-        enc.set_buffer(7, Some(&bb), 0);
-        let w = sp.thread_execution_width().min(64);
-        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+        encode_span(enc, &sp, [&bt, &bseq, &blit, &bd, &bo], &bb, &bc, &btab, n, dict.len() as u32, mode);
         enc.end_encoding();
         cmd.commit();
         cmd.wait_until_completed();
-        ls = gpu_seconds(cmd);
+        ls = gpu_seconds(cmd) + is;
     }
     // SAFETY: shared storage of `expected.len()` bytes; the GPU is done with it.
     let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), expected.len()) };
-    Ok(HuffRun { threads: tasks.len(), bytes_out: expected.len(), huff_seconds: hs, lz_seconds: ls, correct: got == &expected[..] })
+    Ok(HuffRun { threads: inputs.tasks.len(), bytes_out: expected.len(), huff_seconds: hs, lz_seconds: ls, index_seconds: is, correct: got == &expected[..] })
 }
