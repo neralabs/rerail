@@ -1,6 +1,6 @@
 # 0155: A stored program is its `.rr` text, read straight back into a program
 
-Status: accepted (2026-11-13). Supersedes decision 0074 §1–3 and §4's facts entry.
+Status: built (2026-11-13). Supersedes decision 0074 §1–3 and §4's facts entry.
 
 ## Intro
 
@@ -122,8 +122,33 @@ The reading half of `program_facts` (rows back to a program, its in-place `decod
 
 ## Measured
 
-To be filled in when built: bytes kept per warm dl1 batch, the lookup's share of the main thread (inclusive samples,
-`incl.py`), instructions and cycles of the warm batch with the load, and the findings (48 on dl1 and dl10).
+dl1, the 44 data-layer policies in one batch, debug build, CPU, strict SQL. The baseline is the merge before this
+change (649113f9a), which already read 0074's rows in place (the hub's `decode_view`). Each build was given its own
+fresh store; the runs interleaved, at load 8 to 16.
+
+| | 0074's rows, read in place | the program's text |
+|---|---|---|
+| store after five runs | 17.9 MB | 10.0 MB |
+| first run (prepares and stores) | 206.6 G instructions, peak 408 MB | 194.2–194.9 G, peak 227–238 MB |
+| warm run, instructions | 85.6–88.4 G | 87.2–90.6 G |
+| warm run, cycles | 27.6–29.4 G | 26.4–28.8 G |
+| findings, dl1 and dl10 | 48, 48 | 48, 48 |
+
+The warm run reads the programs in about the same time either way. On the main thread (inclusive samples, 1 ms):
+reading the rows in place took 462 samples, and parsing the text takes 480. Most of the parse is the rr lexer,
+which copies each identifier into its own `String` (`Parser::new`, 434 of the 480). Reading the text through the lean
+parser's tape and `from_tape::statements` instead was slower in a debug build (96 G against 91 G) and was dropped.
+What this change buys is the form: no row per node, the store and the first run's memory nearly halved, and a
+program kept as text a person can read.
+
+Two faults the build found:
+
+- **Reads inside the waves.** A plan choice's text was first read when the choice was looked up, inside the waves;
+  strict SQL refused it (decision 0104). `Durable::start` now reads every choice's text in one bulk read with the
+  entries, and a lookup parses it.
+- **Texts no manifest named.** A choice's or the combined program's text is a source of its own, and collection took
+  it when no run's manifest named it. Warm runs then alternated between taking the choices (90 G) and choosing again
+  (104 G). Each text a run reads or stores is now added to its late sources (the manifest's).
 
 ## What this does not do
 
