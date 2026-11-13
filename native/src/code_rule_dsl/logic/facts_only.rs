@@ -64,8 +64,18 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
-    // The device parity test's input (`setfix/device/parity.rs`).
+    // The device parity test's inputs and its stratum's head (`setfix/device/parity.rs`).
     "dn",
+    "h0",
+    "ia",
+    "ib",
+    "ic",
+    "ie",
+    "io",
+    "iz",
+    "sm",
+    "sn",
+    "sp",
     "x",
     "t",
     "input",
@@ -244,8 +254,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
-    // The device copies of `replace_all`'s regex automata, per thread: resident buffers, as `RESIDENT`.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "UPLOADED"),
+    // The device copies of `replace_all`'s regex automata and of a row stage's test tables, per thread: resident
+    // buffers, as `RESIDENT`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),
@@ -281,11 +293,18 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "STATE"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // The accounts and gaps of threads that have ended, read by the report: profiling, as `THREADS`.
+    ("code_rule_dsl/logic/profile.rs", "EXITED"),
+    ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // The program a run read, by the digest of the text it prints as (`remember_lowered`), and a text's include seed:
+    // functions of the program's own text, as a compiled rule's code is, not a run's result kept.
+    ("code_rule_dsl/logic/rr.rs", "LOWERED"),
+    ("code_rule_dsl/logic/rr.rs", "SEEDS"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
@@ -302,7 +321,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
