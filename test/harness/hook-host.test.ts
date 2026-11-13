@@ -597,19 +597,31 @@ const foldersFoundThroughGit = [
   },
 ];
 
+/** How spawnSync reports a Git that gave no answer: one it ended past runGit's 10 s, and one another process ended on Windows. */
+const UNANSWERED_GIT = {
+  "timed out": { status: null, stdout: "", stderr: "", error: Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }) },
+  "ended by another process on Windows": { status: 1, stdout: "", stderr: "" },
+};
+
+/** Each folder found through Git, with each way Git gives no answer. */
+const unansweredFolders = foldersFoundThroughGit.flatMap(folder =>
+  (Object.keys(UNANSWERED_GIT) as Array<keyof typeof UNANSWERED_GIT>).map(how => ({ ...folder, how })));
+
 /**
- * The hook host over a Git that starts and gives no answer to each command named in `silent`, as spawnSync reports a Git
- * it ended past runGit's 10 s: `runGit` gives no status and an error, `gitText` gives nothing.
+ * The hook host over a Git that starts and gives no answer to each command named in `silent`, reported as `unanswered`
+ * (by default a Git spawnSync ended past runGit's 10 s: no status and an error), where `gitText` gives nothing.
  */
-async function hookHostWithSilentGit(silent: readonly string[]): Promise<typeof import("../../src/harness/hook-host.js")> {
+async function hookHostWithSilentGit(
+  silent: readonly string[],
+  unanswered: (typeof UNANSWERED_GIT)[keyof typeof UNANSWERED_GIT] = UNANSWERED_GIT["timed out"],
+): Promise<typeof import("../../src/harness/hook-host.js")> {
   vi.resetModules();
   vi.doMock("../../src/engine/git.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
-    const timedOut = { status: null, stdout: "", stderr: "", error: Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }) };
     const answers = (args: readonly string[]): boolean => !silent.includes(args[0] ?? "");
     return {
       ...actual,
-      runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => answers(args) ? actual.runGit(cwd, args, options) : timedOut,
+      runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => answers(args) ? actual.runGit(cwd, args, options) : unanswered,
       gitText: (cwd: string, args: readonly string[]) => answers(args) ? actual.gitText(cwd, args) : undefined,
     };
   });
@@ -663,7 +675,7 @@ describe("the hook start check", () => {
     }
   });
 
-  it.each(foldersFoundThroughGit)("asks a live daemon where this process's Git gives no answer, in $shape", async ({ silent, make }) => {
+  it.each(unansweredFolders)("asks a live daemon where this process's Git gives no answer ($how), in $shape", async ({ silent, make, how }) => {
     const root = await temporaryDirectory({ started: false });
     const app = gitRepository(join(root, "app"));
     git(app, "remote", "add", "origin", REMOTE);
@@ -675,7 +687,7 @@ describe("the hook start check", () => {
       // Git answering, the hook finds the folder started itself.
       expect(await hookRerailStarted("claude-code", workspace)).toBe(true);
       expect(daemon.requests).toEqual([]);
-      const silenced = await hookHostWithSilentGit(silent);
+      const silenced = await hookHostWithSilentGit(silent, UNANSWERED_GIT[how]);
       expect({ started: await silenced.hookRerailStarted("claude-code", workspace), requests: daemon.requests })
         .toEqual({ started: true, requests: ["/api/presentation"] });
     } finally {

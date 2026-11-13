@@ -275,9 +275,9 @@ function soleRemote(root: string, read: GitTextRead): RemoteAddress | undefined 
 type GitRun = ReturnType<typeof runGit>;
 
 /**
- * Git started and gave no answer: it could not start, ran past its time limit or was killed, or ended with a status
- * Git never exits with, as a process Windows could not initialise does. Git's own refusal, such as exit 128 for a
- * folder outside Git, is an answer.
+ * Git started and gave no answer: it could not start, ran past its time limit or was ended, or ended with a status
+ * none of these reads ends with on its own, as a process Windows could not initialise does. Git's own refusal, such as
+ * exit 128 for a folder outside Git, is an answer.
  */
 export class GitDidNotAnswerError extends Error {
   constructor(folder: string, result: GitRun) {
@@ -286,9 +286,17 @@ export class GitDidNotAnswerError extends Error {
   }
 }
 
-/** Whether Git ended on its own: an exit status of its own (0 to 255), and no error starting or stopping it. */
+/**
+ * The exit statuses the reads that answer for a hook end with on their own (`rev-parse`, `ls-remote --get-url`,
+ * `remote`, `remote get-url`): 0, 2 for a remote that does not exist, 128 where Git refuses (a folder outside Git) and
+ * 129 for a usage it does not take. None exits 1 on its own, and on Windows a Git another process ends (`taskkill /F`,
+ * `Stop-Process`) reports exactly that, status 1 with no signal, where Linux and macOS report the signal.
+ */
+const OWN_GIT_EXITS: ReadonlySet<number> = new Set([0, 2, 128, 129]);
+
+/** Whether Git ended on its own: an exit status these reads end with ({@link OWN_GIT_EXITS}), and no error starting or stopping it. */
 function gitAnswered(result: GitRun): boolean {
-  return result.error === undefined && result.status !== null && result.status >= 0 && result.status <= 255;
+  return result.error === undefined && result.status !== null && OWN_GIT_EXITS.has(result.status);
 }
 
 /** `gitText` that throws GitDidNotAnswerError where Git gave no answer, where `gitText` gives undefined. */
