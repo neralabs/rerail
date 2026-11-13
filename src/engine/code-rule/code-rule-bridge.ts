@@ -690,9 +690,12 @@ function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   }
   return false;
 }
-/** Whether the session folder's own walk covers `path`: inside the folder, and in none of the other `worktrees`. */
+/**
+ * Whether the session folder's own walk covers `path`: inside the folder, and in none of the other `worktrees`. A path
+ * that leads out of the folder is told apart by its first segment, before any worktree is looked up.
+ */
 function inSessionFolder(worktrees: ReadonlySet<string>, path: string): boolean {
-  return !underBaselineRoot(worktrees, path) && path !== ".." && !path.startsWith("../");
+  return path !== ".." && !path.startsWith("../") && !underBaselineRoot(worktrees, path);
 }
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
 function sessionPath(root: string, absolute: string): string {
@@ -1296,7 +1299,9 @@ export class CodeRuleBridge {
   #shareOwnObservations(discovery: SourceDiscovery): void {
     const shared = this.#observations?.get(this.#cwd);
     if (shared === undefined) return;
-    const own = new Map([...shared].filter(([path]) => inSessionFolder(discovery.worktrees.roots, path)));
+    // On the event loop, which every session's hooks wait on: no copy of the whole map before the filter.
+    const own = new Map<string, ObservedSource>();
+    for (const [path, source] of shared) if (inSessionFolder(discovery.worktrees.roots, path)) own.set(path, source);
     this.#observations?.set(this.#cwd, own);
   }
 

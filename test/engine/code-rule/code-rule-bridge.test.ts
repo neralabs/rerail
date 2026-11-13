@@ -1358,6 +1358,31 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
   });
 
+  it("keeps its own sources, and none of the worktrees inside its folder, in the observations it shares once it closes", async () => {
+    const root = await twoBranches();
+    // A folder of its own whose path starts with a worktree's: `wt/w1-notes` beside `wt/w1`.
+    await mkdir(join(root, "wt", "w1-notes"), { recursive: true });
+    await writeFile(join(root, "wt", "w1-notes", "a.py"), "notes\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "notes");
+    const roots = ["w1", "w2"].map(name => join(root, "wt", name));
+    for (const place of roots) git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+    const observations: SourceObservationCache = new Map();
+    const bridge = createBridge(root, {
+      ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0, observations });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const own = ["src/a.py", "src/gone.py", "wt/w1-notes/a.py"];
+    const others = ["w1", "w2"].flatMap(name => ["a.py", "new.py"].map(file => `wt/${name}/src/${file}`));
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual([...own, ...others].sort());
+    await bridge.close();
+    expect([...observations.get(root)?.keys() ?? []].sort()).toEqual(own);
+  });
+
   it("audits nothing when a worktree is removed, or of one Git adds later", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
