@@ -21,7 +21,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
+import { checkouts, notAnEarlierSpelling, repositories, ruleSettings } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -357,10 +357,13 @@ function nearestFirst(containing: readonly ContainingCheckout[]): RecordedChecko
   return [...containing].sort((left, right) => right.folderLength - left.folderLength || left.row.rowid - right.row.rowid).map(({ row }) => row);
 }
 
-/** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
+/**
+ * The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself, nor a
+ * copy kept for an earlier build under another spelling of a folder (`notAnEarlierSpelling`), here and below.
+ */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): RecordedCheckout[] {
   const rows = db.select(recordedCheckoutColumns).from(checkouts)
-    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
+    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath), notAnEarlierSpelling(checkouts.checkoutPath))).all()
     .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath));
   return nearestFirst(rows.map(row => ({ row, folderLength: listedFolderKey(row.checkoutPath).length })));
 }
@@ -400,7 +403,7 @@ export function followsGitignore(db: Reader, checkout: Pick<CheckoutContext, "re
 /** The recorded checkouts of the same repository inside `checkout`'s folder; never itself. */
 export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
   return db.select().from(checkouts)
-    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
+    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath), notAnEarlierSpelling(checkouts.checkoutPath))).all()
     .filter(row => withinCheckout(checkout.checkoutPath, row.checkoutPath));
 }
 
@@ -408,10 +411,10 @@ export interface RepositoryListing extends RepositoryRecord {
   readonly checkouts: readonly RecordedCheckout[];
 }
 
-/** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
+/** Every repository Rerail knows, with its recorded checkouts, each folder once (`notAnEarlierSpelling`), ordered by name. */
 export function listRepositories(db: Reader): RepositoryListing[] {
   const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
-  for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
+  for (const row of db.select(recordedCheckoutColumns).from(checkouts).where(notAnEarlierSpelling(checkouts.checkoutPath)).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
   return db.select().from(repositories).all()
@@ -512,9 +515,12 @@ function listedByGit(checkoutPath: string): boolean {
     .some(line => storedPath(line.slice("worktree ".length)) === checkoutPath);
 }
 
-/** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */
+/**
+ * Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. A copy kept
+ * for an earlier build under another spelling of a folder stays: Git lists the folder under this build's spelling.
+ */
 export function pruneCheckouts(db: RerailDatabase): string[] {
-  const gone = db.select({ path: checkouts.checkoutPath }).from(checkouts).all()
+  const gone = db.select({ path: checkouts.checkoutPath }).from(checkouts).where(notAnEarlierSpelling(checkouts.checkoutPath)).all()
     .map(row => row.path)
     .filter(path => !existsSync(path) || !listedByGit(path));
   if (gone.length === 0) return gone;

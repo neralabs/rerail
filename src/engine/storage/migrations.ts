@@ -12,10 +12,17 @@
  */
 import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
+import {
+  currentPathKey, lookUpPathKeys, lookUpWaitingKeys, pathKeysCanMove, readableRoots, respellPathKeys, respellReturnedKeys,
+  withDriveBudget, type PathKeyLookups,
+} from "./path-key-spelling.js";
 import { schemaMigrations } from "./schema.js";
 
-/** One change to the shape of an existing table. Ids and order never change once released. */
-export interface Migration {
+/**
+ * One change to the shape of an existing table. Ids and order never change once released. `Read` is what the step
+ * reads before the open takes the write lock (`read`, `readLater`).
+ */
+export interface Migration<Read = unknown> {
   /** Unique and stable: `schema_migrations` records it once the step has run. */
   readonly id: string;
   /**
@@ -24,17 +31,100 @@ export interface Migration {
    */
   readonly floor?: number;
   /**
+   * Reads what `up` needs before the open takes the write lock: the file as it is, and what lies outside it, such as a
+   * folder's spelling on disk. A plain read, which a WAL file runs beside any writer, so no other writer waits however
+   * long a cold page cache or a slow drive makes it. It runs on an existing file whose record lacks the step as the
+   * open begins; `up` gets what it returned, and reads under the lock only what was written since. `open` says where
+   * the open's caller works (`openedIn`).
+   */
+  read?(database: RerailDatabase, open?: MigrationOpen): Read;
+  /**
    * Brings the file from the shape before this step to the shape after it, inside the open's write
    * transaction, where foreign keys are enforced and `PRAGMA foreign_keys` cannot change: a step that rebuilds a
    * table others reference keeps them valid (or sets `PRAGMA defer_foreign_keys`); `rebuildTable` is only for a
    * table nothing references. It must tolerate a table this step changes not existing yet: the generated DDL that
-   * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both.
+   * runs after the steps creates it in its current shape. `addColumn` and `rebuildTable` do both. `read` is undefined
+   * when the step has no `read`, or another open's step was pending as this one began.
    */
-  up(database: RerailDatabase): void;
+  up(database: RerailDatabase, read?: Read): void;
+  /** `read` for `later`, before the lock at every later writable open. */
+  readLater?(database: RerailDatabase, open?: MigrationOpen): Read;
+  /**
+   * Runs at every later writable open of the file, inside the same write transaction, after the DDL: for what `up` had
+   * to leave until something outside the file changed (a folder absent when it ran). It must cost next to nothing when
+   * nothing is left, since every writable open pays it.
+   */
+  later?(database: RerailDatabase, read?: Read): void;
 }
 
 /** The step that keeps each rule provenance once. */
 export const RULE_PROVENANCE_STEP = "audit-rule-provenance-once";
+
+/** What the steps read before the write lock (`Migration.read` and `readLater`), by step id. */
+export interface MigrationReads {
+  readonly up: ReadonlyMap<string, unknown>;
+  readonly later: ReadonlyMap<string, unknown>;
+}
+
+/** No step read anything: a read-only open, a new file, or a caller that runs the steps on their own. */
+export const NO_MIGRATION_READS: MigrationReads = { up: new Map(), later: new Map() };
+
+/** What a step's reads before the lock know of the open that runs them (`Migration.read`, `readLater`). */
+export interface MigrationOpen {
+  /** The folder the open's caller works in: a hook's session folder, a command's checkout. */
+  readonly workspace?: string;
+}
+
+/**
+ * `migrations` as an open made from `workspace` runs them: each step's reads before the lock get it (`MigrationOpen`).
+ * Ids, floors and order stay, so the file's record and stamp read the same.
+ */
+export function openedIn(migrations: readonly Migration[], workspace: string): readonly Migration[] {
+  const open: MigrationOpen = { workspace };
+  return migrations.map(migration => ({
+    ...migration,
+    ...(migration.read === undefined ? {} : { read: (database: RerailDatabase) => migration.read?.(database, open) }),
+    ...(migration.readLater === undefined ? {} : { readLater: (database: RerailDatabase) => migration.readLater?.(database, open) }),
+  }));
+}
+
+/**
+ * The key this build gives a folder an earlier build keyed as a path, looked up on this computer's system drive and on
+ * the drive of the folder the open's caller works in only, within each drive's time (`path-key-spelling.ts`).
+ */
+function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string | undefined {
+  return withDriveBudget(stored => currentPathKey(stored), process.platform, readableRoots(open?.workspace));
+}
+
+/**
+ * On Windows this build keys a checkout, its settings, its audit settings and audit, and its presentation
+ * preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
+ * a caller passed, such as `c:\` from VS Code. Before the lock the step reads every key, and every place the audit
+ * history says an audit ran, and looks each up (`lookUpPathKeys`); under it, the rows under each key whose folder is
+ * spelt otherwise are copied to that spelling, and rows that come to one key are merged (`path-key-spelling.ts`), so a
+ * checkout keeps its start state and settings. The rows under the earlier spelling stay as they were, so an older
+ * build that opens the file after this step (after a downgrade, or on another agent host sharing the file) reads all
+ * it read before; the new table `path_key_spellings` records each spelling that moved, and this build's lists leave
+ * its rows out, so each folder is listed once. The audit history is never rewritten: the list of repository audits
+ * reads where an audit ran through that table. An open looks up keys on this computer's system drive and on the drive
+ * or share of the folder its caller works in, and reads no other drive (`readableRoots`): a key elsewhere (another
+ * disk, a mapped drive, a share), or past its drive's time in this open, is recorded with no key and looked up before
+ * the lock by a later writable open that reads its drive (`later`): one made from a folder there, which every reader of
+ * a folder's records makes before it reads them (`openRerailDatabaseIn`). A folder that is gone keeps
+ * its spelling. On macOS and Linux keys keep their spelling and the step reads nothing. No floor: an older build
+ * ignores the new table.
+ */
+const PATH_KEYS_AS_STORED: Migration<PathKeyLookups | undefined> = {
+  id: "path-keys-as-stored",
+  read: (database, open) => (pathKeysCanMove() ? lookUpPathKeys(database, pathKeyOf(open)) : undefined),
+  up(database, lookups) {
+    if (lookups !== undefined) respellPathKeys(database, lookups);
+  },
+  readLater: (database, open) => (pathKeysCanMove() ? lookUpWaitingKeys(database, pathKeyOf(open)) : undefined),
+  later(database, lookups) {
+    if (lookups !== undefined) respellReturnedKeys(database, lookups);
+  },
+};
 
 /**
  * The first schema version with a migration path. Files stamped 1 come from releases before it: 0.1.0-next.1 (main
@@ -145,6 +235,7 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "audits", "rule_provenance_id", "integer");
     },
   },
+  PATH_KEYS_AS_STORED,
 ];
 
 /** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */
@@ -284,6 +375,48 @@ export function rebuildTable(database: RerailDatabase, table: string, ddl: strin
   const copied = columns.map(column => identifier(column.name)).join(", ");
   database.run(sql.raw(`INSERT INTO ${identifier(table)} (${copied}) SELECT ${copied} FROM ${identifier(previous)}`));
   database.run(sql.raw(`DROP TABLE ${identifier(previous)}`));
+}
+
+/**
+ * What the steps of `migrations` read before a writable open takes the write lock (`Migration.read` for each step the
+ * file's record lacks, `readLater` for every step), on an existing file. Its caller runs it on the connection that
+ * then takes the lock, outside any transaction.
+ */
+export function readBeforeMigrating(database: RerailDatabase, migrations: readonly Migration[]): MigrationReads {
+  const pending = new Set(pendingMigrations(database, migrations));
+  return {
+    up: new Map(migrations.flatMap(migration => (pending.has(migration) ? readOf(migration, migration.read, database) : []))),
+    later: new Map(migrations.flatMap(migration => readOf(migration, migration.readLater, database))),
+  };
+}
+
+/** `[id, what read gave]` for a step with `read`, else nothing. */
+function readOf(migration: Migration, read: Migration["read"], database: RerailDatabase): Array<[string, unknown]> {
+  return read === undefined ? [] : [[migration.id, read.call(migration, database)]];
+}
+
+/**
+ * `migrations`, each step's `up` and `later` given what the step read before the lock (`reads`): the steps `migrate` and
+ * `migrateLater` run.
+ */
+export function withReads(migrations: readonly Migration[], reads: MigrationReads): readonly Migration[] {
+  return migrations.map(migration => ({
+    ...migration,
+    up: (database: RerailDatabase) => migration.up(database, reads.up.get(migration.id)),
+    ...laterWith(migration, reads.later.get(migration.id)),
+  }));
+}
+
+/** `migration`'s `later` given `read`, or none for a step with no `later`. */
+function laterWith(migration: Migration, read: unknown): Pick<Migration, "later"> {
+  const later = migration.later;
+  return later === undefined ? {} : { later: database => later.call(migration, database, read) };
+}
+
+/** Runs the `later` work of `migrations` (`Migration.later`) on a file a writer holds, unless it is new: then none is left. */
+export function migrateLater(database: RerailDatabase, migrations: readonly Migration[], fresh: boolean): void {
+  if (fresh) return;
+  for (const migration of migrations) migration.later?.(database);
 }
 
 /**

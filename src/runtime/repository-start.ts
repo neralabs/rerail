@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseIn, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
@@ -50,11 +50,13 @@ function hasStartTables(database: Pick<RerailDatabase, "$client">): boolean {
 
 /**
  * `workspace`'s start state without side effects: no identity file, database, or schema is created and nothing
- * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped.
+ * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped. On Windows,
+ * keys an earlier build stored that wait for `workspace`'s drive are looked up first (`openRerailDatabaseIn`), so a
+ * checkout on another disk, a mapped drive or a share keeps its start state and settings.
  */
 export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
-  const database = openRerailDatabase(databasePath, { readonly: true });
+  const database = openRerailDatabaseIn(databasePath, workspace);
   try {
     if (!hasStartTables(database)) return stateOf(STOPPED);
     return stateOf(checkoutStatus(database, lookupCheckout(database, workspace)));
@@ -65,11 +67,12 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
 
 /**
  * Whether `workspace`'s repository is set up, read apart from its start state and without side effects: a repository
- * Rerail never recorded is not set up.
+ * Rerail never recorded is not set up. Keys that wait for `workspace`'s drive are looked up first, as for its start
+ * state (`openRerailDatabaseIn`): `rerail start` reads this before anything else in a repository set up already.
  */
 export function workspaceSetUp(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   if (!existsSync(databasePath)) return false;
-  const database = openRerailDatabase(databasePath, { readonly: true });
+  const database = openRerailDatabaseIn(databasePath, workspace);
   try {
     return hasStartTables(database) && checkoutStatus(database, lookupCheckout(database, workspace)).setUp;
   } finally {
@@ -154,8 +157,10 @@ export class RepositoryStartWatch {
 }
 
 /**
- * The one check hooks, runtimes and the daemon make before doing anything in a checkout. A started repository
- * that is not set up yet counts: its sessions are recorded, though no rule runs there until it is set up.
+ * The check a host that reads the database itself makes before doing anything in a checkout (Pi, OMP under Node), and
+ * a hook no daemon answers. A hook a running daemon answers takes the daemon's answer, which it reads from its own
+ * stores (`DatabaseApiStores.repositoryState`). A started repository that is not set up yet counts: its sessions are
+ * recorded, though no rule runs there until it is set up.
  */
 export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   return rerailRunsIn(workspaceStartState(workspace, databasePath));
@@ -302,7 +307,8 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   // No coding agent named (a terminal, or Cursor, which stops without one): the default sigil.
   const sigil = options.session === undefined ? "/" : ADAPTER_CAPABILITIES[options.session.host].commandSigil;
   const startCommand = io.lane === "terminal" ? "rerail start" : `${sigil}rerail-start`;
-  const database = openRerailDatabase(databasePath);
+  // Made from the folder, so a checkout an earlier build keyed another way on its drive is stopped, not left started.
+  const database = openRerailDatabaseIn(databasePath, workspace, { readonly: false });
   let previous: RepositoryStartState;
   let steered: readonly string[];
   try {

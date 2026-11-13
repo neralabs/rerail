@@ -1,0 +1,1 @@
+On Windows, a checkout's start state and rule, audit and presentation settings that an earlier version saved under another spelling of its folder (`c:\` from VS Code, a mapped drive's letter) keep applying: this version copies them, on another drive at the first coding agent event or `rerail start`, `stop` or `status` there. An earlier version still reads its own.

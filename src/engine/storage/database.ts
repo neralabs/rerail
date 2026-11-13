@@ -4,7 +4,11 @@ import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, pendingMigrations, schemaVersionOf, type Migration } from "./migrations.js";
+import {
+  NO_MIGRATION_READS, RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, openedIn, pendingMigrations, readBeforeMigrating,
+  schemaVersionOf, withReads, type Migration, type MigrationReads,
+} from "./migrations.js";
+import { keysWaitOn, pathKeysCanMove } from "./path-key-spelling.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
@@ -207,6 +211,42 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
 }
 
 /**
+ * An open for a caller that works in `workspace` (a hook's session folder, a command's checkout, the folder a request to
+ * the daemon names). On Windows, the folder keys an earlier build stored that wait on that folder's drive or share
+ * (`keysWaitOn`: an open reads only this computer's system drive and the drive of the folder its caller works in) are
+ * looked up and their rows copied before the caller reads, by a writable open whose steps read that drive too
+ * (`openedIn`): it answered as the caller came to it. A writable open (`readonly: false`) is that open itself. A
+ * read-only one makes it only where keys wait there; elsewhere, and once none waits there, it is the read-only open
+ * alone, with one read of an empty table. A reader that may not write the file reads it as it is, the keys still waiting.
+ */
+export function openRerailDatabaseIn(path: string, workspace: string, { readonly = true } = {}): RerailDatabase {
+  const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
+  if (!readonly) return openRerailDatabase(path, { migrations });
+  const database = openRerailDatabase(path, { readonly: true, migrations });
+  if (!keysWaitHere(database, workspace)) return database;
+  try {
+    openRerailDatabase(path, { migrations }).$client.close();
+  } catch (error) {
+    if (!cannotWrite(error)) throw error;
+  }
+  return openRerailDatabase(path, { readonly: true, migrations });
+}
+
+/**
+ * Whether keys wait on `workspace`'s drive (`keysWaitOn`), which can happen on Windows only; `database` is closed when
+ * they do, or when reading fails.
+ */
+function keysWaitHere(database: RerailDatabase, workspace: string): boolean {
+  let waiting = true;
+  try {
+    waiting = pathKeysCanMove() && keysWaitOn(database, workspace);
+    return waiting;
+  } finally {
+    if (waiting) database.$client.close();
+  }
+}
+
+/**
  * A read-only open that never changes the file: where `openRerailDatabase({ readonly: true })` would run this build's
  * schema steps first (a writable open), this refuses, saying so. For commands that only read the person's database
  * from another build or process (`rerail scan`), so a checkout build never migrates the installed Rerail's file. A
@@ -295,17 +335,29 @@ function checkBeforeWriting(database: RerailDatabase, path: string, supported: n
 
 /**
  * Migration steps, DDL and stamp run under one write lock, so concurrent openers agree on the file's shape and a
- * step that fails leaves the file as it was. `migrations` is undefined for a read-only open, which only checks.
+ * step that fails leaves the file as it was. What a step reads before it (`Migration.read`) runs first, holding no
+ * lock. `migrations` is undefined for a read-only open, which only checks.
  */
 function applySchema(database: RerailDatabase, path: string, migrations: readonly Migration[] | undefined, supported: number): void {
+  const reads = readBeforeLock(database, migrations);
   if (migrations !== undefined) database.run(sql.raw("BEGIN IMMEDIATE"));
   const stamp = schemaStamp(database);
   const refusal = schemaRefusal(path, stamp, supported);
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
-  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
+  const steps = withReads(migrations, reads);
+  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, steps);
+  migrateLater(database, steps, stamp.version === 0);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
+}
+
+/**
+ * What a writable open's steps read before its write lock (`readBeforeMigrating`): nothing for a read-only open, or
+ * for a new file, which runs no step.
+ */
+function readBeforeLock(database: RerailDatabase, migrations: readonly Migration[] | undefined): MigrationReads {
+  return migrations === undefined || schemaStamp(database).version === 0 ? NO_MIGRATION_READS : readBeforeMigrating(database, migrations);
 }
 
 function rollbackQuietly(database: RerailDatabase): void {

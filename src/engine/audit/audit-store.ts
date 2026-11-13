@@ -22,6 +22,7 @@ import {
 } from "./audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import {
+  pathKeySpellings,
   repositoryAudits,
   auditResultPages,
   auditUnlistedFailures,
@@ -353,6 +354,8 @@ function listRepositoryAudits(
   const unlisted = holdsUnlistedTable(database)
     ? sql`(SELECT ${auditUnlistedFailures.count} FROM ${auditUnlistedFailures} WHERE ${auditUnlistedFailures.auditId} = audit.audit_id)`
     : sql`NULL`;
+  // Each folder once, under the key this build gives it: a root an earlier build spelt another way, in the audit history
+  // or a copy kept for that build, reads through `path_key_spellings`.
   const rows = database.all<{
     workspaceRoot: string;
     repositoryAuditSessionId: string | null;
@@ -374,10 +377,14 @@ function listRepositoryAudits(
     unlistedFailureCount: number | null;
     total: number;
   }>(sql`
-    WITH repositories AS (
+    WITH roots AS (
       SELECT workspace_root FROM ${audits} WHERE ${scopedSessions(audits.sessionId, repositoryId)}
       UNION
       SELECT workspace_root FROM ${repositoryAudits} WHERE ${scopedSessions(repositoryAudits.sessionId, repositoryId)}
+    ),
+    repositories AS (
+      SELECT DISTINCT coalesce(spelling.current, roots.workspace_root) AS workspace_root
+      FROM roots LEFT JOIN ${pathKeySpellings} spelling ON spelling.stored = roots.workspace_root
     )
     SELECT
       repositories.workspace_root AS workspaceRoot,

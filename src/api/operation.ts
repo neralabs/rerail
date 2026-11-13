@@ -40,6 +40,12 @@ export interface RerailApiStores {
   markChanged(): void;
   /** Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities. */
   repositoryState(workspace: string): RepositoryStartState;
+  /**
+   * On Windows, copies the rows of the folder keys an earlier build stored under another spelling that wait on the drive
+   * or share of `workspace`, a folder a caller works in, to the keys this build reads (`path-key-spelling.ts`); nothing
+   * where none waits there, which is known without a read once the stores have read where keys wait.
+   */
+  copyWaitingKeys(workspace: string): void;
   /** `http://host:port` of the dashboard. */
   dashboardOrigin(): string;
   health(): z.infer<typeof presentationDaemonSchema>;
@@ -65,6 +71,11 @@ export interface OperationDefinition<
   query?: z.ZodObject<Query>;
   body?: z.ZodObject<Body>;
   output: Output;
+  /**
+   * The folder the caller works in, for an operation that reads what Rerail keeps for it by its path: the keys an
+   * earlier build stored for folders on its drive are copied before the handler reads (`copyWaitingKeys`).
+   */
+  workspace?: (input: z.infer<z.ZodObject<Params>> & z.infer<z.ZodObject<Query>> & z.infer<z.ZodObject<Body>>) => string;
   handler: (
     stores: RerailApiStores,
     input: z.infer<z.ZodObject<Params>> & z.infer<z.ZodObject<Query>> & z.infer<z.ZodObject<Body>>,
@@ -99,6 +110,7 @@ export class ApiError extends Error {
 /** Run one operation for one caller; a write that returns counts toward the stores' change token. */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   try {
+    if (operation.workspace !== undefined) stores.copyWaitingKeys(operation.workspace(input as never));
     return await operation.handler(stores, input as never, caller);
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);

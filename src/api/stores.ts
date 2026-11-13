@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import type { z } from "zod";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { databaseInstalledAt, openRerailDatabase, openRerailDatabaseIn, type RerailDatabase } from "../engine/storage/database.js";
+import { pathKeysCanMove, rootOf, rootsKeysWaitOn } from "../engine/storage/path-key-spelling.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -40,6 +41,11 @@ export class DatabaseApiStores implements RerailApiStores {
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
   #installedAt: number | null = null;
+  /**
+   * The drives and shares folder keys an earlier build stored wait on (`rootsKeysWaitOn`), read once the database is
+   * there and again after each copy ({@link copyWaitingKeys}): a request from any other drive reads nothing for them.
+   */
+  #waitingRoots: ReadonlySet<string> | undefined;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -111,6 +117,14 @@ export class DatabaseApiStores implements RerailApiStores {
 
   markChanged(): void {
     this.#localRevision += 1;
+  }
+
+  copyWaitingKeys(workspace: string): void {
+    if (!pathKeysCanMove()) return;
+    this.#waitingRoots ??= existsSync(this.#path) ? rootsKeysWaitOn(this.database()) : undefined;
+    if (this.#waitingRoots?.has(rootOf(workspace)) !== true) return;
+    openRerailDatabaseIn(this.#path, workspace, { readonly: false }).$client.close();
+    this.#waitingRoots = rootsKeysWaitOn(this.database());
   }
 
   repositoryState(workspace: string): RepositoryStartState {
