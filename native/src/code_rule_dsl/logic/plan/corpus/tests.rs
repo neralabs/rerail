@@ -1040,3 +1040,25 @@ fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     assert_eq!(asked.lines().count(), 1, "only \"List[int]\" is asked for:\n{asked}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A file whose scope table cannot be built (nesting past `MAX_BUILD_DEPTH`) gives no `string_annotation` rows and
+/// the run goes on: one such file ended a 30k-file run (posthog). The other files' annotations are read as before.
+#[test]
+fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("too-deep");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    std::fs::create_dir_all(&src).unwrap();
+    let depth = crate::code_rule_dsl::scope::MAX_BUILD_DEPTH as usize + 100;
+    std::fs::write(src.join("deep.py"), format!("x = {}1{}\n", "[".repeat(depth), "]".repeat(depth))).unwrap();
+    std::fs::write(src.join("typed.py"), "def f(a: \"int\") -> None: pass\n").unwrap();
+    let rule = base.join("annotated.rr");
+    std::fs::write(&rule, ".language python\n.scope include \"**/*.py\"\n.decl annotated(p: symbol)\nannotated(p) :- string_annotation(s), docof(s, d), doc(d, p, _).\n.output annotated\n").unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    let stack = std::thread::Builder::new().stack_size(64 << 20);
+    let run = stack.spawn(move || super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map(|_| out)).unwrap();
+    let out = run.join().unwrap().unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("annotated.csv")).unwrap_or_default(), "typed.py\n");
+    let _ = std::fs::remove_dir_all(&base);
+}
