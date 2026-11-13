@@ -20,8 +20,10 @@
  * vitest makes one folder of its own outside the run folder: when its module cache is off or cannot be made (a
  * read-only node_modules), it copies each transformed module into a folder it names in the temp folder as it starts,
  * before this setup runs, and removes only when it closes. The owner file names that folder too, and a later run
- * removes it with the run folder of a run killed before vitest closed. vitest keeps that folder's path in a field it
- * does not make public; a vitest without the field leaves the folder after a kill, as before.
+ * removes it with the run folder of a run killed before its global teardown. A run killed after its teardown, while
+ * vitest closes, leaves that folder: the teardown removed the run folder and the owner file that named it. vitest
+ * keeps that folder's path in a field it does not make public; a vitest without the field leaves the folder after a
+ * kill, as before.
  */
 import { readFileSync, readlinkSync, type Stats } from "node:fs";
 import { chmod, lstat, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";

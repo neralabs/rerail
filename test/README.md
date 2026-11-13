@@ -23,7 +23,8 @@ file says where its pid means something (the host and, on Linux, the pid namespa
 minute. So a run from the same place goes once its pid has ended, one from another container or host that shares the
 temp folder once it has stopped touching the file for ten minutes, and any run a day after it stopped. The owner file
 also names the folder vitest copies the run's modules into when its module cache is off or cannot be made: vitest
-makes that folder in the temp folder before the run folder exists, and it goes with the run folder.
+makes that folder in the temp folder before the run folder exists, and it goes with the run folder, unless the run
+was killed after its teardown removed the run folder, while vitest closed.
 
 On Linux and macOS the folder goes in `/tmp`, or in the folder `RERAIL_TEST_SHORT_TEMP` names, when the temp folder
 leaves no room below it for the deepest socket a test binds: that socket ends 54 bytes below the run folder, the run
