@@ -664,7 +664,7 @@ The runtime process is the daemon for OMP, Claude Code, Codex and Cursor, and th
 - **`subagent`**: the same, ending with an instruction to delegate the fix to a subagent (`rerail_fix` in Pi, registered by Rerail; `task` in OMP; `Task` in Claude Code and Cursor; `spawn_agent` in Codex) and stay on task.
 - **`rewind`**: if an edit's own check steers before its tool result is answered, every file the call captured returns to its preimage (created files deleted), all or none. The steer goes into that tool result, saying what was restored and that the edit must be redone following the rule. The rollback is audited in `log` mode, so the restored file steers nothing on its own.
 
-`rewind` falls back to `message` when the preimage was unreadable, the call didn't capture the file, or the steer came after the result was answered (a one-shot hook waits a second). Ledger `delivery` entries record each steer's `strategy`, plus a rewound edit's `toolCallId` and `rewound` paths.
+`rewind` falls back to `message` when the preimage was unreadable, the call didn't capture the file, the call reached Rerail only after its tool wrote the file (what the file held then comes from the tool's result, not from the file), or the steer came after the result was answered (a one-shot hook waits a second). Ledger `delivery` entries record each steer's `strategy`, plus a rewound edit's `toolCallId` and `rewound` paths.
 
 </details>
 
