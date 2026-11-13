@@ -5,18 +5,18 @@ import { EventEmitter } from "node:events";
 import { existsSync, opendirSync, type Dir, type Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, opendir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, opendir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { isSourceGap, type AuditRecorder, type AuditInput, type AuditResult } from "../../../src/engine/audit/audit.js";
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
-import { modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { AUDIT_MAX_SOURCE_BYTES, MAX_SOURCE_BYTES, modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -224,6 +224,20 @@ function failingListing(directory: Dir, { after, listed }: { after: number; list
         listed.push(entry.name);
         yield entry;
       }
+    } finally {
+      await directory.close();
+    }
+  }
+  return Object.defineProperty(directory, Symbol.asyncIterator, { value: entries });
+}
+
+/** `directory`, whose listing gives the entries `names` names in that order, as a filesystem that lists so would. */
+function listingInOrder(directory: Dir, names: readonly string[]): Dir {
+  async function* entries(): AsyncGenerator<Dirent> {
+    try {
+      const listed = new Map<string, Dirent>();
+      for (let entry = await directory.read(); entry !== null; entry = await directory.read()) listed.set(entry.name, entry);
+      for (const name of names) yield listed.get(name)!;
     } finally {
       await directory.close();
     }
@@ -1291,6 +1305,57 @@ describe("mechanical code rule regressions", () => {
       vi.mocked(opendir).mockReset();
     }
   }, 60_000);
+
+  it("stops a walk at its byte budget after the same files, the first in path order, whatever order a folder lists them in", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    const api = join(await realpath(root), "api");
+    // One file more than the source budget holds, each just under the per-file budget. They are hard links to one
+    // file, so the folder takes one file's disk and only its listing differs between the two audits.
+    const size = MAX_SOURCE_BYTES - 1_000;
+    const names = Array.from({ length: Math.floor(AUDIT_MAX_SOURCE_BYTES / size) + 1 }, (_, index) => `f${String(index).padStart(2, "0")}.py`);
+    const source = Buffer.alloc(size, "#");
+    source.write("NEEDLE\n");
+    source[size - 1] = 0x0a;
+    await writeFile(join(api, names[0]!), source);
+    for (const name of names.slice(1)) await link(join(api, names[0]!), join(api, name));
+    const reads = vi.spyOn(fsPromises, "readFile");
+    /** One repository audit with `api` listed in the order of `listing`: the files it read, in order, and its result. */
+    const audit = async (listing: readonly string[]) => {
+      vi.mocked(opendir).mockImplementation(async (path, options) => {
+        const directory = opendirSync(path, options);
+        return String(path) === api ? listingInOrder(directory, listing) : directory;
+      });
+      reads.mockClear();
+      const [auditId] = await enforcer.audit("byte-budget", { scope: "repository", mode: "log" });
+      const result = audits.get(auditId!)?.result;
+      return {
+        status: result?.status,
+        read: reads.mock.calls.map(([path]) => String(path)).filter(path => dirname(path) === api).map(path => basename(path)),
+        violations: (result?.violations ?? []).map(violation => violation.path).toSorted(),
+        failures: result?.failures,
+      };
+    };
+    try {
+      await enforcer.openWorkspace("byte-budget");
+      // The walk reads the files in path order. The last one would pass the budget: the walk stops there and says so,
+      // so the files before it are the ones audited, whichever order the folder was listed in.
+      const stopped = {
+        status: "failed",
+        read: names,
+        violations: names.slice(0, -1).map(name => `api/${name}`),
+        failures: [expect.objectContaining({
+          clauseId: "scan", code: "budget-exceeded", message: "Repository scan exceeded its 100,000-file or 512 MiB source budget",
+        })],
+      };
+      await expect(audit(names)).resolves.toEqual(stopped);
+      await expect(audit(names.toReversed())).resolves.toEqual(stopped);
+    } finally {
+      vi.mocked(opendir).mockReset();
+      reads.mockRestore();
+      await enforcer.close();
+    }
+  }, 120_000);
 
   it("evaluates generated edits in a Git checkout holding an unreadable untracked directory", async () => {
     const { recorder, audits } = recordingAudits();
