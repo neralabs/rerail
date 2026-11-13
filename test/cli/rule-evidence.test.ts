@@ -399,6 +399,30 @@ describe("rerail rules evidence", () => {
     });
   });
 
+  it("counts what is stamped at the window's very start, and nothing a millisecond before it", async () => {
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
+    const since = NOW - DAY;
+    const push = { toolName: "Bash", input: { command: "git push --force origin main" } };
+    try {
+      // Started at the window's start, its one push stamped earlier by a clock set back: read whole, as a session that
+      // started in the window, though only its start finds it.
+      store.openSession({ host: "claude-code", sessionId: "startedAtSince", cwd: repo }, since);
+      store.append({ sessionId: "startedAtSince", kind: "call", payload: push, observedAt: since - HOUR });
+      // Started the day before; its last event, a push, came at the window's start.
+      store.openSession({ host: "codex", sessionId: "pushAtSince", cwd: repo }, since - DAY);
+      store.append({ sessionId: "pushAtSince", kind: "call", payload: push, observedAt: since });
+      // Started the day before; its last event, a push, came a millisecond before the window.
+      store.openSession({ host: "claude-code", sessionId: "pushedBefore", cwd: repo }, since - DAY);
+      store.append({ sessionId: "pushedBefore", kind: "call", payload: push, observedAt: since - 1 });
+    } finally {
+      store.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect(evidence.window).toEqual({ days: 1, sessions: 2, hosts: { "claude-code": 1, codex: 1 }, prompts: 0 });
+    expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 2, example: "git push --force origin main" }]);
+  });
+
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {
     const repo = await repository({ "AGENTS.md": "x" });
     const databasePath = join(await temporary("rerail-rule-evidence-none-"), "rerail.sqlite");
