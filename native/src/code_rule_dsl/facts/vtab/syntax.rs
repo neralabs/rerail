@@ -276,7 +276,7 @@ fn hold_texts(batch: &Arc<Batch>) {
 
 /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`), read from its document in the
 /// batch that holds it; none for a shorter node (whose text `text` holds), a span, or a document no batch holds.
-/// Only the nodes a rule binds are read and interned (decision 0108b §1).
+/// Only the nodes a rule binds are read and interned (decision 0108 §1).
 pub(crate) fn long_node_text(n: i64) -> Option<String> {
     let (key, low) = ((n >> 32) as u32, n as u32);
     let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
@@ -2970,7 +2970,7 @@ impl Batch {
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
 /// (`within::Axis`), or for the whole batch by the transducer's file-local FIX (`typing::file_local::nearest`, bound
-/// `binding`) where the planner expects more lookups than that costs (decision 0105a).
+/// `binding`) where the planner expects more lookups than that costs (decision 0143).
 pub fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -2982,7 +2982,7 @@ pub fn with_nearest(
     with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
 }
 
-/// A program's `ast` matchers (decision 0106) as one wave over a batch's tapes (decision 0107b), which the engine
+/// A program's `ast` matchers (decision 0106) as one wave over a batch's tapes (decision 0107), which the engine
 /// compiles from the matchers' text (`AstCompiler`): facts runs the wave where `with_matchers` binds, and keeps no
 /// matcher of its own.
 pub trait AstWave: Send + Sync {

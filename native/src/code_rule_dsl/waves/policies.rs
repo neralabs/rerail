@@ -282,7 +282,7 @@ pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)]
     lower_with(policies, &Program::default())
 }
 
-/// What reads an `ast` atom's captures (decision 0107b): W's matcher of the atom's rule, matched again at each root the
+/// What reads an `ast` atom's captures (decision 0107): W's matcher of the atom's rule, matched again at each root the
 /// transducer found, and the visits its policy allows a file. `verify`: the transducer runs a relaxed matcher (a
 /// superset of the roots), so each root is W's only where W's matcher matches there too.
 pub(in crate::code_rule_dsl) struct Captor {
@@ -294,7 +294,7 @@ pub(in crate::code_rule_dsl) struct Captor {
 /// An `ast` atom's matcher lowered for the transducer (decision 0106), as `lower_with` lowers a helper clause: the
 /// forbid clause of a policy of its own (`base`'s `define` clauses kept so utils resolve), its Python grammar's match
 /// tree, and the gates on a document's path and text. A matcher the transducer does not lower runs as its relaxed
-/// form ([`relaxed`]) where that lowers, its roots confirmed by W's matcher (`Captor::verify`, decision 0107b). `Err`
+/// form ([`relaxed`]) where that lowers, its roots confirmed by W's matcher (`Captor::verify`, decision 0107). `Err`
 /// says why it does not lower.
 pub(in crate::code_rule_dsl) fn lower_matcher(matcher: &str, base: Option<&serde_json::Value>) -> Result<(LoweredMatcher, Vec<crate::code_rule_dsl::matcher::DocumentGate>, Captor), String> {
     let value: serde_json::Value = serde_json::from_str(matcher).map_err(|e| format!("the matcher is not JSON: {e}"))?;

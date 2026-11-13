@@ -137,11 +137,36 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
    - the kept chains and indexes serve the old rows, and only the added rows are indexed.
 9. **Statistics of `__old` relations are counted from their rows** ("count run_scope__old from its rows", 0.05–0.07 s
    each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
+   *Fixed:* `Retained::admit`, which reads a reached relation's rows from the frames mid-run, read its rows and
+   levels but not its statistics part. It now reads that part in the same batch (when stored for the same digest)
+   and keeps it under the rows' address in this process (`late_stats`). `measured`, `patched`, `measured_all` and
+   the frames' write-back read it as they read the statistics admitted before the run.
 10. **`frag_str`'s `doc_role(d, 17505)` is planned from statistics made before its rows exist:** estimated at 1 row,
     2,455 found, 7.1 M rows, none kept. The floor (item 2) bounds this but does not fix it. The plan should be made
     when the relation is known.
+    *Fixed:* the planning budget (`budget_takes`, decision 0122) took a kept order while the relations it reads
+    grew by less than a search's work, by their rows alone. A literal with a constant reads that constant's rows:
+    their counts (already in `live_sizes`) are now part of the growth, unknown counts left out. One row for 7 when
+    planned and 2,455 now is 2,455 times growth: the line is searched again.
 11. **Smaller:** `p149_LOG001` scans `import_alias` with nothing bound (3.9 M rows → 0). `rr_agg48` goes from 135 k
     to 3.1 M rows. There are 1.5 M scalar node visits.
+
+Tests, one a gun (each fixed gun's test was checked red with its fix undone; the open ones are red, `#[ignore]`d
+with the gun's reason until fixed):
+
+| Gun | Test | State |
+|---|---|---|
+| 1 | `rr::tests::a_cover_of_two_variables_is_narrowed_by_what_binds_them` | green |
+| 2 | `plan::tests::a_relation_empty_when_planned_does_not_make_a_cross_product_free` | green |
+| 3 | `retain::frame_tests::kept_rows_are_grouped_by_the_column_the_memo_attributes_them_by` | green |
+| 4 | `retain::frame_tests::the_kept_inputs_are_known_before_the_waves_with_why_not` | green |
+| 5 | `retain::frame_tests::a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go` | green |
+| 6 | `strings::functions::tests::a_place_is_native_and_encoded_as_sql_encodes_it`, `plan::tests::violations_at_places_are_found_at_their_path_and_line` | green |
+| 7 | `lanes::wave_tests::a_jobs_waves_are_credited_to_the_run_that_takes_it_back`, `plan::tests::closures_of_one_level_launch_in_one_wave` (the hub's fix, 4dde583e2, kept at the merge) | green |
+| 8 | `setfix::survivor_tests::a_maintained_relation_starts_from_its_kept_rows_without_copying_them` | red, ignored |
+| 9 | `retain::frame_tests::rows_read_where_reached_come_with_their_kept_statistics` | green (fixed at the hub merge) |
+| 10 | `plan::tests::a_constant_counted_none_when_planned_is_growth_when_it_has_rows` | green (fixed at the hub merge) |
+| 11 | none yet: its three items are a cold run's, and each is to be found first | — |
 
 ## To do, in order
 

@@ -133,7 +133,7 @@ pub struct State {
     pub work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
     pub waits: BTreeMap<(String, String, String), WaitTotal>,
-    /// Where each native stratum ran, by stratum (`placed`, decision 0095b).
+    /// Where each native stratum ran, by stratum (`placed`, decision 0095).
     pub placements: BTreeMap<String, PlacedTotal>,
     /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
     /// runs and nanoseconds.
@@ -168,7 +168,7 @@ pub struct PlacedTotal {
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
     pub joins: [(u64, f64, f64, u64); 3],
-    /// Its runs on the device (decision 0095b, step 4), summed: rules, stages, submissions, dispatches, the GPU's
+    /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
     /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
@@ -936,7 +936,7 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
     }
 }
 
-/// The strata the device ran (decision 0095b, step 4): in all, then the costliest; and the strata placed there that it
+/// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).
 pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ran: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu.runs > 0).collect();

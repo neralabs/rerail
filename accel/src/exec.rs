@@ -1,6 +1,6 @@
 //! The executor: every job of the process's relational work, run on every lane at once, and scored.
 //!
-//! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095b §5).
+//! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095 §5).
 //! The executor runs them as jobs on the lanes' workers:
 //!
 //! - **The cores** are the process's one pool ([`configure`]: [`threads`] threads, `RERAIL_THREADS`, else the
@@ -64,9 +64,41 @@ pub fn threads() -> usize {
 pub fn configure(this_thread: bool) {
     static MADE: OnceLock<()> = OnceLock::new();
     MADE.get_or_init(|| {
-        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}"));
+        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
+const POOL_STACK: usize = 16 << 20;
+
+/// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
+const HELP_STACK_MARGIN: usize = 4 << 20;
+
+/// The bytes of this thread's stack below this frame, where the platform says where the stack is.
+fn stack_left() -> Option<usize> {
+    thread_local! {
+        /// The lowest address of this thread's stack.
+        static LOW: Option<usize> = stack_low();
+    }
+    let here = 0u8;
+    let here = std::ptr::addr_of!(here) as usize;
+    LOW.with(|low| low.map(|low| here.saturating_sub(low)))
+}
+
+#[cfg(target_os = "macos")]
+fn stack_low() -> Option<usize> {
+    // SAFETY: this thread's own stack's top and size.
+    let (top, size) = unsafe {
+        let me = libc::pthread_self();
+        (libc::pthread_get_stackaddr_np(me) as usize, libc::pthread_get_stacksize_np(me))
+    };
+    (top > size && size > 0).then(|| top - size)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stack_low() -> Option<usize> {
+    None
 }
 
 thread_local! {
@@ -89,6 +121,11 @@ pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
 /// CPU is counted as helped ([`helped`]), not as the waiter's own, and its wall is the job the wait last ran (how late
 /// the wait may be, if what it waits for was ready during it: [`Waiting`]).
 pub fn help_once() -> bool {
+    // A job run here runs on this wait's frames, and may wait and help in turn: with too little stack left, it is
+    // left to a thread with more (an unbounded nesting of helps overflowed a pool thread's stack in a debug build).
+    if stack_left().is_some_and(|left| left < HELP_STACK_MARGIN) {
+        return false;
+    }
     let c0 = crate::score::thread_cpu();
     let t0 = Instant::now();
     LAST_JOB.with(|j| j.set(""));
@@ -1261,7 +1298,7 @@ impl Running {
 
 
 /// A batch whose launches are taken one by one as each ends ([`Running::each`]): one submission to the lanes, and
-/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114b §2).
+/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114 §2).
 pub struct Each {
     claims: Arc<Claims>,
     cpu: Option<Arc<dyn Backend>>,
@@ -1492,5 +1529,24 @@ pub fn process_cpu() -> f64 {
     #[cfg(not(unix))]
     {
         0.0
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod stack_tests {
+    /// The guard on helping ([`super::help_once`]) reads the stack left below a frame: on a thread of a known stack,
+    /// it is that stack less what the thread has used (2026-11-13: unbounded helps overflowed a pool thread).
+    #[test]
+    fn the_stack_left_is_measured_on_the_threads_own_stack() {
+        let size = 3 << 20;
+        let left = std::thread::Builder::new().stack_size(size).spawn(super::stack_left).unwrap().join().unwrap().expect("measured");
+        assert!(left <= size + (64 << 10) && left > size - (256 << 10), "{left} of {size} (the platform counts its guard page)");
+        let deeper = std::thread::Builder::new().stack_size(size).spawn(|| {
+            let pad = std::hint::black_box([0u8; 512 << 10]);
+            let left = super::stack_left().unwrap();
+            std::hint::black_box(&pad);
+            left
+        }).unwrap().join().unwrap();
+        assert!(deeper + (512 << 10) <= left + (64 << 10), "a frame of 512 KiB is counted: {deeper} after {left}");
     }
 }

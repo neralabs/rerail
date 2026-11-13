@@ -1,10 +1,10 @@
 # 0098: Accelerating relational work: forms first, then four lanes (CPU, SME, GPU, Neural Engine)
 
-Status: draft (2026-11-09). It extends 0095b. The executor, the four lanes and the first engine forms are built ("Built", below).
+Status: draft (2026-11-09). It extends 0095. The executor, the four lanes and the first engine forms are built ("Built", below).
 
 ## Intro
 
-**The problem.** Decision 0095b plans the logic engine's joins, negations, aggregates and recursion on the GPU. The
+**The problem.** Decision 0095 plans the logic engine's joins, negations, aggregates and recursion on the GPU. The
 matrix-offload spikes (`tools/matrix-offload/RESULTS.md`) then measured five relational workloads on every compute
 engine of an M5 Max:
 
@@ -17,7 +17,7 @@ Three results change the plan:
 
 1. **The form matters more than the hardware.** On one CPU core, the right physical form beats the engine's current
    forms by 18× to 1,700×. The right forms are a counting table per document, a direct histogram, a closure by
-   dynamic programming over the condensed graph, and bitmaps. 0095b's form list does not have them.
+   dynamic programming over the condensed graph, and bitmaps. 0095's form list does not have them.
 2. **The engine has more than one accelerator.**
    - SME is a matrix unit inside the CPU with no dispatch cost. On dense bit products it runs 10–43× faster than the
      CPU forms it replaces.
@@ -66,7 +66,7 @@ These Neural Engine facts constrain §3:
 
 ### The engine's real strata
 
-These come from the Python pack, cold: 486 files, 107,714 nodes, after the CPU fixes in 0095b's "Found on the way"
+These come from the Python pack, cold: 486 files, 107,714 nodes, after the CPU fixes in 0095's "Found on the way"
 (profile of 2026-11-09).
 
 - **Joins take 12.4 s of CPU** over 5,139 strata and 11,959 runs. Every stratum joins.
@@ -81,7 +81,7 @@ These come from the Python pack, cold: 486 files, 107,714 nodes, after the CPU f
   | 1–10 ms | 604 | 4.87 s |
   | 10–100 ms | 116 | 5.81 s |
 
-- **Outputs are large next to inputs.** The relational lab (0095b step 0) captured the 144 strata of more than
+- **Outputs are large next to inputs.** The relational lab (0095 step 0) captured the 144 strata of more than
   3·10^5 planned units. Their sources total 12.4 M rows, and they write 6.7 M rows. 26 of them write more rows than
   they read.
 - **A typical capture** joins two small tables on one column and writes every pair: 63 K rows and 2.6 K rows become
@@ -91,21 +91,21 @@ What that means for the lanes:
 
 - **A device call per stratum loses on this pack.** A GPU submission costs about 0.13 ms, and an ANE call about
   100 µs. Either one costs more than the whole stratum for 2,477 strata, and is a large share of it for 1,942 more.
-  So the devices pay only with device waves (0095b §5), or with work batched across documents.
+  So the devices pay only with device waves (0095 §5), or with work batched across documents.
 - **The spikes' corpus is about 200 times the pack's**, and that is where the device forms were measured. The
-  data-layer repository's profile (0095b step 0) decides how much device work there is at scale. It has not been run.
+  data-layer repository's profile (0095 step 0) decides how much device work there is at scale. It has not been run.
 - **The CPU forms pay at both sizes.** They have no dispatch cost.
 
 ## Decision (proposed)
 
 ### 1. Four more physical forms in the one plan
 
-0095b §4 gives each join step a form: tile, hash or index. These four join them. The planner recognizes them from the
+0095 §4 gives each join step a form: tile, hash or index. These four join them. The planner recognizes them from the
 spec and records them in the plan, and every lane implements them.
 
 | Form | Recognized when | What it does |
 |---|---|---|
-| `count table` | An equality join or a group whose key is a per-document code (a local name id, a kind, a node's low 16 bits: 0095b §6), within one document | A table indexed by the code: counts, or the first rows, per key. No hash and no row per pair. |
+| `count table` | An equality join or a group whose key is a per-document code (a local name id, a kind, a node's low 16 bits: 0095 §6), within one document | A table indexed by the code: counts, or the first rows, per key. No hash and no row per pair. |
 | `count only` | The reader of a step's rows needs only their number or their existence: `count { … } = 1`, a negation, a semi-join | The step's rows are counted, not written out. |
 | `bit product` | Set-valued rows tested for overlap: the prefilter's candidates, co-occurrence, many-to-many existence | Rows as bitsets; AND and popcount, as a matrix product of bits |
 | `closure` | A linear recursive stratum that is a transitive closure: `r(x,y) :- e(x,y). r(x,z) :- r(x,y), e(y,z).` | Condense the strongly connected components, then propagate bit rows over the components' DAG in topological order |
@@ -120,7 +120,7 @@ spec and records them in the plan, and every lane implements them.
 
 ### 2. Placement: four lanes, priced per form, with the lanes' load
 
-0095b §8 places a stratum on the CPU or the GPU, from one price per unit of work. That becomes:
+0095 §8 places a stratum on the CPU or the GPU, from one price per unit of work. That becomes:
 
 - **Lanes:**
   - `cpu`: the cores, NEON;
@@ -129,7 +129,7 @@ spec and records them in the plan, and every lane implements them.
   - `ane`: one queue of compiled models.
 - **A price per form and lane, measured.** The spikes give the first prices. The relational lab replaces them with
   prices measured on captured strata. The GPU's assumed price (2 ns a unit) goes.
-- **A stratum runs on a lane only if the lane has every form it uses**, as in 0095b (`DEVICE_FORMS`, then one list
+- **A stratum runs on a lane only if the lane has every form it uses**, as in 0095 (`DEVICE_FORMS`, then one list
   per lane).
 - **A parity band for the low-power lanes.** The ANE is chosen when its price is within a factor `B` of the best
   lane's, starting at `B = 3`. GPU work is chosen within the same band when the CPU has other work queued. Near
@@ -174,7 +174,7 @@ The spikes built Core ML models with coremltools, a Python tool. The product nev
 
 ### 4. SME kernels
 
-- **Hand-written shared kernels**, as 0095b §3's MSL kernels are: the bit product (BMOPA), and the dense counts behind
+- **Hand-written shared kernels**, as 0095 §3's MSL kernels are: the bit product (BMOPA), and the dense counts behind
   co-occurrence and closure tiles.
 - **Written in C with ACLE intrinsics and built by `cc`**, which the engine already uses. Cranelift has no SME, and
   inline assembly in Rust is the alternative if C is not wanted.
@@ -185,9 +185,9 @@ The spikes built Core ML models with coremltools, a Python tool. The product nev
 
 ### 5. GPU
 
-0095b stands as it is, with two additions:
+0095 stands as it is, with two additions:
 
-- kernels for `count table` (the table in threadgroup memory: 2,048 u16 counters are 4 KB, within 0095b §3's budget),
+- kernels for `count table` (the table in threadgroup memory: 2,048 u16 counters are 4 KB, within 0095 §3's budget),
   `closure` (level by level over the components' DAG) and `bit product` (AND and popcount on the threads);
 - the GPU's matrix units are used only for products of more than about 80–200 int8 operations per byte. Boolean work
   stays on the threads, which read 8× fewer bytes.
@@ -224,7 +224,7 @@ executor of its run's binding (`logic::lanes`):
 - **CPU binding:** the cores and SME. SME is part of the CPU.
 - **Metal binding:** every lane.
 
-A batch is a dependency level's launches across strata (device waves, 0095b §5: "Device waves for kernel
+A batch is a dependency level's launches across strata (device waves, 0095 §5: "Device waves for kernel
 launches", below). The executor took them without any change to its interface.
 
 ## Answered (the user, 2026-11-09)
@@ -250,16 +250,16 @@ launches", below). The executor took them without any change to its interface.
 0. **Done.**
    - The spikes (`tools/matrix-offload/`), with every kernel checked exactly.
    - The relational lab: 144 Python-pack strata captured and replayed row for row.
-1. **The data-layer repository's profile and lab capture** (0095b step 0, its last part). This is measurement only. It
+1. **The data-layer repository's profile and lab capture** (0095 step 0, its last part). This is measurement only. It
    says how much of a run each form and each lane would take at scale.
 2. **The CPU forms in the native engine:** `count only`, `count table`, `closure`, then `bit product` on NEON.
    - Gates: lab replay, row for row, and identical findings on the Python pack.
    - They pay on every machine, under both bindings, at the pack's size.
 3. **Placement by lanes** (§2), with the profile's per-lane report. Until a lane has kernels, it is priced but never
    chosen, as the GPU is today.
-4. **The GPU path, 0095b steps 1–8,** with the new forms' kernels placed where those steps reach them.
+4. **The GPU path, 0095 steps 1–8,** with the new forms' kernels placed where those steps reach them.
    - Begun: a stratum's seed joins (equi-joins, negation, existence, the filters after an atom) run on the GPU
-     when placement chooses it, one submission per stratum (0095b, order of work, step 4; "Built" below).
+     when placement chooses it, one submission per stratum (0095, order of work, step 4; "Built" below).
 5. **The SME lane:** the bit-product kernel and its worker per cluster.
 6. **The Neural Engine lane:**
    - a. the ML Program writer, with one template, checked against coremltools' output for the same graph;
@@ -359,14 +359,14 @@ All of it was checked exactly against the CPU reference. Times are from release 
       from one `CountTable` launch (counts only, no pairs). The step then reads its row's count by position.
     - **Histogram:** otherwise the relation's counts by key, from one `Histogram` launch. The table is the
       relation's, like its indexes, so every step in any stratum that counts it by the same columns reads it.
-    - **Codes:** keys get 16-bit local codes within partitions (0095b §6). A partition here is a hash of the key, not
+    - **Codes:** keys get 16-bit local codes within partitions (0095 §6). A partition here is a hash of the key, not
       a document, so each holds at most 2^16 distinct keys whatever the document's size.
     - **On the slice:** `up_once`'s count of `binding` and its annotation copy take counts per row, and `rr_agg67`
       a histogram.
     - **Gate:** outputs are identical with it on and off. Local CPU was 18.6 s both ways (load 106–110): these counts
       are small at the pack's size.
     - `RERAIL_COUNT_TABLE=off` turns it off.
-  - **Device waves** (0095b §5): "Device waves for kernel launches", below.
+  - **Device waves** (0095 §5): "Device waves for kernel launches", below.
     - **Count tables.** When a level's first stratum runs, the level's count tables are built as one batch: those
       an earlier chunk built and whose relations the run holds. So each lane gets one submission per level. On the
       slice's second chunk, a level of 15 strata built its one table that way.
@@ -387,7 +387,7 @@ All of it was checked exactly against the CPU reference. Times are from release 
 ### Joins on the GPU from the engine (2026-11-09)
 
 The GPU lane's first engine form outside `rerail-accel`: a stratum's seed joins as stages over binding tables
-(`setfix::device`, `metal_join`; 0095b's order of work, step 4, has the design). It goes through the native engine,
+(`setfix::device`, `metal_join`; 0095's order of work, step 4, has the design). It goes through the native engine,
 not the executor, because its unit is a stratum's rules, not a launch; a dependency level's strata would be one call
 of the same function, so device waves need no new interface.
 
@@ -457,7 +457,7 @@ What it shows:
   decision 0099's case for not materializing: keep (row, start node) and look the reach up in the reader.
 - **The forms are 2% of the run under the CPU binding.** In that binding every launch stays on the CPU, since
   closures and histograms have only CPU and GPU kernels.
-- **The larger prize is the strata.** The placement planner (0095b) finds 553 strata whose work would be cheaper
+- **The larger prize is the strata.** The placement planner (0095) finds 553 strata whose work would be cheaper
   on the GPU: 84 s of CPU against an estimated 0.4 s on the device. That needs the Metal binding (`--metal`), and
   their forms on the device.
 - **Under the Metal binding** (`--metal`, the same pack, load 94 to 124), findings are identical and nothing goes
@@ -467,7 +467,7 @@ What it shows:
     (46.0 s) or comparison (49.0 s).
   - Local CPU was 197.4 + 7.6 s against the CPU binding's 206.7 + 10.3 s, which is noise at this load.
 
-  So the expected gain waits on 0095b's device join (sort and probe), negation and comparison, not on these forms.
+  So the expected gain waits on 0095's device join (sort and probe), negation and comparison, not on these forms.
 - **Fixed on the way:**
   - The closure searches its edges in one join context for every node, not one per node: its encode fell from
     1,055 to 467 ms CPU on the 8-program slice.

@@ -1,57 +1,35 @@
-//! simdjson (the C++ library, vendored at `native/vendor/simdjson-5.0.5`): a JSON document parsed
-//! and validated in full by its DOM parser, and the structural index its first stage found.
+//! simdjson (the C++ library, vendored at `native/vendor/simdjson-5.0.5`) and the engine's JSON tape.
+//!
+//! The portable side: the native code (simdjson, the kernels) is `rerail-simdjson-native`'s.
+//!
+//! `tape_with` is a kernel's: simdjson's stage 1, the source hashed in it, and a stage 2 of ours, which
+//! walks the index itself, validates the document as simdjson's does, and writes the v9np tape into the
+//! tape's own buffers. `structurals` is simdjson's DOM parser and the structural index its stage 1
+//! found (`tape_from_index`, the kernels' oracle and the tape on a CPU no kernel runs on, writes a tape
+//! from it).
 //!
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
 
-use std::ffi::{CStr, c_char};
+pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
+use rerail_simdjson_native::{KEEP, Sink, release_above};
 
-unsafe extern "C" {
-    fn rerail_simdjson_structurals(src: *const c_char, len: usize, indexes: *mut *const u32, count: *mut u32) -> i32;
-    fn rerail_simdjson_release_above(keep: usize);
-    fn rerail_simdjson_error_message(code: i32) -> *const c_char;
-    fn rerail_simdjson_implementation() -> *const c_char;
-}
-
-/// A thread keeps its parser's buffers for files up to this size; a larger file's are freed once
-/// it is read (simdjson's DOM parser holds about 14 bytes a source byte).
-const KEEP: usize = 1 << 20;
-
-/// Why simdjson refused a document: its error code and message.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Error(pub i32);
-
-impl Error {
-    pub fn message(self) -> &'static str {
-        // SAFETY: simdjson's messages are static, NUL-terminated strings.
-        unsafe { CStr::from_ptr(rerail_simdjson_error_message(self.0)) }.to_str().unwrap_or("simdjson error")
+/// `grow`: each buffer holds `need[i]` bytes, its first `len[i]` kept.
+unsafe extern "C" fn grow(sink: *mut Sink, need: *const usize) {
+    // SAFETY: the shim passes the sink it was given, whose `ctx` is the tape's buffers, and
+    // `need` of 5; it has written the first `len[i]` bytes of each.
+    unsafe {
+        let sink = &mut *sink;
+        let columns = &mut *sink.ctx.cast::<[Vec<u8>; 5]>();
+        for (i, v) in columns.iter_mut().enumerate() {
+            v.set_len(sink.len[i]);
+            let need = *need.add(i);
+            v.reserve(need.saturating_sub(v.len()));
+            sink.col[i] = v.as_mut_ptr();
+            sink.cap[i] = v.capacity();
+        }
     }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.message())
-    }
-}
-
-/// Parses `src` with simdjson and gives `read` its structural index; `Err` where simdjson refuses it
-/// (invalid JSON, an empty document, a number past its range, nesting past 1,024).
-pub fn structurals<R>(src: &[u8], read: impl FnOnce(&[u32]) -> R) -> Result<R, Error> {
-    let (mut indexes, mut count) = (std::ptr::null(), 0u32);
-    // SAFETY: `src` is read for `len` bytes; the index stays valid until this thread's next call,
-    // which nothing in `read` can make before it returns (the slice is not kept past it).
-    let code = unsafe { rerail_simdjson_structurals(src.as_ptr().cast(), src.len(), &mut indexes, &mut count) };
-    let result = if code != 0 {
-        Err(Error(code))
-    } else {
-        let index = if count == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(indexes, count as usize) } };
-        Ok(read(index))
-    };
-    if src.len() > KEEP {
-        unsafe { rerail_simdjson_release_above(KEEP) };
-    }
-    result
 }
 
 /// The kinds and fields a JSON tape is written with: tree-sitter-json's ids, which the caller looks up.
@@ -98,6 +76,8 @@ pub struct Tape {
     pub tail: Vec<u8>,
     /// `size`, `off` and `tail`'s widths in bytes (2 or 4); every tail is from the last descendant's start.
     pub widths: [u8; 3],
+    /// The source's SHA-256, where the pass that read it computed it (`tape`, not `tape_from_index`).
+    pub digest: Option<[u8; 32]>,
 }
 
 impl Tape {
@@ -116,8 +96,10 @@ pub enum Refusal {
     Simdjson(Error),
     /// Its index is not one a valid document has (never, for a document simdjson accepts).
     Shape(&'static str),
-    /// It is past the tape's offsets (4 GB).
+    /// It is past the tape's offsets (4 GB; 2 GB for a kernel).
     TooLarge,
+    /// This CPU does not run the kernel asked for.
+    NotHere,
 }
 
 impl std::fmt::Display for Refusal {
@@ -126,18 +108,82 @@ impl std::fmt::Display for Refusal {
             Refusal::Simdjson(e) => write!(f, "simdjson: {e}"),
             Refusal::Shape(why) => f.write_str(why),
             Refusal::TooLarge => f.write_str("past 4 GB"),
+            Refusal::NotHere => f.write_str("a kernel this CPU does not run"),
         }
     }
 }
 
-/// `src`'s tape (simdjson's DOM parser validates the whole document first).
+/// `src`'s tape and its SHA-256 by `kernel`, in one pass of stage 1 and one of a stage 2 of ours:
+/// - stage 1 is simdjson's (the kernel's implementation's), each 64-byte block of the source also
+///   hashed (with the CPU's SHA-256 instructions, where the kernel has them);
+/// - stage 2 walks the index itself, as simdjson's walker does, checks each scalar as simdjson's tape
+///   builder does (escapes, numbers, atoms), and writes the columns at each node's preorder slot, into
+///   the returned `Tape`'s own buffers, at their stored widths, with the tape's codes. No DOM tape, no
+///   unescaped strings, no number values, nothing copied or converted after.
 ///
-/// What the index leaves to the writer: a string's closing quote and a scalar's end are the last byte
-/// before the next index that is not whitespace; a string's escapes are found with `memchr`, and its
-/// content is the runs between them. Each escape is two bytes, `\` and its letter (tree-sitter-json's
-/// `escape_sequence`: a `\u`'s four digits are content). The document runs from its first token to the
-/// end of the file, as tree-sitter's root does.
+/// Each column is 2 bytes wide unless a value needs 4: `size`'s width is predicted from the structural
+/// count, `off` and `tail` start at 2, and a file a prediction fails is walked again at the right widths
+/// (7 of the repository's 2,200). `Refusal::NotHere` where this CPU does not run the kernel.
+///
+/// The nodes are `tape_from_index`'s, byte for byte (`every_kernels_tape_is_the_index_writers`).
+pub fn tape_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    let mut columns: [Vec<u8>; 5] = Default::default();
+    let k = kinds;
+    let mut sink = Sink {
+        col: [std::ptr::null_mut(); 5],
+        len: [0; 5],
+        cap: [0; 5],
+        width: [2; 3],
+        ctx: (&raw mut columns).cast(),
+        grow,
+        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null],
+        key_field: k.key_field,
+        value_field: k.value_field,
+        codes: 0,
+        code_kind: [0; 33],
+        code_field: [0; 33],
+        code_value: [0; 33],
+        digest: [0; 32],
+    };
+    // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
+    // what `grow` gave.
+    let code = unsafe { kernel.tape(src, &mut sink) };
+    if src.len() > KEEP {
+        release_above(KEEP);
+    }
+    match code {
+        -1 => Err(Refusal::NotHere),
+        0 => {
+            for (v, &len) in columns.iter_mut().zip(&sink.len) {
+                // SAFETY: the shim wrote `len` bytes of each, within its capacity.
+                unsafe { v.set_len(len) };
+                // The buffers were made for the most nodes a file of its length can have: what the
+                // tape does not use is given back.
+                if v.capacity() > len + len / 2 + 64 {
+                    v.shrink_to_fit();
+                }
+            }
+            let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
+            let [code, size, off, tail, base] = columns;
+            Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: Some(sink.digest) })
+        }
+        error => Err(Refusal::Simdjson(Error(error))),
+    }
+}
+
+/// `src`'s tape by the fastest kernel this CPU runs, else from the index (`tape_from_index`, no digest).
 pub fn tape(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    match Kernel::best() {
+        Some(kernel) => tape_with(kernel, src, kinds),
+        None => tape_from_index(src, kinds),
+    }
+}
+
+/// `src`'s tape, written from simdjson's structural index after its DOM parser validated the whole document.
+pub fn tape_from_index(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize {
         return Err(Refusal::TooLarge);
     }
@@ -357,15 +403,18 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
     Ok(w.finish())
 }
 
-/// The kernel simdjson chose for this CPU (`arm64`, `haswell`, …).
-pub fn implementation() -> &'static str {
-    // SAFETY: the name is a static string of simdjson's.
-    unsafe { CStr::from_ptr(rerail_simdjson_implementation()) }.to_str().unwrap_or("?")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
+    /// fastest this CPU runs.
+    fn kernel_under_test() -> Kernel {
+        match std::env::var("RERAIL_SIMDJSON_KERNEL") {
+            Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),
+            Err(_) => Kernel::best().expect("a kernel this CPU runs"),
+        }
+    }
 
     #[test]
     fn the_index_is_each_structural_and_scalar_start() {
@@ -396,19 +445,177 @@ mod tests {
             }
         }
         files.retain(|f| structurals(f, |_| ()).is_ok());
+        // `RERAIL_TAPE_SIZES`: `small` (under 52,000 bytes) or `large`.
+        match std::env::var("RERAIL_TAPE_SIZES").as_deref() {
+            Ok("small") => files.retain(|f| f.len() < 52_000),
+            Ok("large") => files.retain(|f| f.len() >= 52_000),
+            _ => {}
+        }
+        let nodes: usize = files.iter().map(|f| tape_from_index(f, &Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 }).unwrap().node_count()).sum();
+        eprintln!("{} bytes, {nodes} nodes", files.iter().map(Vec::len).sum::<usize>());
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
+        let kernel = kernel_under_test();
+        let retired = || {
+            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+            info.ri_instructions
+        };
         let mut n = 0usize;
-        for _ in 0..10 {
+        let mut best = u64::MAX;
+        for _ in 0..5 {
+            let i0 = retired();
             for f in &files {
                 n += match run.as_str() {
                     "index" => structurals(f, <[u32]>::len).unwrap(),
-                    "tape" => tape(f, &kinds).unwrap().node_count(),
+                    "tape" => tape_with(kernel, f, &kinds).unwrap().node_count(),
+                    "stage1" => kernel.stage1(f, false) as usize,
+                    "stage1-hashed" => kernel.stage1(f, true) as usize,
+                    "index-tape" => tape_from_index(f, &kinds).unwrap().node_count(),
+                    "sha2" => {
+                        use sha2::Digest;
+                        sha2::Sha256::digest(f)[0] as usize
+                    }
                     _ => f.len(),
                 };
             }
+            best = best.min(retired() - i0);
         }
-        eprintln!("{} files, {n}", files.len());
+        eprintln!("{run}: {:.1} M instructions, {:.1} a node", best as f64 / 1e6, best as f64 / nodes as f64);
+        eprintln!("{} files, {n}, {} walked again ({})", files.len(), kernel.rewalks(), kernel.name());
+    }
+
+    /// Every kernel this CPU runs writes the index writer's tape, byte for byte, and its digest is the
+    /// `sha2` crate's; each refuses what the other does: documents made to reach every node and every
+    /// check, and the repository's `.json` files.
+    #[test]
+    fn every_kernels_tape_is_the_index_writers() {
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let kernels: Vec<Kernel> = Kernel::ALL.into_iter().filter(|k| k.runs()).collect();
+        eprintln!("kernels checked: {:?}", kernels.iter().map(|k| k.name()).collect::<Vec<_>>());
+        assert!(!kernels.is_empty());
+        let same = |src: &[u8]| {
+            let b = tape_from_index(src, &kinds);
+            let accepted = b.is_ok();
+            for &kernel in &kernels {
+                match (tape_with(kernel, src, &kinds), &b) {
+                    (Ok(a), Ok(b)) => {
+                        use sha2::Digest;
+                        assert_eq!(a.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src))), "{}: the digest of {:?}", kernel.name(), String::from_utf8_lossy(src));
+                        assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{}: {:?}", kernel.name(), String::from_utf8_lossy(src));
+                    }
+                    (Err(Refusal::Simdjson(_)), Err(Refusal::Simdjson(_))) => {}
+                    (a, b) => panic!("{}: {:?}: {:?} against {:?}", kernel.name(), String::from_utf8_lossy(src), a.map(|t| t.node_count()), b.as_ref().map(|t| t.node_count())),
+                }
+            }
+            accepted
+        };
+        let made: &[&[u8]] = &[
+            b"1", b" -1.5e3 ", b"true", b"false", b"null", b"\"\"", b"\"a\\nb\"", b"\xef\xbb\xbf{\"a\":1}", b"{}", b"[]", b" [ ] ",
+            br#"{"a": [1, true, "x\"y"], "b": null, "c": {}, "d": [], "e": {"f": [[], {}]}}"#,
+            br#"["\u00e9", "\ud83d\ude00", "\\\\", "a\/b", "\b\f\n\r\t", "\u0041\u0042x"]"#,
+            br#"{"k\"ey": "v\\", "": ""}"#,
+            // Refused by both.
+            b"", b"{", b"[1,]", b"\"\\x\"", b"01", b"[\"\xff\"]", b"123456789012345678901234567890", br#"["\ud83d"]"#, br#"["\ude00"]"#,
+            br#"["\ud83d\u0041"]"#, br#"["\u12g4"]"#, b"[tru]", b"[nul, 1]", b"{\"a\" 1}", b"[1 2]", b"1 2", b"[1.]", b"[-]",
+        ];
+        for src in made {
+            same(src);
+        }
+        // The walker's own checks: structure, depth, what follows the value.
+        let walker: &[&[u8]] = &[
+            b"{\"a\":1,}", b"{\"a\"}", b"{\"a\":}", b"[1]]", b"{} {}", b"{\"a\":1 \"b\":2}", b"   ", b"[\"\\u", b"{1:2}", b"[,1]",
+            b"[1,,2]", b"{\"a\":1]", b"[{]", b"[[]", b"{\"a\":[}]", b"[true false]", b"[nulll]", b"[-0, -0.0e-0, 1E+2, 0.5]", b"[\"a\"x]",
+            b"  {  \"a\"  :  [ 1 , { } , [ ] , \"\" ]  }  ", b"\"x\" ", b"7 ", b" 7", b"-", b"[01]", b"[1e]", b"[18446744073709551615, -9223372036854775808]",
+            b"[18446744073709551616]", b"[-9223372036854775809]", b"[1e400]",
+        ];
+        for src in walker {
+            same(src);
+        }
+        let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        // Both refuse past simdjson's depth: some of these.
+        let refused = [1023, 1024, 1025, 1026, 2000].iter().filter(|&&n| !same(deep(n).as_bytes())).count();
+        assert!(refused >= 1, "no depth refused");
+        // Strings past a block of 32 bytes, with escapes on either side of one's end.
+        for n in [0, 1, 15, 16, 30, 31, 32, 33, 63, 64, 65, 100] {
+            for esc in [&b""[..], b"\\n", b"\\u00e9", b"\\\\"] {
+                let mut s = b"[\"".to_vec();
+                s.extend(std::iter::repeat_n(b'x', n));
+                s.extend_from_slice(esc);
+                s.extend(std::iter::repeat_n(b'y', n / 2));
+                s.extend_from_slice(b"\", 1]");
+                assert!(same(&s), "{:?}", String::from_utf8_lossy(&s));
+            }
+        }
+        // Past 2-byte columns: a long file, and a long string (a wide `off` and `tail`).
+        let long: String = format!("[{}]", (0..30_000).map(|i| format!("{{\"k{i}\": [{i}, \"v\\n\"]}}")).collect::<Vec<_>>().join(","));
+        assert!(same(long.as_bytes()));
+        let wide = format!("[\"{}\", 1]", "x".repeat(70_000));
+        assert!(same(wide.as_bytes()));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut checked, mut work) = (0, vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 4 << 20) {
+                    if let Ok(f) = std::fs::read(&p) {
+                        checked += usize::from(same(&f));
+                    }
+                }
+            }
+        }
+        assert!(checked > 2000, "{checked}");
+    }
+
+    /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
+    #[test]
+    #[ignore = "a measurement: run by name with --nocapture"]
+    fn shape_costs() {
+        let retired = || {
+            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+            info.ri_instructions
+        };
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let kernel = kernel_under_test();
+        let n = 20_000;
+        let join = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<Vec<_>>().join(",");
+        let shapes: Vec<(&str, String)> = vec![
+            ("ints", format!("[{}]", join(&|i| format!("{}", i % 1000)))),
+            ("trues", format!("[{}]", join(&|_| "true".into()))),
+            ("short strings", format!("[{}]", join(&|i| format!("\"s{}\"", i % 100)))),
+            ("empty strings", format!("[{}]", join(&|_| "\"\"".into()))),
+            ("int pairs", format!("{{{}}}", join(&|i| format!("\"k{i}\":{}", i % 1000)))),
+            ("objects", format!("[{}]", join(&|i| format!("{{\"a\":{i},\"b\":\"x\"}}")))),
+            ("nested arrays", format!("[{}]", join(&|_| "[[1],[2]]".into()))),
+        ];
+        for (name, doc) in &shapes {
+            let d = doc.as_bytes();
+            let nodes = tape(d, &kinds).unwrap().node_count();
+            let measure = |f: &dyn Fn() -> usize| {
+                let mut best = u64::MAX;
+                for _ in 0..20 {
+                    let i0 = retired();
+                    std::hint::black_box(f());
+                    best = best.min(retired() - i0);
+                }
+                best as f64 / nodes as f64
+            };
+            let s1 = measure(&|| kernel.stage1(d, false) as usize);
+            let hashed = measure(&|| kernel.stage1(d, true) as usize);
+            let dom = measure(&|| structurals(d, <[u32]>::len).unwrap());
+            let ours = measure(&|| tape_with(kernel, d, &kinds).unwrap().node_count());
+            eprintln!(
+                "{name:14} {nodes:7} nodes: stage 1 {s1:5.1}, SHA-256 in it {:5.1}, DOM stage 2 {:5.1}, v9np stage 2 {:5.1} a node",
+                hashed - s1,
+                dom - s1,
+                ours - hashed
+            );
+        }
     }
 
     #[test]

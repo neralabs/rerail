@@ -54,7 +54,7 @@ pub fn on() -> bool {
 /// A level's batch of seed joins, running until the first seed that reads it waits.
 struct LevelBatch {
     /// The batch, each launch taken by its seed as soon as it ended, not when the batch's slowest did (decision
-    /// 0114b §2): a seed reads its own pairs alone. They are a view of the lane's buffer when the GPU ran it, so
+    /// 0114 §2): a seed reads its own pairs alone. They are a view of the lane's buffer when the GPU ran it, so
     /// nothing is copied (decision 0100 §9).
     each: Option<rerail_accel::exec::Each>,
 }

@@ -22,7 +22,7 @@
 //! a rotating slice of the files whose stat it trusts (one in [`VALIDATE_EVERY`], by path and a counter the store
 //! keeps), and counts a mismatch. `RERAIL_VALIDATE_EVERY=1` checks every file, `0` none.
 //!
-//! **The journal** (decision 0105b). Under a root a run watches (`watch`: the corpus root, the directories its
+//! **The journal** (decision 0105). Under a root a run watches (`watch`: the corpus root, the directories its
 //! requests may read), the observer does not `stat` a path it has an answer for. It asks the system's journal once
 //! per run what changed under the root since the run before (`journal::since`), forgets its answers under each path
 //! named, and trusts the rest: an unchanged corpus costs no `stat` of its files. Where the journal cannot say (no
@@ -311,7 +311,7 @@ impl Observer {
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
             .unwrap_or_default();
         // The journal's streams for the roots the last runs watched, started now: their replays run while the process
-        // starts, before a run asks (decision 0105b).
+        // starts, before a run asks (decision 0105).
         let mut volumes: Vec<(PathBuf, Option<[u8; 16]>)> = Vec::new();
         if journal_on()
             && let (Some(k), Some(dir)) = (db.as_ref(), cookies.as_deref())
@@ -354,7 +354,7 @@ impl Observer {
     /// Loads every kept entry under `dir` at once: nothing to do, as everything kept was read as the observer opened.
     pub fn preload(&mut self, _dir: &Path) {}
 
-    /// The answer kept for `path` when the journal says nothing changed there since it was recorded (decision 0105b):
+    /// The answer kept for `path` when the journal says nothing changed there since it was recorded (decision 0105):
     /// used as it is. A write after the answer was recorded, even in the same tick, came after the cursor the
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
@@ -403,14 +403,14 @@ impl Observer {
     }
 
     /// What is at `path` now (following symlinks): one `stat`, or none where the journal says nothing changed
-    /// (decision 0105b): the answer kept, or for a path its directory's kept listing does not hold, missing.
+    /// (decision 0105): the answer kept, or for a path its directory's kept listing does not hold, missing.
     pub fn kind(&mut self, path: &Path) -> Kind {
         let path = &self.abs(path);
         self.stat(path).map_or(Kind::Missing, |(k, _)| k)
     }
 
     /// Whether `path` is missing by its directory's kept listing, where the journal says nothing changed (decision
-    /// 0105b): a name the listing does not hold.
+    /// 0105): a name the listing does not hold.
     /// The listing is kept for the next run: a directory probed for a name is listed once, and its listing answers
     /// later probes; a directory that is missing itself is missing by its own directory's listing.
     fn missing(&mut self, path: &Path) -> bool {
@@ -439,7 +439,7 @@ impl Observer {
     }
 
     /// `path`'s canonical form (`std::fs::canonicalize`: absolute, symlinks and `..` resolved; `None` when nothing is
-    /// there). Under a root the journal speaks for (decision 0105b), the answer kept is used as it is: a symlink made,
+    /// there). Under a root the journal speaks for (decision 0105), the answer kept is used as it is: a symlink made,
     /// moved or retargeted under the root is an event that forgets it. Elsewhere, one `realpath`, kept for the next run.
     pub fn canonical(&mut self, path: &Path) -> Option<PathBuf> {
         let path = self.abs(path);
@@ -537,7 +537,7 @@ impl Observer {
         self.open += 1;
     }
 
-    /// Watches `roots` for this run (decision 0105b): asks the journal what changed under each since the run that
+    /// Watches `roots` for this run (decision 0105): asks the journal what changed under each since the run that
     /// last watched it, and forgets the answers kept under what it names. The rest are trusted with no `stat` until
     /// the run ends. A root the journal cannot speak for is checked by `stat`, and its unchecked answers forgotten
     /// at the run's end (`flush`). Without a store there is nothing kept across runs to trust.
@@ -610,7 +610,7 @@ impl Observer {
     }
 
     /// What the journal names as changed under each of `roots` since its cursor in `cursors` (`mark`'s), decision
-    /// 0105b: `None` where it cannot say.
+    /// 0105: `None` where it cannot say.
     pub fn changed_since(&mut self, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
         let cookies = self.cookies.clone().filter(|_| self.db.is_some())?;
         if roots.len() != cursors.len() {
@@ -1071,7 +1071,7 @@ pub fn hex(d: &[u8; 32]) -> String {
 mod tests {
     use super::*;
 
-    /// Decision 0105b: a run that watches a root does no `stat` of what the journal says is unchanged. A first run
+    /// Decision 0105: a run that watches a root does no `stat` of what the journal says is unchanged. A first run
     /// checks every path; the next, with nothing changed, none, and its answers are the same; after an edit, the
     /// edited file is read again and the others are trusted. Each run is a new process's observer.
     #[cfg(target_os = "macos")]
@@ -1170,7 +1170,7 @@ mod tests {
         let file = dir.path().join("a.py");
         std::fs::write(&file, "x = 1\n").unwrap();
         aged(&file);
-        // The setup's events delivered before the first run's cursor (decision 0105b): a later one names the file, read
+        // The setup's events delivered before the first run's cursor (decision 0105): a later one names the file, read
         // again (safe, and not what this test is of).
         std::thread::sleep(std::time::Duration::from_millis(300));
         // ctime is not settable: wait out the racy window by recording later than it.
@@ -1189,7 +1189,7 @@ mod tests {
         assert_eq!(second.digest(&file), Some(d1));
         assert_eq!((second.counts.hashed, second.counts.reused), (0, 1), "unchanged: one stat, no read");
         std::fs::write(&file, "x = 2\n").unwrap();
-        // The next run (a run's answers are as its journal found them, decision 0105b).
+        // The next run (a run's answers are as its journal found them, decision 0105).
         second.flush();
         let d2 = second.digest(&file).unwrap();
         assert_ne!(d1, d2);
@@ -1330,7 +1330,7 @@ mod tests {
     }
 }
 
-/// Whether the observer asks the file system's journal (decision 0105b). On unless `RERAIL_JOURNAL=off`, or turned off
+/// Whether the observer asks the file system's journal (decision 0105). On unless `RERAIL_JOURNAL=off`, or turned off
 /// by `set_journal`: the engine's tests do (each run of a test waits for its cookie's event, up to `journal`'s `WAIT`, and a test
 /// makes many runs), and the journal's own tests here keep it on.
 static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);

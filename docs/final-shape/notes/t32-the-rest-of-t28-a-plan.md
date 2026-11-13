@@ -161,8 +161,8 @@ kept relations' encoding, not a format of their own.
 
 | Step | Change | Owner |
 |---|---|---|
-| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0108c, 472c8bfaa). An entry's relations are typed rows in its frame |
-| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0108c). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
+| 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0146, 472c8bfaa). An entry's relations are typed rows in its frame |
+| 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0146). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
 | 5.3 | Each other cache of 0103 §8 | its owner |
 
 **5.1 and 5.2 measured (2026-11-10, after 1515840af).** The test binary's P3 bench on the 54 files of `dl-sub40` used
@@ -201,9 +201,9 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 
 | Step | Change | Done when |
 |---|---|---|
-| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0107a**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
-| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0107a §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
-| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0107a §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
+| 7.1 | A decision draft: a search is a program kind; its requests a key relation; a wave's new requests answered in one batch (0065 §2a's loop) | **drafted as 0144**, for review: a search is demand rules (a request relation, answer rules that read it), no program kind and no `.cache` |
+| 7.2 | `mro_find` first: it replaces `found`/`lfound` and `need_name`'s patches | **measured, not taken** (0144 §5): as demand rules, `found` pulled six relations into `pv`'s recursion, +13.5% join work there (1.81 M to 2.05 M) for the same answers; the eager `found` was 279 units. P3 keeps it. The full corpus's 116 s (against 66 s, at load 110 against 36 to 76) was not measured again on the full corpus; on the 54 files, the same cold run took 38 s of main-thread CPU at load 75 to 97 and 29 to 32 s at 19 to 48, and the new path's cold run was no slower than the old (28.8 s against 31.9 s) |
+| 7.3 | `inst` for the library generics (`lgpar`, `lcbind`, `lwbind`) | **measured, not taken** (0144 §6): on the 84-file small corpus, cold, `lcbind` 316 k, `lgpar` 281 k, `wbind` 103 k (t27: 2.7 M), `gpar` 69 k, `lfound` 5 k, `lwbind` 4 k of 30.9 M join work: 2.5% and 0.3 s together. The cost is `py_try` (4.5 M), `tv` and `tbv` |
 
 ### Stage 8. P3 on symbols (this branch, after 2.1 and 7.2)
 

@@ -1,9 +1,9 @@
-# 0095a: Run artifacts: rules first, then entries kept by what they depend on
-
-_Numbered 0095 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
+# 0142: Run artifacts: rules first, then entries kept by what they depend on
 
 Status: proposed (2026-11-08). Number not reserved in trunk's register (0094 §9): this branch cannot push there. What
 is built is named in each section; the rest is the open items listed at the end.
+
+Numbered 0095 where it was written; renumbered 0142 in the hub (2026-11-13) because another record had 0095.
 
 ## Intro
 

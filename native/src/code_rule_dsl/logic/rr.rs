@@ -69,7 +69,7 @@ pub use print::print;
 pub use syntax::quote;
 pub use translate::translate;
 
-/// The relations `core.rr` declares: the engine's names (decision 0047a). Empty when `core.rr` does not read.
+/// The relations `core.rr` declares: the engine's names (decision 0141). Empty when `core.rr` does not read.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
@@ -751,10 +751,10 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
         .collect()
 }
 
-/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047a), and names
+/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
-    // `core.rr`'s relations are the engine's (decision 0047a): no other file declares or derives one.
+    // `core.rr`'s relations are the engine's (decision 0141): no other file declares or derives one.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);

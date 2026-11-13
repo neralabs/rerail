@@ -559,7 +559,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105a) on the CPU and on Metal.
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();

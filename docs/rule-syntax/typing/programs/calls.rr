@@ -418,7 +418,7 @@ call_open(c) :- callee(c, e), pv(e, "inst", k), attr_open(k, "__call__").
 call_open(c) :- callee(c, e), pv(e, "mod", _).
 call_open(c) :- callee(c, e), pv(e, "super", _).
 call_open(c) :- callee(c, e), mro_ambiguous(e).
-// Rounds that stop before the fixpoint (O41, decision 0047b) leave a cross-file row missing, and a missing row reads
+// Rounds that stop before the fixpoint (O41, decision 0047) leave a cross-file row missing, and a missing row reads
 // as no edge. The pending round adds `unconverged(1)`: a call with no target is then unknown, not "calls nothing".
 // A call with targets keeps them as a lower bound.
 .decl unconverged(r: number)
@@ -495,7 +495,7 @@ builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"
 builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
 builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
 
-// ---- types (decision 0047b, point 3) ---------------------------------------------------------------------------
+// ---- types (decision 0047, point 3) ---------------------------------------------------------------------------
 // What a rule reads of a value's type, at the positions whose value the program models (`vpos`: callees and
 // receivers, assigned, returned and decorating values, arguments and bases). Three-valued, as calls are:
 //   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name, or a builtin's

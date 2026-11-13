@@ -240,7 +240,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
     ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114b §4): which
+    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
     ("content_store/atoms.rs", "RESERVED"),
     ("content_store/atoms.rs", "RESERVING"),
@@ -325,7 +325,7 @@ const STATE: &[(&str, &str)] = &[
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
     ("content_store/observe.rs", "OBSERVERS"),
-    // The journal's open streams, one a root (decision 0105b): open things.
+    // The journal's open streams, one a root (decision 0105): open things.
     ("content_store/journal.rs", "LIVE"),
     // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
     // state on the job's thread, gone with it.

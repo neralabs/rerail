@@ -1,4 +1,4 @@
-//! Typing programs' answers as a rule's facts (decision 0047b, point 2; 03 §13: "their results are facts").
+//! Typing programs' answers as a rule's facts (decision 0047, point 2; 03 §13: "their results are facts").
 //!
 //! A rule reads a typing program's output by declaring an input relation named `typing_<program>__<output>`. In it,
 //! each node column of the output becomes four columns: the node's path, kind, start byte and end byte. Other

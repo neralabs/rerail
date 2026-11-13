@@ -1,6 +1,4 @@
-# 0095b: The logic engine's relational work on Metal: one plan, device waves, generated row code
-
-_Numbered 0095 until 2026-11-13, when 2 decisions shared the number; the letter orders them by when each was written._
+# 0095: The logic engine's relational work on Metal: one plan, device waves, generated row code
 
 Status: draft (2026-11-09). A plan for review; nothing in it is built.
 

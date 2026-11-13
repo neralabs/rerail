@@ -7,7 +7,7 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
 `convert.rs` is the contract, summarized here.
 
 - Declare every relation the file reads or defines but core.rr's. core.rr's relations are the engine's (decision
-  0047a): `rr::read_file` refuses a file that declares or derives one. Their declarations are the file's prelude
+  0141): `rr::read_file` refuses a file that declares or derives one. Their declarations are the file's prelude
   (below, "Base relations beyond the converter's"), in the converter's column types, so read them undeclared; an
   `.input` of a relation nothing declares is the error `UndeclaredInput`. The converter's base relations, as core.rr
   declares them (not to be declared here):
@@ -102,7 +102,7 @@ from the baseline, worse or better: `RERAIL_REPLAY_BLESS=1` records it once it i
 ## Base relations beyond the converter's
 
 The corpus runner binds these too (core.rr's, `facts::vtab::syntax::Extra`), each only for a program that reads it;
-they are core.rr's, so a file reads them undeclared (decision 0047a), but for `cpython_syntax_error`, which it
+they are core.rr's, so a file reads them undeclared (decision 0141), but for `cpython_syntax_error`, which it
 declares as written. `span` and `loc` lower to `node`. A span is a piece of a document's text, with an id of its own
 (never a node of `node`). A base relation a program reads is an input whether or not it says `.input`, in the
 runner too.
@@ -224,7 +224,7 @@ runner too.
     constant: the runner parses each host once per marker the program's `fstring_template` atoms hold.
 - `cpython_syntax_error(d, l, msg)` is core.rr's `syntax_error(d, l, msg)` under the name the runner binds it by
   (the converter declares `syntax_error(d: number)`, the tape's verdict, which a file here reads as
-  `tape_syntax_error(d)`; it may not declare core.rr's names, decision 0047a): `d` a Python document `ast.parse`
+  `tape_syntax_error(d)`; it may not declare core.rr's names, decision 0141): `d` a Python document `ast.parse`
   (CPython 3.13) rejects, `l` its `SyntaxError`'s `lineno` (1 for a
   null byte, where CPython gives none) and `msg` its `msg`, computed natively (`cpython::syntax`, Ruff's parser; no
   Python runs). It is stricter than `tape_syntax_error(d)`: an empty block (`if x:` then a comment or nothing), an
@@ -289,7 +289,7 @@ The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` 
 
 core.rr is every program's prelude (`rr::lower::core`): a relation the file reads and does not declare, which core.rr
 declares, has core.rr's declaration and is an input, so the python library's relations need no declarations of the
-core relations they read. A file may not declare or derive one (decision 0047a, `rr::read_file`): the tape's verdict,
+core relations they read. A file may not declare or derive one (decision 0141, `rr::read_file`): the tape's verdict,
 which the converter's programs declare as `syntax_error(d: number)`, is `tape_syntax_error(d)` here, and
 `syntax_error` read with one column is an error naming this. `#include "core.rr"` adds nothing. These
 core relations are tree arithmetic and lower to the base relations wherever the file does not derive them:

@@ -1,7 +1,7 @@
 //! A program's `ast(d, n, { … })` atoms, run by the transducer's matchers (decision 0106).
 //!
 //! Each atom becomes an input relation, one per distinct matcher and captured names: `rr_ast_<k>(n)` without
-//! captures, `rr_ast_<k>_<m>(n, x1, …, xm)` with `m` (decision 0107b), and `docof(n, d)` where the rule reads `d`
+//! captures, `rr_ast_<k>_<m>(n, x1, …, xm)` with `m` (decision 0107), and `docof(n, d)` where the rule reads `d`
 //! elsewhere. Each chunk fills the relations by running the matchers' wave over its documents' tapes
 //! (`facts::vtab::syntax::with_matchers`); a captured matcher's rows read W's bindings at each matched root. The
 //! joins read the matches as any base relation.
@@ -27,7 +27,7 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// `kind(r, "K")` and fields `field(r, "F", x), kind(x, "K2")` whose `x` no other literal or the head reads becomes one
 /// matcher, `{"all": [{"kind": "K"}, {"has": {"field": "F", "kind": "K2", "stopBy": "neighbor"}}, …]}`. With
 /// `capture`, a field the rule reads further is part of it too, its node the matcher's capture (`"pattern": "$C1"`,
-/// `C1: x`: decision 0107b). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
+/// `C1: x`: decision 0107). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
 /// `field` is the field's first node, where `field(r, "F", x)` is each of them (`import os, sys`'s two names). A field
 /// tested without a kind stays a join. The number of rules rewritten.
 pub fn absorb(prog: &mut Program, capture: bool) -> usize {

@@ -117,7 +117,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         let reads = |head: &str| body(head).iter().filter_map(|l| l.atom().map(|a| a.rel.clone())).collect::<Vec<_>>();
         assert_eq!(reads("a"), vec![rel.clone()]);
         assert_eq!(reads("b"), vec![rel.clone(), "docof".to_owned()]);
-        // A captured matcher's relation has the root and a column a capture (decision 0107b).
+        // A captured matcher's relation has the root and a column a capture (decision 0107).
         assert_eq!(found[1].0, "rr_ast_1_1");
         assert_eq!(found[1].2, vec!["X".to_owned()]);
         assert_eq!(reads("c"), vec!["rr_ast_1_1".to_owned()]);

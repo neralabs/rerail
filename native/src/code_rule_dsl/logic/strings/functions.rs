@@ -84,7 +84,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_place_line", &[Number], Number),
     // Characters, as SQLite's `length` counts a text's.
     ("rr_strlen", &[Text], Number),
-    // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107b): positions from 1,
+    // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107): positions from 1,
     // characters not bytes; `sql_substr2` is SQLite's `substr(x, y)`, `sql_trim2` its `trim(x, chars)`.
     ("sql_instr", &[Text, Text], Number),
     ("sql_substr", &[Text, Number, Number], Text),
@@ -133,7 +133,7 @@ pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     }
 }
 
-/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107b: t17's catalogue, the
+/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
 /// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
 /// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
 pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
@@ -642,4 +642,36 @@ pub fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
+    /// @place(p, 7))`) had no native form, so the edit failed. `@place`, `@place_path` and `@place_line` are native
+    /// functions, and their values are those of SQL's encoding (`plan::sql_term`), the path a symbol's atom.
+    #[test]
+    fn a_place_is_native_and_encoded_as_sql_encodes_it() {
+        for f in ["place", "place_path", "place_line"] {
+            let (_, kinds, ret) = native_call(f).unwrap_or_else(|| panic!("@{f} has a native function"));
+            assert!(kinds.iter().chain([&ret]).all(|k| *k == Kind::Number), "@{f} is over numbers: a symbol is its atom");
+        }
+        let int = |v: Value| match v {
+            Value::Integer(n) => n,
+            other => panic!("{other:?}"),
+        };
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for (p, l) in [(0, 0), (5, 7), (123_456, (1 << 32) - 1), (9, -1), (9, 1 << 32)] {
+            let sql: i64 = db
+                .query_row("SELECT CASE WHEN ?2 >= 0 AND ?2 < 4294967296 THEN -2 - (?1 * 4294967296 + ?2) ELSE -1 END", [p, l], |r| r.get(0))
+                .unwrap();
+            let place = int(eval("rr_place", &[], &[p, l]));
+            assert_eq!(place, sql, "@place({p}, {l}) as SQL makes it");
+            if sql != -1 {
+                assert_eq!(int(eval("rr_place_path", &[], &[place])), p);
+                assert_eq!(int(eval("rr_place_line", &[], &[place])), l);
+            }
+        }
+    }
 }

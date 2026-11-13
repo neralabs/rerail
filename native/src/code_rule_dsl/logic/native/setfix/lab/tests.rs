@@ -83,7 +83,7 @@
             };
             load(&db, false);
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
-            // The same stratum on the device (decision 0095b, step 4), first: its rows against the run's, row for row,
+            // The same stratum on the device (decision 0095, step 4), first: its rows against the run's, row for row,
             // or the reason the device refuses it. Then the relations as they were, for the CPU's run.
             #[cfg(target_os = "macos")]
             {

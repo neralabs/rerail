@@ -1,7 +1,7 @@
 # 0065: Typing's cross-file facts are one fixpoint, recorded by the store, keyed by type terms
 
 Status: draft for review (2026-11-07). Reverses parts of 03 §13 (an adopted Typing-branch resolution), I10, I11,
-I18, 0035, 0047b and 0056, so it needs that branch's agreement before any code changes. Replaces 0059 and 0064.
+I18, 0035, 0047 and 0056, so it needs that branch's agreement before any code changes. Replaces 0059 and 0064.
 
 ## Intro
 
@@ -9,7 +9,7 @@ A typing program has a per-file part and a cross-file part. The per-file part is
 rows are memoised by its content, its path and the plan (0052). The cross-file part is not stored, and it runs
 differently from every other part of the engine.
 
-It runs in **bounded rounds** (03 §13, 0035, 0047b). Round r reads round r − 1's rows wherever a chain crosses a
+It runs in **bounded rounds** (03 §13, 0035, 0047). Round r reads round r − 1's rows wherever a chain crosses a
 file, and the rounds stop at k = 4. Every round runs the whole cross-file part again.
 
 Three costs follow, each measured this week:
@@ -221,7 +221,7 @@ figure without either one.
   A dependency's file is a document like any other: it has a tape, its facts are stored by content like any
   file's, and there is no summary, no separate cache and no pending state. Findings are reported for the files a
   run is asked to check, whichever files it reads.
-- **0035, 0047b:** k, the hop rules, the pending round and `unconverged`, for the typing programs.
+- **0035, 0047:** k, the hop rules, the pending round and `unconverged`, for the typing programs.
 - **0056:** the typing programs no longer declare rounds. The declaration stays as a mechanism.
 - **0059:** withdrawn and its code removed. There is no library stage and no replay.
 - **0064:** withdrawn and its code removed. Its measurements are the evidence above.

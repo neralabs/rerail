@@ -3,7 +3,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// A closure of one level (decision 0095b §5, 0098 §1): a def's descendants, walked down the tree. Each def's subtree
+// A closure of one level (decision 0095 §5, 0098 §1): a def's descendants, walked down the tree. Each def's subtree
 // is a component of the reach graph, so its bit rows are pieces of their own.
 .decl wf_tree(p: node, c: node)
 wf_tree(p, c) :- child(p, c, _).

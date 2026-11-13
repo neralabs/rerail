@@ -1,4 +1,4 @@
-//! Where a stratum runs, CPU or GPU, from its shape and the planner's estimates (decision 0095b §8).
+//! Where a stratum runs, CPU or GPU, from its shape and the planner's estimates (decision 0095 §8).
 //!
 //! Before a stratum opens, its seeds' and probes' plans give an estimate of its work: the planner's own unit, the
 //! rows a join step reads. Each backend has a price for that work:
@@ -10,7 +10,7 @@
 //!   **assumed**; and each **join step** priced on each form it can take (`price_join`): the CPU's index lookups, the
 //!   device's sort and probe (any equi-join; a relation sorted once a stratum for every probe of it by the same
 //!   keys), the device's tile (a range inside a document). The device's join prices are **measured** by the
-//!   relational lab (0095b); the step's estimates are the planner's (its recorded plan, kept when profiling or when
+//!   relational lab (0095); the step's estimates are the planner's (its recorded plan, kept when profiling or when
 //!   the run may use the device).
 //!
 //! The stratum's **shape** is the relational forms its plans use: joins, negation, aggregates, comparisons,

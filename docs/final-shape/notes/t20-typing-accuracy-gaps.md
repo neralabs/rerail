@@ -126,11 +126,11 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   Each departure is pinned with its reason. One Python departure is a silent no-edge caused by O41: a
   re-export three files deep, which the k = 2 rounds cut. With k = 6 the rounds converge and it agrees, so O41
   is an accuracy bug, not only a report.
-- **Decisions** (0047b, the user): rounds k = 4 with a pending round; `calls:` moves to the programs after parity;
+- **Decisions** (0047, the user): rounds k = 4 with a pending round; `calls:` moves to the programs after parity;
   type relations drafted here first; Python first for receiver typing.
 - **O41 narrowed:** at k = 4 calls.rr converges on the oracle (84 agree, 9 depart, 0 wrong). Cut short, the
   pending round makes the re-export unknown, never no edge.
-- **Python parity** (decision 0047b, point 2).
+- **Python parity** (decision 0047, point 2).
   - The runtime oracle gained the cases the native resolver models and the program did not: a metaclass
     `__call__`, a `__new__`, a C3 diamond, and relative imports two dots up (`pkg/hierarchy.py`,
     `pkg/sub/deep.py`).
@@ -149,10 +149,10 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   | native resolver | 84 | 19 | 0 |
 
   Every departure of the program is one the native resolver also has. The program departs nowhere the native
-  resolver agrees. That is decision 0047b's condition for the switch. The Jedi corpus comparison is a broader
+  resolver agrees. That is decision 0047's condition for the switch. The Jedi corpus comparison is a broader
   accuracy check beside it, not a gate (O88).
 
-- **Rule-facing type relations, Python** (decision 0047b, point 3; step 1). `calls.rr` exports them beside
+- **Rule-facing type relations, Python** (decision 0047, point 3; step 1). `calls.rr` exports them beside
   `call_target`/`call_open`. They are three-valued, as calls are, and read the program's points-to values:
 
   ```text
@@ -206,7 +206,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
   `native/src/code_rule_dsl/typing/programs/calls.rr`, section "types". Type names are dotted qualified names
   for workspace classes and bare names for builtins, as `declared_ret` and `workload.rr`'s `type_of` write them.
 
-- **The switch, Python** (decision 0047b, point 2). One implementation of Python call resolution remains for
+- **The switch, Python** (decision 0047, point 2). One implementation of Python call resolution remains for
   `.rr` rules: the typing program.
   - **The bridge** (`logic::plan::corpus::bridge`). A rule reads a typing program's output by declaring an input
     `typing_<program>__<output>`, with each node column as four: path, kind, start, end. When a rule reaching an

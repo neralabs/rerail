@@ -3,7 +3,7 @@
 //! - **Declarations.** `rr::program` reads core.rr before every file, so a file's program has all of core.rr's
 //!   declarations, and a program that includes core.rr reads core.rr's shape (`syntax::Projection::of`); the
 //!   inputs it does not read are neither bound nor planned. A file may not declare or derive a
-//!   core.rr relation (decision 0047a, `rr::read_file`). A relation read and not declared, which core.rr declares,
+//!   core.rr relation (decision 0141, `rr::read_file`). A relation read and not declared, which core.rr declares,
 //!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a
 //!   text's own declaration replaces core.rr's: a converted program's `syntax_error(d: number)` (the tape has an
 //!   error node, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (the batch's `core_rr` row:

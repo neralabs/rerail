@@ -35,11 +35,11 @@ pub mod capture_run;
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
 pub mod metal_batch_abi;
 // cratify: `metal_parallel` is rerail-device-metal's (it mounts it)
-// Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095b).
+// Row programs on Metal: scan, count and scatter over the 16-bit layout (decision 0095).
 // cratify: `metal_rows` is rerail-device-metal's (it mounts it)
-// Relations sorted by a key on the device, and the joins that probe them (decision 0095b).
+// Relations sorted by a key on the device, and the joins that probe them (decision 0095).
 // cratify: `metal_sort` is rerail-device-metal's (it mounts it)
-// A stratum's join plan on the device: binding tables and their stages (decision 0095b, step 4).
+// A stratum's join plan on the device: binding tables and their stages (decision 0095, step 4).
 // cratify: `metal_join` is rerail-device-metal's (it mounts it)
 // cratify: `metal_program_backend` is rerail-device-metal's (it mounts it)
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
@@ -170,10 +170,10 @@ pub mod native_cpu_reduction;
 pub mod native_cpu_regex;
 pub mod native_cpu_scheduler;
 pub mod native_cpu_value;
-// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095b §2), the compiler crate's.
+// Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
 pub use rerail_compiler::native_cpu_rows;
-// Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095b).
+// Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub mod rows_sort;
 pub mod native_ir;
 pub mod output;

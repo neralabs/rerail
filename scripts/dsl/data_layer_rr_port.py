@@ -6,7 +6,7 @@ usage: data_layer_rr_port.py <programs dir> <main stem> <out dir>
 
 Each file stays a program of its own (the parts' relations are their own), each with the main file's `.policy`
 line (so the corpus includes core.rr and the matchers' `$option`s resolve) and a shim for what prelude.rr defines
-that core.rr does not. The rewrites (decision 0107b):
+that core.rr does not. The rewrites (decision 0107):
 - prelude's `doc(d, path)` is core's `doc(d, path, module)`;
 - `@within(n, a) = 1` (`= 0`) is core's `within(n, a)` (`!within`); `@depth(a)` is `ast_depth(a, k)`, a fresh `k`;
 - `@rx_matches(s, re) = 1` (`= 0`, `!= 1`) is the text test `@rx(s, re) = 1` (`= 0`);
@@ -23,7 +23,7 @@ shim = """
 // prelude.rr's relations core.rr does not hold, over core's (the data-layer port).
 .decl start(n: node, s: number)
 start(n, s) :- node(_, n, _, s, _).
-// The tree builtins @class_path and @class_prefix as relations (decision 0107b): the `name` texts of a class and its
+// The tree builtins @class_path and @class_prefix as relations (decision 0107): the `name` texts of a class and its
 // class ancestors, outermost first, joined with "."; a node's enclosing classes' path and ".", or "".
 .decl dl_class_kind(k: symbol)
 dl_class_kind("class_definition").

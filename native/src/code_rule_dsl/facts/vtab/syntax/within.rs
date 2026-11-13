@@ -17,7 +17,7 @@
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!
-//! - **The batch's solve** (`Nearest` and `Inside`, decision 0105a): where the planner expects more `n` lookups than
+//! - **The batch's solve** (`Nearest` and `Inside`, decision 0143): where the planner expects more `n` lookups than
 //!   one solve of every node costs, the `n` side is made for the whole batch at once by the transducer's file-local
 //!   FIX (`typing::file_local::nearest`: pointer jumping on Metal, one pass in preorder on the CPU). Its rows are ids
 //!   `0..`; the rows made per looked-up `n` are then ids from `LOOKED_UP` on. A scan of these axes solves.
@@ -213,7 +213,7 @@ impl Within {
         let nodes = self.batch.nodes.last().copied().unwrap_or(0) as f64;
         if *expected * LOOKUP_NS > nodes * SOLVE_NS {
             self.chosen.store(true, Ordering::Relaxed);
-            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0105a)", || {
+            crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || {
                 format!("solved for the batch: the planner expects at least {:.0} lookups over {nodes:.0} nodes", *expected)
             });
         }

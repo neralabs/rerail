@@ -5,7 +5,7 @@ evidence: no cut of the rounds pays for itself, and the rounds go instead.
 
 ## Intro
 
-A typing program's cross-file part runs in bounded rounds (0035, 0047b, 0056). Round r reads round r − 1's rows of
+A typing program's cross-file part runs in bounded rounds (0035, 0047, 0056). Round r reads round r − 1's rows of
 the hop relations (`<rel>__prev`) wherever a chain crosses a file. It stops when the digest of all hop rows is
 unchanged, or at k = 4.
 
@@ -64,7 +64,7 @@ digest for all rows. This record makes it per document.
      0059 measured that loading and indexing rows per round costs more than deriving them.
 
 5. **Then k is raised (step 3),** to the depth the library needs (8 for the 84-file corpus), and the pending round
-   (0047b) is kept.
+   (0047) is kept.
 
 ## Order of work
 

@@ -1,6 +1,6 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
-Status: draft (2026-11-09). It builds 0095b §5 (device waves) on the executor of 0098 §6. The order of work is
+Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
 below; steps 1–5 and 7–14 are built, and step 6 is measured.
 
 ## Intro
@@ -59,7 +59,7 @@ The level's CPU strata run meanwhile.
   - 0032 (resident slabs). **Used**: its budget split gives relations the run's share of the Metal buffer budget.
   - 0039 and 0040 (pre-pinned blocks; one wait per chunk). **Extended**: the pool moves into the one manager, and
     "one wait per chunk" becomes one wait per level, taken only by the stratum that needs the results.
-  - 0095b §5 (device waves). **Built** here, through 0098's executor rather than beside it.
+  - 0095 §5 (device waves). **Built** here, through 0098's executor rather than beside it.
   - 0098 §6 (the executor). **Extended**: asynchronous submission, inputs resident on the device, and the sort,
     probe and tile join forms as its kernels.
 - **The other work in progress**, surveyed before this record:
@@ -107,7 +107,7 @@ and returns at once. `wait` on a launch blocks only until that launch's lane is 
 
 A **space** (`rerail_accel::Space`) is what a chunk keeps on the GPU:
 
-- **Columns**, by relation, version and column. An input relation is uploaded once per chunk, in 0095b §6's narrow
+- **Columns**, by relation, version and column. An input relation is uploaded once per chunk, in 0095 §6's narrow
   form (16, 32 or 64 bits of offset from its least value).
 - **Sorted forms**, by relation, version and key columns: the permutation, the run starts and the run keys of
   `metal_sort`.
@@ -128,7 +128,7 @@ The strata loop gives each stratum a level: one more than the deepest level it r
 1. **Its launches are collected** from every stratum of the level whose inputs are known: count tables, histograms,
    the sorts of probed relations by their keys, and first joins (§6). A closure's launch is known only once its walk
    has found its nodes, so it is still sent alone.
-2. **Placement** prices every launch on every lane (0098 §2). The join forms' prices of 0095b §8 move into the
+2. **Placement** prices every launch on every lane (0098 §2). The join forms' prices of 0095 §8 move into the
    executor's price table, beside the other forms.
 3. **One submission per lane.**
 4. **The level's strata run in order on the host.** A stratum that reads a launch waits for it. The others, and
@@ -562,7 +562,7 @@ build: 10.4 → 0.3 µs; 16 launches 43–53 → 3.2 µs; 1,024 launches 549–5
      programs.
    - Prices, per row of both sides: the cores 5.7 ns (one core); the GPU 1.4 ns by sort and probe, 5 ns by tiles
      (the host's grouping). The pairs are not known ahead, so they are not priced. At these prices a single join
-     goes to the cores, as the lab found (0095b).
+     goes to the cores, as the lab found (0095).
    - **The space.** Every lane keeps a join's right side by the caller's id: the cores its sort; the GPU its sort,
      or its grouping by document. The id names a relation and its key columns, and a kept entry whose row count
      differs is refused. `Executor::forget(id)` drops one entry and `Executor::clear()` drops all of them, at the

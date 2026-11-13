@@ -54,7 +54,7 @@ Two facts shape everything below:
 | Workload | What it is |
 |---|---|
 | W1 prefilter | For each (document, rule) pair, how many of the rule's names occur in the document. 13,088 documents × 444 rules over 767 rule names. |
-| W2 join | Within each document, pair each read of a name with each binding of the same name. This is 0095b's `tile` shape (`up_once`). |
+| W2 join | Within each document, pair each read of a name with each binding of the same name. This is 0095's `tile` shape (`up_once`). |
 | W3 closure | Transitive closure of the import graph between documents. |
 | W4 group-by | A histogram of node kinds per document. |
 | W5 co-occurrence | For every pair of the 2,048 most frequent names, the number of documents that hold both: MLDB's AᵀA overlap counts. |
@@ -104,7 +104,7 @@ The GPU wins every workload once each uses its best form. All five finish in 1.9
 - **The matrix units pay only above about 80–200 int8 operations per byte of DRAM traffic.** Group-by does not reach
   that: the one-hot form on the matrix units is 3× slower than threadgroup atomics.
 - **At this corpus size the cost is in the framing, not the kernels.** One host round trip (0.13 ms at best, about
-  1 ms when the GPU is cold) costs as much as a whole workload. 0095b's device waves are the right shape: one command
+  1 ms when the GPU is cold) costs as much as a whole workload. 0095's device waves are the right shape: one command
   buffer per wave, at least about 1 ms of device work in each.
 
 ### 3. SME pays for dense bit products inside a CPU stratum
@@ -172,7 +172,7 @@ Compressed operands help only where they can stay compressed:
 
 ## What this means for the engine
 
-Mapped onto draft 0095b's plan ("Relational work on Metal": device waves, physical forms chosen by the planner):
+Mapped onto draft 0095's plan ("Relational work on Metal": device waves, physical forms chosen by the planner):
 
 | Physical form | Engine | Covers |
 |---|---|---|
@@ -200,7 +200,7 @@ These are from the research brief (sources in the session notes), not measured h
 ## Limits and open items
 
 - **One corpus, one language.** The workloads are extracts with the engine's shapes, not the engine's own relations.
-  0095b's step 0, a relational profile of the data layer, would say how much of a real run each workload stands for.
+  0095's step 0, a relational profile of the data layer, would say how much of a real run each workload stands for.
 - **GPU clocks are noisy under load.** Sustained rates are about 2.5× lower than bursts.
 - **The ANE was measured through Core ML only.** A private route (`_ANEClient`) might lower the per-call cost, but
   would not change the fp16-input rule.

@@ -219,8 +219,9 @@ pub enum TemplateError {
 pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
 
 /// A dialect whose files a language parses itself, not with tree-sitter (Blade's Forte), or with a parser
-/// standing in for tree-sitter's (JSON's Bitlex parser). The crate that owns the parser registers it for its
-/// dialect as the engine loads (`install_parsers`); the tape reads the file through it (`TapeImage::parse`).
+/// standing in for tree-sitter's (JSON's simdjson kernels). The crate that owns the parser registers each
+/// implementation for its dialect as the engine loads (`install_parsers`, a `ParserImpl` each); the tape
+/// reads the file through the one the router takes (`tree_parser`, `TapeImage::parse`).
 pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
@@ -245,16 +246,57 @@ pub trait TreeParser: Send + Sync {
     }
 }
 
-static PARSERS: std::sync::OnceLock<Vec<(GrammarDialect, &'static dyn TreeParser)>> = std::sync::OnceLock::new();
-
-/// The engine's tree parsers, by dialect; the first call holds.
-pub fn install_parsers(parsers: Vec<(GrammarDialect, &'static dyn TreeParser)>) {
-    let _ = PARSERS.set(parsers);
+/// One implementation of a dialect's parser, as its language registers it (`install_parsers`). A dialect
+/// may have several (JSON's: a kernel for each CPU family, simdjson's DOM parser); the router reads its
+/// files with the best one this host runs, and a file that one leaves alone goes to tree-sitter.
+pub struct ParserImpl {
+    pub dialect: GrammarDialect,
+    /// Its name, for the profile and the route's listing (`parser_routes`).
+    pub name: &'static str,
+    /// Its place among the dialect's implementations: the lowest this host runs is taken. The order is
+    /// the registering language's, from its measurements (JSON's: decision 0148).
+    pub rank: u32,
+    /// Whether this host runs it: its CPU's instructions, its build's.
+    pub runs: bool,
+    pub parser: &'static dyn TreeParser,
 }
 
-/// `dialect`'s own parser, where its language registered one.
+/// The parser router: every implementation registered, and for each dialect the one taken.
+struct Router {
+    registered: Vec<ParserImpl>,
+    /// Each dialect's implementation, an index into `registered`.
+    chosen: Vec<(GrammarDialect, usize)>,
+}
+
+static ROUTER: std::sync::OnceLock<Router> = std::sync::OnceLock::new();
+
+/// The engine's parsers, by dialect; the first call holds. Each dialect's files are read by the
+/// lowest-ranked implementation this host runs (the first registered, among equals).
+pub fn install_parsers(registered: Vec<ParserImpl>) {
+    let mut chosen: Vec<(GrammarDialect, usize)> = Vec::new();
+    for (i, r) in registered.iter().enumerate() {
+        if !r.runs {
+            continue;
+        }
+        match chosen.iter_mut().find(|(dialect, _)| *dialect == r.dialect) {
+            Some((_, best)) if registered[*best].rank <= r.rank => {}
+            Some((_, best)) => *best = i,
+            None => chosen.push((r.dialect, i)),
+        }
+    }
+    let _ = ROUTER.set(Router { registered, chosen });
+}
+
+/// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
-    PARSERS.get()?.iter().find(|(lang, _)| *lang == dialect).map(|(_, parser)| *parser)
+    let router = ROUTER.get()?;
+    router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// Every registered implementation, in registration order, and whether the router took it.
+pub fn parser_routes() -> Vec<(&'static ParserImpl, bool)> {
+    let Some(router) = ROUTER.get() else { return Vec::new() };
+    router.registered.iter().enumerate().map(|(i, r)| (r, router.chosen.iter().any(|&(_, c)| c == i))).collect()
 }
 
 impl From<String> for TemplateError {
@@ -1250,7 +1292,11 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        Self::read_image(&rerail_rr_syntax::tape(source), grammar)
+        // A parsed image carries its source's digest, as `finish`'s does (not stored since format 12): the
+        // documents and the memo are keyed by it.
+        let mut image = Self::read_image(&rerail_rr_syntax::tape(source), grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
     }
 
     /// The image of `nodes`, in preorder with their parents set.
@@ -1286,7 +1332,8 @@ impl TapeImage {
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
     /// per `CHECKPOINT_STRIDE` nodes, each of `size`, `off` and `tail` at its narrowest width): no node is
     /// packed again, and only the columns' lengths are checked (a code's range is the writer's: a node's code
-    /// is numbered as the node is written). Not generic, so it is compiled once, here.
+    /// is numbered as the node is written). `digest`: the source's SHA-256, where the parser's pass computed
+    /// it. Not generic, so it is compiled once, here.
     #[allow(clippy::too_many_arguments)]
     pub fn written(
         code: Vec<u8>,
@@ -1296,6 +1343,7 @@ impl TapeImage {
         tail: Vec<u8>,
         widths: [u8; 3],
         codes: Vec<Code>,
+        digest: Option<[u8; 32]>,
         grammar: &Grammar,
         source: &str,
         budget: &dyn Fn() -> bool,
@@ -1324,7 +1372,11 @@ impl TapeImage {
             kind_aliases: Vec::new(),
             language: grammar.lang,
             source_len: source.len(),
-            source_digest: Some(source_digest(source, &budget)?),
+            // The parser's pass hashed the source as it read it, or it is hashed here.
+            source_digest: Some(match digest {
+                Some(digest) => digest,
+                None => source_digest(source, &budget)?,
+            }),
         })
     }
 

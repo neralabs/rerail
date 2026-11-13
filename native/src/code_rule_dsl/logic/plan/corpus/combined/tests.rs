@@ -21,7 +21,7 @@
         assert!(lookup(&store, &[8u8; 32]).unwrap().is_none());
         // A file appearing where an include found none combines again.
         // Each edit comes in a later run (`flush` ends one): a run reads its files as they were when it first looked
-        // (decision 0105b).
+        // (decision 0105).
         let next_run = || super::super::observe(|o| o.flush());
         std::fs::write(&missing, "b").unwrap();
         next_run();

@@ -101,14 +101,14 @@ with the same file parses it not at all.
 
 ### 2. A library's names are the run's, one per run
 
-As `core.rr`'s names are the engine's (decision 0047a), a library relation keeps its name, one per run. Only a
+As `core.rr`'s names are the engine's (decision 0141), a library relation keeps its name, one per run. Only a
 program's own relations are renamed (`p{i}_…`), as now.
 
 The reader checks the two facts the survey found, so they cannot silently break:
 
 - A relation is declared in one library module of the run. Otherwise the run is refused, naming both files.
 - A program does not declare a relation of a library it includes. Otherwise the reader refuses it with the file,
-  the line and the name, as 0047a refuses `core.rr`'s names.
+  the line and the name, as 0141 refuses `core.rr`'s names.
 
 ### 3. A request makes an instance; equal requests share one
 
@@ -293,7 +293,7 @@ a `stat` later), the lowering of each program's own rules, and printing the prep
   reached SQL, so equal statements could be found). Here the duplication is removed before any pass runs, instead
   of being found after.
 - **Decisions:**
-  - 0047a: `core.rr` once per run, the precedent for §2;
+  - 0141: `core.rr` once per run, the precedent for §2;
   - 0038: `merge_identical`, which stays for programs' own copies;
   - 0051: one run for all rules;
   - 0052 and 0063: the per-file memo and session reruns, which §6 refines;

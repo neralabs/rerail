@@ -3,11 +3,12 @@ name = "rerail-simdjson"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "simdjson (C++, vendored at native/vendor/simdjson-5.0.5): a JSON file validated in full, and its structural index."
-links = "rerail_simdjson"
+description = "JSON's tape from simdjson: the portable side (the Tape, the index writer); the native code is rerail-simdjson-native's."
 
 [dependencies]
 memchr = "=2.8.3"
+rerail-simdjson-native = { path = "../simdjson_native" }
 
-[build-dependencies]
-cc = "=1.10.0"
+[dev-dependencies]
+libc = "0.2.189"
+sha2 = "0.11"

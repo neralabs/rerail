@@ -283,7 +283,7 @@ fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std:
     SNAPSHOTS.get_or_init(Default::default)
 }
 
-/// The relations a corpus memo's space keeps per file (decision 0108c: `memo::entry_rel`, `outputs_rel`): one frame a
+/// The relations a corpus memo's space keeps per file (decision 0146: `memo::entry_rel`, `outputs_rel`): one frame a
 /// file content and path, whose first read is its path.
 const MEMO_RELS: [&str; 2] = ["local", "local_out"];
 
@@ -364,7 +364,7 @@ impl ContentStore {
 
     /// `preload_frames`, of the memos' per-file frames (`MEMO_RELS`) only those of live plans' spaces (each
     /// root's protected runs' plans and those a run holds: `keep_corpus_runs`), and of each path the newest. A dead
-    /// plan's (an earlier engine build's, decision 0108c) are read by no run, nor an edited file's earlier contents'
+    /// plan's (an earlier engine build's, decision 0146) are read by no run, nor an edited file's earlier contents'
     /// entries; a run that looks one up misses it, and evaluates the file (the memo is a cache).
     pub fn preload_frames_live(&self) -> StoreResult<(usize, usize)> {
         let spaces: Vec<[u8; 32]> = {
@@ -1100,7 +1100,7 @@ fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
     out
 }
 
-/// The space of the per-file memo of plan `plan` (decision 0108c): one space per file-local program.
+/// The space of the per-file memo of plan `plan` (decision 0146): one space per file-local program.
 pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();

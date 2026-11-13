@@ -128,7 +128,7 @@ pub struct EdgeSpec {
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
-    /// The placement put the stratum on the device (decision 0095b §7).
+    /// The placement put the stratum on the device (decision 0095 §7).
     Device,
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed

@@ -82,6 +82,9 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// (decision 0117 step 4, `admit`): taken with `rels` from then on. Rows read, and relations.
     late: std::cell::RefCell<HashMap<String, Kept>>,
     admitted: std::cell::Cell<(usize, usize)>,
+    /// The statistics stored with the rows `admit` read (decision 0120 §3), under the address each has in this
+    /// process: measured, and kept by delta. Taken as `measured` and `patched` are (smoking gun 9, t34).
+    late_stats: std::cell::RefCell<(HashMap<(String, usize), Measured>, HashMap<String, Patched>)>,
     /// The relations this run derived past the budget: written to the frames with the kept ones (`write_frames`,
     /// `parts`), then let go (`let_go_past`), never held for the next run of this process.
     past: HashMap<String, Kept>,
@@ -382,7 +385,8 @@ pub(in crate::code_rule_dsl) fn budget() -> usize {
 
 /// What the next run keeps: the clean relations as they were, and those this run derived (each the engine's
 /// relation, with its width), in stratum order while they fit the budget, with the decoded `outputs`; and every
-/// input's source (held anyway while the session's inputs are: nothing is copied).
+/// input's source (held anyway while the session's inputs are: nothing is copied). `budget`: the bytes held in
+/// memory (`budget()`); what is past it is still written to the frames (`past`).
 pub(in crate::code_rule_dsl) fn after(
     old: Option<Retained>,
     key: [u8; 32],
@@ -396,6 +400,7 @@ pub(in crate::code_rule_dsl) fn after(
     mut input_docs: HashMap<String, Arc<DocDigests>>,
     docs: (super::input_delta::Docs, [u8; 32]),
     mut patched: HashMap<String, Patched>,
+    budget: usize,
 ) -> Retained {
     // An input bound as the last run's source keeps that source's hashes.
     if let Some(old) = &old {
@@ -411,7 +416,8 @@ pub(in crate::code_rule_dsl) fn after(
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
         // A relation this run did not derive again keeps its statistics kept by delta, as it keeps its rows.
-        for (name, p) in old.patched {
+        let late_patched = old.late_stats.into_inner().1;
+        for (name, p) in old.patched.into_iter().chain(late_patched) {
             patched.entry(name).or_insert(p);
         }
         for (rel, k) in old.rels.into_iter().chain(old.late.into_inner()) {
@@ -421,7 +427,6 @@ pub(in crate::code_rule_dsl) fn after(
         }
     }
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
-    let budget = budget();
     let mut past: HashMap<String, Kept> = HashMap::new();
     for (rel, width, held) in derived {
         // An index's relation (the reach index, decision 0119) is made again in less than reading it back costs:
@@ -533,18 +538,22 @@ impl Retained {
     }
 
     /// The statistics measured of kept relation `held` bound as `name`, if a run measured them.
-    pub(in crate::code_rule_dsl) fn measured(&self, name: &str, held: &Arc<InRel>) -> Option<&Measured> {
-        self.measured.get(&(name.to_owned(), Arc::as_ptr(held) as *const u8 as usize))
+    pub(in crate::code_rule_dsl) fn measured(&self, name: &str, held: &Arc<InRel>) -> Option<Measured> {
+        let key = (name.to_owned(), Arc::as_ptr(held) as *const u8 as usize);
+        self.measured.get(&key).cloned().or_else(|| self.late_stats.borrow().0.get(&key).cloned())
     }
 
     /// The statistics kept by delta of kept relation `held` bound as `name` (`Patched`), if a run kept them.
-    pub(in crate::code_rule_dsl) fn patched(&self, name: &str, held: &Arc<InRel>) -> Option<&Patched> {
-        self.patched.get(name).filter(|p| p.at == Arc::as_ptr(held) as *const u8 as usize)
+    pub(in crate::code_rule_dsl) fn patched(&self, name: &str, held: &Arc<InRel>) -> Option<Patched> {
+        let at = Arc::as_ptr(held) as *const u8 as usize;
+        self.patched.get(name).filter(|p| p.at == at).cloned().or_else(|| self.late_stats.borrow().1.get(name).filter(|p| p.at == at).cloned())
     }
 
     /// Every statistic kept, to be carried to the next run's (`after`).
     pub(in crate::code_rule_dsl) fn measured_all(&self) -> HashMap<(String, usize), Measured> {
-        self.measured.clone()
+        let mut all = self.late_stats.borrow().0.clone();
+        all.extend(self.measured.iter().map(|(k, m)| (k.clone(), m.clone())));
+        all
     }
 
     /// The last run's source of an input, as it bound it.
@@ -579,6 +588,10 @@ impl Retained {
         // levels only if its kept relations have them. Not a key of the admission's check: a relation may have none.
         let mut with_level_keys = keys.clone();
         with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)));
+        // Their statistics, stored for these rows (decision 0120 §3): taken with them, not counted from them.
+        if kept_stats::on() {
+            with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), kept_stats::PART)));
+        }
         let admitted = store.admit_frame_parts(&frames.space, &with_level_keys).map_err(|e| Error::Plan(e.to_string()))?;
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
@@ -595,10 +608,33 @@ impl Retained {
             rows += got.n;
             n += 1;
             let Some(kept) = with_levels(frames, levels, rel, key, got) else { return Ok(false) };
+            if kept_stats::on() {
+                self.take_stats(frames, &admitted, rel, &kept);
+            }
             late.insert(rel.clone(), Kept { rel: kept, width, output: None });
         }
         self.admitted.set((rows, n));
         Ok(true)
+    }
+
+    /// The statistics part stored with `rel`'s rows (`admitted` holds it, when stored), taken for `held`, the
+    /// relation those rows are in this process. A part of another digest is of other rows: not taken.
+    fn take_stats(&self, frames: &InFrames, admitted: &HashMap<(FrameRel, i64), Arc<crate::content_store::AdmittedFrame>>, rel: &str, held: &Arc<InRel>) {
+        let Some(d) = frames.derived.get(rel).map(|s| s.digest) else { return };
+        let Some(part) = admitted.get(&(frames.names[rel].clone(), kept_stats::PART)).filter(|p| p.stored.digest == d) else { return };
+        let Some(all) = part.rows().ok().and_then(|r| kept_stats::from_words(&r.rows)) else { return };
+        let at = Arc::as_ptr(held) as *const u8 as usize;
+        let mut late = self.late_stats.borrow_mut();
+        for ((name, _), s) in all {
+            match s {
+                kept_stats::KeptStat::Patched { stats, counts, tested } => {
+                    late.1.insert(name, Patched { at, stats, counts, tested });
+                }
+                kept_stats::KeptStat::Measured(m) => {
+                    late.0.insert((name, at), m);
+                }
+            }
+        }
     }
 
     /// The rows' count of each of `rels` the frames hold, read from their headers (their rows are not decoded).
@@ -1090,7 +1126,7 @@ pub mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),past:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
@@ -1896,13 +1932,14 @@ impl Retained {
     fn stats_puts(&self, was: &InFrames, now: &HashMap<String, u64>, puts: &mut Vec<FramePut>) {
         let mut by: HashMap<&str, kept_stats::ByDigest> = HashMap::new();
         let at_of = |rel: &str| self.framed(rel).map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize);
-        for (name, p) in &self.patched {
+        let late = self.late_stats.borrow();
+        for (name, p) in self.patched.iter().chain(&late.1) {
             let base = kept_stats::base(name);
             if let Some(d) = now.get(base).filter(|_| at_of(base) == Some(p.at)) {
                 by.entry(base).or_default().insert((name.clone(), *d), kept_stats::KeptStat::of_patched(p));
             }
         }
-        for ((name, at), m) in &self.measured {
+        for ((name, at), m) in self.measured.iter().chain(&late.0) {
             let base = kept_stats::base(name);
             if let Some(d) = now.get(base).filter(|_| at_of(base) == Some(*at)) {
                 by.entry(base).or_default().insert((name.clone(), *d), kept_stats::KeptStat::Measured(m.clone()));

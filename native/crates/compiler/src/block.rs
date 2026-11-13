@@ -467,7 +467,7 @@ pub struct BlockProgram {
     /// settle within `MAX_ROUNDS` (docs/parser-generators/03-bitlex.md §2.7).
     pub rounds: Vec<Vec<(u16, u16)>>,
     /// A row program's inputs: its stream is rows, not bytes, bit `j` of word `i` row `64 i + j`
-    /// of a run's columns (decision 0095b §2). Its values come from `Cmp` and `Bit` and the mask
+    /// of a run's columns (decision 0095 §2). Its values come from `Cmp` and `Bit` and the mask
     /// operations; it reads no bytes, has no delay, carries nothing from word to word and
     /// writes no tier-2 masks. Its extract pass writes row numbers: a filter's survivors.
     pub rows: Option<RowShape>,

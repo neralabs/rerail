@@ -360,7 +360,7 @@ impl<'a> Board<'a> {
         }
     }
 
-    /// Collects the components whose jobs ended, out of order (decision 0114b §1): each is absorbed and its members
+    /// Collects the components whose jobs ended, out of order (decision 0114 §1): each is absorbed and its members
     /// retire on the scoreboard now, so their readers are ready before the loop reaches them. A component writes only
     /// its own relations, so the order of absorbing is not the program's.
     pub(super) fn collect<'s>(&mut self, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>) -> Result<()> {
@@ -395,7 +395,7 @@ impl<'a> Board<'a> {
         };
         // Its strand's relations are those its members that ran made: the others' are not held.
         run.absorb(strand, &comp.own, &comp.digests);
-        // Its relations are published: so are its atoms (decision 0114b §4).
+        // Its relations are published: so are its atoms (decision 0114 §4).
         self.counts.atoms += reserved.len();
         drop(reserved);
         self.in_flight -= comp.members.len();

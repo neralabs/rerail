@@ -428,7 +428,7 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     answers
 }
 
-/// `calls.rr`'s type relations against the classes CPython's receivers were (decision 0047b, point 3): never wrong,
+/// `calls.rr`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
 /// and the receivers not exact as listed.
 const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
@@ -446,7 +446,7 @@ fn python_type_relations_agree_with_the_runtime() {
     assert_eq!(departures, listed, "receivers whose classes calls.rr does not give exactly");
 }
 
-/// A rule reads the Python program's answers through `lib/python/calls.rr` and `lib/python/types.rr` (decision 0047b, point 2): the engine runs
+/// A rule reads the Python program's answers through `lib/python/calls.rr` and `lib/python/types.rr` (decision 0047, point 2): the engine runs
 /// `typing/programs/calls.rr` for it (`corpus::bridge`), and the rule's call edges and proven types, joined back to its
 /// own nodes on `core.rr`'s facts, are exactly the program's on T's.
 #[test]
@@ -1250,7 +1250,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
-/// A rule that reads types (decision 0047b, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
+/// A rule that reads types (decision 0047, point 3): `docs/rule-syntax/data-layer/leg-083-typed.rr`, LEG-083 counting
 /// a `resolve()` as eager by its receiver's type, not its name, over `fixtures/python/leg083`. A lazy receiver is
 /// told by a declared return (`-> LazyResult[...]`), a decorator declared to keep the function (`(fn: F) -> F`), a
 /// class attribute's annotation, a quoted annotation and a chain of them; a pathlib path and an untyped parameter

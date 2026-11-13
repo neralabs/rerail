@@ -194,7 +194,7 @@ pub struct Step {
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
-/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105a).
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
     let mut into = 1.0;
     for step in &plan.steps {
@@ -1669,6 +1669,15 @@ impl Model {
             (Some(a), Some(b)) => growth(a, b),
             _ => f64::INFINITY,
         };
+        // A literal with a constant reads the constant's rows, not its relation's: `doc_role(d, 7)` with one row
+        // for 7 when planned and 2,455 now grew 2,455 times, though `doc_role` grew 9 (smoking gun 10, t34).
+        let grew = grew * Self::const_slots(body, first).into_iter().map(|i| match (previous.sizes.get(i), sizes.get(i)) {
+            (Some(&a), Some(&b)) if a != -1.0 && b != -1.0 => {
+                let n = |x: f64| if x == -2.0 { 0.0 } else { x };
+                (n(b).max(1.0) / n(a).max(1.0)).max(1.0)
+            }
+            _ => 1.0,
+        }).product::<f64>();
         // A line that did nothing tells nothing of its order's cost but that one row of input costs about that:
         // counted as one row of work (an order kept from an empty input, with 5,000 rows now, is searched).
         (ran.max(1.0) * grew < SEARCH_WORK && self.valid_live_driver(order, body, first))
@@ -1964,6 +1973,25 @@ impl Model {
             .collect()
     }
 
+    /// Where `live_sizes` holds the count of each constant the body's atoms test: the planning budget reads them
+    /// as growth (`budget_takes`).
+    fn const_slots(body: &[Literal], first: Option<usize>) -> Vec<usize> {
+        // `read_sizes` (the nodes, then each atom's rows), then the delta's rows.
+        let mut at = 1 + body.iter().filter(|l| l.atom().is_some()).count() + usize::from(first.and_then(|f| body[f].atom()).is_some());
+        let mut slots = Vec::new();
+        for a in body.iter().filter_map(Literal::atom) {
+            for t in &a.args {
+                if matches!(t, Term::Wild) { continue; }
+                at += 2;
+                if constant(t).is_some() {
+                    slots.push(at);
+                    at += 1;
+                }
+            }
+        }
+        slots
+    }
+
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
     /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
     pub fn live_sizes(&self, body: &[Literal], _first: Option<usize>) -> Vec<f64> {
@@ -2010,6 +2038,12 @@ impl Model {
     /// the next run's planning budget (decision 0122).
     pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
         plans_update(&key, |k| k.5 = Some(work));
+    }
+
+    /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ran_as_planned(&self, head: &Atom, body: &[Literal], first: Option<usize>, work: f64) {
+        Self::ran(self.plan_key("", head, body, first), work);
     }
 
     /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
@@ -3101,8 +3135,8 @@ impl Model {
         };
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
-        // Also when the run may use the device: placement prices each join step from these (decision 0095b); and when
-        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105a).
+        // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
         let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
@@ -4205,7 +4239,7 @@ enum Native<'a> {
     Ran,
     /// Its run waits on its device wave (`lanes::wave`): the driver's state, to resume once the wave ran.
     Waiting(Box<Driving<'a>>),
-    /// Its component posted requests (`Run::asking`, decision 0114b §3): the driver's state and the requests'
+    /// Its component posted requests (`Run::asking`, decision 0114 §3): the driver's state and the requests'
     /// tickets, to resume once every one is answered. Nothing waits for them meanwhile.
     Asking(Box<Driving<'a>>, Vec<u64>),
 }
@@ -4287,7 +4321,7 @@ struct Run<'a, 'b> {
     /// Answers a request (decision 0065 §2a): the request relation and its new rows, to the produced relations'
     /// rows. A component with a request pauses for it (`setfix`'s `request`).
     answer: Option<Answer<'b>>,
-    /// Posts requests and gives their answers as they arrive (decision 0114b §3): where the strata loop retires
+    /// Posts requests and gives their answers as they arrive (decision 0114 §3): where the strata loop retires
     /// strata from a scoreboard, a component with a request suspends on it instead of waiting in `answer`.
     asking: Option<&'b mut dyn Asking>,
     /// Each produced relation's rows answered so far, for a stratum above its request's (its table's rows).
@@ -4302,7 +4336,7 @@ struct Run<'a, 'b> {
 /// rows each produced relation gains.
 pub type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
 
-/// The runner's answers to requests, without a wait (decision 0114b §3): a request is posted and its answer is an
+/// The runner's answers to requests, without a wait (decision 0114 §3): a request is posted and its answer is an
 /// event, taken when it has come.
 pub trait Asking {
     /// Posts a request relation's new rows: the ticket its answer comes back with.
@@ -5610,7 +5644,7 @@ impl<'a> Strand<'a> {
         let t0 = std::time::Instant::now();
         times.clear();
         times.resize(members.len(), (t0, t0));
-        // The atoms it makes are its own until it retires (decision 0114b §4): reserved, then published.
+        // The atoms it makes are its own until it retires (decision 0114 §4): reserved, then published.
         struct End<'r>(Option<crate::content_store::atoms::Reservation>, &'r mut crate::content_store::atoms::Reserved);
         impl Drop for End<'_> {
             fn drop(&mut self) {
@@ -6545,7 +6579,7 @@ impl<'a> Run<'a, '_> {
         let rule_no = |r: &Rule| numbers.get(&(r as *const Rule)).copied();
         // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
         let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
-        // Its shape and planned work, for where it runs (`placement`, decision 0095b).
+        // Its shape and planned work, for where it runs (`placement`, decision 0095).
         let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
@@ -6747,7 +6781,7 @@ impl<'a> Run<'a, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), spec.to_text()));
         }
         let started = std::time::Instant::now();
-        // Where it runs (decision 0095b §7, §8). A stratum the placement puts on the device says so in its spec
+        // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
         // (`device`): its seed joins run there, in one submission, and a recursive one's rounds to its fixpoint
         // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
         // requests are forms the device lacks.
@@ -6769,7 +6803,7 @@ impl<'a> Run<'a, '_> {
         };
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let counted: Vec<Vec<(u64, u64)>> = Vec::new();
-        // The relational lab (decision 0095b, step 0): the stratum's sources and seeds kept to run it again alone.
+        // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
             .and_then(|path| super::native::component::lab::capture_inputs(&self.db, &name, &spec, &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
@@ -6903,7 +6937,7 @@ impl<'a> Run<'a, '_> {
                     })
                 }};
             }
-            // Requests, where they are posted (decision 0114b §3): the stratum suspends with its tickets.
+            // Requests, where they are posted (decision 0114 §3): the stratum suspends with its tickets.
             if f.last() == Some(&"2") && self.asking.is_some() && self.model.inputs.atoms.is_some() {
                 let asked = super::native::component::pending(&self.db, &name)?;
                 let asking = self.asking.as_deref_mut().expect("checked");
@@ -7597,7 +7631,7 @@ pub struct Hooks<'a> {
     pub unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub answer: Option<Answer<'a>>,
-    /// Posts the requests a component makes, their answers taken as they come (decision 0114b §3); used where the
+    /// Posts the requests a component makes, their answers taken as they come (decision 0114 §3); used where the
     /// strata loop retires from a scoreboard, `answer` elsewhere.
     pub asking: Option<&'a mut dyn Asking>,
     /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
@@ -8366,7 +8400,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             }
         }
     }
-    // Device waves (decision 0095b §5, 0098 §6): the strata in order of their levels. A stratum's level is one more
+    // Device waves (decision 0095 §5, 0098 §6): the strata in order of their levels. A stratum's level is one more
     // than the deepest level it depends on, so a level's strata do not depend on each other, and in this order each
     // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
     // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
@@ -8635,7 +8669,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     for (r, &l) in &last {
         after_last[(l + 1).min(sccs.len())].push(r.clone());
     }
-    // Device waves (decision 0095b §5, 0098 §6), by level (`by_level`):
+    // Device waves (decision 0095 §5, 0098 §6), by level (`by_level`):
     // - Each level's count tables that an earlier chunk found worth building (`count table`) are built as one batch
     //   when the level's first stratum runs. A table whose relation is not held yet is built by its step, as before.
     // - A stratum whose form launches kernels (the closure's bit rows) prepares them and waits (`Native::Waiting`),
@@ -8674,7 +8708,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     // Strata waiting on their device wave: position, key, driver's state.
     let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
-    // Strata suspended on their requests (decision 0114b §3), and the answers come for them so far, by ticket.
+    // Strata suspended on their requests (decision 0114 §3), and the answers come for them so far, by ticket.
     let mut asked: Vec<Asked> = Vec::new();
     let mut arrived: HashMap<u64, Vec<(String, Vec<Vec<i64>>)>> = HashMap::new();
     // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
@@ -8848,7 +8882,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         // first stratum, every stratum of the level is placed: its producers are all below it, so whether a changed
         // read reaches it is known. One no changed read reaches holds its kept rows; one that a changed read reaches
         // gets its form, maintained or derived again (decision 0090 §4, by its input deltas' size). The level's
-        // count tables and first joins go out as one device batch (decision 0095b §5, 0100 §5), and each form whose
+        // count tables and first joins go out as one device batch (decision 0095 §5, 0100 §5), and each form whose
         // pieces a strand can run is issued as a job on the host stream (decision 0113), retired at its position.
         if let Some(m) = maintaining.as_deref_mut() {
             if prepared_to <= at {
@@ -8990,7 +9024,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     let _wave = super::profile::span(|| "device wave (count tables, a maintained level)".into());
                     let (launches, rels) = super::native::component::prefetch_tables(db, &wants)?;
                     if launches > 0 {
-                        super::profile::decision("device waves (decision 0095b §5)", || format!("a maintained level of {} strata: {launches} count tables over {rels} relations in one batch", end - at));
+                        super::profile::decision("device waves (decision 0095 §5)", || format!("a maintained level of {} strata: {launches} count tables over {rels} relations in one batch", end - at));
                     }
                 }
                 if !specs.is_empty() {
@@ -9406,6 +9440,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
                 // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
                 let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
+                // so its readers read the facts and the answers both.
+                let mut rows = rows;
+                if run.native_rels.contains(rel) {
+                    if let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    }
+                }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());
             }
@@ -9465,7 +9507,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 let _wave = super::profile::span(|| "device wave (count tables)".into());
                 let (launches, rels) = super::native::component::prefetch_tables(db, &wants)?;
                 if launches > 0 {
-                    super::profile::decision("device waves (decision 0095b §5)", || format!("a level of {} strata: {launches} count tables over {rels} relations in one batch", level.len()));
+                    super::profile::decision("device waves (decision 0095 §5)", || format!("a level of {} strata: {launches} count tables over {rels} relations in one batch", level.len()));
                 }
             }
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
@@ -9827,7 +9869,7 @@ fn off_thread(e: &Error) -> bool {
 
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
-/// each other, so it is a device wave (decision 0095b §5).
+/// each other, so it is a device wave (decision 0095 §5).
 fn by_level(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, sort: bool) -> (Vec<BTreeSet<String>>, Vec<usize>) {
     let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     let mut level = vec![0usize; sccs.len()];
@@ -9874,7 +9916,7 @@ fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<
     Ok(())
 }
 
-/// A stratum suspended on its requests (decision 0114b §3): its position and key, its driver's state, the tickets
+/// A stratum suspended on its requests (decision 0114 §3): its position and key, its driver's state, the tickets
 /// of the requests it posted, and when it posted them.
 struct Asked<'a> {
     at: usize,

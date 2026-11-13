@@ -271,7 +271,7 @@ fn batches_test_their_strings_at_once_on_one_pool() {
     }
 }
 
-/// The data-layer programs' SQLite functions (decision 0107b) give what SQLite's own give, over strings with
+/// The data-layer programs' SQLite functions (decision 0107) give what SQLite's own give, over strings with
 /// multi-byte characters, negative and zero positions, and patterns of `%` and `_`.
 #[test]
 fn sqlite_functions_as_sqlite_has_them() {

@@ -33,11 +33,11 @@ use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Rule, Ter
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The number of rounds after round 0 the typing programs declare (I11 adopted k = 2; 4 since 2026-11-06, decision
-/// 0047b: the CPython runtime oracle's package re-export needs a third file crossing, and its rounds converge after
+/// 0047: the CPython runtime oracle's package re-export needs a third file crossing, and its rounds converge after
 /// round 4). Since decision 0056 a program states it (`PRAGMA`); this is the value they state.
 pub(crate) const K: usize = 4;
 
-/// A program's flag for the pending round (O41, decision 0047b): a program that declares the fact `unconverged(0)`
+/// A program's flag for the pending round (O41, decision 0047): a program that declares the fact `unconverged(0)`
 /// gets one more round after round `K` when the rounds have not converged, with `unconverged(1)` added. Its rules
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";

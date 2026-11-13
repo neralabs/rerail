@@ -315,7 +315,7 @@ fn metavariable(
 }
 
 /// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
-/// decision 0107b): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
+/// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
 /// A name of the rule's `transform` binds its text instead (`Capture::Text`). `None` where W does not match there or a
 /// name binds nothing; `Err` with the limit W's matcher hit within `work` visits.
 pub(in crate::code_rule_dsl) fn captured(

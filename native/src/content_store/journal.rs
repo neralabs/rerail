@@ -1,5 +1,5 @@
 //! What changed on disk since a cursor, from the journal the operating system keeps: the observer's way of knowing
-//! which paths to look at again without a `stat` of every path it knows (decision 0105b).
+//! which paths to look at again without a `stat` of every path it knows (decision 0105).
 //!
 //! On macOS that journal is FSEvents: `fseventsd` records every change to a volume with an event id, and replays the
 //! changes under some directories since an id (`sinceWhen`). A process of the engine asks it once, as it starts

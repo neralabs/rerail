@@ -1,7 +1,7 @@
 //! The engine's compute lanes (decision 0098 §2): one executor per binding, shared by every stratum of the process.
 //!
 //! - Under the **CPU binding**, the CPU's lanes: the cores and, where the CPU has one, its matrix unit (SME2). The
-//!   CPU is a target in its own right (0095b §7), and SME is part of it. SQL forms are also available.
+//!   CPU is a target in its own right (0095 §7), and SME is part of it. SQL forms are also available.
 //! - Under the **Metal binding**, every lane this machine has: the cores, SME, the GPU and the Neural Engine. Each
 //!   launch goes where `rerail_accel::price` places it: the least energy among the lanes within the parity band of
 //!   the first to finish.
@@ -78,7 +78,7 @@ pub fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
     out
 }
 
-/// Device waves (decision 0095b §5, 0098 §6): the launches of strata that do not read each other, run as one batch.
+/// Device waves (decision 0095 §5, 0098 §6): the launches of strata that do not read each other, run as one batch.
 ///
 /// A form that launches kernels runs in two halves around them. When its caller can wait (`can_wait`, while a
 /// `Suspendable` is held: the stratum driver), the first half queues its launches here and the component's run
@@ -215,6 +215,32 @@ pub mod wave {
     }
 }
 
+#[cfg(test)]
+mod wave_tests {
+    use super::wave;
+
+    /// Smoking gun 7 (t34, 2026-11-13): a level's strata may run as a job off the run's thread (decision 0113 §4), and
+    /// the wave their launches join is flushed there. The job takes its waves off its thread's count (`since`) and
+    /// the run's thread credits them when it takes the job back (`credit`, in `absorb`): the run counts them.
+    #[test]
+    fn a_jobs_waves_are_credited_to_the_run_that_takes_it_back() {
+        let before = wave::flushed();
+        let waves = std::thread::spawn(|| {
+            let at = wave::flushed_now();
+            wave::defer(Box::new(|| Ok(())));
+            assert_eq!(wave::flush(1).unwrap(), 1);
+            let waves = wave::since(at);
+            assert_eq!(wave::flushed_now(), at, "taken off the job's thread");
+            waves
+        })
+        .join()
+        .unwrap();
+        assert_eq!(wave::flushed(), before, "not the run's until it takes the job back");
+        wave::credit(waves);
+        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave is the run's");
+    }
+}
+
 /// The acceleration profile (decision 0098 §4): per form, where a launch's time goes from recognizing the form to
 /// consuming its output. Each form's host phases are timed here (`host`), each batch's executor report is added
 /// (`run`), and `report` renders the profile's section. Only under `RERAIL_PROFILE`.
@@ -259,7 +285,7 @@ pub mod prof {
 
     static FORMS: LazyLock<Mutex<BTreeMap<&'static str, Form>>> = LazyLock::new(Default::default);
 
-    /// Batches and device waves, over the run: launches per batch, batches per dependency level (decision 0095b §5).
+    /// Batches and device waves, over the run: launches per batch, batches per dependency level (decision 0095 §5).
     #[derive(Default)]
     struct Batches {
         batches: u64,
@@ -441,7 +467,7 @@ pub mod prof {
                 b.batches, b.launches, b.max_launches, b.by_size[0], b.by_size[1], b.by_size[2], b.by_size[3], b.by_size[4]);
             let _ = writeln!(r, "Per dependency level: {} levels ran a batch (at most {} in one level); by batches: 1: {}, 2: {}, 3-4: {}, 5-8: {}, more: {}",
                 b.levels, b.max_per_level, b.per_level[0], b.per_level[1], b.per_level[2], b.per_level[3], b.per_level[4]);
-            let _ = writeln!(r, "Device waves (decision 0095b §5): {} waves flushed, {} launches of {} waiting strata in them", b.waves, b.wave_launches, b.wave_strata);
+            let _ = writeln!(r, "Device waves (decision 0095 §5): {} waves flushed, {} launches of {} waiting strata in them", b.waves, b.wave_launches, b.wave_strata);
         }
         let _ = writeln!(r, "\nAll forms: {:.1} ms around the kernels (host phases' CPU, placing, threads, lanes' encode and decode) against {:.1} ms in them", ms(grand.0), ms(grand.1));
         r

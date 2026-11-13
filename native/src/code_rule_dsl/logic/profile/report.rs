@@ -75,7 +75,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     }
 }
 
-/// Where the native strata ran (decision 0095b): how many on each backend, the strata the GPU would run cheaper and
+/// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
 /// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
 pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
     use crate::code_rule_dsl::logic::plan::placement::gpu_price;
@@ -89,7 +89,7 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
     let device = all.values().any(|t| t.device);
     let _ = writeln!(
         r,
-        "\n== Placement (decision 0095b): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
+        "\n== Placement (decision 0095): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
         all.len(),
         runs - gpu,
         if device { "Metal" } else { "CPU" }

@@ -4,7 +4,7 @@ Status: proposed (2026-11-10)
 
 ## Intro
 
-Decision 0108b left three engine defects open:
+Decision 0108 left three engine defects open:
 
 - A rule reading the text of a node whose kind its body does not fix
   still saw the 256-byte bound.
@@ -177,4 +177,4 @@ across files. No `.rr` library computes this yet. The nearest are
 - **`reference_edge`** as `.rr` over the import and scope relations, or as
   W's graph supplied as a base relation.
 - **serverplan_quality's probes** need a port per entry-point case
-  (0108b).
+  (0108).

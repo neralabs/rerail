@@ -1,9 +1,9 @@
-# 0108c: The per-file memo is frames
-
-_Numbered 0108 until 2026-11-13, when 3 decisions shared the number; the letter orders them by when each was written._
+# 0146: The per-file memo is frames
 
 Status: accepted (2026-11-10). It builds t32 stage 5.1 and 5.2, and 0104's move 3 for the per-file memo, on
 this branch rather than More-ergonomic-rule-syntax, so that the work does not wait.
+
+Numbered 0108 where it was written; renumbered 0146 in the hub (2026-11-13) because another record had 0108.
 
 ## Intro
 

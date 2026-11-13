@@ -781,7 +781,7 @@ fn normalized(mut p: front::Program) -> front::Program {
         }
         rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
     }
-    // The lowering's projections (`lower::projections`, decision 0047a): `kind` and `docof` over nodes, read as
+    // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
     let v = |s: &str| front::Term::Var(s.to_owned());
     let mut at = 0;
@@ -1213,7 +1213,7 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
     assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
     let (again, files_again) = read_file(&main).unwrap();
     assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
-    // The edit comes in a later run: a run reads its files as they were when it first looked (decision 0105b).
+    // The edit comes in a later run: a run reads its files as they were when it first looked (decision 0105).
     std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
     crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.flush());
     let (edited, edited_files) = read_file(&main).unwrap();
@@ -2135,7 +2135,7 @@ Subtree(n) :- kind(n, "module"), text(n, _).
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
     assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
-    // Decision 0108b: a kind the rule reads by `kind` has its text at any length (the module's here, named by
+    // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
     // `Subtree`); the source span and the lines are exact either way.
     assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
 }

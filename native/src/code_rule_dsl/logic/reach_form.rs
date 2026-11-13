@@ -56,7 +56,7 @@ pub fn find(prog: &mut Program) -> Result<(usize, usize), Error> {
 }
 
 /// The reaches a later rewrite put in a cycle of other relations, made rows again. `find` takes a closure only when
-/// nothing it reads reads it back, but the rewrites after it (magic sets' demand, decision 0108a) add readers: at
+/// nothing it reads reads it back, but the rewrites after it (magic sets' demand, decision 0145) add readers: at
 /// O125, `magic_found_bbf` reads `anc` and feeds `found`, which `base`, `anc`'s edge, reads. A native operator's
 /// stratum has no maintained form (`plan`, decision 0119), so the 44 relations of that component were derived from
 /// scratch at every edit. Each such reach's rules are its own again, and a relation made through it is rows too.
