@@ -19,6 +19,7 @@
         kept().lock().unwrap().clear();
         let store = ContentStore::open(&db).unwrap();
         let back = read_all(&store, &prepared).unwrap().remove(&path(&key)).expect("kept in the store");
+        let back = decode_chosen(&back).expect("decoded when looked up");
         assert_eq!(format!("{:?}", back.program.as_deref()), format!("{:?}", Some(&rewritten)));
         assert_eq!((back.inlined.clone(), back.nodes), (vec!["e".to_owned()], 1000.0));
         let (text, _) = named(&prepared);

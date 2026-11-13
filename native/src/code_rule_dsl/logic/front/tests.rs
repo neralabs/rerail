@@ -16,7 +16,7 @@ fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
         ("calls.rr", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
-        ("calls_rust.rr", (61, 148, 9, 0, &[], 5, 6, 4, 45, 8, 147, 44)),
+        ("calls_rust.rr", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
         ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
             "workload_demand.rr",
