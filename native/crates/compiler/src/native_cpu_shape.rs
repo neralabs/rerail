@@ -12,6 +12,8 @@
 //!   - `Bits`: the next eight set bits of a mask (an extract's flattening);
 //!   - `Token`: the next token of tier 1's stream;
 //!   - `Round`: the next round of a fixed point, within a block (at most `block::MAX_ROUNDS`);
+//!   - `Region`: the next region of a block, on the CPU (`block::Walk`, decision 0139);
+//!   - `Word`: the next eight bytes of a scan for a closer past the block (a walk's `else`);
 //!   - `Node`: the next record of the node table (placing the wraps at the end, and the final
 //!     pass: each record's parent and extra flag);
 //!   - `Return`: the next call of the call stack, popped (the words' verifier: no call is made
@@ -33,6 +35,8 @@ pub enum Step {
     Bits,
     Token,
     Round,
+    Region,
+    Word,
     Node,
     Return,
 }

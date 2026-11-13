@@ -601,3 +601,26 @@ fn json_gated_regions_equal_the_interpreter() {
     }
 }
 
+
+/// Why the JSONC form refuses each file of `RERAIL_JSON_FILES` (a path a line): each reason
+/// with its count and a file. A probe: run by hand.
+#[test]
+#[ignore = "a probe: run by hand with RERAIL_JSON_FILES"]
+fn jsonc_refusals_by_reason() {
+    let c = form("15-jsonc");
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).expect("reads");
+    let mut reasons: std::collections::BTreeMap<String, (usize, String)> = Default::default();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(bytes) = std::fs::read(path) else { continue };
+        if let Err(e) = c.parser.image(&bytes) {
+            let r = reasons.entry(format!("{e:?}")).or_insert((0, path.to_owned()));
+            r.0 += 1;
+        }
+    }
+    for (reason, (n, path)) in &reasons {
+        eprintln!("{n:5} {reason}: {path}");
+    }
+    if let Ok(out) = std::env::var("RERAIL_DISASM") {
+        std::fs::write(out, rerail_compiler::rir_asm::disassemble(&c.program)).expect("writes");
+    }
+}

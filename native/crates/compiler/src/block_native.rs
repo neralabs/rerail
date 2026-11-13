@@ -31,6 +31,9 @@ pub struct BlockNative {
     pub groups: Vec<crate::block::Group>,
     /// The token records (`block::BlockProgram::records`): the record pass after the passes.
     pub records: Option<crate::records::Records>,
+    /// The groups that are regions (`block::BlockProgram::walks`): Metal runs their rounds; the
+    /// CPU walks them (`cpu_form`).
+    pub walks: Vec<crate::block::Walk>,
 }
 
 /// An instruction of a block body.
@@ -86,19 +89,25 @@ pub enum BlockInst {
     Cmp { col: u16, op: crate::block::CmpOp, rhs: crate::block::Rhs, width: u8 },
     /// A row program's set test (`block::BlockOp::Bit`): 64 rows' values looked up in a set.
     Bit { set: u16, col: u16 },
+    /// Value `out` of walk `walk` (`block::Walk::made`), on the CPU (`cpu_form`): the walk runs
+    /// once a block, a call, when the first of its values is needed. `args` is its inputs.
+    Walk { walk: u16, out: u8, args: u16 },
+    /// Two of a walk's inputs, or an input and the inputs before it: what `Walk` reads, so that
+    /// every pass orders and keeps them as it does any operand. No word of its own.
+    Args(u16, u16),
 }
 
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) | BlockInst::BackFill(..))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) | BlockInst::BackFill(..) | BlockInst::Walk { .. })
     }
 
     /// The values the instruction reads.
     pub fn operands(&self) -> Vec<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) => vec![usize::from(a)],
-            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) => {
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) | BlockInst::Walk { args: a, .. } => vec![usize::from(a)],
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) | BlockInst::Args(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
             _ => vec![],
@@ -146,6 +155,123 @@ impl BlockNative {
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
             records: program.records.clone(),
+            walks: program.walks.clone(),
+        }
+    }
+
+    /// Each instruction with its operands renamed by `m`.
+    pub fn renamed(inst: BlockInst, m: impl Fn(u16) -> u16) -> BlockInst {
+        match inst {
+            BlockInst::Not(a) => BlockInst::Not(m(a)),
+            BlockInst::And(a, b) => BlockInst::And(m(a), m(b)),
+            BlockInst::Or(a, b) => BlockInst::Or(m(a), m(b)),
+            BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
+            BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
+            BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+            BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
+            BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
+            BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
+            BlockInst::BackFill(a, b) => BlockInst::BackFill(m(a), m(b)),
+            BlockInst::Carry(a) => BlockInst::Carry(m(a)),
+            BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk, out, args: m(args) },
+            BlockInst::Args(a, b) => BlockInst::Args(m(a), m(b)),
+            other => other,
+        }
+    }
+
+    /// A walk with its values renamed by `m`.
+    fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
+    }
+
+    /// The CPU's form (decision 0139): each walk's group made by the walk, not by rounds. The
+    /// values the walk makes become its `Walk`s, reading its inputs through `Args`; the group
+    /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
+    /// backward pass it took). Metal runs the program as it is.
+    pub fn cpu_form(&self) -> BlockNative {
+        if self.walks.is_empty() {
+            return self.clone();
+        }
+        let mut insts = self.insts.clone();
+        let mut walked = vec![false; self.groups.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            walked[usize::from(walk.group)] = true;
+            // Each `Args` reads the one before it and one input more.
+            let reads = walk.reads();
+            let mut args = reads[0];
+            for &r in &reads[1..] {
+                insts.push(BlockInst::Args(args, r));
+                args = (insts.len() - 1) as u16;
+            }
+            for (out, v) in walk.made().into_iter().enumerate() {
+                insts[usize::from(v)] = BlockInst::Walk { walk: w as u16, out: out as u8, args };
+            }
+        }
+        // A `Walk` now reads a later `Args`: the program is put back in order with the `Args`
+        // where its walk's first value was, then pruned to what the outputs read.
+        let n = self.insts.len();
+        let mut order: Vec<usize> = Vec::with_capacity(insts.len());
+        let mut placed = vec![false; insts.len()];
+        fn place(x: usize, insts: &[BlockInst], placed: &mut [bool], order: &mut Vec<usize>) {
+            if placed[x] {
+                return;
+            }
+            placed[x] = true;
+            for o in insts[x].operands() {
+                place(o, insts, placed, order);
+            }
+            order.push(x);
+        }
+        let mut keep = vec![false; insts.len()];
+        let mut todo: Vec<usize> = self.outputs.iter().map(|&v| usize::from(v)).collect();
+        for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
+            todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
+        }
+        while let Some(x) = todo.pop() {
+            if !std::mem::replace(&mut keep[x], true) {
+                todo.extend(insts[x].operands());
+                // A kept group's carry reads its next, a round later.
+                for group in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]).map(|(_, g)| g) {
+                    if let Some(&(_, next)) = group.carries.iter().find(|p| p.0 == x) {
+                        todo.push(next);
+                    }
+                }
+            }
+        }
+        for x in 0..insts.len() {
+            if keep[x] && x < n {
+                place(x, &insts, &mut placed, &mut order);
+            }
+        }
+        let mut number = vec![u16::MAX; insts.len()];
+        for (k, &x) in order.iter().enumerate() {
+            number[x] = k as u16;
+        }
+        let m = |v: u16| number[usize::from(v)];
+        let place_of = |x: usize| usize::from(number[x]);
+        BlockNative {
+            tables: self.tables.clone(),
+            insts: order.iter().map(|&x| Self::renamed(insts[x], m)).collect(),
+            outputs: self.outputs.iter().map(|&v| m(v)).collect(),
+            extracts: self.extracts.clone(),
+            totals: self.totals.clone(),
+            masks: self.masks.clone(),
+            delay: self.delay,
+            output_delays: self.output_delays.clone(),
+            records: self.records.clone(),
+            groups: self
+                .groups
+                .iter()
+                .enumerate()
+                .filter(|(g, _)| !walked[*g])
+                .map(|(_, g)| {
+                    let mut members: Vec<usize> = g.members.iter().filter(|&&x| keep[x]).map(|&x| place_of(x)).collect();
+                    members.sort_unstable();
+                    crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
+                })
+                .collect(),
+            walks: self.walks.iter().map(|w| Self::walk_renamed(w, m)).collect(),
         }
     }
 
@@ -201,6 +327,8 @@ impl BlockNative {
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
                 BlockInst::BackFill(a, b) => f.push(BlockInst::BackFill(m(a), m(b))),
                 BlockInst::Carry(a) => f.push(BlockInst::Carry(m(a))),
+                BlockInst::Walk { walk, out, args } => f.push(BlockInst::Walk { walk, out, args: m(args) }),
+                BlockInst::Args(a, b) => f.push(BlockInst::Args(m(a), m(b))),
                 other => f.push(other),
             };
             at.push(index);
@@ -216,6 +344,7 @@ impl BlockNative {
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
+            walks: self.walks.iter().map(|w| Self::walk_renamed(w, |v| at[usize::from(v)])).collect(),
             groups: self
                 .groups
                 .iter()
@@ -437,6 +566,8 @@ impl BlockNative {
                     BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
                     BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
                     BlockInst::Carry(a) => BlockInst::Carry(m(a)),
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk, out, args: m(args) },
+                    BlockInst::Args(a, b) => BlockInst::Args(m(a), m(b)),
                     BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("not in a forward pass"),
                     other => other,
                 });
@@ -452,7 +583,11 @@ impl BlockNative {
                 .filter(|g| g.members.iter().all(|&m| in_pass(m, p)))
                 .map(|g| crate::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
                 .collect();
+            // A walk is made in the pass of its values, all in one (its `Walk`s read one `Args`).
+            // In another pass it is a walk of no kinds, of nothing (its `hidden` any value).
+            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
             let body = |outputs: Vec<u16>, last: bool| BlockNative {
+                walks: walks.clone(),
                 tables: self.tables.clone(),
                 insts: insts.clone(),
                 output_delays: if last { self.output_delays.clone() } else { vec![0; outputs.len()] },

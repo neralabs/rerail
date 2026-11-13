@@ -500,6 +500,48 @@ pub mod tests {
         }
     }
 
+    /// The grammar's regions walked (the CPU's form, decision 0139) are its rounds' fixed point
+    /// (Metal's): every value of tier 1 the same, on a sample of the corpus and on regions whose
+    /// closers cross a block's end, and empty literals with and without a `` `` `` later.
+    #[test]
+    fn the_walks_are_the_rounds() {
+        let c = crate::compiled().expect("compiles");
+        assert_eq!(c.block.walks.len(), 1, "the grammar's regions are one walk");
+        let pad = |n: usize| "x".repeat(n);
+        let edges = [
+            format!("{}```a```", pad(55)),
+            format!("{}```a``` r(x).", pad(58)),
+            format!("{}\"{}\" r(x).", pad(40), "s".repeat(100)),
+            format!("{}/* {} */ r(x).", pad(61), "c".repeat(70)),
+            format!("{}// c\n r(x).", pad(62)),
+            format!("r(x) :- x = ``, y = ``.{}", pad(90)),
+            format!("r(x) :- x = ``, y = ``a``.{}``", pad(90)),
+            format!("{}`` {} ``", pad(30), pad(200)),
+            "r(x) :- `a\"b`, \"c`d\", `` `` ``.".to_owned(),
+            "\"open at the end".to_owned(),
+            "/* open at the end".to_owned(),
+            "``".to_owned(),
+        ];
+        let corpus = corpus();
+        let mut files: Vec<&[u8]> = corpus.iter().step_by(10).map(|f| f.as_bytes()).collect();
+        files.extend(edges.iter().map(|f| f.as_bytes()));
+        let (walked, spans) = c.block.all_values(&files);
+        let (rounds, _) = c.block.rounds_values(&files);
+        for (v, (w, r)) in walked.iter().zip(&rounds).enumerate() {
+            if w != r {
+                let b = w.iter().zip(r).position(|(x, y)| x != y).expect("a word differs");
+                let f = spans.iter().position(|s| s.contains(&b)).expect("a file's");
+                panic!("value {v} differs in file {f} block {}: walked {:#x}, rounds {:#x}", b - spans[f].start, w[b], r[b]);
+            }
+        }
+        // And the CPU's tier 1 (the walk lowered) gives the engine's tapes on the edges.
+        for f in &edges {
+            if let Ok(t) = c.parser.image(f.as_bytes()) {
+                assert_eq!(t, crate::engine_tape(f), "{f:?}");
+            }
+        }
+    }
+
     /// The compiled parser's tier 2 is in clusters, cut by the samples' profile, and each sample
     /// parses (none is refused).
     #[test]
@@ -841,6 +883,19 @@ pub mod tests {
     fn rr_tier1_shape() {
         use rerail_compiler::block_native::{BlockInst, Pass};
         let c = super::compiled().expect("compiles");
+        // The CPU's form (its walks walked, decision 0139), then Metal's (their rounds run).
+        let cpu = c.native.cpu_form();
+        let cpu_passes = cpu.passes();
+        eprintln!("the CPU's form: {} passes", cpu_passes.passes.len());
+        for (k, pass) in cpu_passes.passes.iter().enumerate() {
+            if let Pass::Forward { body, stores } = pass {
+                let count = |f: &dyn Fn(&BlockInst) -> bool| body.insts.iter().filter(|i| f(i)).count();
+                eprintln!("  pass {k}: forward, {} insts, {} walk values, {} fills, {} prevs, {} groups, {} outputs, {} stores", body.insts.len(), count(&|i| matches!(i, BlockInst::Walk { .. })), count(&|i| matches!(i, BlockInst::Fill(..))), count(&|i| matches!(i, BlockInst::Prev(..))), body.groups.len(), body.outputs.len(), stores.len());
+            } else {
+                eprintln!("  pass {k}: back");
+            }
+        }
+        eprintln!("Metal's form:");
         let passes = c.native.passes();
         let want: Option<(usize, usize)> = std::env::var("RR_PASS").ok().and_then(|p| Some((p.parse().ok()?, std::env::var("RR_CONE").ok()?.parse().ok()?)));
         for (k, pass) in passes.passes.iter().enumerate() {
