@@ -3580,6 +3580,20 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-from-fact.rr",
+      "sha256": "c949ed984d3819d7a1bc6849b31add43cc997f8f18b4e26eeca721ca310d4529",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-from-fact.rr",
+      "sha256": "2674e3ed557d3f90fb440229743d8b0d31fefbf0cc796760d8b409112ce0b975",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
     }
   ],
   "rules": [
@@ -6589,14 +6603,14 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "9bfdb4cd566c3e0933fc7eec71400cee8914494f",
+    "upstreamCommit": "bd71442a1ba183ca904166e7b1b7fcc91e90f1bd",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Integration hub 9bf with complete batched request answers, shared filesystem order and metadata, typed errors, load aliases and native value primitives",
+    "status": "Integration hub bd with shared filesystem views, complete deferred batches and native Python primitive conversions",
     "nativeExtensions": [
       {
         "path": "native/src/code_rule_dsl/cpython/value.rs",
-        "sha256": "8bb5b1e37a14937bf419f79a2761a6647c690235aff4e3da7df8b541e3c915a6",
-        "reason": "Expose the existing native Python float formatter across the integrated crate boundary"
+        "sha256": "041c5c9cab68804170315487f714b152c47fa7d092f56ae7dba996267b7b4d49",
+        "reason": "Native primitive formatting and fallible integer casts, required by lint_plan_scope_side_effects.py:503"
       },
       {
         "path": "native/src/code_rule_dsl/logic/answers.rs",
@@ -6604,7 +6618,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "ae8de1f9a87b93eaf7b338938d7797e4fffe87f0ecabfa6f3eebd2974ab89b15"
+        "sha256": "8bd2e982b00df7590b8e4b43747d99ab6f41886a4b683731d7d3aa811d54e1e1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
@@ -6632,7 +6646,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "66ad6a727b71c00dd93ee89846ef723072934397971a284f31211521404074c5"
+        "sha256": "4cb558b5bcbb6ca3f03ee3306da05f6f5a0f448e1fea5ac5fb557bcccdd40ebb"
       },
       {
         "path": "native/src/code_rule_dsl/logic/simplify.rs",
@@ -6640,20 +6654,20 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "8bcea8eb41109da92e9eef9fb35856db3d7720c88982342ba048618abf8f9d91",
-        "reason": "Generic native primitive float formatting for typed caller value graphs"
+        "sha256": "c3b2b4a100ebb199951ab84270ae14ca69cac3d8ff06d31a808cc34dd228ca27",
+        "reason": "Native primitive formatting and fallible integer casts, required by lint_plan_scope_side_effects.py:503"
       },
       {
         "path": "native/src/code_rule_dsl/mod.rs",
-        "sha256": "797872c72d095eb8a58ff5d390764fc376f1355615c32077ae8f8125af2640dc",
-        "reason": "Generic native primitive float formatting for typed caller value graphs"
+        "sha256": "c1fdb408d5ff497b1c5149189a76c30a9d18f803770a0f5ab0847c341dcfb249",
+        "reason": "Native primitive formatting and fallible integer casts, required by lint_plan_scope_side_effects.py:503"
       },
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "f7e4a35a0da4ffa525f811b0fcdcf687220e30076d6072df10ffc4a37a1c0322"
       }
     ],
-    "previousUpstreamCommit": "83b51a47d8b3a1d254c7c98e1f8f8a8f36b54707",
+    "previousUpstreamCommit": "9bfdb4cd566c3e0933fc7eec71400cee8914494f",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "artifactHistory": [
       {
@@ -7077,49 +7091,36 @@
         "wallSeconds": 584.31,
         "userCpuSeconds": 1324.68,
         "systemCpuSeconds": 57.99
-      }
-    ],
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "9bfdb4cd566c3e0933fc7eec71400cee8914494f",
-      "engineCommit": "3fd200bf61585f8da1516325f9510fa4ff7dd7d6",
-      "sourceTrees": {
-        "native": "f55552627708d0c63e83e9c2f1292a49feeb91ed",
-        "accel": "193e76a3e6ccbcb3d3d05444a9f47c310f639c1c",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "b6ca6ef23b16ca8589768e8569f5766fe8a2f6ee"
-      }
-    },
-    "cliArtifact": {
-      "format": "rerail.root-engine-build/v1",
-      "engineCommit": "3fd200bf61585f8da1516325f9510fa4ff7dd7d6",
-      "upstreamCommit": "9bfdb4cd566c3e0933fc7eec71400cee8914494f",
-      "sourceTrees": {
-        "native": "f55552627708d0c63e83e9c2f1292a49feeb91ed",
-        "accel": "193e76a3e6ccbcb3d3d05444a9f47c310f639c1c",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "b6ca6ef23b16ca8589768e8569f5766fe8a2f6ee"
       },
-      "path": ".rerail/modern-engine-alignment/cli-69fd43262751e202",
-      "sha256": "69fd43262751e2024b4d15708d0640f297cccf0bc1208c954a63d6ce296ee322",
-      "command": "RUSTUP_TOOLCHAIN=1.97.1 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
-      "buildAttempts": [
-        {
-          "log": "build9bf.log",
-          "status": "passed",
-          "wallSeconds": 108.54,
-          "userCpuSeconds": 459.36,
-          "systemCpuSeconds": 27.23
-        }
-      ],
-      "wallSeconds": 108.54,
-      "userCpuSeconds": 459.36,
-      "systemCpuSeconds": 27.23
-    }
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "3fd200bf61585f8da1516325f9510fa4ff7dd7d6",
+        "upstreamCommit": "9bfdb4cd566c3e0933fc7eec71400cee8914494f",
+        "sourceTrees": {
+          "native": "f55552627708d0c63e83e9c2f1292a49feeb91ed",
+          "accel": "193e76a3e6ccbcb3d3d05444a9f47c310f639c1c",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
+          "Cargo.lock": "b6ca6ef23b16ca8589768e8569f5766fe8a2f6ee"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-69fd43262751e202",
+        "sha256": "69fd43262751e2024b4d15708d0640f297cccf0bc1208c954a63d6ce296ee322",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "log": "build9bf.log",
+            "status": "passed",
+            "wallSeconds": 108.54,
+            "userCpuSeconds": 459.36,
+            "systemCpuSeconds": 27.23
+          }
+        ],
+        "wallSeconds": 108.54,
+        "userCpuSeconds": 459.36,
+        "systemCpuSeconds": 27.23
+      }
+    ]
   },
   "engineSourceSnapshots": [
     {
