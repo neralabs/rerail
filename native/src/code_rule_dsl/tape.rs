@@ -1250,7 +1250,11 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        Self::read_image(&rerail_rr_syntax::tape(source), grammar)
+        // A parsed image carries its source's digest, as `finish`'s does (not stored since format 12): the
+        // documents and the memo are keyed by it.
+        let mut image = Self::read_image(&rerail_rr_syntax::tape(source), grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
     }
 
     /// The image of `nodes`, in preorder with their parents set.
