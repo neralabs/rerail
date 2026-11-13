@@ -52,12 +52,21 @@ fn add_samples(samples: &mut Vec<Vec<u8>>, total: &mut usize, bytes: &[u8]) {
 }
 
 pub fn prepare(files: Vec<File>) -> Result<Corpus, String> {
+    prepare_with(files, None)
+}
+
+/// As `prepare`, with the supertype candidates already learned (a streamed corpus learns them from every
+/// file first, so every shard numbers masks alike).
+pub fn prepare_with(files: Vec<File>, known: Option<Candidates>) -> Result<Corpus, String> {
     // Pass 1: every tree's supertypes (a mask indexes the full candidate list), and format 15's training half.
-    let mut candidates = Candidates::default();
+    let learn = known.is_none();
+    let mut candidates = known.unwrap_or_default();
     let mut v15_train: BTreeMap<u8, (Vec<Vec<u8>>, usize)> = BTreeMap::new();
     for f in &files {
-        let tree = v15::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
-        candidates.learn(f.tag, &tree);
+        if learn {
+            let tree = v15::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
+            candidates.learn(f.tag, &tree);
+        }
         if !f.is_test() {
             let (v, total) = v15_train.entry(f.tag).or_default();
             add_samples(v, total, &f.image);
@@ -240,7 +249,43 @@ pub struct Row {
     pub errors: usize,
 }
 
+impl Lang {
+    pub fn merge(&mut self, o: &Lang) {
+        self.files += o.files;
+        self.nodes += o.nodes;
+        self.source_bytes += o.source_bytes;
+        self.source_stored += o.source_stored;
+        self.v15_raw += o.v15_raw;
+        self.v15_stored += o.v15_stored;
+        self.v15_trained += o.v15_trained;
+        self.laid += o.laid;
+        self.stored += o.stored;
+        self.placement += o.placement;
+        self.entropy += o.entropy;
+        self.dict_bytes = self.dict_bytes.max(o.dict_bytes);
+        self.blocks += o.blocks;
+        self.dup_bytes += o.dup_bytes;
+        self.trained |= o.trained;
+    }
+}
+
 impl Row {
+    /// Another shard's row of the same solution added in.
+    pub fn merge(&mut self, o: &Row) {
+        for (k, l) in &o.by_lang {
+            self.by_lang.entry(k.clone()).or_default().merge(l);
+        }
+        self.encode += o.encode;
+        self.decode += o.decode;
+        self.positions += o.positions;
+        self.random += o.random;
+        self.random_reads += o.random_reads;
+        self.errors += o.errors;
+        if self.solution.is_empty() {
+            self.solution = o.solution.clone();
+        }
+    }
+
     pub fn total(&self) -> Lang {
         let mut t = Lang::default();
         for l in self.by_lang.values() {

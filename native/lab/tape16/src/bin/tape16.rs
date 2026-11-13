@@ -18,6 +18,7 @@ use rerail_tape_lab::solution::{self, Corpus, Dicts, Solution};
 use rerail_tape_lab::{capture, edits, events, layout, report, text};
 use std::collections::{BTreeMap, HashMap};
 
+
 fn base() -> Solution {
     Solution { layout: Layout::BytePlanes, codec: Codec::LpLz, cut: Cut::Whole, dict: 64 * 1024, k: 64, extras: Extras::default(), entropy: false }
 }
@@ -83,6 +84,25 @@ fn grid(full: bool, axis: &str) -> Vec<Solution> {
             }
         }
     }
+    if axis == "final" {
+        // The candidates the measurements so far point at, for a whole-repository run.
+        v.clear();
+        push(Solution { codec: Codec::Zstd, ..b }, &mut v);
+        push(Solution { codec: Codec::Zstd, cut: Cut::Target(1024), dict: 16 * 1024, ..b }, &mut v);
+        push(Solution { codec: Codec::LzOutput, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        push(Solution { codec: Codec::LpSpan { depth: 4, cross: true }, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        push(Solution { codec: Codec::LpSpan { depth: 4, cross: true }, cut: Cut::Target(256), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+    }
+    if axis == "dictcut" {
+        for cut in [Cut::Target(256), Cut::Target(1024)] {
+            for dict in [0, 16 * 1024, 64 * 1024] {
+                push(Solution { codec: Codec::Zstd, cut, dict, ..b }, &mut v);
+                for codec in [Codec::LzOutput, Codec::LpSpan { depth: 4, cross: true }] {
+                    push(Solution { codec, cut, dict, entropy: true, ..b }, &mut v);
+                }
+            }
+        }
+    }
     if axis == "huff" {
         for cut in [Cut::Whole, Cut::Target(1024)] {
             for codec in [Codec::LzOutput, Codec::LpLz, Codec::LpReplay, Codec::LpSpan { depth: 4, cross: false }, Codec::LpSpan { depth: 4, cross: true }] {
@@ -111,6 +131,61 @@ fn load(path: &str) -> Corpus {
 fn die(e: &str) -> ! {
     eprintln!("tape16: {e}");
     std::process::exit(1)
+}
+
+/// The grid over a capture too big to hold: candidates from every file, a fixed training subsample (about
+/// `TRAIN_NODES` per language) for dictionaries and tables, then the test half in `shards` shards, rows added.
+fn cmd_grid_streamed(path: &str, full: bool, axis: &str, check: bool, shards: u64, only: Option<usize>) {
+    const TRAIN_NODES: u64 = 1_500_000;
+    let p = std::path::Path::new(path);
+    let mut cand = rerail_tape_lab::events::Candidates::default();
+    let mut train_nodes: BTreeMap<u8, u64> = BTreeMap::new();
+    let (mut files, mut nodes) = (0usize, 0u64);
+    capture::stream(p, |f| {
+        let t = rerail_tape_lab::v15::read(&f.image)?;
+        cand.learn(f.tag, &t);
+        files += 1;
+        if !f.is_test() {
+            *train_nodes.entry(f.tag).or_default() += t.len() as u64;
+        } else {
+            nodes += t.len() as u64;
+        }
+        Ok(())
+    })
+    .unwrap_or_else(|e| die(&e));
+    let rate: BTreeMap<u8, u64> = train_nodes.iter().map(|(t, n)| (*t, n.div_ceil(TRAIN_NODES).max(1))).collect();
+    let mut train = Vec::new();
+    capture::stream(p, |f| {
+        if !f.is_test() && capture::path_hash(&f.path, 1) % rate[&f.tag] == 0 {
+            train.push(f);
+        }
+        Ok(())
+    })
+    .unwrap_or_else(|e| die(&e));
+    println!("{path}: {files} files, {nodes} test nodes in {shards} shards; training on {} files (1 in {:?} by language)\n", train.len(), rate.values().collect::<Vec<_>>());
+    let mut sols = grid(full, axis);
+    if let Some(i) = only {
+        sols = vec![sols[i]];
+    }
+    let mut rows: Vec<solution::Row> = sols.iter().map(|_| solution::Row::default()).collect();
+    let mut dicts = Dicts::default();
+    for shard in 0..shards {
+        let mut part: Vec<capture::File> = train.iter().map(|f| capture::File { path: f.path.clone(), tag: f.tag, source: f.source.clone(), image: f.image.clone() }).collect();
+        capture::stream(p, |f| {
+            if f.is_test() && capture::path_hash(&f.path, 2) % shards == shard {
+                part.push(f);
+            }
+            Ok(())
+        })
+        .unwrap_or_else(|e| die(&e));
+        let corpus = solution::prepare_with(part, Some(cand.clone())).unwrap_or_else(|e| die(&e));
+        for (s, row) in sols.iter().zip(&mut rows) {
+            row.merge(&solution::evaluate(&corpus, s, &mut dicts, check));
+        }
+        eprintln!("  shard {shard} done");
+    }
+    report::print_grid(&rows);
+    report::print_lang_matrix(&rows);
 }
 
 fn cmd_grid(path: &str, full: bool, axis: &str, langs: bool, check: bool) {
@@ -446,7 +521,13 @@ fn main() {
     match cmd.as_str() {
         "grid" => {
             let axis = args.iter().position(|a| a == "--axis").and_then(|i| args.get(i + 1)).map_or("all", String::as_str);
-            cmd_grid(path, flag("--full"), axis, flag("--langs"), !flag("--no-check"))
+            match opt("--shards", 1) {
+                1 => cmd_grid(path, flag("--full"), axis, flag("--langs"), !flag("--no-check")),
+                n => {
+                    let only = args.iter().position(|a| a == "--only").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok());
+                    cmd_grid_streamed(path, flag("--full"), axis, !flag("--no-check"), n as u64, only)
+                }
+            }
         }
         "text" => cmd_text(path),
         "edits" => cmd_edits(path),
