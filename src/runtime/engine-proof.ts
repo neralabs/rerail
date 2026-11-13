@@ -1,5 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { request } from "node:http";
+import { open } from "node:fs";
+import { request, type RequestOptions } from "node:http";
+import { Socket } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
+import { isNamedPipe } from "./engine-pipe.js";
 
 /**
  * How a process asks whether the engine on a socket or pipe is this Rerail home's without presenting the home's access
@@ -15,6 +20,9 @@ const CHALLENGE = /^[0-9a-f]{64}$/u;
 const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
+/** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
+const PIPE_RETRY_MS = 50;
+const openFile = promisify(open);
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -54,12 +62,43 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 export type EngineProofAnswer = "proved" | "refused" | "silent";
 
 /**
+ * A socket connected to the Windows named pipe `path`, opened as a file: an open that finds every instance of the pipe
+ * taken fails at once with `EBUSY`, and is tried again every {@link PIPE_RETRY_MS} until `deadline` (epoch ms), when
+ * the `EBUSY` is thrown. Node's own connect waits up to 30 s for a free instance, in a thread that closing the socket
+ * does not stop, and that thread keeps the process alive after the proof has answered.
+ */
+async function openPipe(path: string, deadline: number): Promise<Socket> {
+  for (;;) {
+    try {
+      return new Socket({ fd: await openFile(path, "r+"), readable: true, writable: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EBUSY" || Date.now() >= deadline) throw error;
+    }
+    await sleep(PIPE_RETRY_MS);
+  }
+}
+
+/**
+ * How a proof's request reaches the listener on `socketPath`: a Windows pipe opened by {@link openPipe} before the
+ * request, a Unix socket by its path. A pipe that is not opened by `deadline` is the verdict: every instance still taken
+ * is no answer (`silent`); a pipe that is gone, or that this user may not open, is `refused`.
+ */
+async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
+  if (!isNamedPipe(socketPath)) return { socketPath, agent: false };
+  try {
+    const socket = await openPipe(socketPath, deadline);
+    return { createConnection: () => socket };
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EBUSY" ? "silent" : "refused";
+  }
+}
+
+/**
  * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
  * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process. The answer comes within `timeoutMs` of the ask, whatever the listener does: the limit is a timer of its own,
- * since a request's timeout starts only once its socket has connected and restarts at each byte read. On Windows a
- * connect to a pipe whose instances are all taken waits up to 30 s for a free one, and an engine whose event loop is
- * stuck frees none.
+ * process. The answer comes within `timeoutMs` of the ask, whatever the listener does, and nothing of the ask outlives
+ * it: the connect is bounded ({@link proofRoute}), and the limit is a timer of its own, since a request's timeout
+ * starts only once its socket has connected and restarts at each byte read.
  */
 export async function engineCapabilityProof(
   socketPath: string,
@@ -67,14 +106,16 @@ export async function engineCapabilityProof(
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<EngineProofAnswer> {
+  const deadline = Date.now() + timeoutMs;
+  const route = await proofRoute(socketPath, deadline);
+  if (typeof route === "string") return route;
   const expected = engineProof(accessToken, challenge);
   const { promise, resolve } = Promise.withResolvers<EngineProofAnswer>();
   let answered = false;
   const outgoing = request({
-    socketPath,
+    ...route,
     method: "POST",
     path: ENGINE_PROOF_PATH,
-    agent: false,
     headers: { [ENGINE_CHALLENGE_HEADER]: challenge, "content-length": 0 },
   }, (response) => {
     answered = true;
@@ -93,7 +134,7 @@ export async function engineCapabilityProof(
   const limit = setTimeout(() => {
     resolve("silent");
     outgoing.destroy(new Error("Engine proof timed out"));
-  }, timeoutMs);
+  }, Math.max(0, deadline - Date.now()));
   outgoing.on("error", () => resolve("refused"));
   // Node can close the request before the response's `end`; only a request that never got a response is a refusal here.
   outgoing.on("close", () => {
