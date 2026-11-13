@@ -1786,8 +1786,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (!state.closed) this.#recordWorkspaceFailure(state, settings, error);
       return undefined;
     }
+    return await this.#publishOpened(state, bridge, auditor);
+  }
+
+  /**
+   * The evaluator the session's open has just opened, published to the session's boundaries, the repository audit
+   * started behind it; undefined when the session closed while it opened, as close did not wait for it, so it is
+   * released here, unobserved.
+   */
+  async #publishOpened(state: RuntimeSessionState, bridge: CodeRuleBridge, auditor: CodeRuleAuditor): Promise<CodeRuleBridge | undefined> {
     if (state.closed) {
-      // The session closed while the evaluator opened: close did not wait, so the evaluator is released here, unobserved.
       delete state.codeRuleBridge;
       await bridge.close(this.#lateRelease()).catch(() => undefined);
       return undefined;
@@ -1796,7 +1804,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // itself, and a boundary that finds the evaluator still opening has queued for the drain, one that finds it open
     // uses the bridge.
     state.codeRuleOpening = false;
-    if (auditor.audit !== undefined && firstRepositoryAuditEnabled()) state.repositoryAudit = this.#runRepositoryAudit(sessionId, state);
+    if (auditor.audit !== undefined && firstRepositoryAuditEnabled()) state.repositoryAudit = this.#runRepositoryAudit(state.descriptor.sessionId, state);
     return bridge;
   }
 
