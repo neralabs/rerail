@@ -675,11 +675,13 @@ const unansweredFolders = foldersFoundThroughGit.flatMap(folder =>
 
 /**
  * The hook host over a Git that starts and gives no answer to each command named in `silent`, reported as `unanswered`
- * (by default a Git spawnSync ended past runGit's 10 s: no status and an error), where `gitText` gives nothing.
+ * (by default a Git spawnSync ended past runGit's 10 s: no status and an error), where `gitText` gives nothing. Each
+ * command `runGit` is given goes onto `ran`, with the time limit it is given (undefined: runGit's own 10 s).
  */
 async function hookHostWithSilentGit(
   silent: readonly string[],
   unanswered: (typeof UNANSWERED_GIT)[keyof typeof UNANSWERED_GIT] = UNANSWERED_GIT["timed out"],
+  ran: Array<{ command: string; limit: number | undefined }> = [],
 ): Promise<typeof import("../../src/harness/hook-host.js")> {
   vi.resetModules();
   vi.doMock("../../src/engine/git.js", async () => {
@@ -687,7 +689,10 @@ async function hookHostWithSilentGit(
     const answers = (args: readonly string[]): boolean => !silent.includes(args[0] ?? "");
     return {
       ...actual,
-      runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => answers(args) ? actual.runGit(cwd, args, options) : unanswered,
+      runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => {
+        ran.push({ command: args[0] ?? "", limit: options?.timeout });
+        return answers(args) ? actual.runGit(cwd, args, options) : unanswered;
+      },
       gitText: (cwd: string, args: readonly string[]) => answers(args) ? actual.gitText(cwd, args) : undefined,
     };
   });
@@ -718,9 +723,24 @@ describe("the hook start check", () => {
     } finally {
       await daemon.close();
     }
-    // Neither answers: the database is read again, and its failure is the hook's.
+    // No daemon recorded: the hook reads the database directly, and its failure is the hook's.
     await rm(join(home, "daemon.json"));
     await expect(hookRerailStarted("claude-code", root)).rejects.toThrow("not a database");
+  });
+
+  it("runs Git once where no daemon is recorded, though Git gives no answer", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const ran: Array<{ command: string; limit: number | undefined }> = [];
+    const silenced = await hookHostWithSilentGit(["rev-parse"], UNANSWERED_GIT["timed out"], ran);
+    try {
+      // The checkout's own top is found by its path, with or without Git's answer.
+      expect({ started: await silenced.hookRerailStarted("claude-code", app), gitRuns: ran.map(run => run.command) })
+        .toEqual({ started: true, gitRuns: ["rev-parse"] });
+    } finally {
+      vi.doUnmock("../../src/engine/git.js");
+      vi.resetModules();
+    }
   });
 
   it("asks a live daemon where this process finds no Git to resolve the checkout with", async () => {
