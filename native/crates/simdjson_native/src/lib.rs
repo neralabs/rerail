@@ -108,8 +108,8 @@ impl Kernel {
     }
 
     /// As `tape`, `src` read as JSONC: each comment (`//` to the line's end, `/* */`) blanked for stage 1
-    /// and written to the tape as a leaf where tree-sitter-json places an extra. For a file `tape`
-    /// refused; a strict file gives `tape`'s tape.
+    /// and written to the tape as a leaf where tree-sitter-json places an extra, and a trailing comma
+    /// passed over. For a file `tape` refused; a strict file gives `tape`'s tape.
     ///
     /// # Safety
     /// As `tape`.

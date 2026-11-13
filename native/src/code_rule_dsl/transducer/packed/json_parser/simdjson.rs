@@ -9,9 +9,10 @@
 //! with the CPU's SHA-256 instructions and without; then simdjson's DOM parser and the index writer,
 //! which run on any CPU simdjson does.
 //!
-//! simdjson reads strict JSON. A file the strict read refuses that has a `//` or `/*` is read again as
-//! JSONC (`rerail_simdjson::tape_jsonc_with`): its comments blanked for stage 1, and written to the tape
-//! as tree-sitter-json places them (extras). A file still refused (a trailing comma, a number past
+//! simdjson reads strict JSON. A file the strict read refuses is read again as JSONC
+//! (`rerail_simdjson::tape_jsonc_with`, decision 0158): its comments blanked for stage 1 and written to
+//! the tape as tree-sitter-json places them (extras), and a trailing comma passed over, as TypeScript
+//! reads it (rerail reads source as it is written: permissive). A file still refused (a number past
 //! simdjson's range, nesting past 1,024, invalid JSON) goes to tree-sitter-json.
 use crate::code_rule_dsl::tape::{Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, ParserImpl, TapeImage, TemplateError, TreeParser};
 pub use rerail_simdjson::Refusal;
@@ -56,11 +57,11 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     let src = source.as_bytes();
     let t = match route {
         Some(kernel) => match rerail_simdjson::tape_with(kernel, src, kinds) {
-            // A file with what may be a comment, read again as JSONC: a second read only of files the
-            // strict one refused.
-            Err(rerail_simdjson::Refusal::Simdjson(why)) if memchr::memmem::find(src, b"//").is_some() || memchr::memmem::find(src, b"/*").is_some() => {
+            // Read again as JSONC (comments, trailing commas): a second read only of files the strict
+            // one refused.
+            Err(rerail_simdjson::Refusal::Simdjson(why)) => {
                 let t = rerail_simdjson::tape_jsonc_with(kernel, src, kinds).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
-                crate::code_rule_dsl::logic::profile::decision("JSON parse", || "a file with comments: read as JSONC".into());
+                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("refused as JSON ({why}): read as JSONC"));
                 t
             }
             t => t?,

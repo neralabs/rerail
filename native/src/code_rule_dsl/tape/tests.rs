@@ -1982,6 +1982,49 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
 
 /// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
 /// refuses the file (`Ok` of each tape's bytes otherwise).
+/// `source` with a space for each trailing comma (a `,` before `]` or `}`, comments between), outside
+/// strings and comments: the text whose tree-sitter-json tape a JSONC file's simdjson tape is (decision 0158).
+fn without_trailing_commas(source: &str) -> String {
+    let b = source.as_bytes();
+    let mut out = b.to_vec();
+    // The end of the string, comment or whitespace run at `i`, or `i` where none starts there.
+    let skip = |i: usize| -> usize {
+        match (b[i], b.get(i + 1)) {
+            (b'/', Some(b'/')) => b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n),
+            (b'/', Some(b'*')) => source[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2),
+            (c, _) if c.is_ascii_whitespace() => i + 1,
+            _ => i,
+        }
+    };
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
+        let after = skip(i);
+        if after != i {
+            i = after;
+            continue;
+        }
+        if b[i] == b',' {
+            let mut j = i + 1;
+            while j < b.len() && skip(j) != j {
+                j = skip(j);
+            }
+            if j < b.len() && matches!(b[j], b']' | b'}') {
+                out[i] = b' ';
+            }
+        }
+        i += 1;
+    }
+    String::from_utf8(out).unwrap()
+}
+
 fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false)
@@ -1991,8 +2034,11 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
         .unwrap();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
-    let tree = parser.parse(source, None).unwrap();
-    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
+    // without it, which is as long.
+    let text = without_trailing_commas(source);
+    let tree = parser.parse(&text, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false).unwrap().primary.to_bytes().unwrap();
     Ok((ours, theirs))
 }
 
@@ -2010,8 +2056,8 @@ fn the_product_reads_json_with_simdjson() {
     let simdjson = jp::simdjson::encode(&grammar, source, &|| false).unwrap().unwrap();
     assert_eq!(product.primary.to_bytes().unwrap(), simdjson.to_bytes().unwrap());
     assert_eq!(product.primary.source_digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(source.as_bytes()))));
-    // Refused by simdjson, as JSON and as JSONC (a trailing comma): tree-sitter-json's tape.
-    let jsonc = "// c\n{\"a\": 1,}\n";
+    // Refused by simdjson, as JSON and as JSONC (two commas): tree-sitter-json's tape.
+    let jsonc = "// c\n{\"a\": 1,,}\n";
     assert!(jp::simdjson::encode(&grammar, jsonc, &|| false).is_err());
     assert!(TapeImage::parse(&grammar, jsonc, &|| false).unwrap().is_ok());
 }
@@ -2074,11 +2120,21 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
         "1 // eof",
         "[\"/*x*/\", 1] /* a \" quote */",
         "{\n  // The compiler's options.\n  \"compilerOptions\": {\n    \"strict\": true, // always\n    /* \"lib\": [\"dom\"], */\n    \"target\": \"es2022\"\n  }\n}\n",
+        // Trailing commas, passed over: tree-sitter-json's tape of the text without them.
+        "[1,]",
+        "{\"a\": 1,}",
+        "// c\n{\"a\": 1,}",
+        "[[1,],]",
+        "{\"a\": {\"b\": 1,},}",
+        "[{\"a\": 1},\n]",
+        "[\"x\", // c\n]",
+        "{\"a\": [1, 2,], \"b\": 3, /* last */ }",
+        "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
     ] {
         let (ours, theirs) = simdjson_tapes(source).unwrap_or_else(|why| panic!("refused {source:?}: {why}"));
         assert!(ours == theirs, "the tapes of {source:?} differ");
     }
-    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", "", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[1 / 2]", "/* open"] {
+    for invalid in ["{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open"] {
         assert!(simdjson_tapes(invalid).is_err(), "accepted {invalid:?}");
     }
     // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are simdjson's alone.

@@ -135,8 +135,9 @@ pub fn tape_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refu
 /// `src`'s tape by `kernel`, read as JSONC: as `tape_with`, each comment (`//` to the line's end, its
 /// `\n` not included; `/* … */`) also a node, a `comment` leaf of the lowest node holding the tokens on
 /// either side of it, as tree-sitter-json places it (an extra). Stage 1 reads the source with its
-/// comments blanked; the digest is the source's as given. For a file the strict read refused: a
-/// strict file's tape is `tape_with`'s. A trailing comma is still refused.
+/// comments blanked; the digest is the source's as given. A trailing comma (before `]` or `}`) is passed
+/// over, as TypeScript reads JSONC: the tape is the one the file has without it. For a file the strict
+/// read refused: a strict file's tape is `tape_with`'s.
 pub fn tape_jsonc_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
     run(kernel, src, kinds, true)
 }
@@ -705,8 +706,21 @@ mod tests {
             // A comment past a block of 64 bytes, a quote in it, then a string.
             let long = format!("[{}] // \"\n", "1,".repeat(40) + "\"//\"");
             assert!(nodes(&long).iter().any(|&(k, _, _)| k == com));
+            // A trailing comma is passed over: the tape is the one the file has with a space for it.
+            for (with, without) in [
+                ("[1,]", "[1 ]"),
+                ("{\"a\": 1,}", "{\"a\": 1 }"),
+                ("[[1,],]", "[[1 ] ]"),
+                ("{\"a\": {\"b\": 1,},}", "{\"a\": {\"b\": 1 } }"),
+                ("[\"x\",\n]", "[\"x\" \n]"),
+                ("[{\"a\": 1}, // c\n]", "[{\"a\": 1}  // c\n]"),
+                ("{\"a\": 1, /* c */ }", "{\"a\": 1  /* c */ }"),
+                ("{\"a\": [1, 2,], \"b\": {},}", "{\"a\": [1, 2 ], \"b\": {} }"),
+            ] {
+                assert_eq!(nodes(with), nodes(without), "{}: {with:?}", kernel.name());
+            }
             // Not comments, or not JSONC this read takes: refused.
-            for bad in ["[1 / 2]", "/* open", "[1, /* open ]", "{\"a\": 1,}", "[1,]", "1 /", "// only a comment"] {
+            for bad in ["[1 / 2]", "/* open", "[1, /* open ]", "1 /", "// only a comment", "[1,,]", "[,1]", "[,]", "{,}", "{\"a\": 1,,}", "{\"a\": 1,]", "[1,}"] {
                 assert!(tape_jsonc_with(kernel, bad.as_bytes(), &kinds).is_err(), "{}: {bad:?}", kernel.name());
             }
         }

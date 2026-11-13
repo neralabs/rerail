@@ -427,7 +427,8 @@ int rerail_simdjson_v9np(uint32_t k, const char* src, size_t len, rerail_v9np_si
 }
 
 // As `rerail_simdjson_v9np`, the source read as JSONC: its comments blanked for stage 1 and written to
-// the tape where tree-sitter-json places them. For a file the strict read refused.
+// the tape where tree-sitter-json places them, a trailing comma passed over. For a file the strict read
+// refused.
 int rerail_simdjson_v9np_jsonc(uint32_t k, const char* src, size_t len, rerail_v9np_sink* sink) {
   if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
   return kernel(k)->tape_jsonc(src, len, sink);
