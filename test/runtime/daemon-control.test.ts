@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,7 @@ import {
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
+import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -833,6 +834,27 @@ describe("launching the daemon", () => {
       program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null, env: { A: "1" }, logFile: log,
     }]);
   });
+
+  /** Starts the console probe as Rerail starts the daemon, through launchDetached, with its output in `log`. */
+  const launchProbe = (log: string) => ({ args, cwd }: ProbeLaunch): StartedProbe => {
+    const probe = launchDetached({ args, cwd, env: process.env, logFile: log });
+    return {
+      ended: () => probe.exitReason() !== undefined,
+      kill: () => {
+        if (probe.pid !== undefined) process.kill(probe.pid);
+      },
+      output: async () => await readFile(log, "utf8"),
+    };
+  };
+
+  // What Windows did, read without asking Rerail's helper. A process started with no console, as Node's detached spawn
+  // started Rerail 0.1.3's daemon, fails it twice: it has no console, and a Git it starts without windowsHide gets a
+  // console of its own, with a window.
+  it.runIf(process.platform === "win32")("on Windows starts a process with a console, which a Git started without windowsHide shares", async () => {
+    const seen = await runConsoleProbe(home, launchProbe(join(home, "probe.log")));
+    // windowsHide gives the second Git a console of its own with no window, so its console host shows the count is read.
+    expect(seen).toEqual({ attached: true, consoleHosts: [0, 1] });
+  }, 60_000);
 
   // The native spawn on Windows, Node's elsewhere: each platform's launch, on every OS.
   it.each(["linux", "win32"] as const)("starts the daemon in the Rerail home and names the caller's folder as its workspace root (%s)", async platform => {

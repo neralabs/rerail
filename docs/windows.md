@@ -76,8 +76,8 @@ with `SW_HIDE`, and with `CREATE_NO_WINDOW` when it inherits no stdio. The optio
 
 ## The daemon's console
 
-On Windows the daemon owns a console that has no window, and every console program it starts shares that console. It
-never starts without a console.
+On Windows the daemon owns a console that has no window, so no console program it starts opens one. It never starts
+without a console.
 
 `DETACHED_PROCESS` leaves a process with no console at all, and Windows ignores `CREATE_NO_WINDOW` beside it. Node's
 `detached: true` adds `DETACHED_PROCESS` on Windows, so Rerail starts the daemon through the native `spawn_detached`
@@ -106,6 +106,13 @@ by a library Rerail does not control for example, then shares the hidden console
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
   build checks them against `windows-sys` when it compiles. PR CI compiles that `cfg(windows)` code in `unit-windows`
   whenever the engine's inputs change, and runs `reports_a_detached_childs_exit_code_from_the_handle_it_kept` there.
+- On Windows `test/runtime/daemon-control.test.ts` starts a probe (`test/support/platform/console-probe.ts`) through
+  `launchDetached`, as the daemon is started. The probe opens `CONOUT$` to say whether it has a console, and starts
+  two Git processes: one without `windowsHide`, as a library could, and one with it, as the helper does. The test
+  counts the console hosts (`conhost.exe`) under each in Windows' process table: none under the first, which shares
+  the probe's console, and one under the second, which shows the count is read. A probe started with no console, as
+  Rerail 0.1.3 started its daemon, fails both ways: it has no console, and the first Git gets one of its own, with a
+  window. `unit-windows` runs it.
 
 </details>
 
