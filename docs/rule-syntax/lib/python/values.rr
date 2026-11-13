@@ -11,25 +11,31 @@ pv_child(to_number(p),f,to_number(i),n) :- option_item("pvParents",n,p),p!="-1",
 .decl pv_member(parent:number,key:symbol,value:number)
 pv_member(p,k,v) :- pv_kind(p,"dict"),pv_child(p,_,_,entry),pv_kind(entry,"pair"),pv_child(entry,"key",_,key),pv_kind(key,"str"),pv_text(key,k),pv_child(entry,"value",_,v).
 .decl pv_need(n:number)
+.decl pv_render(n:number)
+pv_render(n) :- pv_need(root),pv_kind(root,k),pv_brackets(k,_,_),pv_span(root,a,z),pv_span(n,b,y),b>=a,y<=z.
+.decl pv_scalar_need(n:number)
+pv_scalar_need(n) :- pv_need(n),!pv_kind(n,"str"),!pv_kind(n,"list"),!pv_kind(n,"tuple"),!pv_kind(n,"dict").
+pv_scalar_need(n) :- pv_render(n).
 .decl pv_scalar(n:number,text:symbol)
-pv_scalar(n,@py_repr(t)) :- pv_kind(n,"str"),pv_text(n,t).
-pv_scalar(n,t) :- pv_kind(n,"int"),pv_text(n,t).
-pv_scalar(n,"True") :- pv_kind(n,"bool"),pv_text(n,"true").
-pv_scalar(n,"False") :- pv_kind(n,"bool"),pv_text(n,"false").
-pv_scalar(n,"None") :- pv_kind(n,"NoneType").
+pv_scalar(n,@py_repr(t)) :- pv_scalar_need(n),pv_kind(n,"str"),pv_text(n,t).
+pv_scalar(n,t) :- pv_scalar_need(n),pv_kind(n,"int"),pv_text(n,t).
+pv_scalar(n,"True") :- pv_scalar_need(n),pv_kind(n,"bool"),pv_text(n,"true").
+pv_scalar(n,"False") :- pv_scalar_need(n),pv_kind(n,"bool"),pv_text(n,"false").
+pv_scalar(n,"None") :- pv_scalar_need(n),pv_kind(n,"NoneType").
 .functor py_float_str(bits:symbol):symbol
-pv_scalar(n,@py_float_str(t)) :- pv_kind(n,"float"),pv_text(n,t).
+pv_scalar(n,@py_float_str(t)) :- pv_scalar_need(n),pv_kind(n,"float"),pv_text(n,t).
 .decl pv_brackets(kind:symbol,open:symbol,close:symbol)
 pv_brackets("list","[","]").pv_brackets("tuple","(",")").pv_brackets("dict","{","}").
 .decl pv_token(owner:number,position:number,phase:number,text:symbol)
-pv_token(n,a,1,t) :- pv_span(n,a,_),pv_scalar(n,t).
-pv_token(n,a,1,o) :- pv_kind(n,k),pv_brackets(k,o,_),pv_span(n,a,_).
-pv_token(n,z,1,c) :- pv_kind(n,k),pv_brackets(k,_,c),pv_span(n,_,z).
-pv_token(p,a,0,", ") :- pv_kind(p,k),(k="list";k="tuple";k="dict"),pv_child(p,_,i,n),i>0,pv_span(n,a,_).
-pv_token(p,a,0,": ") :- pv_kind(p,"pair"),pv_child(p,"value",_,v),pv_span(v,a,_).
-pv_token(n,z,0,",") :- pv_kind(n,"tuple"),pv_span(n,_,z),count:{pv_child(n,_,_,_)}=1.
+pv_token(n,a,1,t) :- pv_render(n),pv_span(n,a,_),pv_scalar(n,t).
+pv_token(n,a,1,o) :- pv_render(n),pv_kind(n,k),pv_brackets(k,o,_),pv_span(n,a,_).
+pv_token(n,z,1,c) :- pv_render(n),pv_kind(n,k),pv_brackets(k,_,c),pv_span(n,_,z).
+pv_token(p,a,0,", ") :- pv_render(p),pv_kind(p,k),(k="list";k="tuple";k="dict"),pv_child(p,_,i,n),i>0,pv_span(n,a,_).
+pv_token(p,a,0,": ") :- pv_render(p),pv_kind(p,"pair"),pv_child(p,"value",_,v),pv_span(v,a,_).
+pv_token(n,z,0,",") :- pv_render(n),pv_kind(n,"tuple"),pv_span(n,_,z),count:{pv_child(n,_,_,_)}=1.
 .decl pv_repr(n:number,text:symbol)
-pv_repr(n,s) :- pv_need(n),pv_span(n,a,z),s=join text by (pos,phase) sep "":{pv_token(owner,pos,phase,text),pv_span(owner,b,y),b>=a,y<=z}.
+pv_repr(n,s) :- pv_need(n),pv_kind(n,k),pv_brackets(k,_,_),pv_span(n,a,z),s=join text by (pos,phase) sep "":{pv_token(owner,pos,phase,text),pv_span(owner,b,y),b>=a,y<=z}.
 .decl pv_str(n:number,text:symbol)
 pv_str(n,t) :- pv_need(n),pv_kind(n,"str"),pv_text(n,t).
-pv_str(n,t) :- pv_need(n),!pv_kind(n,"str"),pv_repr(n,t).
+pv_str(n,t) :- pv_need(n),!pv_kind(n,"str"),pv_scalar(n,t).
+pv_str(n,t) :- pv_need(n),pv_repr(n,t).

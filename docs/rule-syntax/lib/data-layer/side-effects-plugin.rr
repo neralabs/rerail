@@ -24,8 +24,7 @@ psp_line(n,"0","false") :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kin
 .decl psp_integer_line(n:number)
 psp_integer_line(n) :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kind(v,k),(k="int";k="bool").
 psp_line(n,"1","1") :- psp_active(_,_,n),!psp_integer_line(n).
-pyp_input(n,p) :- psp_value(n,"file_path",p),prefix("/",p).
-pyp_input(n,cat(root,"/",p)) :- psp_value(n,"file_path",p),!prefix("/",p),option("psePluginRoot",root).
+pyp_join(n,root,p) :- psp_value(n,"file_path",p),option("psePluginRoot",root).
 .decl psp_flip(digit:symbol,opposite:symbol)
 psp_flip("0","9").psp_flip("1","8").psp_flip("2","7").psp_flip("3","6").psp_flip("4","5").
 psp_flip("5","4").psp_flip("6","3").psp_flip("7","2").psp_flip("8","1").psp_flip("9","0").

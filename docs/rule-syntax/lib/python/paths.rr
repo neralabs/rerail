@@ -1,5 +1,10 @@
 // pathlib's lexical normalization. '..' stays; exactly two leading slashes stay.
 .decl pyp_input(n:number,raw:symbol)
+.decl pyp_join(n:number,root:symbol,child:symbol)
+pyp_input(n,p) :- pyp_join(n,_,p),prefix("/",p).
+pyp_input(n,root) :- pyp_join(n,root,"").
+pyp_input(n,cat(root,p)) :- pyp_join(n,root,p),p!="",!prefix("/",p),(root="/";root="//").
+pyp_input(n,cat(root,"/",p)) :- pyp_join(n,root,p),p!="",!prefix("/",p),root!="/",root!="//".
 .decl pyp_step(n:number,text:symbol)
 pyp_step(n,cat("/",@replace_all(p,"/{2,}","/"))) :- pyp_input(n,p),prefix("//",p),!prefix("///",p).
 pyp_step(n,@replace_all(p,"/{2,}","/")) :- pyp_input(n,p),!prefix("//",p).
