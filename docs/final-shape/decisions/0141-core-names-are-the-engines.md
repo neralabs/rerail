@@ -2,6 +2,8 @@
 
 Status: accepted (2026-11-06)
 
+Numbered 0047 where it was written; renumbered 0141 in the hub (2026-11-13) because another record had 0047.
+
 ## Intro
 
 `core.rr` declares every relation the engine makes: `node`, `kind`, `docof`, `text`, `file`, `col`,

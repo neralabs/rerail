@@ -194,7 +194,7 @@ pub struct Step {
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
-/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105).
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
     let mut into = 1.0;
     for step in &plan.steps {
@@ -2012,6 +2012,12 @@ impl Model {
         plans_update(&key, |k| k.5 = Some(work));
     }
 
+    /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ran_as_planned(&self, head: &Atom, body: &[Literal], first: Option<usize>, work: f64) {
+        Self::ran(self.plan_key("", head, body, first), work);
+    }
+
     /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
     pub(in crate::code_rule_dsl) fn reused_key(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         self.plan_key("", head, body, first)
@@ -3102,7 +3108,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
-        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105).
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
         let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
@@ -10171,5 +10177,27 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod ambient_tests {
+    use super::super::lanes::wave;
+
+    /// Smoking gun 7 (t34, 2026-11-13): a level's strata run as a job off the run's thread (decision 0113 §4) and flush
+    /// their wave there. The job works in the run's ambient, and its waves are the run's: `closures_of_one_level_…`
+    /// read none about one run in three.
+    #[test]
+    fn a_strata_jobs_waves_are_the_runs() {
+        let before = wave::flushed();
+        let ambient = super::Ambient::here();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _in = ambient.enter();
+                wave::defer(Box::new(|| Ok(())));
+                wave::flush(1).unwrap();
+            });
+        });
+        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave counts as the run's");
     }
 }

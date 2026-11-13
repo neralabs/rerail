@@ -26,7 +26,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
 }
 
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
-/// decision 0108's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
+/// decision 0145's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
 /// head, so neither head loses the rows the first wave derives.
 #[test]
 fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
@@ -2006,6 +2006,73 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let ((small,_,_),_)=model.plan_rule_live(&p,&r.head,&r.body,Some(0)).unwrap();
     assert_eq!(small[0].at,0,"a one-row delta drives its own probe");
 
+}
+
+/// Smoking gun 2 (t34, 2026-11-13): a relation empty when its rule is planned (annotation demand's `rel_base`
+/// before its guest round made `rr_ast_1_1`) priced every later step at 0 rows, so every order was free: `pkg` (40
+/// rows) was scanned with nothing bound before `docof` was probed by what was bound (10,728 -> 25.8 M -> 10,728 rows
+/// once `rr_ast_1_1` had rows; its EXPLAIN priced every step 0.00 rows). It is priced at least one row.
+#[test]
+fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
+    let p = parse(".decl e(x:number)\n.decl big(y:number)\n.decl link(x:number,y:number)\n.decl out(x:number,y:number)\nout(x,y) :- e(x), big(y), link(x,y).\n.output out\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    // `rel_base`'s sizes: `rr_ast_1_1` empty (no rows, so no fanout), `pkg` 40 rows, `docof` 90,100 keyed by its node.
+    for (rel, rows, ndv) in [("e", 0.0, vec![1.0]), ("big", 40.0, vec![40.0]), ("link", 90_100.0, vec![90_100.0, 40.0])] {
+        model.stats.card.insert(rel.into(), rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.into(), c), n);
+            model.stats.fan.insert((rel.into(), c), rows / n);
+        }
+    }
+    let r = &p.rules[0];
+    let _plans = KeepPlans::start(None);
+    let was = explaining(true);
+    let (_, explained) = model.plan_rule_reused(&p, &r.head, &r.body, None).unwrap();
+    explaining(was);
+    let steps = explained.expect("explained").steps;
+    let zero: Vec<&str> = steps.iter().filter(|s| s.rows <= 0.0).map(|s| s.literal.as_str()).collect();
+    assert!(zero.is_empty(), "no step is priced at no rows, so no order after the empty relation is free: {zero:?} of {:?}", steps.iter().map(|s| (s.literal.as_str(), s.rows)).collect::<Vec<_>>());
+}
+
+/// Smoking gun 10 (t34, 2026-11-13), red until fixed. `frag_str(s) :- ann_str(s), d = @doc(s), doc_role(d,
+/// "fragment")` is planned before the guest round makes the fragment documents: "fragment" counts 0, so `doc_role`
+/// leads, and `d = @doc(s)` keys nothing, so each fragment then scans every string. Its line did about a row of work,
+/// and the planning budget (decision 0122) measures growth by the relations' rows alone (`budget_takes`): `doc_role`
+/// grew 9 times, under the budget, so the order was kept with 2,455 fragments (7.1 M rows, none kept). A constant's
+/// count that moved from none to many is growth, and the line is searched again.
+#[test]
+#[ignore = "smoking gun 10 open (t34): budget_takes measures growth by rows alone, not by a constant's count"]
+fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
+    let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model {docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let size = |model: &mut Model, roles: f64, fragments: i64| {
+        for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", roles, vec![roles, 4.0])] {
+            model.stats.card.insert(rel.into(), rows);
+            for (c, n) in ndv.into_iter().enumerate() {
+                model.ndv.insert((rel.into(), c), n);
+                model.stats.fan.insert((rel.into(), c), (rows / n).max(1.0));
+            }
+        }
+        model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
+    };
+    model.stats.nodes = 300_000.0;
+    let r = &p.rules[0];
+    let _plans = KeepPlans::start(None);
+    let lead = |order: &[Step]| order[0].lit.atom().map(|a| a.rel.to_string());
+    // Planned before the guest round: about no fragment yet (production's estimate was 0.01 rows), and the line
+    // ran over none.
+    size(&mut model, 300.0, 1);
+    let ((order, work, _), _) = model.plan_rule_reused(&p, &r.head, &r.body, None).unwrap();
+    assert_eq!(lead(&order).as_deref(), Some("doc_role"), "with about no fragment, `doc_role` leads: {work} {:?}", order.iter().map(|s| s.lit.to_string()).collect::<Vec<_>>());
+    model.ran_as_planned(&r.head, &r.body, None, 1.0);
+    // The guest round made 2,455 fragment documents.
+    size(&mut model, 2_755.0, 2_455);
+    let ((order, _, _), _) = model.plan_rule_reused(&p, &r.head, &r.body, None).unwrap();
+    assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
 #[test]

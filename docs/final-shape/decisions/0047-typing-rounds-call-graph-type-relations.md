@@ -1,6 +1,4 @@
-# 0148: Typing: k = 4 with a pending round; `calls:` moves to the programs after parity; type relations drafted here
-
-Numbered 0047 where it was written.
+# 0047: Typing: k = 4 with a pending round; `calls:` moves to the programs after parity; type relations drafted here
 
 Status: accepted (the user, 2026-11-06; t20)
 

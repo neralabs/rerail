@@ -4,7 +4,7 @@
 //!
 //! The cross-file part's session path does the same with more beside it (statistics kept by delta, frames, the
 //! measurement aids); this is its core, for a program run many times over growing inputs: the cone's rounds
-//! (decision 0108).
+//! (decision 0145).
 
 use super::{Result, held_rows, lower, maintain, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, syntax};
@@ -144,7 +144,7 @@ pub(in crate::code_rule_dsl) fn run(
     let outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
-    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new());
+    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new(), retain::budget());
     if let Some(frames) = frames {
         next.with_frames(frames, &cut);
     }
