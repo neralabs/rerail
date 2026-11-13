@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-python",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Rerail rule pack: Ruff and Bandit rules ported to Rerail code rules.",
   "keywords": [
     "rerail",
@@ -26,7 +26,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+    "@neralabs/rerail": ">=0.1.0-0"
   },
   "peerDependenciesMeta": {
     "@neralabs/rerail": {

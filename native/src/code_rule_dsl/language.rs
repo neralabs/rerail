@@ -323,7 +323,6 @@ include!(concat!(env!("OUT_DIR"), "/language_registry.rs"));
 // trips over other shapes, the transducer's grammar census), each with the ast-grep language that
 // lends it pattern syntax. No file or code rule selects a test-only grammar.
 grammar_dialect! {
-    Java => SupportLang::Java,
     CSharp => SupportLang::CSharp,
     Cpp => SupportLang::Cpp,
     C => SupportLang::C,

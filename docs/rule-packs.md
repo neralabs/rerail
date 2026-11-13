@@ -17,7 +17,7 @@ A pack directory holds rule documents in `rules/` and a `pack.json`. The `pack.j
 
 Set-up installs and adds the packs the person confirms. Afterwards the dashboard adds and removes packs and turns their rules on or off, for the repository. The API and its MCP tools add and remove packs, turn rules off or change their mode, per repository, folder and checkout.
 
-Recommendations match the repository's files and dependency manifests against each match definition. Matching is data only: no pack code, no model, no reading code for violations, no network but npm to fetch the packs. Rerail says nothing about what no pack covers.
+Recommendations match the repository's files and dependency manifests against each match definition. Matching is data only: no pack code, no model, no reading code for violations, no network but npm to fetch the packs. When no pack fits, set-up and `rerail packs recommend` say what the scan found and skipped, and what each pack looks for.
 
 </details>
 
@@ -33,7 +33,7 @@ then offers it from that copy.
 | Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
 | JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 537 (318) | Python source outside tests, scripts and docs |
+| Python | language | 537 (316) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | 33 (17) | `*.rs` files |
@@ -56,7 +56,7 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`.
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also lists a rule `"on": false` when its steer would do harm where no matcher change can tell the cases apart; the pack's README says why for each (Python's B009 and B010).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
 
 </details>
@@ -87,7 +87,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch.** Set-up fetches every listed pack under the update channel's npm dist-tag: `latest` by default, where each pack version is published ([pack format](pack-format.md#release)), or `next` for a pack with no `latest`. They land in a staging folder under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once read. Each is checked as the [catalog](#catalog-checks) does.
 2. **Keep newer versions.** A pack installed at a newer version than the tag's (`rerail packs add typescript@next`) is offered at that version. If it does not load (its core range, after setting up an older core again, say), set-up names it as unusable, with why, and does not offer it. An answer naming an older version than the installed one is refused; `rerail packs add` downgrades.
-3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs".
+3. **Ask.** Set-up lists each fitting pack with its rule count and why it fits, and the rules the repository's lint config turns off or configures. It warns when a yes replaces an installed version, which every repository on the computer runs. A fitting pack with no rule that starts on is named as having no rules yet, as is every such pack under "Skip, I'll pick packs". When no pack fits, it counts the files it scanned by ending, names the folders it did not scan, names up to two packs whose excludes left out every file they look for, with those excludes, and says what each pack looks for.
 4. **Install only what the answer carries.**
    - **"Yes"** installs the versions shown, from npm's cache where discovery left them; a coding agent passes `--packs typescript@0.1.1,…`.
    - **"Change rule packs…"** (`--answer choose`) installs only the packs picked from those fetched, replacing any an earlier dashboard review added. Not offered if no pack was fetched.
@@ -102,7 +102,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 - **`list`**: installed packs with versions, and any left out, with why.
 - **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
-- **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits; installs nothing.
+- **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
 
 <details>
 <summary>Arguments and refusals</summary>
@@ -122,7 +122,7 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 
 - **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/packs/.lock`. Others wait up to five minutes; a lock whose process has gone is taken over.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` (`>=0.1.0-0 <0.2.0` today) covers the core versions a pack was released for. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0` today), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
 
 </details>
 
@@ -247,7 +247,7 @@ Core reads each installed pack's `pack.json` and listed documents into memory, r
 | Two versions of a pack are installed | Only one can be. Rerail installs into `$RERAIL_HOME/packs` and reads only the `node_modules/rerail-pack-<id>` and `node_modules/@<scope>/rerail-pack-<id>` the packs folder's `package.json` lists, one version each. |
 | Two packages hold one pack id | Rerail's own loads, else the first by package name; the other is reported as left out. Repositories add packs by id, so they run the one that loads. While Rerail's own is installed but left out, neither loads. |
 | A pack's core range excludes the running core | Skipped and reported; repositories adding it report it as `missing`. |
-| A person edits a pack's rule | The rule is copied into the library and added where the original is. The copy keeps the edit through upgrades; the original follows them. Saved in the dashboard, the copy is approved and the original switched off where the copy is added. A coding agent's copy runs in Log, beside the running original, until a person approves it ([copy on edit](rule-scoping.md#coding-agents)). Option values change through `config` settings instead. |
+| A person edits a pack's rule | The rule is copied into the library and added where the original is. The copy keeps the edit through upgrades; the original follows them. Saved in the dashboard, the copy is approved and the original switched off where the copy is added. A coding agent's copy (`library_rules_upsert`, or `rerail rules show` then `rerail rules add` from any agent) runs in Log, beside the running original, until a person approves it ([copy on edit](rule-scoping.md#coding-agents)). Option values change through `config` settings instead. |
 | `rerail rules export` / `import` | `rules.json` carries attachments and settings by id, never pack rules. Without the pack, its attachments are `missing` until it is installed. |
 
 </details>

@@ -89,7 +89,8 @@ imported needs adding to the filter by hand (`scripts/check/check-ci-paths.mjs`)
 | `upstream-status` (informational) | `upstream-rule` (`gates.yaml`'s `rules` lists it and the test data holds a unit from its tests or a finding of it), `stable` (not deprecated), `recommended` (an approved configuration turns it on) | `gates.yaml`'s declared facts |
 
 `upstream-status` never stops a rule: it decides only whether a shipped rule starts on (every check holds) or ships
-off as experimental, and the report flags a `pack.json` `on` that disagrees.
+off as experimental, and the report flags a `pack.json` `on` that disagrees. A rule a reviewer ships off because its
+steer would do harm is listed there too, on purpose; its section in the pack's README says why.
 
 ### How samples are judged
 

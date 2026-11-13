@@ -1,20 +1,15 @@
 /** Set-up and the repository's own lint config, a database from before set-up, `rerail setup` itself, and rule packs from npm. */
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
-// Passed through, and watched: a run that must read no code never matches packs against the repository.
+// The pack matcher's scan, passed through and watched: a run that must read no code never scans the repository.
 const readsRepository = vi.hoisted(() => vi.fn<(root: string) => void>());
-vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
-  type Match = (root: string, packs?: readonly unknown[]) => unknown;
-  const actual = await importOriginal<{ recommendRulePacks: Match; rulePacksThatFit: Match }>();
-  const watched = (match: Match): Match => (root, packs) => {
-    readsRepository(root);
-    return match(root, packs);
-  };
-  return { ...actual, recommendRulePacks: watched(actual.recommendRulePacks), rulePacksThatFit: watched(actual.rulePacksThatFit) };
+vi.mock("../../src/engine/catalog/rule-pack-matcher.js", async (importOriginal) => {
+  const actual = await importOriginal<{ scanRepository: (root: string) => unknown }>();
+  return { ...actual, scanRepository: (root: string) => (readsRepository(root), actual.scanRepository(root)) };
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { listRepositoryRules, loadRuleCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
@@ -375,6 +370,25 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(asked.text()).not.toContain("--packs typescript@");
   });
 
+  it("says why no pack fits: the Python pack excludes every Python file there", async () => {
+    const setup = await fixture();
+    for (const path of ["tests/test_models.py", "tests/test_views.py", "scripts/release.py"]) {
+      mkdirSync(join(setup.repo, dirname(path)), { recursive: true });
+      writeFileSync(join(setup.repo, path), "x = 1\n");
+    }
+    const asked = agentIo();
+    await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
+    expect(asked.text()).toContain([
+      "Scanned acme-api. None of Rerail’s rule packs fit it.",
+      "",
+      "  Found           .py 3 · .ts 1",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Closest         Python excludes the 3 files it looks for: tests/ (2),",
+      "                  scripts/ (1)",
+      "  Packs look for  Python  *.py, *.pyi",
+    ].join("\n"));
+  });
+
   it("says npm gave no pack and offers to try again, never that none fit or to start with none", async () => {
     const setup = await fixture();
     // Yes, read it; 1 tries again, which fetches again; then 2 is "Not now".
@@ -428,14 +442,14 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
 
   it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {
     const setup = await fixture();
-    // `rerail update` has made 0.2.0 active; this run is the older package a coding agent's session loaded.
+    // `rerail update rollback` has made 0.0.9 active, older than any pack fits; this run is the newer package a coding agent's session loaded.
     const current = join(process.env.RERAIL_HOME!, "current");
     mkdirSync(current, { recursive: true });
-    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.2.0" }));
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.9" }));
     try {
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
-      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
+      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.0\.9/u);
       expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
     } finally {
       await rm(current, { recursive: true, force: true });
