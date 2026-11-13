@@ -21,7 +21,11 @@ class SideEffectsConversionCheckpointTests(unittest.TestCase):
         return next(row for report in value['native'][mode]for row in report['cases']if row['input']['id']==name)
 
     def test_all_conversion_observations_pass_both_apis(self):
-        self.assertEqual(validate(self.receipt),dict(conversionCasesPerAPI=105,fullMigrationAcceptance=False))
+        self.assertEqual(validate(self.receipt),dict(conversionCasesPerAPI=105,captureDemandCasesPerAPI=3,fullMigrationAcceptance=False))
+
+    def test_unread_payload_cannot_remove_a_valid_fact(self):
+        value=copy.deepcopy(self.receipt);value['captureDemand']['native']['workspace']['cases'][0]['actual']={'value':None}
+        with self.assertRaisesRegex(ValueError,'Complete capture-demand observation differs'):validate(value)
 
     def test_omitted_case_is_rejected(self):
         value=copy.deepcopy(self.receipt);value['native']['workspace'][0]['cases'].pop()

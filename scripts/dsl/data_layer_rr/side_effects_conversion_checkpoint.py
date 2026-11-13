@@ -14,6 +14,8 @@ def reports(value):
     yield value['source']
     for mode in MODES:yield from value['native'][mode]
     yield from value['tdd'].values()
+    yield value['captureDemand']['source']
+    yield from value['captureDemand']['native'].values()
 
 
 def validate(value):
@@ -42,6 +44,19 @@ def validate(value):
     require(not red['passed']and len(red['cases'])==105 and all(not r['passed']for r in red['cases']),'Missing pre-port failures')
     cast=value['tdd']['missingCast']
     require(not cast['passed']and len(cast['cases'])==1 and 'no SQL for @py_int_str'in str(cast['cases'][0]['actual']),'Missing execution-capability failure')
+    demand=value['captureDemand'];before=value['tdd']['captureDemand']
+    require(demand['source']['passed']and len(demand['source']['cases'])==3,'Incomplete capture-demand source corpus')
+    require(not before['passed']and len(before['cases'])==3 and all(not row['passed']and row['actual']['error']['type']=='ValueError'for row in before['cases']),'Missing unused-payload capture failures')
+    for mode in MODES:
+        report=demand['native'][mode]
+        require(report['passed']and not report['semanticFallbacks']and report['executionMode']==mode and report['engineSha256']==value['build']['sha256'],'Wrong capture-demand execution')
+        require(report['sourceSha256']==demand['source']['sourceSha256']and report['baselineSha256']==sha((json.dumps(demand['source'],indent=2,ensure_ascii=False)+'\n').encode()),'Wrong capture-demand source recording')
+        require(len(report['cases'])==3,'Capture-demand case omitted')
+        for actual,expected in zip(report['cases'],demand['source']['cases']):
+            require(equal(actual['input'],expected['input'])and actual['passed']and equal(actual['expected'],expected['expected'])and equal(actual['actual'],expected['expected']),'Complete capture-demand observation differs')
+        for call in calls(report):
+            for item in call['programInputs']:
+                require(final_inputs.setdefault(item['path'],item['sha256'])==item['sha256'],'Final program revisions differ')
     require('2 passed; 0 failed'in value['integerUnitLog'],'Missing native integer unit checks')
     retained=set()
     for item in value['snapshots']:
@@ -51,13 +66,14 @@ def validate(value):
         for name,digest in report['harnessFiles'].items():require((name,digest)in retained,'Consumed bytes omitted')
         for call in calls(report):
             for item in call['programInputs']:require((item['path'],item['sha256'])in retained,'Consumed bytes omitted')
-    return dict(conversionCasesPerAPI=105,fullMigrationAcceptance=False)
+    return dict(conversionCasesPerAPI=105,captureDemandCasesPerAPI=3,fullMigrationAcceptance=False)
 
 
 def pack(work):
     value=dict(format='rerail.side-effects-conversion-progress/v1',sourcePin=PIN,fullMigrationAcceptance=False,
         source=read_json(work/'source-final.json'),native={mode:[read_json(p)for p in sorted(work.glob(f'final-{mode}-[0-9]*.json'))]for mode in MODES},
-        tdd=dict(source=read_json(work/'source-red.json'),native=read_json(work/'red.json'),missingCast=read_json(work/'missing-cast-red.json')),
+        tdd=dict(source=read_json(work/'source-red.json'),native=read_json(work/'red.json'),missingCast=read_json(work/'missing-cast-red.json'),captureDemand=read_json(work/'demand-red.json')),
+        captureDemand=dict(source=read_json(work/'demand-source.json'),native={mode:read_json(work/f'demand-{mode}.json')for mode in MODES}),
         build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
         integerUnitLog=(work/'int-green-test.log').read_text(),unicodeData=read_json(work/'decimal-zeroes.json'),
         logs=[dict(name=p.name,sha256=sha(p.read_bytes()),text=p.read_text())for p in sorted(work.glob('*.log'))],
