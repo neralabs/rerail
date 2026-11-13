@@ -252,6 +252,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
+    // The connections closing beside their runs, counted by file (`close_beside`), which a run deleting the file
+    // waits for: state of the connections, not a result kept.
+    ("code_rule_dsl/logic/plan/corpus.rs", "CLOSING"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     // The device copies of `replace_all`'s regex automata and of a row stage's test tables, per thread: resident
