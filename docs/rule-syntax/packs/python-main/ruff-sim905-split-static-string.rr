@@ -1,0 +1,238 @@
+.policy "ruff-sim905-split-static-string" revision 1
+.guests off
+.description "Use a list literal instead of calling split() or rsplit() on a string literal; the result is known in advance."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM905(n): a finding at node n, from clause `split-static-string`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM905(at: node) "Consider using a list literal instead of `str.split`"
+    suppress noqa "SIM905"
+SIM905(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "attribute"), child(c1, c2, _),
+    sim905_receiver(c2), precedes_stop(c2, s3, sim905_stop_10), glob(".", s3), child(c1, c4, _),
+    kind(c4, "identifier"), glob("{split,rsplit}", c4), sim905_tok_follows_2(c4),
+    child(n, c12, _), kind(c12, "argument_list"),
+    ( child(c12, c3, _), kind(c3, "keyword_argument"), child(c3, c5, _), kind(c5, "identifier"), glob("maxsplit", c5), sim905_tok_precedes_6(c5), child(c3, c6, _), sim905_tok_follows_7(c6), sim905_maxsplit(c6)
+    ; count : { child(c12, c7, _), kind(c7, "keyword_argument"), child(c7, c8, _), kind(c8, "identifier"), glob("maxsplit", c8), sim905_tok_precedes_8(c8) } = 0, sim905_alt_16(c12)
+    ),
+
+    ( child(c12, c9, _), kind(c9, "keyword_argument"), child(c9, c10, _), kind(c10, "identifier"), glob("sep", c10), sim905_tok_precedes_6(c10), child(c9, c11, _), sim905_tok_follows_7(c11), sim905_sep(c11)
+    ; count : { child(c12, c13, _), kind(c13, "keyword_argument"), child(c13, c14, _), kind(c14, "identifier"), glob("sep", c14), sim905_tok_precedes_8(c14) } = 0, sim905_alt_53(c12)
+    ).
+
+
+// part(n, key): 3 copies of one rule set (`part-b`, `part-f`, `part-t`), folded into one: row `key` of
+// part_case gives the strings each copy had.
+.decl sim905_part(n: node, key: symbol)
+sim905_part(n, q1) :- sim905_part_case(q1, s1), child(n, c1, _), kind(c1, "string_start"),
+    match(s1, c1).
+
+// t_string(n): the JSON util `t-string`, used where the JSON says `matches: "t-string"`
+.decl sim905_t_string(n: node)
+sim905_t_string(n) :- kind(n, "string"), sim905_part(n, "t").
+sim905_t_string(n) :- kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"),
+    sim905_part(c1, "t").
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl sim905_f_string(n: node)
+sim905_f_string(n) :- !sim905_t_string(n),
+    ( kind(n, "string"), sim905_part(n, "f")
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim905_part(c1, "f")
+    ).
+
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl sim905_plain_string(n: node)
+sim905_plain_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), !sim905_alt_2(n).
+
+// bytes_string(n): the JSON util `bytes-string`, used where the JSON says `matches: "bytes-string"`
+.decl sim905_bytes_string(n: node)
+sim905_bytes_string(n) :- sim905_plain_string(n),
+    ( kind(n, "string"), sim905_part(n, "b")
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim905_part(c1, "b")
+    ).
+
+
+// receiver(n): the JSON util `receiver`, used where the JSON says `matches: "receiver"`
+.decl sim905_receiver(n: node)
+sim905_receiver(n) :- sim905_plain_string(n), !sim905_bytes_string(n).
+sim905_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim905_receiver(c1).
+
+// int32(n): the JSON util `int32`, used where the JSON says `matches: "int32"`
+.decl sim905_int32(n: node)
+sim905_int32(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"),
+    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) <= 2147483647.
+sim905_int32(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim905_int32(c2).
+
+// maxsplit(n): the JSON util `maxsplit`, used where the JSON says `matches: "maxsplit"`
+.decl sim905_maxsplit(n: node)
+sim905_maxsplit(n) :- sim905_int32(n).
+sim905_maxsplit(n) :- sim905_neg_int32(n).
+
+// neg_int32(n): the JSON util `neg-int32`, used where the JSON says `matches: "neg-int32"`
+.decl sim905_neg_int32(n: node)
+sim905_neg_int32(n) :- kind(n, "unary_operator"), sim905_tok_has_1(n), child(n, c9, _), sim905_int32(c9).
+sim905_neg_int32(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), sim905_neg_int32(c10).
+
+// sep(n): the JSON util `sep`, used where the JSON says `matches: "sep"`
+.decl sim905_sep(n: node)
+sim905_sep(n) :- (kind(n, "none") ; sim905_plain_string(n), !sim905_bytes_string(n)).
+sim905_sep(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim905_sep(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^-$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_has_1(n: node)
+.stored sim905_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_has_1(n) :- child(n, c1, _), glob("-", c1).
+sim905_tok_has_1(n) :- op(n, t2), match("-", t2).
+sim905_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim905_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim905_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:-)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_follows_2(n: node)
+.stored sim905_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_follows_2(n) :- next_sibling(s5, n), glob(".", s5).
+sim905_tok_follows_2(n) :- structural_before(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, st10, _), o9 = st10 - strlen(g7), token(p8, _, t6, _, o9),
+    match("\\.", t6).
+sim905_tok_follows_2(n) :- structural_before(n, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g7).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_3(n: node)
+.stored sim905_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_3(n) :- next_sibling(n, s15), glob("=", s15).
+sim905_tok_precedes_3(n) :- structural_after(n, g17), match("\\s*", g17), child(p18, n, _),
+    node(_, n, _, _, en21), o19 = en21 + strlen(g17), token(p18, _, t16, o19, _),
+    match("=", t16).
+sim905_tok_precedes_3(n) :- structural_after(n, g17),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g17).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_follows_4(n: node)
+.stored sim905_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_follows_4(n) :- next_sibling(s23, n), glob("=", s23).
+sim905_tok_follows_4(n) :- structural_before(n, g25), match("\\s*", g25), child(p26, n, _),
+    node(_, n, _, st28, _), o27 = st28 - strlen(g25), token(p26, _, t24, _, o27),
+    match("=", t24).
+sim905_tok_follows_4(n) :- structural_before(n, g25),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g25).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_5(n: node)
+.stored sim905_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_5(n) :- next_sibling(n, s32), glob("=", s32).
+sim905_tok_precedes_5(n) :- structural_after(n, g34), match("\\s*", g34), child(p35, n, _),
+    node(_, n, _, _, en38), o36 = en38 + strlen(g34), token(p35, _, t33, o36, _),
+    match("=", t33).
+sim905_tok_precedes_5(n) :- structural_after(n, g34),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g34).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_6(n: node)
+.stored sim905_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_6(n) :- next_sibling(n, s3), glob("=", s3).
+sim905_tok_precedes_6(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match("=", t4).
+sim905_tok_precedes_6(n) :- structural_after(n, g5),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_follows_7(n: node)
+.stored sim905_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_follows_7(n) :- next_sibling(s11, n), glob("=", s11).
+sim905_tok_follows_7(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("=", t12).
+sim905_tok_follows_7(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g13).
+
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_8(n: node)
+.stored sim905_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_8(n) :- next_sibling(n, s20), glob("=", s20).
+sim905_tok_precedes_8(n) :- structural_after(n, g22), match("\\s*", g22), child(p23, n, _),
+    node(_, n, _, _, en26), o24 = en26 + strlen(g22), token(p23, _, t21, o24, _),
+    match("=", t21).
+sim905_tok_precedes_8(n) :- structural_after(n, g22),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g22).
+
+// tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_9(n: node)
+.stored sim905_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_9(n) :- next_sibling(n, s49), glob("=", s49).
+sim905_tok_precedes_9(n) :- structural_after(n, g51), match("\\s*", g51), child(p52, n, _),
+    node(_, n, _, _, en55), o53 = en55 + strlen(g51), token(p52, _, t50, o53, _),
+    match("=", t50).
+sim905_tok_precedes_9(n) :- structural_after(n, g51),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g51).
+
+// tok_follows_10(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_follows_10(n: node)
+.stored sim905_tok_follows_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_follows_10(n) :- next_sibling(s57, n), glob("=", s57).
+sim905_tok_follows_10(n) :- structural_before(n, g59), match("\\s*", g59), child(p60, n, _),
+    node(_, n, _, st62, _), o61 = st62 - strlen(g59), token(p60, _, t58, _, o61),
+    match("=", t58).
+sim905_tok_follows_10(n) :- structural_before(n, g59),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g59).
+
+// tok_precedes_11(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim905_tok_precedes_11(n: node)
+.stored sim905_tok_precedes_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim905_tok_precedes_11(n) :- next_sibling(n, s66), glob("=", s66).
+sim905_tok_precedes_11(n) :- structural_after(n, g68), match("\\s*", g68), child(p69, n, _),
+    node(_, n, _, _, en72), o70 = en72 + strlen(g68), token(p69, _, t67, o70, _),
+    match("=", t67).
+sim905_tok_precedes_11(n) :- structural_after(n, g68),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g68).
+
+// part_case: one row per relation folded into part: its key, then the strings that differed.
+.decl sim905_part_case(key: symbol, s1: symbol)
+sim905_part_case("b", "[A-Za-z]*[bB].*"). sim905_part_case("f", "[A-Za-z]*[fF].*").
+sim905_part_case("t", "[A-Za-z]*[tT].*").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl sim905_alt_2(n: node)
+sim905_alt_2(n) :- sim905_t_string(n).
+sim905_alt_2(n) :- sim905_f_string(n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim905_stop_10(n: node)
+sim905_stop_10(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl sim905_alt_11(n: node)
+sim905_alt_11(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "list_splat")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ).
+
+sim905_alt_11(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl sim905_alt_16(n: node)
+sim905_alt_16(n) :- child(n, c1, _), !sim905_alt_11(c1), precedes_stop(s2, c1, sim905_stop_10),
+    glob("\\,", s2), precedes_stop(s3, s2, sim905_stop_10), !sim905_alt_11(s3),
+    precedes_stop(s4, s3, sim905_stop_10), glob("(", s4), sim905_maxsplit(c1).
+sim905_alt_16(n) :- node(_, n, _, _, _),
+    count : { child(n, c5, _), !sim905_alt_11(c5), sim905_stop_10_precedes(s6, c5), glob("\\,", s6), sim905_stop_10_precedes(s7, s6), !sim905_alt_11(s7), sim905_stop_10_precedes(s8, s7), glob("(", s8) } = 0.
+
+// alt_53(n): the JSON `any`: n matches if any one of these rules does
+.decl sim905_alt_53(n: node)
+sim905_alt_53(n) :- child(n, c1, _), !sim905_alt_11(c1), precedes_stop(s2, c1, sim905_stop_10),
+    glob("(", s2), sim905_sep(c1).
+sim905_alt_53(n) :- node(_, n, _, _, _),
+    count : { child(n, c3, _), !sim905_alt_11(c3), sim905_stop_10_precedes(s4, c3), glob("(", s4) } = 0.
+
+// stop_10_precedes: precedes_stop over the stop set stop_10, read inside an aggregate
+.decl sim905_stop_10_precedes(a: node, b: node)
+sim905_stop_10_precedes(x, y) :- precedes_stop(x, y, sim905_stop_10).

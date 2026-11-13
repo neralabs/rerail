@@ -1,0 +1,88 @@
+.policy "ruff-ytt302-sys-version-cmp-str10" revision 1
+.guests off
+.description "Compare sys.version_info to a tuple instead of comparing sys.version to a one-character string; string order misjudges a two-digit major version."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// YTT302(n): a finding at node n, from clause `sys-version-cmp-str10`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation YTT302(at: node, c: node) "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3,)` instead of comparing `sys.version` to a one-character string; string order misjudges a two-digit major version."
+    suppress noqa "YTT302"
+YTT302(C, n) :- ytt302_target(n), node(_, n, _, _, _), C = n.
+YTT302(C, n) :- ytt302_in_string(n, C).
+
+// one_byte_string(n): the JSON util `one-byte-string`, used where the JSON says `matches: "one-byte-string"`
+.decl ytt302_one_byte_string(n: node)
+ytt302_one_byte_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), value_type(v1, "str"), match("[\\x00-\\x7f]", v1),
+    count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, !ytt302_alt_1(n).
+ytt302_one_byte_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ytt302_one_byte_string(c4).
+
+// sys_version(n): the JSON util `sys-version`, used where the JSON says `matches: "sys-version"`
+.decl ytt302_sys_version(n: node)
+ytt302_sys_version(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.version").
+ytt302_sys_version(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ytt302_sys_version(c1).
+
+// ordered_string_compare(n): the JSON util `ordered-string-compare`, used where the JSON says `matches: "ordered-string-compare"`
+.decl ytt302_ordered_string_compare(n: node)
+ytt302_ordered_string_compare(n) :- kind(n, "comparison_operator"), ytt302_tok_has_1(n),
+    child(n, c9, _), child(p10, c9, _), ytt302_counted(c9),
+    k12 = count : { child(p10, s11, _), precedes(s11, c9), ytt302_counted(s11) }, k12 = 1,
+    ytt302_one_byte_string(c9),
+    count : { child(n, c13, _), child(p14, c13, _), ytt302_counted(c13), k16 = count : { child(p14, s15, _), precedes(s15, c13), ytt302_counted(s15) }, k16 = 2 } = 0.
+
+// left_operand(n): the JSON util `left-operand`, used where the JSON says `matches: "left-operand"`
+.decl ytt302_left_operand(n: node)
+ytt302_left_operand(n) :- child(p1, n, _), ytt302_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ytt302_counted(s2) }, k3 = 0,
+    child(p4, n, _), ytt302_ordered_string_compare(p4).
+ytt302_left_operand(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    ytt302_left_operand(p5).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl ytt302_target(n: node)
+ytt302_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "sys.version"),
+    ytt302_left_operand(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ytt302_in_string(n: node, c: loc)
+ytt302_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ytt302_alt_5(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:<|<=|>|>=)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt302_tok_has_1(n: node)
+.stored ytt302_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt302_tok_has_1(n) :- child(n, c1, _), glob("{<,<=,>,>=}", c1).
+ytt302_tok_has_1(n) :- op(n, t2), match("(?:<|<=|>|>=)", t2).
+ytt302_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ytt302_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ytt302_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ytt302_alt_1(n: node)
+ytt302_alt_1(n) :- kind(n, "string"),
+    match("(?s:.*)(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n(?s:.*)", n).
+ytt302_alt_1(n) :- has(n, c1, "string"),
+    match("(?s:.*)(?:^|[^\\\\])(?:\\\\\\\\)*\\r\\n(?s:.*)", c1).
+
+// counted(n): 3 identical copies of one rule set (`counted_2`, `counted_3`, `counted_4`), folded into one.
+.decl ytt302_counted(n: node)
+ytt302_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ytt302_alt_5(n: node, c: loc)
+ytt302_alt_5(n, C) :- ytt302_target(n), C = n.
+ytt302_alt_5(n, C) :- ytt302_in_string(n, C).

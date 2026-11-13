@@ -1,0 +1,130 @@
+.policy "ruff-pyi026-type-alias-without-annotation" revision 1
+.guests off
+.description "Annotate type alias assignments in stub files with TypeAlias; it marks the line as an alias declaration instead of an ordinary variable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI026(n): a finding at node n, from clause `type-alias-without-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI026(at: node, name: loc) "Annotate `{name}` as `{name}: TypeAlias = ...`, importing `TypeAlias` from `typing` (`typing_extensions` before 3.10). Leave it unannotated only if it is a variable, not a type alias."
+    suppress noqa "PYI026"
+PYI026_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    count : { inside(n, p1, "function_definition"), node(_, p1, _, _, _) } = 0,
+    ( pyi026_alias_target(n)
+    ; pyi026_none_target(n), count : { within_stop(n, p2, "class_definition"), pyi026_enum_class(p2) } = 0
+    ).
+
+
+// enum_base(n): the JSON util `enum-base`, used where the JSON says `matches: "enum-base"`
+.decl pyi026_enum_base(n: node)
+pyi026_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pyi026_set_1(q1).
+
+// enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
+.decl pyi026_enum_class(n: node)
+pyi026_enum_class(n) :- kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), pyi026_enum_base_expr(c2).
+
+// typing_any(n): the JSON util `typing-any`, used where the JSON says `matches: "typing-any"`
+.decl pyi026_typing_any(n: node)
+pyi026_typing_any(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Any")
+    ; sym_of(n, "typing_extensions.Any")
+    ; sym_of(n, "_typeshed.Any")
+    ).
+
+
+// none_value(n): the JSON util `none-value`, used where the JSON says `matches: "none-value"`
+.decl pyi026_none_value(n: node)
+pyi026_none_value(n) :- kind(n, "none").
+pyi026_none_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi026_none_value(c1).
+
+// union_member(n): the JSON util `union-member`, used where the JSON says `matches: "union-member"`
+.decl pyi026_union_member(n: node)
+pyi026_union_member(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "attribute")
+    ; kind(n, "subscript")
+    ; kind(n, "none")
+    ).
+
+pyi026_union_member(n) :- pyi026_union(n).
+pyi026_union_member(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi026_union_member(c1).
+
+// union(n): the JSON util `union`, used where the JSON says `matches: "union"`
+.decl pyi026_union(n: node)
+pyi026_union(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1),
+    field(n, "left", c2), pyi026_union_member(c2), field(n, "right", c3), pyi026_union_member(c3).
+
+// alias_value(n): the JSON util `alias-value`, used where the JSON says `matches: "alias-value"`
+.decl pyi026_alias_value(n: node)
+pyi026_alias_value(n) :- kind(n, "subscript").
+pyi026_alias_value(n) :- pyi026_union(n).
+pyi026_alias_value(n) :- pyi026_typing_any(n).
+pyi026_alias_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi026_alias_value(c1).
+
+// plain_assignment(n): the JSON util `plain-assignment`, used where the JSON says `matches: "plain-assignment"`
+.decl pyi026_plain_assignment(n: node)
+pyi026_plain_assignment(n) :- kind(n, "assignment"),
+    count : { child(n, c1, _), kind(c1, "type") } = 0, child(p2, n, _),
+    kind(p2, "expression_statement").
+
+// enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
+.decl pyi026_enum_ref(n: node)
+pyi026_enum_ref(n) :- pyi026_enum_base(n).
+pyi026_enum_ref(n) :- kind(n, "identifier"), ref_site(n, b1), pyi026_enum_class(b1).
+
+// alias_target(n): the JSON util `alias-target`, used where the JSON says `matches: "alias-target"`
+.decl pyi026_alias_target(n: node)
+pyi026_alias_target(n) :- field(p1, "left", n), pyi026_plain_assignment(p1), field(p1, "right", c2),
+    pyi026_alias_value(c2).
+pyi026_alias_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_1(p3),
+    pyi026_alias_target(p3).
+
+// none_target(n): the JSON util `none-target`, used where the JSON says `matches: "none-target"`
+.decl pyi026_none_target(n: node)
+pyi026_none_target(n) :- field(p1, "left", n), pyi026_plain_assignment(p1), field(p1, "right", c2),
+    pyi026_none_value(c2).
+pyi026_none_target(n) :- child(p3, n, _), kind(p3, "tuple_pattern"), !pyi026_tok_has_1(p3),
+    pyi026_none_target(p3).
+
+// paren_enum_ref(n): the JSON util `paren-enum-ref`, used where the JSON says `matches: "paren-enum-ref"`
+.decl pyi026_paren_enum_ref(n: node)
+pyi026_paren_enum_ref(n) :- pyi026_enum_ref(n).
+pyi026_paren_enum_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi026_paren_enum_ref(c1).
+
+// enum_base_expr(n): the JSON util `enum-base-expr`, used where the JSON says `matches: "enum-base-expr"`
+.decl pyi026_enum_base_expr(n: node)
+pyi026_enum_base_expr(n) :- pyi026_paren_enum_ref(n).
+pyi026_enum_base_expr(n) :- kind(n, "subscript"), field(n, "value", c1), pyi026_paren_enum_ref(c1).
+pyi026_enum_base_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi026_enum_base_expr(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi026_tok_has_1(n: node)
+.stored pyi026_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi026_tok_has_1(n) :- child(n, c4, _), glob("\\,", c4).
+pyi026_tok_has_1(n) :- op(n, t5), match(",", t5).
+pyi026_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+pyi026_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+pyi026_tok_has_1(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi026_set_1(v: symbol)
+pyi026_set_1("enum.Enum"). pyi026_set_1("enum.Flag"). pyi026_set_1("enum.IntEnum"). pyi026_set_1("enum.IntFlag").
+pyi026_set_1("enum.StrEnum"). pyi026_set_1("enum.ReprEnum"). pyi026_set_1("enum.CheckEnum").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI026_raw(at: node, name: loc)
+PYI026(v0, v1) :- PYI026_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

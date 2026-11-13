@@ -1,0 +1,44 @@
+.policy "ruff-g010-logging-warn" revision 1
+.guests off
+.description "Call the warning logging method instead of warn; warn is a deprecated alias of warning."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// G010(n): a finding at node n, from clause `logging-warn`.
+// Each rule below is one way the JSON `rule` can match.
+.violation G010(at: node) "Replace the deprecated `warn` logging call with `warning`, which takes the same arguments; leave it if this object is not a standard logger and has no `warning` method."
+    suppress noqa "G010"
+G010(n) :- kind(n, "identifier"),
+    ( glob("warn", n), field(p1, "attribute", n), kind(p1, "attribute"), field(p1, "object", c1), g010_logger_object(c1), g010_callee(p1)
+    ; g010_callee(n), sym_of(n, "logging.warn")
+    ).
+
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl g010_callee(n: node)
+g010_callee(n) :- field(p1, "function", n), kind(p1, "call").
+g010_callee(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), g010_callee(p2).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl g010_name_chain(n: node)
+g010_name_chain(n) :- kind(n, "identifier").
+g010_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), g010_name_chain(c1).
+g010_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g010_name_chain(c2).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl g010_logger_object(n: node)
+g010_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+g010_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g010_logger_object(c2).
+g010_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+g010_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g010_name_chain(c2)
+    ),
+    !sym_of(n, _).

@@ -1,0 +1,158 @@
+.policy "ruff-npy002-numpy-legacy-random" revision 1
+.guests off
+.description "Use a NumPy random Generator instead of the legacy global-state functions in numpy.random."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl npy002_callee_position(n: node)
+npy002_callee_position(n) :- field(p1, "function", n), kind(p1, "call").
+npy002_callee_position(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    npy002_callee_position(p2).
+
+// NPY002(n): a finding at node n, from clause `seed`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002(at: node, name: loc) "Create `rng = np.random.default_rng(seed)` and pass it around instead of seeding NumPy's global state with `{name}`; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.random.seed"), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_state(n): a finding at node n, from clause `state`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_state(at: node, name: loc) code "NPY002" "Save or restore state through `bit_generator.state` on a `np.random.default_rng()` generator instead of `{name}`; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_state(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.random.get_state") ; sym_of(n, "numpy.random.set_state")),
+    node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_rand(n): a finding at node n, from clause `rand`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_rand(at: node, name: loc) code "NPY002" "Call `rng.random(shape)` on a `np.random.default_rng()` generator instead of `{name}`, passing one shape instead of separate dimensions; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_rand(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.random.rand"), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_randn(n): a finding at node n, from clause `randn`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_randn(at: node, name: loc) code "NPY002" "Call `rng.standard_normal(shape)` on a `np.random.default_rng()` generator instead of `{name}`, passing one shape instead of separate dimensions; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_randn(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.random.randn"), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_randint(n): a finding at node n, from clause `randint`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_randint(at: node, name: loc) code "NPY002" "Call `rng.integers(low, high, size)` on a `np.random.default_rng()` generator instead of `{name}`; the upper bound stays exclusive; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_randint(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.random.randint"), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_random_integers(n): a finding at node n, from clause `random-integers`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_random_integers(at: node, name: loc) code "NPY002" "Call `rng.integers(low, high, size, endpoint=True)` on a `np.random.default_rng()` generator instead of `{name}`, as it includes the upper bound; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_random_integers(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.random.random_integers"), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_random_sample(n): a finding at node n, from clause `random-sample`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_random_sample(at: node, name: loc) code "NPY002" "Call `rng.random(size)` on a `np.random.default_rng()` generator instead of `{name}`; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_random_sample(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "numpy.random.random")
+    ; sym_of(n, "numpy.random.ranf")
+    ; sym_of(n, "numpy.random.sample")
+    ; sym_of(n, "numpy.random.random_sample")
+    ),
+    node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_same_method(n): a finding at node n, from clause `same-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_same_method(at: node, name: loc) code "NPY002" "Call the method of the same name on a `np.random.default_rng()` generator instead of `{name}`; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_same_method(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy002_set_1(q1), node(_, n, _, _, _), NAME = n, npy002_callee_position(n).
+
+// NPY002_string_annotation(n): a finding at node n, from clause `string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY002_string_annotation(at: node, name: node) code "NPY002" "Call the matching method of a `np.random.default_rng()` generator instead of the legacy `{name}`; keep `{name}` where legacy seeded results must match."
+    suppress noqa "NPY002"
+NPY002_string_annotation(NAME, n) :- npy002_in_string(n, NAME).
+
+// reference(n): the JSON util `reference`, used where the JSON says `matches: "reference"`
+.decl npy002_reference(n: node)
+npy002_reference(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy002_set_2(q1), npy002_callee_position(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy002_in_string(n: node, name: loc)
+npy002_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), npy002_alt_3(c2, NAME).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl npy002_set_1(v: symbol)
+npy002_set_1("numpy.random.choice"). npy002_set_1("numpy.random.bytes").
+npy002_set_1("numpy.random.shuffle"). npy002_set_1("numpy.random.permutation").
+npy002_set_1("numpy.random.beta"). npy002_set_1("numpy.random.binomial").
+npy002_set_1("numpy.random.chisquare"). npy002_set_1("numpy.random.dirichlet").
+npy002_set_1("numpy.random.exponential"). npy002_set_1("numpy.random.f"). npy002_set_1("numpy.random.gamma").
+npy002_set_1("numpy.random.geometric"). npy002_set_1("numpy.random.gumbel").
+npy002_set_1("numpy.random.hypergeometric"). npy002_set_1("numpy.random.laplace").
+npy002_set_1("numpy.random.logistic"). npy002_set_1("numpy.random.lognormal").
+npy002_set_1("numpy.random.logseries"). npy002_set_1("numpy.random.multinomial").
+npy002_set_1("numpy.random.multivariate_normal"). npy002_set_1("numpy.random.negative_binomial").
+npy002_set_1("numpy.random.noncentral_chisquare"). npy002_set_1("numpy.random.noncentral_f").
+npy002_set_1("numpy.random.normal"). npy002_set_1("numpy.random.pareto").
+npy002_set_1("numpy.random.poisson"). npy002_set_1("numpy.random.power").
+npy002_set_1("numpy.random.rayleigh"). npy002_set_1("numpy.random.standard_cauchy").
+npy002_set_1("numpy.random.standard_exponential"). npy002_set_1("numpy.random.standard_gamma").
+npy002_set_1("numpy.random.standard_normal"). npy002_set_1("numpy.random.standard_t").
+npy002_set_1("numpy.random.triangular"). npy002_set_1("numpy.random.uniform").
+npy002_set_1("numpy.random.vonmises"). npy002_set_1("numpy.random.wald").
+npy002_set_1("numpy.random.weibull"). npy002_set_1("numpy.random.zipf").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl npy002_set_2(v: symbol)
+npy002_set_2("numpy.random.seed"). npy002_set_2("numpy.random.get_state").
+npy002_set_2("numpy.random.set_state"). npy002_set_2("numpy.random.rand").
+npy002_set_2("numpy.random.randn"). npy002_set_2("numpy.random.randint").
+npy002_set_2("numpy.random.random_integers"). npy002_set_2("numpy.random.random").
+npy002_set_2("numpy.random.ranf"). npy002_set_2("numpy.random.sample").
+npy002_set_2("numpy.random.random_sample"). npy002_set_2("numpy.random.choice").
+npy002_set_2("numpy.random.bytes"). npy002_set_2("numpy.random.shuffle").
+npy002_set_2("numpy.random.permutation"). npy002_set_2("numpy.random.beta").
+npy002_set_2("numpy.random.binomial"). npy002_set_2("numpy.random.chisquare").
+npy002_set_2("numpy.random.dirichlet"). npy002_set_2("numpy.random.exponential").
+npy002_set_2("numpy.random.f"). npy002_set_2("numpy.random.gamma"). npy002_set_2("numpy.random.geometric").
+npy002_set_2("numpy.random.gumbel"). npy002_set_2("numpy.random.hypergeometric").
+npy002_set_2("numpy.random.laplace"). npy002_set_2("numpy.random.logistic").
+npy002_set_2("numpy.random.lognormal"). npy002_set_2("numpy.random.logseries").
+npy002_set_2("numpy.random.multinomial"). npy002_set_2("numpy.random.multivariate_normal").
+npy002_set_2("numpy.random.negative_binomial"). npy002_set_2("numpy.random.noncentral_chisquare").
+npy002_set_2("numpy.random.noncentral_f"). npy002_set_2("numpy.random.normal").
+npy002_set_2("numpy.random.pareto"). npy002_set_2("numpy.random.poisson").
+npy002_set_2("numpy.random.power"). npy002_set_2("numpy.random.rayleigh").
+npy002_set_2("numpy.random.standard_cauchy"). npy002_set_2("numpy.random.standard_exponential").
+npy002_set_2("numpy.random.standard_gamma"). npy002_set_2("numpy.random.standard_normal").
+npy002_set_2("numpy.random.standard_t"). npy002_set_2("numpy.random.triangular").
+npy002_set_2("numpy.random.uniform"). npy002_set_2("numpy.random.vonmises").
+npy002_set_2("numpy.random.wald"). npy002_set_2("numpy.random.weibull"). npy002_set_2("numpy.random.zipf").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy002_alt_3(n: node, name: loc)
+npy002_alt_3(n, NAME) :- npy002_reference(n), NAME = n.
+npy002_alt_3(n, NAME) :- npy002_in_string(n, NAME).

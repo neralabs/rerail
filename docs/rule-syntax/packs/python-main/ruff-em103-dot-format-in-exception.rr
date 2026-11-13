@@ -1,0 +1,81 @@
+.policy "ruff-em103-dot-format-in-exception" revision 1
+.guests off
+.description "Assign a formatted exception message to a variable before raising instead of calling format on a literal inline; the traceback otherwise shows the message twice."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// EM103(n): a finding at node n, from clause `dot-format-in-exception`.
+// Each rule below is one way the JSON `rule` can match.
+.violation EM103(at: node) "Assign the result of this `.format()` call to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
+    suppress noqa "EM103"
+EM103(n) :- kind(n, "call"), em103_first_arg_of_raised_call(n), field(n, "function", c1),
+    em103_format_callee(c1).
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl em103_raised(n: node)
+em103_raised(n) :- child(p1, n, _), kind(p1, "raise_statement"),
+    count : { field(p2, "cause", n), kind(p2, "raise_statement") } = 0.
+em103_raised(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), em103_raised(p3).
+
+// typing_cast(n): the JSON util `typing-cast`, used where the JSON says `matches: "typing-cast"`
+.decl em103_typing_cast(n: node)
+em103_typing_cast(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.cast")
+    ; sym_of(n, "typing_extensions.cast")
+    ; sym_of(n, "_typeshed.cast")
+    ).
+
+em103_typing_cast(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    em103_typing_cast(c1).
+
+// first_arg_of_raised_call(n): the JSON util `first-arg-of-raised-call`, used where the JSON says `matches: "first-arg-of-raised-call"`
+.decl em103_first_arg_of_raised_call(n: node)
+em103_first_arg_of_raised_call(n) :- child(p1, n, _), kind(p1, "argument_list"),
+    child(p2, p1, _), kind(p2, "call"), em103_raised(p2),
+    count : { field(p2, "function", c3), em103_typing_cast(c3) } = 0, !em103_tok_follows_1(n).
+em103_first_arg_of_raised_call(n) :- child(p11, n, _), kind(p11, "parenthesized_expression"),
+    em103_first_arg_of_raised_call(p11).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl em103_plain_string(n: node)
+em103_plain_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), match("[^'\"]*[fFtT].*", c1) } = 0.
+
+// plain_string_literal(n): the JSON util `plain-string-literal`, used where the JSON says `matches: "plain-string-literal"`
+.decl em103_plain_string_literal(n: node)
+em103_plain_string_literal(n) :- em103_plain_string(n).
+em103_plain_string_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !em103_plain_string(c1) } = 0.
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl em103_literal(n: node)
+em103_literal(n) :- kind(n, k1), em103_set_1(k1).
+em103_literal(n) :- em103_plain_string_literal(n).
+em103_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), em103_literal(c2).
+
+// format_callee(n): the JSON util `format-callee`, used where the JSON says `matches: "format-callee"`
+.decl em103_format_callee(n: node)
+em103_format_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("format", c1), field(n, "object", c2), em103_literal(c2).
+em103_format_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    em103_format_callee(c3).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl em103_tok_follows_1(n: node)
+.stored em103_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+em103_tok_follows_1(n) :- precedes(s4, n), glob("\\,", s4).
+em103_tok_follows_1(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match(",", t5).
+em103_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:,).*)$", g6).
+em103_tok_follows_1(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+
+// set_1: node kinds from a JSON `any`
+.decl em103_set_1(v: symbol)
+em103_set_1("integer"). em103_set_1("float"). em103_set_1("true"). em103_set_1("false"). em103_set_1("none").
+em103_set_1("ellipsis").

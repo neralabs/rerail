@@ -1,0 +1,151 @@
+.policy "ruff-pie796-non-unique-enums" revision 1
+.guests off
+.description "Give each Enum member a unique value; a duplicate becomes an alias of the earlier member instead of a new one."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// auto_call(n): the JSON util `auto-call`, used where the JSON says `matches: "auto-call"`
+.decl pie796_auto_call(n: node)
+pie796_auto_call(n) :- kind(n, "call"), child(n, c1, _), !pie796_tok_follows_1(c1), pie796_enum_auto(c1).
+pie796_auto_call(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), pie796_auto_call(c9).
+
+// enum_auto(n): the JSON util `enum-auto`, used where the JSON says `matches: "enum-auto"`
+.decl pie796_enum_auto(n: node)
+pie796_enum_auto(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "enum.auto").
+
+// enum_base(n): the JSON util `enum-base`, used where the JSON says `matches: "enum-base"`
+.decl pie796_enum_base(n: node)
+pie796_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "enum.Enum").
+
+// PIE796(n): a finding at node n, from clause `non-unique-enums`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PIE796(at: node, v: loc) "Enum contains duplicate value: `{v}`"
+    suppress noqa "PIE796"
+PIE796_raw(n, V) :- pie796_member(n, V),
+    k4 = count : { precedes(s1, n), pie796_member(s1, U), value(U, t2), value(V, t2) },
+    k4 >= 1, child(p5, n, _), kind(p5, "block"), child(p6, p5, _),
+    kind(p6, "class_definition"), child(p6, c7, _), kind(c7, "argument_list"),
+    child(c7, c8, _), pie796_enum_base(c8).
+
+// member(n, …): the JSON util `member`, called with `matches` and arguments X
+.decl pie796_member(n: node, x: node)
+pie796_member(n, X) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), !pie796_tok_has_2(c1), within_stop(c10, c1, pie796_stop_1),
+    pie796_tok_follows_3(c10), !kind(c10, "assignment"), node(_, c10, _, _, _), X = c10, !pie796_alt_2(c10).
+
+// PIE796_non_unique_enums_stub(n): a finding at node n, from clause `non-unique-enums-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PIE796_non_unique_enums_stub(at: node, v: loc) code "PIE796" "Enum contains duplicate value: `{v}`"
+    suppress noqa "PIE796"
+PIE796_non_unique_enums_stub_raw(n, V) :- pie796_member_non_unique_enums_stub(n, V),
+    k4 = count : { precedes(s1, n), pie796_member_non_unique_enums_stub(s1, U), value(U, t2), value(V, t2) },
+    k4 >= 1, child(p5, n, _), kind(p5, "block"), child(p6, p5, _),
+    kind(p6, "class_definition"), child(p6, c7, _), kind(c7, "argument_list"),
+    child(c7, c8, _), pie796_enum_base(c8).
+
+// member_non_unique_enums_stub(n, …): the JSON util `member`, called with `matches` and arguments X
+.decl pie796_member_non_unique_enums_stub(n: node, x: node)
+pie796_member_non_unique_enums_stub(n, X) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), !pie796_tok_has_2(c1), within_stop(c10, c1, pie796_stop_1),
+    pie796_tok_follows_3(c10), !kind(c10, "assignment"), node(_, c10, _, _, _), X = c10, !pie796_alt_5(c10).
+
+// typing_cast(n): the JSON util `typing-cast`, used where the JSON says `matches: "typing-cast"`
+.decl pie796_typing_cast(n: node)
+pie796_typing_cast(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.cast")
+    ; sym_of(n, "typing_extensions.cast")
+    ; sym_of(n, "_typeshed.cast")
+    ).
+
+
+// ellipsis(n): the JSON util `ellipsis`, used where the JSON says `matches: "ellipsis"`
+.decl pie796_ellipsis(n: node)
+pie796_ellipsis(n) :- kind(n, "ellipsis").
+pie796_ellipsis(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pie796_ellipsis(c1).
+
+// unknown_value(n): the JSON util `unknown-value`, used where the JSON says `matches: "unknown-value"`
+.decl pie796_unknown_value(n: node)
+pie796_unknown_value(n) :- pie796_ellipsis(n).
+pie796_unknown_value(n) :- pie796_cast_ellipsis(n).
+
+// cast_ellipsis(n): the JSON util `cast-ellipsis`, used where the JSON says `matches: "cast-ellipsis"`
+.decl pie796_cast_ellipsis(n: node)
+pie796_cast_ellipsis(n) :- kind(n, "call"), child(n, c1, _), !pie796_tok_follows_1(c1),
+    pie796_typing_cast(c1), child(n, c9, _), kind(c9, "argument_list"),
+    k11 = count : { child(c9, c10, _), !glob("[(),]", c10) }, k11 >= 2, k11 <= 2,
+    count : { child(c9, c12, _), (kind(c12, "keyword_argument") ; kind(c12, "dictionary_splat")) } = 0,
+    child(c9, c13, _), pie796_ellipsis(c13), pie796_tok_follows_4(c13).
+pie796_cast_ellipsis(n) :- kind(n, "parenthesized_expression"), child(n, c21, _),
+    pie796_cast_ellipsis(c21).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie796_tok_follows_1(n: node)
+.stored pie796_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie796_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+pie796_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+pie796_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie796_tok_has_2(n: node)
+.stored pie796_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie796_tok_has_2(n) :- child(n, c2, _), glob(":", c2).
+pie796_tok_has_2(n) :- op(n, t3), match(":", t3).
+pie796_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+pie796_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+pie796_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie796_tok_follows_3(n: node)
+.stored pie796_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie796_tok_follows_3(n) :- next_sibling(s11, n), glob("=", s11).
+pie796_tok_follows_3(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("=", t12).
+pie796_tok_follows_3(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g13).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie796_tok_follows_4(n: node)
+.stored pie796_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie796_tok_follows_4(n) :- next_sibling(s14, n), glob("\\,", s14).
+pie796_tok_follows_4(n) :- structural_before(n, g16), match("\\s*", g16), child(p17, n, _),
+    node(_, n, _, st19, _), o18 = st19 - strlen(g16), token(p17, _, t15, _, o18),
+    match(",", t15).
+pie796_tok_follows_4(n) :- structural_before(n, g16), match("(?s)^(?:.*(?:,)\\s*)$", g16).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pie796_stop_1(n: node)
+pie796_stop_1(n) :- node(_, n, _, _, _), !kind(n, "assignment").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pie796_alt_2(n: node)
+pie796_alt_2(n) :- pie796_auto_call(n).
+pie796_alt_2(n) :- (kind(n, "tuple") ; kind(n, "expression_list")), child(n, c1, _),
+    pie796_auto_call(c1).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pie796_alt_5(n: node)
+pie796_alt_5(n) :- pie796_alt_2(n).
+pie796_alt_5(n) :- pie796_unknown_value(n).
+
+// main's file condition {"regex": "\\.py$"}
+.decl PIE796_raw(at: node, v: loc)
+PIE796(v0, v1) :- PIE796_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.py$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PIE796_non_unique_enums_stub_raw(at: node, v: loc)
+PIE796_non_unique_enums_stub(v0, v1) :- PIE796_non_unique_enums_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

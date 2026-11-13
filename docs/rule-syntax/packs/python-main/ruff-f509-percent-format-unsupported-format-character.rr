@@ -1,0 +1,27 @@
+.policy "ruff-f509-percent-format-unsupported-format-character" revision 1
+.guests off
+.description "Use only valid conversion characters in Python %-format strings; an unsupported one raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F509(n): a finding at node n, from clause `percent-format-unsupported-format-character`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S are added to every rule.
+.violation F509(at: node) "Replace the unsupported conversion character in this %-format string with a valid one such as `s`, `d`, `r` or `f`."
+    suppress noqa "F509"
+F509(n) :- n ~ `$S % $R`, f509_format_string(S).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f509_plain_string(n: node)
+f509_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f509_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// format_string(n): the JSON util `format-string`, used where the JSON says `matches: "format-string"`
+.decl f509_format_string(n: node)
+f509_format_string(n) :- f509_plain_string(n), parsed(n, "percentFormat", r1), child(r1, c2, _),
+    kind(c2, "error"), value(c2, v3), prefix("unsupported format character", v3).
+f509_format_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f509_format_string(c4).

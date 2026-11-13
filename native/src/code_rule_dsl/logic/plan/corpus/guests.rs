@@ -121,11 +121,16 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
 
 /// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
-/// their ids. A guest in the run's language takes `GUEST_KEYS..HIDDEN_KEYS`, which a policy shows; every other
-/// document `HIDDEN_KEYS..2^31` (decision 0058 §1).
-fn key(parts: &[&[u8]], shown: bool, taken: &mut HashSet<u32>) -> u32 {
-    use crate::code_rule_dsl::facts::vtab::syntax::{GUEST_KEYS, HIDDEN_KEYS};
-    let (base, span) = if shown { (GUEST_KEYS, HIDDEN_KEYS - GUEST_KEYS) } else { (HIDDEN_KEYS, (1u32 << 31) - HIDDEN_KEYS) };
+/// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
+/// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
+fn key(parts: &[&[u8]], range: Range, taken: &mut HashSet<u32>) -> u32 {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
+    let (base, end) = match range {
+        Range::Code => (GUEST_KEYS, ANNOTATION_KEYS),
+        Range::Annotation => (ANNOTATION_KEYS, HIDDEN_KEYS),
+        Range::Hidden => (HIDDEN_KEYS, 1u32 << 31),
+    };
+    let span = end - base;
     let mut h = Sha256::new();
     for p in parts {
         h.update((p.len() as u64).to_le_bytes());
@@ -137,6 +142,14 @@ fn key(parts: &[&[u8]], shown: bool, taken: &mut HashSet<u32>) -> u32 {
         k = (k + 1) % span;
     }
     base + k
+}
+
+/// Which keys a document takes (`key`).
+#[derive(Clone, Copy)]
+enum Range {
+    Code,
+    Annotation,
+    Hidden,
 }
 
 /// A string's text as a placement: copied when its normalized text is a stretch of the host, mapped when it has
@@ -308,7 +321,16 @@ impl Guests {
         let Some((text, place)) = placed else { return Ok(None) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
         let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
-        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], label == self.run, &mut self.taken);
+        // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
+        // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
+        // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
+        // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
+        let range = match (label == self.run, grammar_name == "annotation") {
+            (true, false) => Range::Code,
+            (true, true) => Range::Annotation,
+            (false, _) => Range::Hidden,
+        };
+        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &mut self.taken);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
@@ -337,7 +359,7 @@ impl Guests {
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
         let Some((facts, root, digest)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
-        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], false, &mut self.taken);
+        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, &mut self.taken);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         Ok(Some(Document {

@@ -1,0 +1,206 @@
+.policy "ruff-pyi052-unannotated-assignment-in-stub" revision 1
+.guests off
+.description "Annotate simple assignments in stub files with their type; a stub declares types, so a bare assignment of a literal or small container should carry an explicit annotation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI052(n): a finding at node n, from clause `unannotated-assignment-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI052(at: node, name: loc) "Add a type annotation to `{name}` (`{name}: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value."
+    suppress noqa "PYI052"
+PYI052_raw(n, NAME) :- (pyi052_leaf(n) ; pyi052_container(n)), pyi052_value_of(n, NAME).
+
+// enum_base(n): the JSON util `enum-base`, used where the JSON says `matches: "enum-base"`
+.decl pyi052_enum_base(n: node)
+pyi052_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pyi052_set_1(q1).
+
+// enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
+.decl pyi052_enum_class(n: node)
+pyi052_enum_class(n) :- kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), pyi052_alt_2(c2).
+
+// enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
+.decl pyi052_enum_ref(n: node)
+pyi052_enum_ref(n) :- pyi052_enum_base(n).
+pyi052_enum_ref(n) :- kind(n, "identifier"), ref_site(n, b1), pyi052_enum_class(b1).
+
+// plain_lit(n): the JSON util `plain-lit`, used where the JSON says `matches: "plain-lit"`
+.decl pyi052_plain_lit(n: node)
+pyi052_plain_lit(n) :- kind(n, "string"), match("[rRuUbB]{0,2}['\\\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+pyi052_plain_lit(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuUbB]{0,2}['\\\"].*", c2) } = 0.
+
+// math_attr(n): the JSON util `math-attr`, used where the JSON says `matches: "math-attr"`
+.decl pyi052_math_attr(n: node)
+pyi052_math_attr(n) :- kind(n, "attribute"), sym_of(n, q1), pyi052_set_3(q1).
+
+// neg_math_attr(n): the JSON util `neg-math-attr`, used where the JSON says `matches: "neg-math-attr"`
+.decl pyi052_neg_math_attr(n: node)
+pyi052_neg_math_attr(n) :- kind(n, "attribute"),
+    ( sym_of(n, "math.inf")
+    ; sym_of(n, "math.e")
+    ; sym_of(n, "math.pi")
+    ; sym_of(n, "math.tau")
+    ).
+
+
+// neg_arg(n): the JSON util `neg-arg`, used where the JSON says `matches: "neg-arg"`
+.decl pyi052_neg_arg(n: node)
+pyi052_neg_arg(n) :- (kind(n, "integer") ; kind(n, "float")).
+pyi052_neg_arg(n) :- pyi052_neg_math_attr(n).
+pyi052_neg_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi052_neg_arg(c1).
+
+// neg_number(n): the JSON util `neg-number`, used where the JSON says `matches: "neg-number"`
+.decl pyi052_neg_number(n: node)
+pyi052_neg_number(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
+    field(n, "argument", c2), pyi052_neg_arg(c2).
+
+// complex_sum(n): the JSON util `complex-sum`, used where the JSON says `matches: "complex-sum"`
+.decl pyi052_complex_sum(n: node)
+pyi052_complex_sum(n) :- kind(n, "binary_operator"), field(n, "operator", c1),
+    glob("[+-]", c1), field(n, "right", c2), pyi052_imaginary(c2), field(n, "left", c3),
+    pyi052_real_left(c3).
+
+// imaginary(n): the JSON util `imaginary`, used where the JSON says `matches: "imaginary"`
+.decl pyi052_imaginary(n: node)
+pyi052_imaginary(n) :- (kind(n, "integer") ; kind(n, "float")), glob("**[jJ]", n).
+pyi052_imaginary(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi052_imaginary(c1).
+
+// short_real(n): the JSON util `short-real`, used where the JSON says `matches: "short-real"`
+.decl pyi052_short_real(n: node)
+pyi052_short_real(n) :- (kind(n, "integer") ; kind(n, "float")), match("[^jJ]{1,10}", n).
+pyi052_short_real(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi052_short_real(c1).
+
+// real_left(n): the JSON util `real-left`, used where the JSON says `matches: "real-left"`
+.decl pyi052_real_left(n: node)
+pyi052_real_left(n) :- pyi052_short_real(n).
+pyi052_real_left(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
+    field(n, "argument", c2), pyi052_short_real(c2).
+pyi052_real_left(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi052_real_left(c3).
+
+// leaf(n): the JSON util `leaf`, used where the JSON says `matches: "leaf"`
+.decl pyi052_leaf(n: node)
+pyi052_leaf(n) :- (kind(n, "true") ; kind(n, "false")).
+pyi052_leaf(n) :- pyi052_plain_lit(n).
+pyi052_leaf(n) :- (kind(n, "integer") ; kind(n, "float")).
+pyi052_leaf(n) :- pyi052_neg_number(n).
+pyi052_leaf(n) :- pyi052_complex_sum(n).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl pyi052_elem(n: node)
+pyi052_elem(n) :- (kind(n, "none") ; kind(n, "ellipsis")).
+pyi052_elem(n) :- pyi052_leaf(n).
+pyi052_elem(n) :- pyi052_math_attr(n).
+pyi052_elem(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi052_elem(c1).
+
+// pair_ok(n): the JSON util `pair-ok`, used where the JSON says `matches: "pair-ok"`
+.decl pyi052_pair_ok(n: node)
+pyi052_pair_ok(n) :- kind(n, "pair"), field(n, "key", c1), pyi052_elem(c1), field(n, "value", c2),
+    pyi052_elem(c2).
+
+// small(n): the JSON util `small`, used where the JSON says `matches: "small"`
+.decl pyi052_small(n: node)
+pyi052_small(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), child(p2, c1, _), pyi052_counted_4(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi052_counted_4(s3) }, k4 = 10 } = 0.
+
+// container(n): the JSON util `container`, used where the JSON says `matches: "container"`
+.decl pyi052_container(n: node)
+pyi052_container(n) :- pyi052_small(n),
+    ( (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple") ; kind(n, "expression_list")), count : { child(n, c1, _), !pyi052_alt_5(c1) } = 0
+    ; kind(n, "dictionary"), count : { child(n, c2, _), !pyi052_alt_6(c2) } = 0
+    ).
+
+
+// special(n): the JSON util `special`, used where the JSON says `matches: "special"`
+.decl pyi052_special(n: node)
+pyi052_special(n) :- kind(n, "identifier"),
+    ( glob("__all__", n), count : { inside(n, p1, "class_definition"), node(_, p1, _, _, _) } = 0
+    ; glob("__{match_args,slots}__", n), inside(n, p2, "class_definition"), node(_, p2, _, _, _)
+    ).
+
+
+// plain_assign(n): the JSON util `plain-assign`, used where the JSON says `matches: "plain-assign"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl pyi052_plain_assign(n: node, name: loc)
+pyi052_plain_assign(n, NAME) :- kind(n, "assignment"), !pyi052_alt_11(n), child(p4, n, _),
+    kind(p4, "expression_statement"), field(n, "left", c5), pyi052_target_name(c5, NAME).
+
+// value_of(n): the JSON util `value-of`, used where the JSON says `matches: "value-of"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl pyi052_value_of(n: node, name: loc)
+pyi052_value_of(n, NAME) :- field(p1, "right", n), pyi052_plain_assign(p1, NAME).
+pyi052_value_of(n, NAME) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi052_value_of(p2, NAME).
+
+// target_name(n): the JSON util `target-name`, used where the JSON says `matches: "target-name"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl pyi052_target_name(n: node, name: loc)
+pyi052_target_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !pyi052_special(n).
+pyi052_target_name(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi052_target_name(c1, NAME).
+pyi052_target_name(n, NAME) :- kind(n, "tuple_pattern"), !pyi052_tok_has_1(n), child(n, c10, _),
+    pyi052_target_name(c10, NAME).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi052_tok_has_1(n: node)
+.stored pyi052_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi052_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pyi052_tok_has_1(n) :- op(n, t3), match(",", t3).
+pyi052_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi052_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi052_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi052_set_1(v: symbol)
+pyi052_set_1("enum.Enum"). pyi052_set_1("enum.Flag"). pyi052_set_1("enum.IntEnum"). pyi052_set_1("enum.IntFlag").
+pyi052_set_1("enum.StrEnum"). pyi052_set_1("enum.ReprEnum"). pyi052_set_1("enum.CheckEnum").
+
+// set_3: symbols from the JSON `resolves.import`
+.decl pyi052_set_3(v: symbol)
+pyi052_set_3("math.inf"). pyi052_set_3("math.nan"). pyi052_set_3("math.e"). pyi052_set_3("math.pi").
+pyi052_set_3("math.tau"). pyi052_set_3("sys.stdin"). pyi052_set_3("sys.stdout"). pyi052_set_3("sys.stderr").
+pyi052_set_3("sys.version"). pyi052_set_3("sys.version_info"). pyi052_set_3("sys.platform").
+pyi052_set_3("sys.executable"). pyi052_set_3("sys.prefix"). pyi052_set_3("sys.exec_prefix").
+pyi052_set_3("sys.base_prefix"). pyi052_set_3("sys.byteorder"). pyi052_set_3("sys.maxsize").
+pyi052_set_3("sys.hexversion"). pyi052_set_3("sys.winver").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi052_alt_2(n: node)
+pyi052_alt_2(n) :- pyi052_enum_ref(n).
+pyi052_alt_2(n) :- kind(n, "subscript"), field(n, "value", c1), pyi052_enum_ref(c1).
+
+// counted_4(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi052_counted_4(n: node)
+pyi052_counted_4(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi052_alt_5(n: node)
+pyi052_alt_5(n) :- kind(n, "comment").
+pyi052_alt_5(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+pyi052_alt_5(n) :- pyi052_elem(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi052_alt_6(n: node)
+pyi052_alt_6(n) :- kind(n, "comment").
+pyi052_alt_6(n) :- node(_, n, _, _, _), glob("[{},]", n).
+pyi052_alt_6(n) :- pyi052_pair_ok(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi052_alt_11(n: node)
+pyi052_alt_11(n) :- child(n, c1, _), kind(c1, "type").
+pyi052_alt_11(n) :- inside(n, p2, "function_definition").
+pyi052_alt_11(n) :- within_stop(n, p3, "class_definition"), pyi052_enum_class(p3).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI052_raw(at: node, name: loc)
+PYI052(v0, v1) :- PYI052_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -1,0 +1,50 @@
+.policy "ruff-d205-missing-blank-line-after-summary" revision 1
+.guests off
+.description "Separate a multi-line docstring's summary line from the description below it with exactly one blank line."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D205(n): a finding at node n, from clause `missing-blank-line-after-summary`.
+// Each rule below is one way the JSON `rule` can match.
+.violation D205(at: node) "Leave exactly one blank line between this docstring's summary line and the description; if the summary wraps onto a second line, shorten it to fit on one line instead."
+    suppress noqa "D205"
+D205(n) :- d205_docstring(n), match("[uUrR]*(?:\"{3}|'{3}).*", n), child(n, c1, _),
+    kind(c1, "string_content"),
+    match("(?:\\s*\\S[^\\r\\n]*\\r?\\n(?:[^\\S\\r\\n]*\\r?\\n(?:[^\\S\\r\\n]*\\r?\\n)+)?[^\\S\\r\\n]*\\S|\\s*\\S[^\\r\\n]*\\r(?:[^\\S\\r\\n]*\\r(?:[^\\S\\r\\n]*\\r)+)?[^\\S\\r\\n]*\\S)(?s:.*)", c1).
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d205_doc_stmt(n: node)
+d205_doc_stmt(n) :- kind(n, "expression_statement"), !d205_alt_1(n),
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d205_doc_holder(n: node)
+d205_doc_holder(n) :- d205_doc_stmt(n).
+d205_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d205_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d205_docstring(n: node)
+d205_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d205_doc_holder(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d205_tok_has_1(n: node)
+.stored d205_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d205_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d205_tok_has_1(n) :- op(n, t2), match(",", t2).
+d205_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d205_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d205_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d205_alt_1(n: node)
+d205_alt_1(n) :- d205_tok_has_1(n).
+d205_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").

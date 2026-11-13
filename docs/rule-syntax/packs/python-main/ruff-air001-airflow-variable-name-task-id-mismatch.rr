@@ -1,0 +1,163 @@
+.policy "ruff-air001-airflow-variable-name-task-id-mismatch" revision 1
+.guests off
+.description "Name each Airflow operator variable after the task id it creates, so the Dag code reads the same as the task graph it builds."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// AIR001(n): a finding at node n, from clause `task-variable-name-mismatch`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes TV from other metavariables' text; its literals end each rule.
+.violation AIR001(at: node, name: node, tv: symbol) "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
+    suppress noqa "AIR001"
+AIR001(NAME, n, TV) :- kind(n, "assignment"), child(p2, n, _),
+    kind(p2, "expression_statement"),
+    count : { field(n, "type", c3), kind(c3, "type") } = 0, field(n, "left", c4),
+    air001_target_name(c4, NAME), field(n, "right", c5), air001_operator_call(c5, TID),
+    text(NAME, t6), t6 != TV, value(TID, t1), TV = t1.
+
+// str_lit(n): the JSON util `str-lit`, used where the JSON says `matches: "str-lit"`
+.decl air001_str_lit(n: node)
+air001_str_lit(n) :- air001_str_lit_u7(n).
+
+// from_ops_module(n): the JSON util `from-ops-module`, used where the JSON says `matches: "from-ops-module"`
+.decl air001_from_ops_module(n: node)
+air001_from_ops_module(n) :- air001_demand_from_ops_module(n),
+    inside(n, p1, "import_from_statement"), field(p1, "module_name", c2),
+    kind(c2, "dotted_name"),
+    match("airflow\\.providers(\\.\\w+)*\\.operators(\\.\\w+)*", c2).
+
+// ops_site(n): the JSON util `ops-site`, used where the JSON says `matches: "ops-site"`
+.decl air001_ops_site(n: node)
+air001_ops_site(n) :- (kind(n, "dotted_name") ; kind(n, "aliased_import")),
+    air001_from_ops_module(n).
+air001_ops_site(n) :- kind(n, "aliased_import"), child(p1, n, _),
+    kind(p1, "import_statement"), field(n, "name", c2),
+    match("airflow\\.providers(\\.\\w+)*\\.operators(\\.\\w+)+", c2).
+
+// ops_head_site(n): the JSON util `ops-head-site`, used where the JSON says `matches: "ops-head-site"`
+.decl air001_ops_head_site(n: node)
+air001_ops_head_site(n) :- air001_ops_site(n).
+air001_ops_head_site(n) :- inside(n, p1, "import_from_statement"),
+    field(p1, "module_name", c2), kind(c2, "dotted_name"),
+    match("airflow\\.providers(\\.\\w+)*", c2),
+    ( kind(n, "dotted_name"), glob("operators", n)
+    ; kind(n, "aliased_import"), field(n, "name", c1), glob("operators", c1)
+    ).
+
+air001_ops_head_site(n) :- kind(n, "aliased_import"), child(p4, n, _),
+    kind(p4, "import_statement"), field(n, "name", c5),
+    match("airflow\\.providers(\\.\\w+)*\\.operators", c5).
+
+// ops_head(n): the JSON util `ops-head`, used where the JSON says `matches: "ops-head"`
+.decl air001_ops_head(n: node)
+air001_ops_head(n) :- kind(n, "identifier"), ref_site(n, b1), air001_ops_head_site(b1).
+air001_ops_head(n) :- kind(n, "attribute"), field(n, "object", c2), air001_ops_head(c2).
+air001_ops_head(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air001_ops_head(c3).
+
+// ops_chain(n): the JSON util `ops-chain`, used where the JSON says `matches: "ops-chain"`
+.decl air001_ops_chain(n: node)
+air001_ops_chain(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("operators", c1).
+air001_ops_chain(n) :- kind(n, "attribute"), field(n, "object", c2), air001_ops_chain(c2).
+air001_ops_chain(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air001_ops_chain(c3).
+
+// ops_callee(n): the JSON util `ops-callee`, used where the JSON says `matches: "ops-callee"`
+.decl air001_ops_callee(n: node)
+air001_ops_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), match("(airflow\\.operators)(\\.|$).*", q1).
+air001_ops_callee(n) :- kind(n, "identifier"), ref_site(n, b2), air001_ops_site(b2).
+air001_ops_callee(n) :- kind(n, "attribute"),
+    sym_of(n, q3), match("(airflow\\.providers)(\\.|$).*", q3),
+    (field(n, "object", c1), air001_ops_chain(c1) ; field(n, "object", c2), air001_ops_head(c2)).
+air001_ops_callee(n) :- kind(n, "parenthesized_expression"), child(n, c6, _), air001_ops_callee(c6).
+
+// operator_call(n): the JSON util `operator-call`, used where the JSON says `matches: "operator-call"`
+//   TID: metavariable this relation binds for the calling rule
+.decl air001_operator_call(n: node, tid: loc)
+air001_operator_call(n, TID) :- kind(n, "call"), field(n, "function", c1), air001_ops_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
+    kind(c3, "keyword_argument"), field(c3, "name", c4), glob("task_id", c4),
+    field(c3, "value", c5), air001_str_lit(c5), node(_, c5, _, _, _), TID = c5.
+air001_operator_call(n, TID) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    air001_operator_call(c6, TID).
+
+// target_name(n): the JSON util `target-name`, used where the JSON says `matches: "target-name"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl air001_target_name(n: node, name: loc)
+air001_target_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+air001_target_name(n, NAME) :- kind(n, "tuple_pattern"), !air001_tok_has_1(n), child(n, c9, _),
+    air001_target_name(c9, NAME).
+
+.decl air001_str_lit_u0(n: node)
+air001_str_lit_u0(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string") } = 0.
+
+.decl air001_str_lit_u1(n: node)
+air001_str_lit_u1(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u0(c3) } = 0.
+air001_str_lit_u1(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u0(c4).
+
+.decl air001_str_lit_u2(n: node)
+air001_str_lit_u2(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u1(c3) } = 0.
+air001_str_lit_u2(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u1(c4).
+
+.decl air001_str_lit_u3(n: node)
+air001_str_lit_u3(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u2(c3) } = 0.
+air001_str_lit_u3(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u2(c4).
+
+.decl air001_str_lit_u4(n: node)
+air001_str_lit_u4(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u3(c3) } = 0.
+air001_str_lit_u4(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u3(c4).
+
+.decl air001_str_lit_u5(n: node)
+air001_str_lit_u5(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u4(c3) } = 0.
+air001_str_lit_u5(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u4(c4).
+
+.decl air001_str_lit_u6(n: node)
+air001_str_lit_u6(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u5(c3) } = 0.
+air001_str_lit_u6(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u5(c4).
+
+.decl air001_str_lit_u7(n: node)
+air001_str_lit_u7(n) :- kind(n, "string"), !air001_alt_1(n).
+air001_str_lit_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), !air001_str_lit_u6(c3) } = 0.
+air001_str_lit_u7(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), air001_str_lit_u6(c4).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air001_tok_has_1(n: node)
+.stored air001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air001_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+air001_tok_has_1(n) :- op(n, t2), match(",", t2).
+air001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+air001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+air001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_from_ops_module: the nodes from_ops_module is asked at (it looks at every ancestor of every node)
+.decl air001_demand_from_ops_module(n: node)
+air001_demand_from_ops_module(n) :- (kind(n, "dotted_name") ; kind(n, "aliased_import")).
+
+// str_lit_u0_empty: level -1 of an unrolled recursion, empty
+.decl air001_str_lit_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl air001_alt_1(n: node)
+air001_alt_1(n) :- child(n, c1, _), kind(c1, "interpolation").
+air001_alt_1(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[bBfFtT]**", c2).

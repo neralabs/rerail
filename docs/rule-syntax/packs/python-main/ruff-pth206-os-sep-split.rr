@@ -1,0 +1,100 @@
+.policy "ruff-pth206-os-sep-split" revision 1
+.guests off
+.description "Use Path.parts instead of splitting a path string on os.sep; path objects read better than string-based path handling."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH206(n): a finding at node n, from clause `os-sep-split`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on S are added to every rule.
+.violation PTH206(at: node, m: node) "Use `Path(...).parts` instead of `.split(os.sep)` for the path components (`.name` or `.parent` for just the last or parent one); leave it where empty segments or non-path text matter."
+    suppress noqa "PTH206"
+PTH206(M, n) :- kind(n, "call"), field(n, "function", c1), pth206_split_callee(c1, M),
+    pth206_arg_sep_1(n, a2), S = a2, field(n, "arguments", c3), kind(c3, "argument_list"),
+    k5 = count : { child(c3, c4, _), !pth206_alt_1(c4) }, k5 >= 1, k5 <= 1, pth206_sep_ref(S).
+
+// sep_ref(n): the JSON util `sep-ref`, used where the JSON says `matches: "sep-ref"`
+.decl pth206_sep_ref(n: node)
+pth206_sep_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.sep").
+pth206_sep_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth206_sep_ref(c1).
+
+// split_callee(n): the JSON util `split-callee`, used where the JSON says `matches: "split-callee"`
+//   M: metavariable this relation binds for the calling rule
+.decl pth206_split_callee(n: node, m: loc)
+pth206_split_callee(n, M) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), glob("split", c1), node(_, c1, _, _, _), M = c1.
+pth206_split_callee(n, M) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pth206_split_callee(c2, M).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth206_args_plain(l: node, a: node, i: number)
+pth206_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth206_args_splat(l: node, i: number)
+pth206_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth206_args_pos(l: node, a: node, j: number)
+pth206_args_pos(l, a, j) :- pth206_args_plain(l, a, i), count : { pth206_args_splat(l, k), k < i } = 0,
+    j = count : { pth206_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth206_args_star(l: node, j: number)
+pth206_args_star(l, j) :- pth206_args_splat(l, i), count : { pth206_args_splat(l, k), k < i } = 0,
+    j = count : { pth206_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth206_args_kwp(l: node, k: symbol, v: node)
+pth206_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth206_args_lit_dict(s: node, d: node)
+pth206_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth206_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth206_args_str_pair(p: node)
+pth206_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth206_args_kw(l: node, k: symbol, v: node)
+pth206_args_kw(l, k, v) :- pth206_args_kwp(l, k, v).
+pth206_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth206_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth206_args_kw_spread(l: node)
+pth206_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth206_args_lit_dict(s, _).
+
+// arg_sep_1: call n passes v for slot `sep` of (sep), syntactic: Ruff's find_argument
+.decl pth206_arg_sep_1(n: node, v: node)
+pth206_arg_sep_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth206_args_kwp(l, "sep", v).
+pth206_arg_sep_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth206_args_pos(l, v, 0),
+    !pth206_args_kwp(l, "sep", _).
+pth206_arg_sep_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_sep_1: call n does not pass slot `sep` of (sep), syntactic: Ruff's find_argument
+.decl pth206_arg_no_sep_1(n: node)
+pth206_arg_no_sep_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth206_args_kwp(l, "sep", _),
+    !pth206_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth206_alt_1(n: node)
+pth206_alt_1(n) :- node(_, n, _, _, _), glob("[(),\\[\\]{}]", n).
+pth206_alt_1(n) :- kind(n, "comment").

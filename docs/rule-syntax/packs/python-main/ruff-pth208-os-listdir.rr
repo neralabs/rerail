@@ -1,0 +1,324 @@
+.policy "ruff-pth208-os-listdir" revision 1
+.guests off
+.description "Use Path.iterdir() instead of os.listdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth208_callee(n: node, f: loc)
+pth208_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.listdir"), node(_, n, _, _, _), F = n.
+pth208_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth208_callee(c1, F).
+
+// int_ref(n): the JSON util `int-ref`, used where the JSON says `matches: "int-ref"`
+.decl pth208_int_ref(n: node)
+pth208_int_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "int"),
+    sym_of(n, "builtins.int").
+pth208_int_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth208_int_ref(c1).
+
+// int_annotation(n): the JSON util `int-annotation`, used where the JSON says `matches: "int-annotation"`
+.decl pth208_int_annotation(n: node)
+pth208_int_annotation(n) :- pth208_int_ref(n).
+pth208_int_annotation(n) :- kind(n, "type"), child(n, c1, _), pth208_int_annotation(c1).
+pth208_int_annotation(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c2, _),
+    !pth208_tok_follows_1(c2), pth208_int_annotation(c2).
+
+// int_call(n): the JSON util `int-call`, used where the JSON says `matches: "int-call"`
+.decl pth208_int_call(n: node)
+pth208_int_call(n) :- kind(n, "call"), field(n, "function", c1), pth208_int_ref(c1).
+
+// bool_typed(n): the JSON util `bool-typed`, used where the JSON says `matches: "bool-typed"`
+.decl pth208_bool_typed(n: node)
+pth208_bool_typed(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "not_operator")).
+pth208_bool_typed(n) :- kind(n, "named_expression"), field(n, "value", c1), pth208_bool_typed(c1).
+pth208_bool_typed(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth208_bool_typed(c2).
+pth208_bool_typed(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    pth208_tok_precedes_2(c3), pth208_bool_typed(c3), child(n, c11, _), pth208_tok_follows_3(c11),
+    pth208_bool_typed(c11).
+pth208_bool_typed(n) :- kind(n, "boolean_operator"), field(n, "left", c19), pth208_bool_typed(c19),
+    field(n, "right", c20), pth208_bool_typed(c20).
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl pth208_number(n: node)
+pth208_number(n) :- pth208_int_typed(n).
+pth208_number(n) :- pth208_bool_typed(n).
+
+// int_typed(n): the JSON util `int-typed`, used where the JSON says `matches: "int-typed"`
+.decl pth208_int_typed(n: node)
+pth208_int_typed(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_int_typed(n) :- kind(n, "unary_operator"), field(n, "argument", c2), pth208_number(c2).
+pth208_int_typed(n) :- kind(n, "binary_operator"),
+    count : { field(n, "operator", c3), glob("[/@]", c3) } = 0, field(n, "left", c4),
+    pth208_number(c4), field(n, "right", c5), pth208_number(c5).
+pth208_int_typed(n) :- kind(n, "named_expression"), field(n, "value", c6), pth208_int_typed(c6).
+pth208_int_typed(n) :- kind(n, "parenthesized_expression"), child(n, c7, _), pth208_int_typed(c7).
+pth208_int_typed(n) :- kind(n, "conditional_expression"), child(n, c8, _), pth208_tok_precedes_4(c8),
+    pth208_number(c8), child(n, c16, _), pth208_tok_follows_5(c16), pth208_number(c16), pth208_alt_1(n).
+pth208_int_typed(n) :- kind(n, "boolean_operator"), field(n, "left", c40), pth208_number(c40),
+    field(n, "right", c41), pth208_number(c41), pth208_alt_2(n).
+
+// int_value(n): the JSON util `int-value`, used where the JSON says `matches: "int-value"`
+.decl pth208_int_value(n: node)
+pth208_int_value(n) :- pth208_int_call(n).
+pth208_int_value(n) :- pth208_int_typed(n).
+pth208_int_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth208_int_value(c1).
+
+// int_name(n): the JSON util `int-name`, used where the JSON says `matches: "int-name"`
+.decl pth208_int_name(n: node)
+pth208_int_name(n) :- kind(n, "identifier"), pth208_alt_3(n).
+
+// name_root(n): the JSON util `name-root`, used where the JSON says `matches: "name-root"`
+.decl pth208_name_root(n: node)
+pth208_name_root(n) :- pth208_int_name(n).
+pth208_name_root(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth208_name_root(c1).
+pth208_name_root(n) :- kind(n, "call"), field(n, "function", c2), pth208_name_root(c2).
+
+// int_attribute(n): the JSON util `int-attribute`, used where the JSON says `matches: "int-attribute"`
+.decl pth208_int_attribute(n: node)
+pth208_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"),
+    ref_site(c2, b3), kind(b3, "class_definition"), within_stop(c4, b3, pth208_stop_4),
+    pth208_alt_6(c4, A).
+
+// file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
+.decl pth208_file_descriptor(n: node)
+pth208_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth208_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pth208_file_descriptor(c2).
+pth208_file_descriptor(n) :- pth208_name_root(n).
+pth208_file_descriptor(n) :- pth208_int_attribute(n).
+
+// PTH208(n): a finding at node n, from clause `os-listdir`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on S are added to every rule.
+.violation PTH208(at: node, f: node, s: loc) "Use `Path({s}).iterdir()` instead of `os.listdir({s})`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors."
+    suppress noqa "PTH208"
+PTH208(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth208_callee(c1, F),
+    pth208_arg_path_1(n, a2), S = a2, !pth208_file_descriptor(S).
+
+// PTH208_os_listdir_cwd(n, detail): findings from clauses `os-listdir-cwd`, `os-listdir-unpacked`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH208_os_listdir_cwd(at: node, f: node, detail: symbol) code "PTH208" "Use {detail}."
+    suppress noqa "PTH208"
+PTH208_os_listdir_cwd(F, n, "`Path().iterdir()` instead of `os.listdir()`; it lazily yields `Path` objects, so take `.name` for plain names") :- kind(n, "call"),
+    field(n, "function", c1), pth208_callee(c1, F), field(n, "arguments", c2),
+    kind(c2, "argument_list"), count : { child(c2, c3, _), !pth208_alt_8(c3) } = 0.
+PTH208_os_listdir_cwd(F, n, "`Path(path).iterdir()` instead of `os.listdir(...)` once the path argument is known; it lazily yields `Path` objects. Leave it for bytes paths and file descriptors") :- kind(n, "call"),
+    field(n, "function", c1), pth208_callee(c1, F), pth208_arg_no_path_1(n),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), !pth208_alt_9(c3).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_follows_1(n: node)
+.stored pth208_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_follows_1(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+pth208_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+pth208_tok_follows_1(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_precedes_2(n: node)
+.stored pth208_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_precedes_2(n) :- next_sibling(n, s4), glob("if", s4).
+pth208_tok_precedes_2(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("if", t5).
+pth208_tok_precedes_2(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g6).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_follows_3(n: node)
+.stored pth208_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_follows_3(n) :- next_sibling(s12, n), glob("else", s12).
+pth208_tok_follows_3(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("else", t13).
+pth208_tok_follows_3(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g14).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_precedes_4(n: node)
+.stored pth208_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_precedes_4(n) :- next_sibling(n, s9), glob("if", s9).
+pth208_tok_precedes_4(n) :- structural_after(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, _, en15), o13 = en15 + strlen(g11), token(p12, _, t10, o13, _),
+    match("if", t10).
+pth208_tok_precedes_4(n) :- structural_after(n, g11),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g11).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_follows_5(n: node)
+.stored pth208_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_follows_5(n) :- next_sibling(s17, n), glob("else", s17).
+pth208_tok_follows_5(n) :- structural_before(n, g19), match("\\s*", g19), child(p20, n, _),
+    node(_, n, _, st22, _), o21 = st22 - strlen(g19), token(p20, _, t18, _, o21),
+    match("else", t18).
+pth208_tok_follows_5(n) :- structural_before(n, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g19).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_precedes_6(n: node)
+.stored pth208_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_precedes_6(n) :- next_sibling(n, s25), glob("if", s25).
+pth208_tok_precedes_6(n) :- structural_after(n, g27), match("\\s*", g27), child(p28, n, _),
+    node(_, n, _, _, en31), o29 = en31 + strlen(g27), token(p28, _, t26, o29, _),
+    match("if", t26).
+pth208_tok_precedes_6(n) :- structural_after(n, g27),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g27).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_follows_7(n: node)
+.stored pth208_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_follows_7(n) :- next_sibling(s33, n), glob("else", s33).
+pth208_tok_follows_7(n) :- structural_before(n, g35), match("\\s*", g35), child(p36, n, _),
+    node(_, n, _, st38, _), o37 = st38 - strlen(g35), token(p36, _, t34, _, o37),
+    match("else", t34).
+pth208_tok_follows_7(n) :- structural_before(n, g35),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g35).
+
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_precedes_8(n: node)
+.stored pth208_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_precedes_8(n) :- next_sibling(n, s2), glob("if", s2).
+pth208_tok_precedes_8(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("if", t3).
+pth208_tok_precedes_8(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g4).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth208_tok_follows_9(n: node)
+.stored pth208_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth208_tok_follows_9(n) :- next_sibling(s10, n), glob("else", s10).
+pth208_tok_follows_9(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("else", t11).
+pth208_tok_follows_9(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g12).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth208_args_plain(l: node, a: node, i: number)
+pth208_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth208_args_splat(l: node, i: number)
+pth208_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth208_args_pos(l: node, a: node, j: number)
+pth208_args_pos(l, a, j) :- pth208_args_plain(l, a, i), count : { pth208_args_splat(l, k), k < i } = 0,
+    j = count : { pth208_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth208_args_star(l: node, j: number)
+pth208_args_star(l, j) :- pth208_args_splat(l, i), count : { pth208_args_splat(l, k), k < i } = 0,
+    j = count : { pth208_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth208_args_kwp(l: node, k: symbol, v: node)
+pth208_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth208_args_lit_dict(s: node, d: node)
+pth208_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth208_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth208_args_str_pair(p: node)
+pth208_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth208_args_kw(l: node, k: symbol, v: node)
+pth208_args_kw(l, k, v) :- pth208_args_kwp(l, k, v).
+pth208_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth208_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth208_args_kw_spread(l: node)
+pth208_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth208_args_lit_dict(s, _).
+
+// arg_path_1: call n passes v for slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth208_arg_path_1(n: node, v: node)
+pth208_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth208_args_kwp(l, "path", v).
+pth208_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth208_args_pos(l, v, 0),
+    !pth208_args_kwp(l, "path", _).
+pth208_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_path_1: call n does not pass slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth208_arg_no_path_1(n: node)
+pth208_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth208_args_kwp(l, "path", _),
+    !pth208_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
+.decl pth208_demand_alt_6(n: node, a: loc)
+pth208_demand_alt_6(c4, A) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"),
+    ref_site(c2, b3), kind(b3, "class_definition"), within_stop(c4, b3, pth208_stop_4).
+
+// stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pth208_stop_4(kind: symbol)
+pth208_stop_4("function_definition"). pth208_stop_4("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth208_alt_1(n: node)
+pth208_alt_1(n) :- child(n, c1, _), pth208_tok_precedes_8(c1), pth208_int_typed(c1).
+pth208_alt_1(n) :- child(n, c9, _), pth208_tok_follows_9(c9), pth208_int_typed(c9).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pth208_alt_2(n: node)
+pth208_alt_2(n) :- field(n, "left", c1), pth208_int_typed(c1).
+pth208_alt_2(n) :- field(n, "right", c2), pth208_int_typed(c2).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pth208_alt_3(n: node)
+pth208_alt_3(n) :- ref_site(n, b1), site_only(b1),
+    count : { kind(b1, "assignment"), field(b1, "type", c2), kind(c2, "type") } = 0,
+    binding_value(b1, x3), pth208_int_value(x3).
+pth208_alt_3(n) :- ref_site(n, b4), site_only(b4), kind(b4, "as_pattern"), child(b4, c5, _),
+    pth208_int_value(c5), child(b4, c6, _), kind(c6, "as_pattern_target"), child(c6, c7, _),
+    kind(c7, "identifier").
+pth208_alt_3(n) :- ref_site(n, b8), site_only(b8),
+    count : { child(b8, c9, _), (kind(c9, "list_splat_pattern") ; kind(c9, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b8, o10), pth208_int_annotation(o10).
+pth208_alt_3(n) :- ref_site(n, b11), site_only(b11), kind(b11, "function_definition"),
+    field(b11, "return_type", c12), pth208_int_annotation(c12).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+//   A: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth208_alt_6(n: node, a: loc)
+pth208_alt_6(n, A) :- pth208_demand_alt_6(n, A), kind(n, "assignment"), field(n, "left", c1),
+    kind(c1, "identifier"), text(c1, t_a1), text(A, t_a1),
+    ( field(n, "type", c2), pth208_int_annotation(c2)
+    ; count : { field(n, "type", c3), kind(c3, "type") } = 0, field(n, "right", c4), pth208_int_value(c4)
+    ), @doc(c1) = @doc(A).
+
+pth208_alt_6(n, A) :- pth208_demand_alt_6(n, A), kind(n, "function_definition"),
+    field(n, "name", c5), text(c5, t_a2), text(A, t_a2), field(n, "return_type", c6),
+    pth208_int_annotation(c6), @doc(c5) = @doc(A).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl pth208_alt_8(n: node)
+pth208_alt_8(n) :- node(_, n, _, _, _), glob("[()]", n).
+pth208_alt_8(n) :- kind(n, "comment").
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pth208_alt_9(n: node)
+pth208_alt_9(n) :- node(_, n, _, _, _), glob("[(),]", n).
+pth208_alt_9(n) :- kind(n, "comment").

@@ -1,0 +1,87 @@
+.policy "ruff-ruf017-quadratic-list-summation" revision 1
+.guests off
+.description "Avoid flattening lists by summing them onto an empty list; it is quadratic, so chain them with itertools instead."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF017(n): a finding at node n, from clause `quadratic-list-summation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF017(at: node, c: node) "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
+    suppress noqa "RUF017"
+RUF017(C, n) :- ruf017_summation(n), node(_, n, _, _, _), C = n.
+RUF017(C, n) :- ruf017_in_annotation(n, C).
+
+// callee_sum(n): the JSON util `callee-sum`, used where the JSON says `matches: "callee-sum"`
+.decl ruf017_callee_sum(n: node)
+ruf017_callee_sum(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "sum"),
+    sym_of(n, "builtins.sum").
+ruf017_callee_sum(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf017_callee_sum(c1).
+
+// callee_list(n): the JSON util `callee-list`, used where the JSON says `matches: "callee-list"`
+.decl ruf017_callee_list(n: node)
+ruf017_callee_list(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "list"), sym_of(n, "builtins.list").
+ruf017_callee_list(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf017_callee_list(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf017_trivia(n: node)
+ruf017_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// not_positional(n): the JSON util `not-positional`, used where the JSON says `matches: "not-positional"`
+.decl ruf017_not_positional(n: node)
+ruf017_not_positional(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+ruf017_not_positional(n) :- ruf017_trivia(n).
+ruf017_not_positional(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// empty_list(n): the JSON util `empty-list`, used where the JSON says `matches: "empty-list"`
+.decl ruf017_empty_list(n: node)
+ruf017_empty_list(n) :- kind(n, "list"), count : { child(n, c1, _), !ruf017_alt_1(c1) } = 0.
+ruf017_empty_list(n) :- kind(n, "call"), child(n, c2, _), ruf017_callee_list(c2), child(n, c3, _),
+    kind(c3, "argument_list"), count : { child(c3, c4, _), !ruf017_alt_2(c4) } = 0.
+ruf017_empty_list(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf017_empty_list(c5).
+
+// list_start(n): the JSON util `list-start`, used where the JSON says `matches: "list-start"`
+.decl ruf017_list_start(n: node)
+ruf017_list_start(n) :- kind(n, "argument_list"), ruf017_alt_3(n).
+
+// summation(n): the JSON util `summation`, used where the JSON says `matches: "summation"`
+.decl ruf017_summation(n: node)
+ruf017_summation(n) :- kind(n, "call"), child(n, c1, _), ruf017_callee_sum(c1), child(n, c2, _),
+    ruf017_list_start(c2).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf017_in_annotation(n: node, c: loc)
+ruf017_in_annotation(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf017_alt_4(c2, C).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf017_alt_1(n: node)
+ruf017_alt_1(n) :- node(_, n, _, _, _), glob("[\\[\\]]", n).
+ruf017_alt_1(n) :- ruf017_trivia(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf017_alt_2(n: node)
+ruf017_alt_2(n) :- node(_, n, _, _, _), glob("[()]", n).
+ruf017_alt_2(n) :- ruf017_trivia(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf017_alt_3(n: node)
+ruf017_alt_3(n) :- child(n, c1, _), kind(c1, "keyword_argument"), match("start\\b.*", c1),
+    child(c1, c2, _), ruf017_empty_list(c2), child(n, c3, _), !ruf017_not_positional(c3).
+ruf017_alt_3(n) :- count : { child(n, c4, _), kind(c4, "keyword_argument"), match("start\\b.*", c4) } = 0,
+    child(n, c5, _), ruf017_empty_list(c5), precedes(s6, c5), !ruf017_not_positional(s6),
+    count : { precedes(s7, c5), precedes(s8, s7), !ruf017_not_positional(s8), !ruf017_not_positional(s7) } = 0,
+    count : { precedes(s9, c5), kind(s9, "list_splat") } = 0.
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf017_alt_4(n: node, c: loc)
+ruf017_alt_4(n, C) :- ruf017_summation(n), C = n.
+ruf017_alt_4(n, C) :- ruf017_in_annotation(n, C).

@@ -1,0 +1,39 @@
+.policy "ruff-perf203-try-except-in-loop" revision 1
+.guests off
+.description "Avoid wrapping each loop iteration in its own try-except before Python 3.11; move the loop into one try block or check the condition first."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PERF203(n): a finding at node n, from clause `try-except-in-loop`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PERF203(at: node, h: node) "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure."
+    suppress noqa "PERF203"
+PERF203(H, n) :- perf203_handler(n),
+    match("(?:(?P<H>(?:(?s:.*?)\\n)?[ \\t]*(?:(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')[ \\t]*)*?(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'))[ \\t\\r]*(?:#[^\\n]*)?(?:\\n[ \\t\\r]*(?:#[^\\n]*)?)*\\z)?(?s:.*)", n),
+    count : { precedes(s1, n), perf203_handler(s1) } = 0, child(p2, n, _),
+    kind(p2, "try_statement"),
+    count : { field(p2, "body", c3), kind(c3, "block"), perf203_stop_1_within(c4, c3), perf203_jump(c4) } = 0,
+    count : { precedes(s5, p2), !kind(s5, "comment") } = 0,
+    count : { precedes(p2, s6), !kind(s6, "comment") } = 0, child(p7, p2, _),
+    kind(p7, "block"), child(p8, p7, _),
+    (kind(p8, "while_statement") ; kind(p8, "for_statement"), !match("async\\b.*", p8)).
+
+// handler(n): the JSON util `handler`, used where the JSON says `matches: "handler"`
+.decl perf203_handler(n: node)
+perf203_handler(n) :- kind(n, "except_clause").
+
+// jump(n): the JSON util `jump`, used where the JSON says `matches: "jump"`
+.decl perf203_jump(n: node)
+perf203_jump(n) :- (kind(n, "break_statement") ; kind(n, "continue_statement")).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf203_stop_1(kind: symbol)
+perf203_stop_1("function_definition"). perf203_stop_1("class_definition").
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl perf203_stop_1_within(n: node, a: node)
+perf203_stop_1_within(x, y) :- within_stop(x, y, perf203_stop_1).

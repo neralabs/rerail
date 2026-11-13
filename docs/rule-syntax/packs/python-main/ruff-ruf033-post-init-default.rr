@@ -1,0 +1,83 @@
+.policy "ruff-ruf033-post-init-default" revision 1
+.guests off
+.description "Declare init-only dataclass parameters with their defaults as InitVar fields in the class body, not on the post-init method; the generated constructor ignores those defaults."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF033(n): a finding at node n, from clause `post-init-default`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF033(at: node) "The generated `__init__` ignores `__post_init__` defaults: declare this parameter as an `InitVar` field with this default in the class body and drop the default here, unless only direct calls pass it."
+    suppress noqa "RUF033"
+RUF033(n) :- ruf033_default_value(n), !ruf033_alt_3(n).
+
+// stdlib_name(n): the JSON util `stdlib-name`, used where the JSON says `matches: "stdlib-name"`
+.decl ruf033_stdlib_name(n: node)
+ruf033_stdlib_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "dataclasses.dataclass").
+ruf033_stdlib_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf033_stdlib_name(c1).
+
+// attrs_name(n): the JSON util `attrs-name`, used where the JSON says `matches: "attrs-name"`
+.decl ruf033_attrs_name(n: node)
+ruf033_attrs_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf033_set_1(q1).
+ruf033_attrs_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf033_attrs_name(c2).
+
+// stdlib_decorator(n): the JSON util `stdlib-decorator`, used where the JSON says `matches: "stdlib-decorator"`
+.decl ruf033_stdlib_decorator(n: node)
+ruf033_stdlib_decorator(n) :- kind(n, "decorator"), child(n, c1, _), ruf033_stdlib_callable(c1),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), ruf033_attrs_callable(c3) } = 0.
+
+// stdlib_callable(n): the JSON util `stdlib-callable`, used where the JSON says `matches: "stdlib-callable"`
+.decl ruf033_stdlib_callable(n: node)
+ruf033_stdlib_callable(n) :- ruf033_stdlib_name(n).
+ruf033_stdlib_callable(n) :- kind(n, "call"), field(n, "function", c1), ruf033_stdlib_name(c1).
+ruf033_stdlib_callable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf033_stdlib_callable(c2).
+
+// attrs_callable(n): the JSON util `attrs-callable`, used where the JSON says `matches: "attrs-callable"`
+.decl ruf033_attrs_callable(n: node)
+ruf033_attrs_callable(n) :- ruf033_attrs_name(n).
+ruf033_attrs_callable(n) :- kind(n, "call"), field(n, "function", c1), ruf033_attrs_name(c1).
+ruf033_attrs_callable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf033_attrs_callable(c2).
+
+// post_init(n): the JSON util `post-init`, used where the JSON says `matches: "post-init"`
+.decl ruf033_post_init(n: node)
+ruf033_post_init(n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("__post_init__", c1), within_stop(n, p2, ruf033_stop_2),
+    kind(p2, "class_definition"), child(p3, p2, _), kind(p3, "decorated_definition"),
+    child(p3, c4, _), ruf033_stdlib_decorator(c4).
+
+// default_value(n): the JSON util `default-value`, used where the JSON says `matches: "default-value"`
+.decl ruf033_default_value(n: node)
+ruf033_default_value(n) :- field(p1, "value", n),
+    (kind(p1, "default_parameter") ; kind(p1, "typed_default_parameter")),
+    child(p2, p1, _), kind(p2, "parameters"), child(p3, p2, _),
+    kind(p3, "function_definition"), ruf033_post_init(p3).
+ruf033_default_value(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    ruf033_default_value(p4).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl ruf033_set_1(v: symbol)
+ruf033_set_1("attrs.define"). ruf033_set_1("attrs.frozen"). ruf033_set_1("attrs.mutable").
+ruf033_set_1("attr.define"). ruf033_set_1("attr.frozen"). ruf033_set_1("attr.mutable"). ruf033_set_1("attr.s").
+ruf033_set_1("attr.attributes"). ruf033_set_1("attr.attrs").
+
+// stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf033_stop_2(kind: symbol)
+ruf033_stop_2("function_definition"). ruf033_stop_2("class_definition"). ruf033_stop_2("lambda").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf033_alt_3(n: node)
+ruf033_alt_3(n) :-
+    ( kind(n, "parenthesized_expression")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+ruf033_alt_3(n) :- node(_, n, _, _, _), glob("[()]", n).

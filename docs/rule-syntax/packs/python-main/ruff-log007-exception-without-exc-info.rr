@@ -1,0 +1,550 @@
+.policy "ruff-log007-exception-without-exc-info" revision 1
+.guests off
+.description "Use error instead of exception when a logging call sets exc_info to a falsy value; it logs the same message and states the intent plainly."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG007(n): a finding at node n, from clause `exception-without-exc-info`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation LOG007(at: node, c: node) "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
+    suppress noqa "LOG007"
+LOG007(C, n) :- log007_bad_call(n), node(_, n, _, _, _), C = n.
+LOG007(C, n) :- log007_call_in_string(n, C).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl log007_logger_object(n: node)
+log007_logger_object(n) :- kind(n, "call"), child(n, c1, _),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+log007_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    log007_logger_object(c2).
+log007_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+log007_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), match(".*(?:\\W(log|LOG)\\w*|(logger|logging|LOGGER|LOGGING))", n), child(n, c1, _), log007_name_chain(c1), !log007_tok_follows_2(c1)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl log007_name_chain(n: node)
+log007_name_chain(n) :- kind(n, "identifier").
+log007_name_chain(n) :- kind(n, "attribute"), child(n, c1, _), log007_name_chain(c1),
+    !log007_tok_follows_2(c1).
+log007_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), log007_name_chain(c9).
+
+// exception_callee(n): the JSON util `exception-callee`, used where the JSON says `matches: "exception-callee"`
+.decl log007_exception_callee(n: node)
+log007_exception_callee(n) :- kind(n, "attribute"), match(".*\\Wexception", n),
+    child(n, c1, _), log007_logger_object(c1), !log007_tok_follows_2(c1).
+log007_exception_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.exception").
+log007_exception_callee(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    log007_exception_callee(c9).
+
+// filler(n): the JSON util `filler`, used where the JSON says `matches: "filler"`
+.decl log007_filler(n: node)
+log007_filler(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+log007_filler(n) :- kind(n, "comment").
+
+// iterable_builtin(n): the JSON util `iterable-builtin`, used where the JSON says `matches: "iterable-builtin"`
+.decl log007_iterable_builtin(n: node)
+log007_iterable_builtin(n) :- kind(n, "identifier"), global_ref(n, g1), log007_set_2(g1).
+log007_iterable_builtin(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    log007_iterable_builtin(c2).
+
+// empty_part(n): the JSON util `empty-part`, used where the JSON says `matches: "empty-part"`
+.decl log007_empty_part(n: node)
+log007_empty_part(n) :- kind(n, "string"),
+    (value(n, v1), log007_truthy_value(n, "false") ; log007_f_empty(n)).
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl log007_f_string(n: node)
+log007_f_string(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fF].*", c1).
+
+// f_empty(n): the JSON util `f-empty`, used where the JSON says `matches: "f-empty"`
+.decl log007_f_empty(n: node)
+log007_f_empty(n) :- log007_f_empty_u7(n).
+
+// interp_empty(n): the JSON util `interp-empty`, used where the JSON says `matches: "interp-empty"`
+.decl log007_interp_empty(n: node)
+log007_interp_empty(n) :- log007_interp_empty_u7(n).
+
+// fexpr_empty(n): the JSON util `fexpr-empty`, used where the JSON says `matches: "fexpr-empty"`
+.decl log007_fexpr_empty(n: node)
+log007_fexpr_empty(n) :- log007_fexpr_empty_u7(n).
+
+// falsy(n): the JSON util `falsy`, used where the JSON says `matches: "falsy"`
+.decl log007_falsy(n: node)
+log007_falsy(n) :-
+    ( (kind(n, "false") ; kind(n, "none"))
+    ; (kind(n, "integer") ; kind(n, "float")), value(n, v1), log007_truthy_value(n, "false")
+    ).
+
+log007_falsy(n) :- log007_falsy_iterable(n).
+log007_falsy(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), log007_falsy(c2).
+
+// falsy_iterable(n): the JSON util `falsy-iterable`, used where the JSON says `matches: "falsy-iterable"`
+.decl log007_falsy_iterable(n: node)
+log007_falsy_iterable(n) :- log007_falsy_iterable_u7(n).
+
+// exc_info_kw(n): the JSON util `exc-info-kw`, used where the JSON says `matches: "exc-info-kw"`
+.decl log007_exc_info_kw(n: node)
+log007_exc_info_kw(n) :- kind(n, "keyword_argument"), match("exc_info\\b.*", n).
+
+// call_in_string(n): the JSON util `call-in-string`, used where the JSON says `matches: "call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl log007_call_in_string(n: node, c: loc)
+log007_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), log007_alt_12(c2, C).
+
+// bad_call(n): the JSON util `bad-call`, used where the JSON says `matches: "bad-call"`
+.decl log007_bad_call(n: node)
+log007_bad_call(n) :- kind(n, "call"), child(n, c1, _), log007_exception_callee(c1), child(n, c2, _),
+    kind(c2, "argument_list"), child(c2, c3, _), log007_exc_info_kw(c3), child(c3, c4, _),
+    log007_falsy(c4), count : { precedes(s5, c3), log007_exc_info_kw(s5) } = 0.
+
+.decl log007_alt_4_u0(n: node)
+log007_alt_4_u0(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u0(n) :- kind(n, "interpolation").
+
+.decl log007_alt_4_u1(n: node)
+log007_alt_4_u1(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u1(n) :- kind(n, "interpolation"), !log007_interp_empty_u0(n).
+
+.decl log007_alt_4_u2(n: node)
+log007_alt_4_u2(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u2(n) :- kind(n, "interpolation"), !log007_interp_empty_u1(n).
+
+.decl log007_alt_4_u3(n: node)
+log007_alt_4_u3(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u3(n) :- kind(n, "interpolation"), !log007_interp_empty_u2(n).
+
+.decl log007_alt_4_u4(n: node)
+log007_alt_4_u4(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u4(n) :- kind(n, "interpolation"), !log007_interp_empty_u3(n).
+
+.decl log007_alt_4_u5(n: node)
+log007_alt_4_u5(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u5(n) :- kind(n, "interpolation"), !log007_interp_empty_u4(n).
+
+.decl log007_alt_4_u6(n: node)
+log007_alt_4_u6(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u6(n) :- kind(n, "interpolation"), !log007_interp_empty_u5(n).
+
+.decl log007_alt_4_u7(n: node)
+log007_alt_4_u7(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+log007_alt_4_u7(n) :- kind(n, "interpolation"), !log007_interp_empty_u6(n).
+
+.decl log007_alt_6_u0(n: node)
+log007_alt_6_u0(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u1(n: node)
+log007_alt_6_u1(n) :- child(n, c1, _), log007_alt_4_u0(c1).
+log007_alt_6_u1(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u2(n: node)
+log007_alt_6_u2(n) :- child(n, c1, _), log007_alt_4_u1(c1).
+log007_alt_6_u2(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u3(n: node)
+log007_alt_6_u3(n) :- child(n, c1, _), log007_alt_4_u2(c1).
+log007_alt_6_u3(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u4(n: node)
+log007_alt_6_u4(n) :- child(n, c1, _), log007_alt_4_u3(c1).
+log007_alt_6_u4(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u5(n: node)
+log007_alt_6_u5(n) :- child(n, c1, _), log007_alt_4_u4(c1).
+log007_alt_6_u5(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u6(n: node)
+log007_alt_6_u6(n) :- child(n, c1, _), log007_alt_4_u5(c1).
+log007_alt_6_u6(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_alt_6_u7(n: node)
+log007_alt_6_u7(n) :- child(n, c1, _), log007_alt_4_u6(c1).
+log007_alt_6_u7(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; match("(?s:.*)\\\\(\\r\\n|[\\s\\S])[\"']+", n)
+    ).
+
+
+.decl log007_f_empty_u0(n: node)
+log007_f_empty_u0(n) :- log007_f_string(n).
+
+.decl log007_f_empty_u1(n: node)
+log007_f_empty_u1(n) :- log007_f_string(n), !log007_alt_6_u0(n).
+
+.decl log007_f_empty_u2(n: node)
+log007_f_empty_u2(n) :- log007_f_string(n), !log007_alt_6_u1(n).
+
+.decl log007_f_empty_u3(n: node)
+log007_f_empty_u3(n) :- log007_f_string(n), !log007_alt_6_u2(n).
+
+.decl log007_f_empty_u4(n: node)
+log007_f_empty_u4(n) :- log007_f_string(n), !log007_alt_6_u3(n).
+
+.decl log007_f_empty_u5(n: node)
+log007_f_empty_u5(n) :- log007_f_string(n), !log007_alt_6_u4(n).
+
+.decl log007_f_empty_u6(n: node)
+log007_f_empty_u6(n) :- log007_f_string(n), !log007_alt_6_u5(n).
+
+.decl log007_f_empty_u7(n: node)
+log007_f_empty_u7(n) :- log007_f_string(n), !log007_alt_6_u6(n).
+
+.decl log007_fexpr_empty_u0(n: node)
+log007_fexpr_empty_u0(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u0(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3) } = 0.
+
+.decl log007_fexpr_empty_u1(n: node)
+log007_fexpr_empty_u1(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u1(n) :- log007_f_empty_u0(n).
+log007_fexpr_empty_u1(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u0(c3) } = 0.
+log007_fexpr_empty_u1(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u0(c4).
+
+.decl log007_fexpr_empty_u2(n: node)
+log007_fexpr_empty_u2(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u2(n) :- log007_f_empty_u1(n).
+log007_fexpr_empty_u2(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u1(c3) } = 0.
+log007_fexpr_empty_u2(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u1(c4).
+
+.decl log007_fexpr_empty_u3(n: node)
+log007_fexpr_empty_u3(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u3(n) :- log007_f_empty_u2(n).
+log007_fexpr_empty_u3(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u2(c3) } = 0.
+log007_fexpr_empty_u3(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u2(c4).
+
+.decl log007_fexpr_empty_u4(n: node)
+log007_fexpr_empty_u4(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u4(n) :- log007_f_empty_u3(n).
+log007_fexpr_empty_u4(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u3(c3) } = 0.
+log007_fexpr_empty_u4(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u3(c4).
+
+.decl log007_fexpr_empty_u5(n: node)
+log007_fexpr_empty_u5(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u5(n) :- log007_f_empty_u4(n).
+log007_fexpr_empty_u5(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u4(c3) } = 0.
+log007_fexpr_empty_u5(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u4(c4).
+
+.decl log007_fexpr_empty_u6(n: node)
+log007_fexpr_empty_u6(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u6(n) :- log007_f_empty_u5(n).
+log007_fexpr_empty_u6(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u5(c3) } = 0.
+log007_fexpr_empty_u6(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u5(c4).
+
+.decl log007_fexpr_empty_u7(n: node)
+log007_fexpr_empty_u7(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), log007_truthy_value(n, "false"), value_type(v1, "str").
+log007_fexpr_empty_u7(n) :- log007_f_empty_u6(n).
+log007_fexpr_empty_u7(n) :- kind(n, "concatenated_string"), child(n, c2, _), log007_f_string(c2),
+    count : { child(n, c3, _), log007_f_string(c3), !log007_f_empty_u6(c3) } = 0.
+log007_fexpr_empty_u7(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    log007_fexpr_empty_u6(c4).
+
+.decl log007_interp_empty_u1(n: node)
+log007_interp_empty_u1(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u0(c2).
+
+.decl log007_interp_empty_u2(n: node)
+log007_interp_empty_u2(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u1(c2).
+
+.decl log007_interp_empty_u3(n: node)
+log007_interp_empty_u3(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u2(c2).
+
+.decl log007_interp_empty_u4(n: node)
+log007_interp_empty_u4(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u3(c2).
+
+.decl log007_interp_empty_u5(n: node)
+log007_interp_empty_u5(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u4(c2).
+
+.decl log007_interp_empty_u6(n: node)
+log007_interp_empty_u6(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u5(c2).
+
+.decl log007_interp_empty_u7(n: node)
+log007_interp_empty_u7(n) :- count : { child(n, c1, _), log007_alt_9(c1) } = 0, child(n, c2, _),
+    log007_tok_follows_3(c2), log007_fexpr_empty_u6(c2).
+
+.decl log007_alt_11_u0(n: node)
+log007_alt_11_u0(n) :- log007_filler(n).
+
+.decl log007_alt_11_u1(n: node)
+log007_alt_11_u1(n) :- log007_filler(n).
+log007_alt_11_u1(n) :- log007_falsy_iterable_u0(n).
+
+.decl log007_alt_11_u2(n: node)
+log007_alt_11_u2(n) :- log007_filler(n).
+log007_alt_11_u2(n) :- log007_falsy_iterable_u1(n).
+
+.decl log007_alt_11_u3(n: node)
+log007_alt_11_u3(n) :- log007_filler(n).
+log007_alt_11_u3(n) :- log007_falsy_iterable_u2(n).
+
+.decl log007_alt_11_u4(n: node)
+log007_alt_11_u4(n) :- log007_filler(n).
+log007_alt_11_u4(n) :- log007_falsy_iterable_u3(n).
+
+.decl log007_alt_11_u5(n: node)
+log007_alt_11_u5(n) :- log007_filler(n).
+log007_alt_11_u5(n) :- log007_falsy_iterable_u4(n).
+
+.decl log007_alt_11_u6(n: node)
+log007_alt_11_u6(n) :- log007_filler(n).
+log007_alt_11_u6(n) :- log007_falsy_iterable_u5(n).
+
+.decl log007_alt_11_u7(n: node)
+log007_alt_11_u7(n) :- log007_filler(n).
+log007_alt_11_u7(n) :- log007_falsy_iterable_u6(n).
+
+.decl log007_falsy_iterable_u0(n: node)
+log007_falsy_iterable_u0(n) :- log007_empty_part(n).
+log007_falsy_iterable_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u0(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u0(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _) } = 0.
+
+.decl log007_falsy_iterable_u1(n: node)
+log007_falsy_iterable_u1(n) :- log007_empty_part(n).
+log007_falsy_iterable_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u1(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u1(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u0(c7) } = 0.
+log007_falsy_iterable_u1(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u0(c8).
+
+.decl log007_falsy_iterable_u2(n: node)
+log007_falsy_iterable_u2(n) :- log007_empty_part(n).
+log007_falsy_iterable_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u2(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u2(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u1(c7) } = 0.
+log007_falsy_iterable_u2(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u1(c8).
+
+.decl log007_falsy_iterable_u3(n: node)
+log007_falsy_iterable_u3(n) :- log007_empty_part(n).
+log007_falsy_iterable_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u3(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u3(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u2(c7) } = 0.
+log007_falsy_iterable_u3(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u2(c8).
+
+.decl log007_falsy_iterable_u4(n: node)
+log007_falsy_iterable_u4(n) :- log007_empty_part(n).
+log007_falsy_iterable_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u4(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u4(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u3(c7) } = 0.
+log007_falsy_iterable_u4(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u3(c8).
+
+.decl log007_falsy_iterable_u5(n: node)
+log007_falsy_iterable_u5(n) :- log007_empty_part(n).
+log007_falsy_iterable_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u5(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u5(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u4(c7) } = 0.
+log007_falsy_iterable_u5(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u4(c8).
+
+.decl log007_falsy_iterable_u6(n: node)
+log007_falsy_iterable_u6(n) :- log007_empty_part(n).
+log007_falsy_iterable_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u6(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u6(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u5(c7) } = 0.
+log007_falsy_iterable_u6(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u5(c8).
+
+.decl log007_falsy_iterable_u7(n: node)
+log007_falsy_iterable_u7(n) :- log007_empty_part(n).
+log007_falsy_iterable_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !log007_empty_part(c1) } = 0.
+log007_falsy_iterable_u7(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !log007_filler(c2) } = 0.
+log007_falsy_iterable_u7(n) :- kind(n, "call"), child(n, c3, _), log007_iterable_builtin(c3),
+    child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !log007_filler(c5) }, k6 <= 1,
+    count : { child(c4, c7, _), !log007_alt_11_u6(c7) } = 0.
+log007_falsy_iterable_u7(n) :- kind(n, "parenthesized_expression"), child(n, c8, _),
+    log007_falsy_iterable_u6(c8).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log007_tok_follows_1(n: node)
+.stored log007_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log007_tok_follows_1(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+log007_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+log007_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log007_tok_follows_2(n: node)
+.stored log007_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log007_tok_follows_2(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+log007_tok_follows_2(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+log007_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl log007_truthy_value(n: node, b: symbol)
+log007_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+log007_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+log007_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+log007_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+log007_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+log007_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\{$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log007_tok_follows_3(n: node)
+.stored log007_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log007_tok_follows_3(n) :- next_sibling(s3, n), glob("\\{", s3).
+log007_tok_follows_3(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\{", t4).
+log007_tok_follows_3(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\{)\\s*)$", g5).
+
+// alt_4_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_alt_4_u0_empty(n: node)
+
+// alt_6_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_alt_6_u0_empty(n: node)
+
+// f_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_f_empty_u0_empty(n: node)
+
+// fexpr_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_fexpr_empty_u0_empty(n: node)
+
+// interp_empty_u0: level -1 of an unrolled recursion, empty
+.decl log007_interp_empty_u0(n: node)
+
+// interp_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_interp_empty_u0_empty(n: node)
+
+// alt_11_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_alt_11_u0_empty(n: node)
+
+// falsy_iterable_u0_empty: level -1 of an unrolled recursion, empty
+.decl log007_falsy_iterable_u0_empty(n: node)
+
+// set_2: names from the JSON `resolves.global`
+.decl log007_set_2(v: symbol)
+log007_set_2("list"). log007_set_2("tuple"). log007_set_2("set"). log007_set_2("dict"). log007_set_2("frozenset").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl log007_alt_4(n: node)
+log007_alt_4(n) :- log007_alt_4_u7(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl log007_alt_6(n: node)
+log007_alt_6(n) :- log007_alt_6_u7(n).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl log007_alt_9(n: node)
+log007_alt_9(n) :- (kind(n, "type_conversion") ; kind(n, "format_specifier")).
+log007_alt_9(n) :- node(_, n, _, _, _), glob("=", n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl log007_alt_11(n: node)
+log007_alt_11(n) :- log007_alt_11_u7(n).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl log007_alt_12(n: node, c: loc)
+log007_alt_12(n, C) :- log007_bad_call(n), C = n.
+log007_alt_12(n, C) :- log007_call_in_string(n, C).

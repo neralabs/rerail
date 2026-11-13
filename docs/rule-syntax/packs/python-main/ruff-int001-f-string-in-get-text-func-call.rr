@@ -1,0 +1,71 @@
+.policy "ruff-int001-f-string-in-get-text-func-call" revision 1
+.guests off
+.description "Pass a constant template to a gettext call and format the translated result; an f-string is evaluated before the catalog lookup."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// INT001(n): a finding at node n, from clause `f-string-in-gettext-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation INT001(at: node, arg: node) "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {{name}}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    suppress noqa "INT001"
+INT001(ARG, n) :- int001_target(n), node(_, n, _, _, _), ARG = n.
+INT001(ARG, n) :- int001_in_annotation(n, ARG).
+
+// gettext_callee(n): the JSON util `gettext-callee`, used where the JSON says `matches: "gettext-callee"`
+.decl int001_gettext_callee(n: node)
+int001_gettext_callee(n) :- kind(n, "identifier"), glob("{_,gettext,ngettext}", n).
+int001_gettext_callee(n) :- kind(n, "identifier"),
+    (global_ref(n, "_") ; global_ref(n, "gettext") ; global_ref(n, "ngettext")).
+int001_gettext_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), int001_set_1(q1).
+int001_gettext_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    int001_gettext_callee(c2).
+
+// first_gettext_arg(n): the JSON util `first-gettext-arg`, used where the JSON says `matches: "first-gettext-arg"`
+.decl int001_first_gettext_arg(n: node)
+int001_first_gettext_arg(n) :- child(p1, n, _), kind(p1, "argument_list"), child(p2, p1, _),
+    kind(p2, "call"), child(p2, c3, _), int001_gettext_callee(c3),
+    count : { precedes(s4, n), !int001_alt_2(s4) } = 0.
+int001_first_gettext_arg(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    int001_first_gettext_arg(p5).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl int001_target(n: node)
+int001_target(n) :-
+    ( kind(n, "string"), child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1)
+    ; kind(n, "concatenated_string"), child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), glob("**[fF]**", c3)
+    ),
+    int001_first_gettext_arg(n).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   ARG: metavariable this relation binds for the calling rule
+.decl int001_in_annotation(n: node, arg: loc)
+int001_in_annotation(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), int001_alt_4(c2, ARG).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl int001_set_1(v: symbol)
+int001_set_1("gettext.gettext"). int001_set_1("gettext.ngettext"). int001_set_1("builtins._").
+int001_set_1("builtins.gettext"). int001_set_1("builtins.ngettext").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl int001_alt_2(n: node)
+int001_alt_2(n) :-
+    ( kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ; kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ).
+
+int001_alt_2(n) :- node(_, n, _, _, _), glob("[(,]", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   ARG: metavariable this relation binds for the calling rule
+.decl int001_alt_4(n: node, arg: loc)
+int001_alt_4(n, ARG) :- int001_target(n), ARG = n.
+int001_alt_4(n, ARG) :- int001_in_annotation(n, ARG).

@@ -1,0 +1,335 @@
+.policy "ruff-pyi055-unnecessary-type-union" revision 1
+.guests off
+.description "Combine several type-of-class members of a union into one type over the union of those classes; the meaning is unchanged and the annotation is shorter."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// union_head(n): the JSON util `union-head`, used where the JSON says `matches: "union-head"`
+.decl pyi055_union_head(n: node)
+pyi055_union_head(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+pyi055_union_head(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi055_union_head(c1).
+
+// pipe_bin(n): the JSON util `pipe-bin`, used where the JSON says `matches: "pipe-bin"`
+.decl pyi055_pipe_bin(n: node)
+pyi055_pipe_bin(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+
+// pipe(n): the JSON util `pipe`, used where the JSON says `matches: "pipe"`
+.decl pyi055_pipe(n: node)
+pyi055_pipe(n) :- pyi055_pipe_bin(n).
+pyi055_pipe(n) :- kind(n, "union_type").
+
+// union_sub(n): the JSON util `union-sub`, used where the JSON says `matches: "union-sub"`
+.decl pyi055_union_sub(n: node)
+pyi055_union_sub(n) :- kind(n, "subscript"), field(n, "value", c1), pyi055_union_head(c1).
+pyi055_union_sub(n) :- kind(n, "generic_type"), child(n, c2, _), pyi055_union_head(c2).
+
+// union(n): the JSON util `union`, used where the JSON says `matches: "union"`
+.decl pyi055_union(n: node)
+pyi055_union(n) :- pyi055_pipe(n).
+pyi055_union(n) :- pyi055_union_sub(n).
+
+// sole_tuple(n): the JSON util `sole-tuple`, used where the JSON says `matches: "sole-tuple"`
+.decl pyi055_sole_tuple(n: node)
+pyi055_sole_tuple(n) :- kind(n, "tuple"),
+    ( child(p1, n, _), kind(p1, "subscript"), pyi055_union_sub(p1), !pyi055_tok_has_1(p1)
+    ; child(p2, n, _), kind(p2, "type"), child(p3, p2, _), kind(p3, "type_parameter"), !pyi055_tok_has_2(p3), child(p4, p3, _), pyi055_union_sub(p4)
+    ).
+
+
+// in_union(n): the JSON util `in-union`, used where the JSON says `matches: "in-union"`
+.decl pyi055_in_union(n: node)
+pyi055_in_union(n) :- child(p1, n, _), pyi055_pipe_bin(p1).
+pyi055_in_union(n) :- child(p2, n, _), kind(p2, "subscript"), pyi055_union_sub(p2).
+pyi055_in_union(n) :- child(p3, n, _), pyi055_sole_tuple(p3).
+pyi055_in_union(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"), pyi055_in_union(p4).
+pyi055_in_union(n) :- child(p5, n, _), kind(p5, "type"), child(p6, p5, _),
+    ( kind(p6, "union_type")
+    ; kind(p6, "type_parameter"), child(p1, p6, _), pyi055_union_sub(p1)
+    ).
+
+
+// type_head(n): the JSON util `type-head`, used where the JSON says `matches: "type-head"`
+.decl pyi055_type_head(n: node)
+pyi055_type_head(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "type"),
+    sym_of(n, "builtins.type").
+pyi055_type_head(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi055_type_head(c1).
+
+// type_sub(n): the JSON util `type-sub`, used where the JSON says `matches: "type-sub"`
+.decl pyi055_type_sub(n: node)
+pyi055_type_sub(n) :- kind(n, "subscript"), field(n, "value", c1), pyi055_type_head(c1),
+    count : { child(n, c2, _), pyi055_alt_3(c2) } = 0.
+
+// type_gen(n): the JSON util `type-gen`, used where the JSON says `matches: "type-gen"`
+.decl pyi055_type_gen(n: node)
+pyi055_type_gen(n) :- kind(n, "generic_type"), child(n, c1, _), pyi055_type_head(c1),
+    child(n, c2, _), kind(c2, "type_parameter"),
+    count : { child(c2, c3, _), pyi055_alt_4(c3) } = 0.
+
+// type_member(n): the JSON util `type-member`, used where the JSON says `matches: "type-member"`
+.decl pyi055_type_member(n: node)
+pyi055_type_member(n) :- pyi055_type_sub(n).
+pyi055_type_member(n) :- pyi055_type_gen(n).
+
+// flat(n): the JSON util `flat`, used where the JSON says `matches: "flat"`
+.decl pyi055_flat(n: node)
+pyi055_flat(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type") ; kind(n, "type_parameter")).
+pyi055_flat(n) :- pyi055_pipe(n).
+pyi055_flat(n) :- pyi055_union_sub(n).
+pyi055_flat(n) :- pyi055_sole_tuple(n).
+
+// types_in(n): the JSON util `types-in`, used where the JSON says `matches: "types-in"`
+.decl pyi055_types_in(n: node)
+pyi055_types_in(n) :- pyi055_type_member(n).
+pyi055_types_in(n) :- pyi055_flat(n), child(n, c1, _), pyi055_types_in(c1).
+
+// many_types(n): the JSON util `many-types`, used where the JSON says `matches: "many-types"`
+.decl pyi055_many_types(n: node)
+pyi055_many_types(n) :- pyi055_demand_many_types(n), pyi055_flat(n), child(n, c1, _), pyi055_alt_5(c1).
+
+// bad_union(n): the JSON util `bad-union`, used where the JSON says `matches: "bad-union"`
+.decl pyi055_bad_union(n: node)
+pyi055_bad_union(n) :- pyi055_union(n), pyi055_many_types(n), !pyi055_in_union(n).
+
+// tc_test(n): the JSON util `tc-test`, used where the JSON says `matches: "tc-test"`
+.decl pyi055_tc_test(n: node)
+pyi055_tc_test(n) :- kind(n, "identifier"), glob("TYPE_CHECKING", n).
+pyi055_tc_test(n) :- kind(n, "identifier"),
+    ( sym_of(n, "typing.TYPE_CHECKING")
+    ; sym_of(n, "typing_extensions.TYPE_CHECKING")
+    ; sym_of(n, "_typeshed.TYPE_CHECKING")
+    ).
+
+pyi055_tc_test(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("TYPE_CHECKING", c1).
+pyi055_tc_test(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi055_tc_test(c2).
+
+// in_tc_block(n): the JSON util `in-tc-block`, used where the JSON says `matches: "in-tc-block"`
+.decl pyi055_in_tc_block(n: node)
+pyi055_in_tc_block(n) :- inside(n, p1, "if_statement"), field(_, "consequence", n),
+    field(p1, "condition", c2), pyi055_tc_test(c2).
+
+// in_type_statement(n): the JSON util `in-type-statement`, used where the JSON says `matches: "in-type-statement"`
+.decl pyi055_in_type_statement(n: node)
+pyi055_in_type_statement(n) :- inside(n, p1, "type_alias_statement").
+pyi055_in_type_statement(n) :- within(n, p2), field(_, "type_parameters", n),
+    (kind(p2, "function_definition") ; kind(p2, "class_definition")).
+
+// in_annotation_slot(n): the JSON util `in-annotation-slot`, used where the JSON says `matches: "in-annotation-slot"`
+.decl pyi055_in_annotation_slot(n: node)
+pyi055_in_annotation_slot(n) :- within(n, p1), field(_, "type", n),
+    ( kind(p1, "assignment")
+    ; kind(p1, "typed_parameter")
+    ; kind(p1, "typed_default_parameter")
+    ).
+
+pyi055_in_annotation_slot(n) :- inside(n, p2, "function_definition"),
+    field(_, "return_type", n).
+
+// in_local_annotation(n): the JSON util `in-local-annotation`, used where the JSON says `matches: "in-local-annotation"`
+.decl pyi055_in_local_annotation(n: node)
+pyi055_in_local_annotation(n) :- inside(n, p1, "assignment"), field(_, "type", n),
+    within_stop(p1, p2, pyi055_stop_6), kind(p2, "function_definition").
+
+// future_file(n): the JSON util `future-file`, used where the JSON says `matches: "future-file"`
+.decl pyi055_future_file(n: node)
+pyi055_future_file(n) :- pyi055_demand_future_file(n), inside(n, p1, "module"), child(p1, c2, _),
+    kind(c2, "future_import_statement"), child(c2, c3, _),
+    ( kind(c3, "dotted_name"), glob("annotations", c3)
+    ; kind(c3, "aliased_import"), child(c3, c1, _), kind(c1, "dotted_name"), glob("annotations", c1)
+    ).
+
+
+// in_string_annotation(n): the JSON util `in-string-annotation`, used where the JSON says `matches: "in-string-annotation"`
+//   UNION: metavariable this relation binds for the calling rule
+.decl pyi055_in_string_annotation(n: node, pyi055_union: loc)
+pyi055_in_string_annotation(n, UNION) :- pyi055_plain_string(n), parsed(n, "annotation", r1),
+    within(c2, r1), pyi055_alt_8(c2, UNION).
+
+// escaped_or_concatenated(n): the JSON util `escaped-or-concatenated`, used where the JSON says `matches: "escaped-or-concatenated"`
+.decl pyi055_escaped_or_concatenated(n: node)
+pyi055_escaped_or_concatenated(n) :- kind(n, "concatenated_string").
+pyi055_escaped_or_concatenated(n) :- kind(n, "string"),
+    match("[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)(?s:.*)", n).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl pyi055_plain_string(n: node)
+pyi055_plain_string(n) :- kind(n, "string"),
+    !match("[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)(?s:.*)", n).
+
+// pipe_flat(n): the JSON util `pipe-flat`, used where the JSON says `matches: "pipe-flat"`
+.decl pyi055_pipe_flat(n: node)
+pyi055_pipe_flat(n) :- kind(n, "parenthesized_expression").
+pyi055_pipe_flat(n) :- pyi055_pipe_bin(n).
+
+// pipe_types_in(n): the JSON util `pipe-types-in`, used where the JSON says `matches: "pipe-types-in"`
+.decl pyi055_pipe_types_in(n: node)
+pyi055_pipe_types_in(n) :- pyi055_type_member(n).
+pyi055_pipe_types_in(n) :- pyi055_pipe_flat(n), child(n, c1, _), pyi055_pipe_types_in(c1).
+
+// pipe_many_types(n): the JSON util `pipe-many-types`, used where the JSON says `matches: "pipe-many-types"`
+.decl pyi055_pipe_many_types(n: node)
+pyi055_pipe_many_types(n) :- pyi055_demand_pipe_many_types(n), pyi055_pipe_flat(n), child(n, c1, _),
+    pyi055_alt_9(c1).
+
+// in_pipe(n): the JSON util `in-pipe`, used where the JSON says `matches: "in-pipe"`
+.decl pyi055_in_pipe(n: node)
+pyi055_in_pipe(n) :- child(p1, n, _), pyi055_pipe_bin(p1).
+pyi055_in_pipe(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi055_in_pipe(p2).
+
+// bad_pipe_union(n): the JSON util `bad-pipe-union`, used where the JSON says `matches: "bad-pipe-union"`
+.decl pyi055_bad_pipe_union(n: node)
+pyi055_bad_pipe_union(n) :- pyi055_pipe_bin(n), pyi055_pipe_many_types(n), !pyi055_in_pipe(n).
+
+// in_relocated_annotation(n): the JSON util `in-relocated-annotation`, used where the JSON says `matches: "in-relocated-annotation"`
+//   UNION: metavariable this relation binds for the calling rule
+.decl pyi055_in_relocated_annotation(n: node, pyi055_union: loc)
+pyi055_in_relocated_annotation(n, UNION) :- pyi055_demand_in_relocated_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), pyi055_alt_10(c2, UNION).
+
+// in_escaped_or_concatenated_annotation(n): the JSON util `in-escaped-or-concatenated-annotation`, used where the JSON says `matches: "in-escaped-or-concatenated-annotation"`
+//   UNION: metavariable this relation binds for the calling rule
+.decl pyi055_in_escaped_or_concatenated_annotation(n: node, pyi055_union: loc)
+pyi055_in_escaped_or_concatenated_annotation(n, UNION) :- pyi055_escaped_or_concatenated(n),
+    pyi055_in_relocated_annotation(n, UNION).
+pyi055_in_escaped_or_concatenated_annotation(n, UNION) :- pyi055_plain_string(n),
+    parsed(n, "annotation", r1), within(c2, r1),
+    pyi055_in_escaped_or_concatenated_annotation(c2, UNION).
+
+// PYI055(n): a finding at node n, from clause `unnecessary-type-union-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI055(at: node) "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same."
+    suppress noqa "PYI055"
+PYI055_raw(n) :- pyi055_bad_union(n),
+    (pyi055_in_annotation_slot(n) ; pyi055_in_type_statement(n) ; pyi055_in_tc_block(n)).
+
+// PYI055_unnecessary_type_union(n): a finding at node n, from clause `unnecessary-type-union`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI055_unnecessary_type_union(at: node) code "PYI055" "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same."
+    suppress noqa "PYI055"
+PYI055_unnecessary_type_union_raw(n) :- pyi055_bad_union(n),
+    ( pyi055_in_local_annotation(n)
+    ; pyi055_future_file(n), pyi055_in_annotation_slot(n)
+    ; pyi055_in_type_statement(n)
+    ; pyi055_in_tc_block(n)
+    ).
+
+
+// PYI055_unnecessary_type_union_in_string(n): findings from clauses `unnecessary-type-union-in-string`, `unnecessary-type-union-in-escaped-or-concatenated-string`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI055_unnecessary_type_union_in_string(at: node, pyi055_union: node) code "PYI055" "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same."
+    suppress noqa "PYI055"
+PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_string_annotation(n, UNION).
+PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_escaped_or_concatenated_annotation(n, UNION).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi055_tok_has_1(n: node)
+.stored pyi055_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi055_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pyi055_tok_has_1(n) :- op(n, t3), match(",", t3).
+pyi055_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi055_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi055_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi055_tok_has_2(n: node)
+.stored pyi055_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi055_tok_has_2(n) :- child(n, c12, _), glob("\\,", c12).
+pyi055_tok_has_2(n) :- op(n, t13), match(",", t13).
+pyi055_tok_has_2(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
+pyi055_tok_has_2(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
+pyi055_tok_has_2(n) :- node_text(n, g14), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g14).
+
+// demand_alt_10: the nodes alt_10 is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_alt_10(n: node)
+pyi055_demand_alt_10(c2) :- pyi055_demand_in_relocated_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+
+// demand_in_relocated_annotation: the nodes in_relocated_annotation is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_in_relocated_annotation(n: node)
+pyi055_demand_in_relocated_annotation(n) :- pyi055_escaped_or_concatenated(n).
+pyi055_demand_in_relocated_annotation(n) :- pyi055_demand_alt_10(n).
+
+// demand_alt_5: the nodes alt_5 is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_alt_5(n: node)
+pyi055_demand_alt_5(c1) :- pyi055_demand_many_types(n), pyi055_flat(n), child(n, c1, _).
+
+// demand_many_types: the nodes many_types is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_many_types(n: node)
+pyi055_demand_many_types(n) :- pyi055_union(n).
+pyi055_demand_many_types(n) :- pyi055_demand_alt_5(n).
+
+// demand_alt_9: the nodes alt_9 is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_alt_9(n: node)
+pyi055_demand_alt_9(c1) :- pyi055_demand_pipe_many_types(n), pyi055_pipe_flat(n), child(n, c1, _).
+
+// demand_pipe_many_types: the nodes pipe_many_types is asked at (its recursion looks at every descendant)
+.decl pyi055_demand_pipe_many_types(n: node)
+pyi055_demand_pipe_many_types(n) :- pyi055_pipe_bin(n).
+pyi055_demand_pipe_many_types(n) :- pyi055_demand_alt_9(n).
+
+// demand_future_file: the nodes future_file is asked at (it looks at every ancestor of every node)
+.decl pyi055_demand_future_file(n: node)
+pyi055_demand_future_file(n) :- pyi055_in_annotation_slot(n).
+
+// stop_6: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi055_stop_6(kind: symbol)
+pyi055_stop_6("function_definition"). pyi055_stop_6("class_definition").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi055_alt_3(n: node)
+pyi055_alt_3(n) :- (kind(n, "tuple") ; kind(n, "list_splat")).
+pyi055_alt_3(n) :- node(_, n, _, _, _), glob("\\,", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi055_alt_4(n: node)
+pyi055_alt_4(n) :- node(_, n, _, _, _), glob("\\,", n).
+pyi055_alt_4(n) :- kind(n, "type"), child(n, c1, _),
+    (kind(c1, "tuple") ; kind(c1, "splat_type")).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi055_alt_5(n: node)
+pyi055_alt_5(n) :- pyi055_demand_alt_5(n), pyi055_many_types(n).
+pyi055_alt_5(n) :- pyi055_demand_alt_5(n), pyi055_types_in(n), precedes(n, s1), pyi055_types_in(s1).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   UNION: metavariable this relation binds for the calling rule
+.decl pyi055_alt_8(n: node, pyi055_union: loc)
+pyi055_alt_8(n, UNION) :- pyi055_bad_union(n), UNION = n.
+pyi055_alt_8(n, UNION) :- pyi055_in_string_annotation(n, UNION).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi055_alt_9(n: node)
+pyi055_alt_9(n) :- pyi055_demand_alt_9(n), pyi055_pipe_many_types(n).
+pyi055_alt_9(n) :- pyi055_demand_alt_9(n), pyi055_pipe_types_in(n), precedes(n, s1), pyi055_pipe_types_in(s1).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   UNION: metavariable this relation binds for the calling rule
+.decl pyi055_alt_10(n: node, pyi055_union: loc)
+pyi055_alt_10(n, UNION) :- pyi055_demand_alt_10(n), pyi055_bad_pipe_union(n), UNION = n.
+pyi055_alt_10(n, UNION) :- pyi055_demand_alt_10(n), pyi055_in_relocated_annotation(n, UNION).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI055_raw(at: node)
+PYI055(v0) :- PYI055_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl PYI055_unnecessary_type_union_raw(at: node)
+PYI055_unnecessary_type_union(v0) :- PYI055_unnecessary_type_union_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

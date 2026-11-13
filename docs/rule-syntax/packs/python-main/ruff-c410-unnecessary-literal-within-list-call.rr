@@ -1,0 +1,93 @@
+.policy "ruff-c410-unnecessary-literal-within-list-call" revision 1
+.guests off
+.description "Write a list literal instead of passing a list or tuple literal to the list constructor; the call only copies the literal."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C410(n, detail): findings from clauses `list-literal-within-list-call`, `tuple-literal-within-list-call`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C410(at: node, call: node, detail: symbol) "{detail}."
+    suppress noqa "C410"
+C410(CALL, n, "Remove the outer `list()` call and keep the list literal it wraps; the call only copies a list that nothing else references") :- c410_target(n),
+    node(_, n, _, _, _), CALL = n.
+C410(CALL, n, "Remove the outer `list()` call and keep the list literal it wraps; the call only copies a list that nothing else references") :- c410_in_annotation(n, CALL).
+C410(CALL, n, "Write the elements as a list literal `[...]` instead of `list((...))`; the tuple is built only to be copied") :- c410_target_tuple_literal_within_list_call(n),
+    node(_, n, _, _, _), CALL = n.
+C410(CALL, n, "Write the elements as a list literal `[...]` instead of `list((...))`; the tuple is built only to be copied") :- c410_in_annotation_tuple_literal_within_list_call(n, CALL).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c410_callee(n: node)
+c410_callee(n) :- kind(n, "identifier"), global_ref(n, "list").
+c410_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c410_callee(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl c410_literal(n: node)
+c410_literal(n) :- kind(n, "list").
+c410_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c410_literal(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c410_trivia(n: node)
+c410_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c410_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c410_target(n: node)
+c410_target(n) :- kind(n, "call"), field(n, "function", c1), c410_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !c410_trivia(c3) }, k4 >= 1, k4 <= 1, child(c2, c5, _),
+    c410_literal(c5).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c410_in_annotation(n: node, call: loc)
+c410_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c410_alt_1(c2, CALL).
+
+// callee_tuple_literal_within_list_call(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c410_callee_tuple_literal_within_list_call(n: node)
+c410_callee_tuple_literal_within_list_call(n) :- kind(n, "identifier"),
+    global_ref(n, "list").
+c410_callee_tuple_literal_within_list_call(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), c410_callee_tuple_literal_within_list_call(c1).
+
+// literal_tuple_literal_within_list_call(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl c410_literal_tuple_literal_within_list_call(n: node)
+c410_literal_tuple_literal_within_list_call(n) :- kind(n, "tuple").
+c410_literal_tuple_literal_within_list_call(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), c410_literal_tuple_literal_within_list_call(c1).
+
+// trivia_tuple_literal_within_list_call(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c410_trivia_tuple_literal_within_list_call(n: node)
+c410_trivia_tuple_literal_within_list_call(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c410_trivia_tuple_literal_within_list_call(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target_tuple_literal_within_list_call(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c410_target_tuple_literal_within_list_call(n: node)
+c410_target_tuple_literal_within_list_call(n) :- kind(n, "call"), field(n, "function", c1),
+    c410_callee_tuple_literal_within_list_call(c1), field(n, "arguments", c2),
+    kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !c410_trivia_tuple_literal_within_list_call(c3) },
+    k4 >= 1, k4 <= 1, child(c2, c5, _), c410_literal_tuple_literal_within_list_call(c5).
+
+// in_annotation_tuple_literal_within_list_call(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c410_in_annotation_tuple_literal_within_list_call(n: node, call: loc)
+c410_in_annotation_tuple_literal_within_list_call(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c410_alt_2(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c410_alt_1(n: node, call: loc)
+c410_alt_1(n, CALL) :- c410_target(n), CALL = n.
+c410_alt_1(n, CALL) :- c410_in_annotation(n, CALL).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c410_alt_2(n: node, call: loc)
+c410_alt_2(n, CALL) :- c410_target_tuple_literal_within_list_call(n), CALL = n.
+c410_alt_2(n, CALL) :- c410_in_annotation_tuple_literal_within_list_call(n, CALL).

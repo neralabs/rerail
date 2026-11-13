@@ -1,0 +1,18 @@
+.policy "ruff-f842-unused-annotation" revision 1
+.guests off
+.description "Remove local variables that are annotated but never assigned or read; the annotation alone does nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// F842(n): a finding at node n, from clause `unused-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F842(at: node, n: loc) "Local variable `{n}` is annotated but never used"
+    suppress noqa "F842"
+F842(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "annotation"),
+    (site_scope(n, "function") ; site_scope(n, "lambda")), site_latest(n),
+    !site_used(n), !match("(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])", n).

@@ -1,0 +1,304 @@
+.policy "ruff-sim910-dict-get-with-none-default" revision 1
+.guests off
+.description "Drop the redundant None default from dict.get() calls; get() already returns None for a missing key."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SIM910(n): a finding at node n, from clause `dict-get-with-none-default`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM910(at: node) "Use `.get(key)` instead of `.get(key, None)`"
+    suppress noqa "SIM910"
+SIM910(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "attribute"), child(c1, c2, _),
+    sim910_receiver(c2), precedes_stop(c2, s3, sim910_stop_5), glob(".", s3), child(c1, c4, _),
+    kind(c4, "identifier"), glob("get", c4), sim910_tok_follows_6(c4), child(n, c12, _),
+    kind(c12, "argument_list"),
+    count : { child(c12, c13, _), (kind(c13, "keyword_argument") ; kind(c13, "dictionary_splat")) } = 0,
+    child(c12, c14, _), sim910_none(c14), precedes_stop(s15, c14, sim910_stop_5), glob("\\,", s15),
+    precedes_stop(s16, s15, sim910_stop_5), precedes_stop(s17, s16, sim910_stop_5), glob("(", s17).
+
+// dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
+.decl sim910_dict_expr(n: node)
+sim910_dict_expr(n) :- sim910_dict_expr_u7(n).
+
+// dict_callee(n): the JSON util `dict-callee`, used where the JSON says `matches: "dict-callee"`
+.decl sim910_dict_callee(n: node)
+sim910_dict_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+sim910_dict_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_callee(c1).
+
+// dict_init(n): the JSON util `dict-init`, used where the JSON says `matches: "dict-init"`
+.decl sim910_dict_init(n: node)
+sim910_dict_init(n) :- sim910_dict_expr(n).
+sim910_dict_init(n) :- kind(n, "call"), child(n, c1, _), sim910_dict_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// dict_ann(n): the JSON util `dict-ann`, used where the JSON says `matches: "dict-ann"`
+.decl sim910_dict_ann(n: node)
+sim910_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "dict"),
+    sym_of(n, "builtins.dict").
+sim910_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Dict")
+    ; sym_of(n, "_typeshed.Dict")
+    ; sym_of(n, "typing_extensions.Dict")
+    ).
+
+sim910_dict_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !sim910_tok_follows_4(c1), sim910_dict_ann(c1).
+sim910_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), sim910_dict_ann(c9).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl sim910_plain_target(n: node)
+sim910_plain_target(n) :- kind(n, "identifier").
+sim910_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_plain_target(c1).
+
+// dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
+.decl sim910_dict_bound(n: node)
+sim910_dict_bound(n) :- kind(n, "identifier"), sim910_alt_3(n).
+
+// dict_literal(n): the JSON util `dict-literal`, used where the JSON says `matches: "dict-literal"`
+.decl sim910_dict_literal(n: node)
+sim910_dict_literal(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_literal(c1).
+
+// none(n): the JSON util `none`, used where the JSON says `matches: "none"`
+.decl sim910_none(n: node)
+sim910_none(n) :- kind(n, "none").
+sim910_none(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim910_none(c1).
+
+// receiver_name(n): the JSON util `receiver-name`, used where the JSON says `matches: "receiver-name"`
+.decl sim910_receiver_name(n: node)
+sim910_receiver_name(n) :- sim910_dict_bound(n).
+sim910_receiver_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_receiver_name(c1).
+
+// receiver(n): the JSON util `receiver`, used where the JSON says `matches: "receiver"`
+.decl sim910_receiver(n: node)
+sim910_receiver(n) :- sim910_dict_literal(n).
+sim910_receiver(n) :- sim910_receiver_name(n).
+
+.decl sim910_alt_1_u0(n: node)
+sim910_alt_1_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u0(n) :- kind(n, "comment").
+
+.decl sim910_alt_1_u1(n: node)
+sim910_alt_1_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u1(n) :- kind(n, "comment").
+sim910_alt_1_u1(n) :- sim910_dict_expr_u0(n).
+
+.decl sim910_alt_1_u2(n: node)
+sim910_alt_1_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u2(n) :- kind(n, "comment").
+sim910_alt_1_u2(n) :- sim910_dict_expr_u1(n).
+
+.decl sim910_alt_1_u3(n: node)
+sim910_alt_1_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u3(n) :- kind(n, "comment").
+sim910_alt_1_u3(n) :- sim910_dict_expr_u2(n).
+
+.decl sim910_alt_1_u4(n: node)
+sim910_alt_1_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u4(n) :- kind(n, "comment").
+sim910_alt_1_u4(n) :- sim910_dict_expr_u3(n).
+
+.decl sim910_alt_1_u5(n: node)
+sim910_alt_1_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u5(n) :- kind(n, "comment").
+sim910_alt_1_u5(n) :- sim910_dict_expr_u4(n).
+
+.decl sim910_alt_1_u6(n: node)
+sim910_alt_1_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u6(n) :- kind(n, "comment").
+sim910_alt_1_u6(n) :- sim910_dict_expr_u5(n).
+
+.decl sim910_alt_1_u7(n: node)
+sim910_alt_1_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+sim910_alt_1_u7(n) :- kind(n, "comment").
+sim910_alt_1_u7(n) :- sim910_dict_expr_u6(n).
+
+.decl sim910_dict_expr_u0(n: node)
+sim910_dict_expr_u0(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+
+.decl sim910_dict_expr_u1(n: node)
+sim910_dict_expr_u1(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u0(c1).
+sim910_dict_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u0(c2).
+sim910_dict_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u0(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u0(c18).
+sim910_dict_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u0(c26) } = 0.
+
+.decl sim910_dict_expr_u2(n: node)
+sim910_dict_expr_u2(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u1(c1).
+sim910_dict_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u1(c2).
+sim910_dict_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u1(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u1(c18).
+sim910_dict_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u1(c26) } = 0.
+
+.decl sim910_dict_expr_u3(n: node)
+sim910_dict_expr_u3(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u2(c1).
+sim910_dict_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u2(c2).
+sim910_dict_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u2(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u2(c18).
+sim910_dict_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u2(c26) } = 0.
+
+.decl sim910_dict_expr_u4(n: node)
+sim910_dict_expr_u4(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u3(c1).
+sim910_dict_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u3(c2).
+sim910_dict_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u3(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u3(c18).
+sim910_dict_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u3(c26) } = 0.
+
+.decl sim910_dict_expr_u5(n: node)
+sim910_dict_expr_u5(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u4(c1).
+sim910_dict_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u4(c2).
+sim910_dict_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u4(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u4(c18).
+sim910_dict_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u4(c26) } = 0.
+
+.decl sim910_dict_expr_u6(n: node)
+sim910_dict_expr_u6(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u5(c1).
+sim910_dict_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u5(c2).
+sim910_dict_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u5(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u5(c18).
+sim910_dict_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u5(c26) } = 0.
+
+.decl sim910_dict_expr_u7(n: node)
+sim910_dict_expr_u7(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+sim910_dict_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim910_dict_expr_u6(c1).
+sim910_dict_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), sim910_tok_follows_1(c2),
+    sim910_dict_expr_u6(c2).
+sim910_dict_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    sim910_tok_precedes_2(c10), sim910_dict_expr_u6(c10), child(n, c18, _), sim910_tok_follows_3(c18),
+    sim910_dict_expr_u6(c18).
+sim910_dict_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !sim910_alt_1_u6(c26) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_follows_1(n: node)
+.stored sim910_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_follows_1(n) :- next_sibling(s3, n), glob(":=", s3).
+sim910_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+sim910_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_precedes_2(n: node)
+.stored sim910_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_precedes_2(n) :- next_sibling(n, s11), glob("if", s11).
+sim910_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+sim910_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_follows_3(n: node)
+.stored sim910_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_follows_3(n) :- next_sibling(s19, n), glob("else", s19).
+sim910_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+sim910_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_follows_4(n: node)
+.stored sim910_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_follows_4(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+sim910_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+sim910_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_precedes_5(n: node)
+.stored sim910_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_precedes_5(n) :- precedes(n, s11), glob("as", s11).
+sim910_tok_precedes_5(n) :- child(p14, n, _), node(_, n, _, _, en17),
+    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
+sim910_tok_precedes_5(n) :- structural_after(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+sim910_tok_precedes_5(n) :- precedes(n, o15), structural_after(o15, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim910_tok_follows_6(n: node)
+.stored sim910_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim910_tok_follows_6(n) :- next_sibling(s5, n), glob(".", s5).
+sim910_tok_follows_6(n) :- structural_before(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, st10, _), o9 = st10 - strlen(g7), token(p8, _, t6, _, o9),
+    match("\\.", t6).
+sim910_tok_follows_6(n) :- structural_before(n, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g7).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim910_alt_1_u0_empty(n: node)
+
+// dict_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim910_dict_expr_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl sim910_alt_1(n: node)
+sim910_alt_1(n) :- sim910_alt_1_u7(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl sim910_alt_3(n: node)
+sim910_alt_3(n) :- ref_site(n, b1),
+    ( kind(b1, "dictionary_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
+    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "dictionary_splat_pattern")
+    ).
+
+sim910_alt_3(n) :- ref_site(n, b5), binding_value(b5, x6), sim910_dict_init(x6),
+    count : { child(b5, c7, _), kind(c7, "type") } = 0.
+sim910_alt_3(n) :- ref_site(n, b8), kind(b8, "as_pattern"), child(p9, b8, _),
+    kind(p9, "with_item"), child(b8, c10, _), sim910_dict_init(c10), sim910_tok_precedes_5(c10),
+    child(b8, c18, _), kind(c18, "as_pattern_target"), child(c18, c19, _),
+    sim910_plain_target(c19).
+sim910_alt_3(n) :- ref_site(n, b20), site_annotation(b20, o21), sim910_dict_ann(o21),
+    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
+sim910_alt_3(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
+    kind(c24, "type"), child(c24, c25, _), sim910_dict_ann(c25).
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim910_stop_5(n: node)
+sim910_stop_5(n) :- node(_, n, _, _, _), !kind(n, "comment").

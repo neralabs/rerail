@@ -1,0 +1,291 @@
+.policy "ruff-up035-deprecated-import" revision 1
+.guests off
+.description "Import names from the module that now provides them instead of a deprecated location, such as collections.abc rather than collections or typing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// coll_abc_family(n, key): 8 copies of one rule set (`coll-abc`, `te-typing-311`, `te-typing-312` and 5 more), folded into one: row `key` of
+// coll_abc_family_case gives the strings each copy had.
+.decl up035_coll_abc_family(n: node, key: symbol)
+up035_coll_abc_family(n, q1) :- up035_coll_abc_family_case(q1, s1), child(n, c1, _), up035_alt(c1, s1).
+
+// up_to_te_typing_base(n): the JSON util `up-to-te-typing-base`, used where the JSON says `matches: "up-to-te-typing-base"`
+.decl up035_up_to_te_typing_base(n: node)
+up035_up_to_te_typing_base(n) :- up035_coll_abc_family(n, "te_typing_base").
+
+// up_to_te_typing_38(n): the JSON util `up-to-te-typing-38`, used where the JSON says `matches: "up-to-te-typing-38"`
+.decl up035_up_to_te_typing_38(n: node)
+up035_up_to_te_typing_38(n) :- up035_coll_abc_family(n, "te_typing_base").
+up035_up_to_te_typing_38(n) :- up035_backports_strenum_family(n, "te_typing_38").
+
+// up_to_te_typing_39(n): the JSON util `up-to-te-typing-39`, used where the JSON says `matches: "up-to-te-typing-39"`
+.decl up035_up_to_te_typing_39(n: node)
+up035_up_to_te_typing_39(n) :- up035_coll_abc_family(n, "te_typing_base").
+up035_up_to_te_typing_39(n) :- up035_backports_strenum_family(n, "te_typing_38").
+up035_up_to_te_typing_39(n) :- up035_backports_strenum_family(n, "te_typing_39").
+
+// up_to_te_typing_310(n): the JSON util `up-to-te-typing-310`, used where the JSON says `matches: "up-to-te-typing-310"`
+.decl up035_up_to_te_typing_310(n: node)
+up035_up_to_te_typing_310(n) :- up035_coll_abc_family(n, "te_typing_base").
+up035_up_to_te_typing_310(n) :- up035_backports_strenum_family(n, "te_typing_38").
+up035_up_to_te_typing_310(n) :- up035_backports_strenum_family(n, "te_typing_39").
+up035_up_to_te_typing_310(n) :- up035_backports_strenum_family(n, "te_typing_310").
+
+// up_to_te_typing_311(n): the JSON util `up-to-te-typing-311`, used where the JSON says `matches: "up-to-te-typing-311"`
+.decl up035_up_to_te_typing_311(n: node)
+up035_up_to_te_typing_311(n) :- up035_coll_abc_family(n, "te_typing_base").
+up035_up_to_te_typing_311(n) :- up035_backports_strenum_family(n, "te_typing_38").
+up035_up_to_te_typing_311(n) :- up035_backports_strenum_family(n, "te_typing_39").
+up035_up_to_te_typing_311(n) :- up035_backports_strenum_family(n, "te_typing_310").
+up035_up_to_te_typing_311(n) :- up035_coll_abc_family(n, "te_typing_311").
+
+// up_to_te_typing_312(n): the JSON util `up-to-te-typing-312`, used where the JSON says `matches: "up-to-te-typing-312"`
+.decl up035_up_to_te_typing_312(n: node)
+up035_up_to_te_typing_312(n) :- up035_coll_abc_family(n, "te_typing_base").
+up035_up_to_te_typing_312(n) :- up035_backports_strenum_family(n, "te_typing_38").
+up035_up_to_te_typing_312(n) :- up035_backports_strenum_family(n, "te_typing_39").
+up035_up_to_te_typing_312(n) :- up035_backports_strenum_family(n, "te_typing_310").
+up035_up_to_te_typing_312(n) :- up035_coll_abc_family(n, "te_typing_311").
+up035_up_to_te_typing_312(n) :- up035_coll_abc_family(n, "te_typing_312").
+
+// backports_strenum_family(n, key): 14 copies of one rule set (`backports-strenum`, `mypy-37`, `mypy-38` and 11 more), folded into one: row `key` of
+// backports_strenum_family_case gives the strings each copy had.
+.decl up035_backports_strenum_family(n: node, key: symbol)
+up035_backports_strenum_family(n, q1) :- up035_backports_strenum_family_case(q1, s1),
+    child(n, c1, _),
+    ( kind(c1, "dotted_name"), glob(s1, c1), !child(_, c1, 0)
+    ; kind(c1, "aliased_import"), child(c1, c2, _), kind(c2, "dotted_name"), glob(s1, c2)
+    ).
+
+
+// UP035(n, detail): findings from clauses `collections-to-abc`, `pipes-to-shlex`, `typing-extensions-to-typing`, `mypy-extensions-to-typing` and 1 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation UP035(at: node, detail: symbol) "Import {detail}."
+    suppress noqa "UP035"
+UP035(n, "the abstract base classes from `collections.abc` instead of `collections`; names that live in `collections` (such as `Counter`) stay in the original import") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("collections", c1),
+    up035_coll_abc_family(n, "coll_abc").
+UP035(n, "`quote` from `shlex` instead of the removed `pipes` module; names `shlex` lacks (such as `Template`) stay imported from `pipes`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("pipes", c1),
+    up035_backports_strenum_family(n, "pipes_shlex").
+UP035(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_coll_abc_family(n, "te_typing_base").
+UP035(n, "these names from `typing` instead of `mypy_extensions`; keep any other names imported from `mypy_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("mypy_extensions", c1),
+    up035_backports_strenum_family(n, "mypy_37").
+UP035(n, "these names from `typing` instead of the `typing.io` namespace; keep any other names imported from `typing.io`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    match("typing\\s*\\.\\s*io", c1), up035_backports_strenum_family(n, "typing_io").
+
+// UP035_typing_extensions_to_types_312(n, detail): findings from clauses `typing-extensions-to-collections-abc`, `typing-extensions-to-types-312`, `typing-extensions-to-typing-312`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_extensions_to_types_312(at: node, detail: symbol) code "UP035" "Import {detail} imported from `typing_extensions`."
+    suppress noqa "UP035"
+UP035_typing_extensions_to_types_312_raw(n, "`Buffer` from `collections.abc`, which provides it on this Python version; keep any other names") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_abc").
+UP035_typing_extensions_to_types_312_raw(n, "these names from `types`, which provides them on this Python version; keep any other names") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_types_312").
+UP035_typing_extensions_to_types_312_raw(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_coll_abc_family(n, "te_typing_312"),
+    !up035_up_to_te_typing_311(n).
+
+// UP035_typing_extensions_to_warnings(n, detail): findings from clauses `typing-extensions-to-warnings`, `typing-extensions-to-types-313`, `typing-extensions-to-typing-313`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_extensions_to_warnings(at: node, detail: symbol) code "UP035" "Import {detail} imported from `typing_extensions`."
+    suppress noqa "UP035"
+UP035_typing_extensions_to_warnings_raw(n, "`deprecated` from `warnings`, which provides it on this Python version; keep any other names") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_warnings").
+UP035_typing_extensions_to_warnings_raw(n, "these names from `types`, which provides them on this Python version; keep any other names") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_types_313"),
+    !up035_backports_strenum_family(n, "te_types_312").
+UP035_typing_extensions_to_warnings_raw(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_coll_abc_family(n, "te_typing_313"),
+    !up035_up_to_te_typing_312(n).
+
+// UP035_mypy_extensions_to_typing_38(n, detail): findings from clauses `typing-extensions-to-typing-38`, `mypy-extensions-to-typing-38`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_mypy_extensions_to_typing_38(at: node, detail: symbol) code "UP035" "Import these names from {detail}."
+    suppress noqa "UP035"
+UP035_mypy_extensions_to_typing_38(n, "`typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_typing_38"),
+    !up035_up_to_te_typing_base(n).
+UP035_mypy_extensions_to_typing_38(n, "`typing` instead of `mypy_extensions`; keep any other names imported from `mypy_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("mypy_extensions", c1),
+    up035_backports_strenum_family(n, "mypy_38"), !up035_backports_strenum_family(n, "mypy_37").
+
+// UP035_typing_to_re(n, detail): findings from clauses `typing-extensions-to-typing-39`, `typing-re-to-re`, `typing-to-collections-abc`, `typing-to-collections` and 1 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_to_re(at: node, detail: symbol) code "UP035" "Import {detail}."
+    suppress noqa "UP035"
+UP035_typing_to_re(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_typing_39"),
+    !up035_up_to_te_typing_38(n).
+UP035_typing_to_re(n, "`Match` and `Pattern` from `re` instead of the `typing.re` namespace; keep any other names imported from `typing.re`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    match("typing\\s*\\.\\s*re", c1), up035_coll_abc_family(n, "typing_re").
+UP035_typing_to_re(n, "these names from `collections.abc` instead of `typing`; keep any other names imported from `typing`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    up035_coll_abc_family(n, "typing_abc_39").
+UP035_typing_to_re(n, "these names from `collections` instead of `typing`; keep any other names imported from `typing`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    up035_backports_strenum_family(n, "typing_collections").
+UP035_typing_to_re(n, "`Match` and `Pattern` from `re` instead of `typing`; keep any other names imported from `typing`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    up035_coll_abc_family(n, "typing_re_39").
+
+// UP035_typing_to_collections_abc_310(n, detail): findings from clauses `typing-extensions-to-typing-310`, `typing-to-collections-abc-310`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_to_collections_abc_310(at: node, detail: symbol) code "UP035" "Import {detail}."
+    suppress noqa "UP035"
+UP035_typing_to_collections_abc_310(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_backports_strenum_family(n, "te_typing_310"),
+    !up035_up_to_te_typing_39(n).
+UP035_typing_to_collections_abc_310(n, "`Callable` from `collections.abc` instead of `typing`; keep any other names imported from `typing`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    up035_backports_strenum_family(n, "typing_abc_310"),
+    !up035_coll_abc_family(n, "typing_abc_39").
+
+// UP035_backports_strenum_to_enum(n, detail): findings from clauses `typing-extensions-to-typing-311`, `backports-strenum-to-enum`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_backports_strenum_to_enum(at: node, detail: symbol) code "UP035" "Import {detail}."
+    suppress noqa "UP035"
+UP035_backports_strenum_to_enum_raw(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    glob("typing_extensions", c1), up035_coll_abc_family(n, "te_typing_311"),
+    !up035_up_to_te_typing_310(n).
+UP035_backports_strenum_to_enum_raw(n, "`StrEnum` from `enum`, which provides it on this Python version, instead of `backports.strenum`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    match("backports\\s*\\.\\s*strenum", c1),
+    up035_backports_strenum_family(n, "backports_strenum").
+
+// UP035_typing_re_to_typing(n): a finding at node n, from clause `typing-re-to-typing`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_re_to_typing(at: node) code "UP035" "Import `Match` and `Pattern` from `typing` instead of the `typing.re` namespace; keep any other names imported from `typing.re`."
+    suppress noqa "UP035"
+UP035_typing_re_to_typing_raw(n) :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"),
+    match("typing\\s*\\.\\s*re", c1), up035_coll_abc_family(n, "typing_re").
+
+// UP035_typing_builtin_generics(n): a finding at node n, from clause `typing-builtin-generics`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes LOWER from other metavariables' text; its literals end each rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_builtin_generics(at: node, name: loc, lower: symbol) code "UP035" "`typing.{name}` is deprecated; use the built-in `{lower}` in annotations and drop the `typing` import once nothing else uses it."
+    suppress noqa "UP035"
+UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"),
+    field(n, "module_name", c2), kind(c2, "dotted_name"), glob("typing", c2),
+    child(n, c3, _), up035_alt_of(c3, "23", NAME), text(NAME, t1),
+    LOWER = @convert(t1, "lowerCase", "").
+
+// UP035_typing_deque(n, detail): findings from clauses `typing-asynccontextmanager`, `typing-contextmanager`, `typing-abstractset`, `typing-deque` and 1 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP035_typing_deque(at: node, name: loc, detail: symbol) code "UP035" "{detail} instead and drop the `typing` import once nothing else uses it."
+    suppress noqa "UP035"
+UP035_typing_deque(n, NAME, "`typing.AsyncContextManager` is deprecated; use `contextlib.AbstractAsyncContextManager`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    child(n, c2, _), up035_alt_of(c2, "24", NAME).
+UP035_typing_deque(n, NAME, "`typing.ContextManager` is deprecated; use `contextlib.AbstractContextManager`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    child(n, c2, _), up035_alt_of(c2, "25", NAME).
+UP035_typing_deque(n, NAME, "`typing.AbstractSet` is deprecated; use `collections.abc.Set`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    child(n, c2, _), up035_alt_of(c2, "26", NAME).
+UP035_typing_deque(n, NAME, "`typing.Deque` is deprecated; use `collections.deque`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    child(n, c2, _), up035_alt_of(c2, "27", NAME).
+UP035_typing_deque(n, NAME, "`typing.DefaultDict` is deprecated; use `collections.defaultdict`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("typing", c1),
+    child(n, c2, _), up035_alt_of(c2, "28", NAME).
+
+// alt_case: one row per relation folded into alt: its key, then the strings that differed.
+.decl up035_alt_case(key: symbol, s1: symbol)
+up035_alt_case("1", "{AsyncGenerator,AsyncIterable,AsyncIterator,Awaitable,ByteString,Callable,Collection,Container,Coroutine,Generator,Hashable,ItemsView,Iterable,Iterator,KeysView,Mapping,MappingView,MutableMapping,MutableSequence,MutableSet,Reversible,Sequence,Set,Sized,ValuesView}").
+up035_alt_case("11", "{Any,LiteralString,Never,NotRequired,Required,Self,assert_never,assert_type,clear_overloads,final,get_overloads,overload,reveal_type}").
+up035_alt_case("12", "{Protocol,SupportsAbs,SupportsBytes,SupportsComplex,SupportsFloat,SupportsIndex,SupportsInt,SupportsRound,TypeAliasType,Unpack,NamedTuple,dataclass_transform,override}").
+up035_alt_case("13", "{get_protocol_members,is_protocol,NoDefault,ReadOnly,TypeIs,get_type_hints,ContextManager,Generator,AsyncContextManager,AsyncGenerator,Protocol,runtime_checkable,ParamSpec,TypeVar,TypeVarTuple}").
+up035_alt_case("17", "{Match,Pattern}").
+up035_alt_case("19", "{AsyncGenerator,AsyncIterable,AsyncIterator,Awaitable,Collection,Container,Coroutine,Generator,Hashable,ItemsView,Iterable,Iterator,KeysView,Mapping,MappingView,MutableMapping,MutableSequence,MutableSet,Reversible,Sequence,Sized,ValuesView}").
+up035_alt_case("7", "{AbstractSet,AnyStr,AsyncIterable,AsyncIterator,Awaitable,BinaryIO,Callable,ClassVar,Collection,Container,Coroutine,DefaultDict,Dict,FrozenSet,Generic,Hashable,IO,ItemsView,Iterable,Iterator,KeysView,List,Mapping,MappingView,Match,MutableMapping,MutableSequence,MutableSet,Optional,Pattern,Reversible,Sequence,Set,Sized,TYPE_CHECKING,Text,TextIO,Tuple,Type,Union,ValuesView,cast,no_type_check,ChainMap,Counter,Deque,ForwardRef,NoReturn}").
+
+// alt_of_case: one row per relation folded into alt_of: its key, then the strings that differed.
+.decl up035_alt_of_case(key: symbol, s1: symbol)
+up035_alt_of_case("23", "{Tuple,List,FrozenSet,Dict,Type,Set}").
+up035_alt_of_case("24", "AsyncContextManager"). up035_alt_of_case("25", "ContextManager").
+up035_alt_of_case("26", "AbstractSet"). up035_alt_of_case("27", "Deque").
+up035_alt_of_case("28", "DefaultDict").
+
+// backports_strenum_family_case: one row per relation folded into backports_strenum_family: its key, then the strings that differed.
+.decl up035_backports_strenum_family_case(key: symbol, s1: symbol)
+up035_backports_strenum_family_case("backports_strenum", "StrEnum").
+up035_backports_strenum_family_case("mypy_37", "NoReturn").
+up035_backports_strenum_family_case("mypy_38", "TypedDict").
+up035_backports_strenum_family_case("pipes_shlex", "quote").
+up035_backports_strenum_family_case("te_abc", "Buffer").
+up035_backports_strenum_family_case("te_types_312", "get_original_bases").
+up035_backports_strenum_family_case("te_types_313", "CapsuleType").
+up035_backports_strenum_family_case("te_typing_310", "{Concatenate,Literal,NewType,ParamSpecArgs,ParamSpecKwargs,TypeAlias,TypeGuard,get_args,get_origin}").
+up035_backports_strenum_family_case("te_typing_38", "{Final,OrderedDict}").
+up035_backports_strenum_family_case("te_typing_39", "Annotated").
+up035_backports_strenum_family_case("te_warnings", "deprecated").
+up035_backports_strenum_family_case("typing_abc_310", "Callable").
+up035_backports_strenum_family_case("typing_collections", "{ChainMap,Counter,OrderedDict}").
+up035_backports_strenum_family_case("typing_io", "{BinaryIO,IO,TextIO}").
+
+// coll_abc_family_case: one row per relation folded into coll_abc_family: its key, then the strings that differed.
+.decl up035_coll_abc_family_case(key: symbol, s1: symbol)
+up035_coll_abc_family_case("coll_abc", "1"). up035_coll_abc_family_case("te_typing_311", "11").
+up035_coll_abc_family_case("te_typing_312", "12").
+up035_coll_abc_family_case("te_typing_313", "13").
+up035_coll_abc_family_case("te_typing_base", "7").
+up035_coll_abc_family_case("typing_abc_39", "19"). up035_coll_abc_family_case("typing_re", "17").
+up035_coll_abc_family_case("typing_re_39", "17").
+
+// alt(n, key): 7 copies of one rule set (`alt_1`, `alt_11`, `alt_12` and 4 more), folded into one: row `key` of
+// alt_case gives the strings each copy had.
+.decl up035_alt(n: node, key: symbol)
+up035_alt(n, q1) :- up035_alt_case(q1, s1), kind(n, "dotted_name"), glob(s1, n), !child(_, n, 0).
+up035_alt(n, q1) :- up035_alt_case(q1, s1), kind(n, "aliased_import"), child(n, c1, _),
+    kind(c1, "dotted_name"), glob(s1, c1).
+
+// alt_of(n, key): 6 copies of one rule set (`alt_23`, `alt_24`, `alt_25` and 3 more), folded into one: row `key` of
+// alt_of_case gives the strings each copy had.
+//   NAME: metavariable this relation binds for the calling rule
+.decl up035_alt_of(n: node, key: symbol, name: loc)
+up035_alt_of(n, q1, NAME) :- up035_alt_of_case(q1, s1), kind(n, "dotted_name"), glob(s1, n),
+    node(_, n, _, _, _), NAME = n, !child(_, n, 0).
+up035_alt_of(n, q1, NAME) :- up035_alt_of_case(q1, s1), kind(n, "aliased_import"), child(n, c1, _),
+    kind(c1, "dotted_name"), glob(s1, c1), node(_, c1, _, _, _), NAME = c1.
+
+// pythonVersion {"min": "3.12"} excludes Python 3.10, main's default: no findings.
+.decl UP035_typing_extensions_to_types_312_raw(at: node, detail: symbol)
+
+// pythonVersion {"min": "3.13"} excludes Python 3.10, main's default: no findings.
+.decl UP035_typing_extensions_to_warnings_raw(at: node, detail: symbol)
+
+// pythonVersion {"min": "3.11"} excludes Python 3.10, main's default: no findings.
+.decl UP035_backports_strenum_to_enum_raw(at: node, detail: symbol)
+
+// pythonVersion {"max": "3.8"} excludes Python 3.10, main's default: no findings.
+.decl UP035_typing_re_to_typing_raw(at: node)

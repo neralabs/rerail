@@ -1,0 +1,44 @@
+.policy "ruff-ruf040-invalid-assert-message-literal-argument" revision 1
+.guests off
+.description "Use a string as the assert message; a number, boolean, None, ellipsis or bytes literal there is usually a comparison written with a comma by mistake."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RUF040(n): a finding at node n, from clause `invalid-assert-message-literal`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF040(at: node) "Use a string as the assert message; if this literal was meant to be compared with the condition, write the comparison instead, as in `assert cond == value`."
+    suppress noqa "RUF040"
+RUF040(n) :- ruf040_non_string_literal(n), ruf040_message_slot(n).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf040_trivia(n: node)
+ruf040_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// bytes_prefix(n): the JSON util `bytes-prefix`, used where the JSON says `matches: "bytes-prefix"`
+.decl ruf040_bytes_prefix(n: node)
+ruf040_bytes_prefix(n) :- node(_, n, _, _, _), match("[a-zA-Z]*[bB].*", n).
+
+// message_slot(n): the JSON util `message-slot`, used where the JSON says `matches: "message-slot"`
+.decl ruf040_message_slot(n: node)
+ruf040_message_slot(n) :- child(p1, n, _), kind(p1, "assert_statement"),
+    precedes_stop(s2, n, ruf040_stop_1), glob("\\,", s2).
+ruf040_message_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    ruf040_message_slot(p3).
+
+// non_string_literal(n): the JSON util `non-string-literal`, used where the JSON says `matches: "non-string-literal"`
+.decl ruf040_non_string_literal(n: node)
+ruf040_non_string_literal(n) :- kind(n, k1), ruf040_set_2(k1).
+ruf040_non_string_literal(n) :- kind(n, "string"), ruf040_bytes_prefix(n).
+ruf040_non_string_literal(n) :- kind(n, "concatenated_string"), child(n, c2, _),
+    kind(c2, "string"), ruf040_bytes_prefix(c2).
+
+// set_2: node kinds from a JSON `any`
+.decl ruf040_set_2(v: symbol)
+ruf040_set_2("integer"). ruf040_set_2("float"). ruf040_set_2("true"). ruf040_set_2("false"). ruf040_set_2("none").
+ruf040_set_2("ellipsis").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf040_stop_1(n: node)
+ruf040_stop_1(n) :- node(_, n, _, _, _), !ruf040_trivia(n).

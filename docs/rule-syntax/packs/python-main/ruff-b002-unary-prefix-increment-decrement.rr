@@ -1,0 +1,26 @@
+.policy "ruff-b002-unary-prefix-increment-decrement" revision 1
+.guests off
+.description "Don't write a doubled plus or minus prefix to increment or decrement a value; Python has no such operators, so the value is left unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B002(n, detail): findings from clauses `unary-prefix-increment`, `unary-prefix-decrement`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation B002(at: node, detail: symbol) "Replace this {detail}."
+    suppress noqa "B002"
+B002(n, "`++` prefix with `+= 1`; Python reads `++x` as `x`, so nothing is incremented") :- kind(n, "unary_operator"),
+    prefix("+", n), child(n, c1, _), b002_plus(c1).
+B002(n, "`--` prefix with `-= 1`; Python reads `--x` as `x`, so nothing is decremented") :- kind(n, "unary_operator"),
+    prefix("-", n), child(n, c1, _), b002_minus(c1).
+
+// plus(n): the JSON util `plus`, used where the JSON says `matches: "plus"`
+.decl b002_plus(n: node)
+b002_plus(n) :- kind(n, "unary_operator"), prefix("+", n).
+b002_plus(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b002_plus(c1).
+
+// minus(n): the JSON util `minus`, used where the JSON says `matches: "minus"`
+.decl b002_minus(n: node)
+b002_minus(n) :- kind(n, "unary_operator"), prefix("-", n).
+b002_minus(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b002_minus(c1).

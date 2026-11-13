@@ -1,0 +1,341 @@
+.policy "ruff-fast001-fast-api-redundant-response-model" revision 1
+.guests off
+.description "Remove a FastAPI route's response_model argument when it repeats the return annotation; FastAPI already infers the response model from it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// FAST001(n): a finding at node n, from clause `redundant-response-model`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NRET, NRM, TRET, TRM from other metavariables' text; its literals end each rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation FAST001(at: node, rm: loc) "Remove `response_model={rm}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
+    suppress noqa "FAST001"
+// Not grounded: no positive atom binds t3_6.
+FAST001_raw(n, RM) :- kind(n, "keyword_argument"), field(n, "name", c3),
+    glob("response_model", c3), field(n, "value", c4), node(_, c4, _, _, _), RM = c4, fast001_type_shape(c4),
+    (fast001_plain_shape(c4), node(_, c4, _, _, _), RMS = c4 ; !fast001_plain_shape(c4), unset(RMS)),
+    count : { precedes(s5, n), kind(s5, "keyword_argument"), field(s5, "name", c6), glob("response_model", c6) } = 0,
+    child(p7, n, _), kind(p7, "argument_list"), child(p8, p7, _), kind(p8, "call"),
+    fast001_route_call(p8), child(p9, p8, _), fast001_decorator_host(p9, RET, RETS),
+    count : { inside(n, p10, "module"), child(p10, c11, _), kind(c11, "future_import_statement"), child(c11, c12, _), fast001_alt_8(c12) } = 0,
+    (value(RM, t1_5), value(RET, t1_5) ; NRM = NRET),
+    ( unset(RMS), TRM = "!"
+    ; !unset(RMS), text(RMS, t1), TRM = @replace_all(t1, "#[^\\n]*|\\s|\\\\|[()]", "")
+    ),
+
+    ( unset(RETS), TRET = "?"
+    ; !unset(RETS), text(RETS, t2), TRET = @replace_all(t2, "#[^\\n]*|\\s|\\\\|[()]", "")
+    ),
+    NRM = @replace_all(TRM, ",(\\]|$)", "${1}"),
+    NRET = @replace_all(TRET, ",(\\]|$)", "${1}").
+
+// route_ctor(n): the JSON util `route-ctor`, used where the JSON says `matches: "route-ctor"`
+.decl fast001_route_ctor(n: node)
+fast001_route_ctor(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "fastapi.FastAPI") ; sym_of(n, "fastapi.APIRouter")).
+fast001_route_ctor(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), fast001_route_ctor(c1).
+
+// route_ann(n): the JSON util `route-ann`, used where the JSON says `matches: "route-ann"`
+.decl fast001_route_ann(n: node)
+fast001_route_ann(n) :- fast001_route_ctor(n).
+fast001_route_ann(n) :- kind(n, "type"), child(n, c1, _), fast001_route_ann(c1).
+
+// route_init(n): the JSON util `route-init`, used where the JSON says `matches: "route-init"`
+.decl fast001_route_init(n: node)
+fast001_route_init(n) :- kind(n, "call"), field(n, "function", c1), fast001_route_ctor(c1).
+fast001_route_init(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fast001_route_init(c2).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl fast001_plain_target(n: node)
+fast001_plain_target(n) :- kind(n, "identifier").
+fast001_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast001_plain_target(c1).
+
+// route_name(n): the JSON util `route-name`, used where the JSON says `matches: "route-name"`
+.decl fast001_route_name(n: node)
+fast001_route_name(n) :- kind(n, "identifier"), fast001_alt_1(n).
+
+// route_receiver(n): the JSON util `route-receiver`, used where the JSON says `matches: "route-receiver"`
+.decl fast001_route_receiver(n: node)
+fast001_route_receiver(n) :- fast001_route_name(n).
+fast001_route_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast001_route_receiver(c1).
+
+// route_attr(n): the JSON util `route-attr`, used where the JSON says `matches: "route-attr"`
+.decl fast001_route_attr(n: node)
+fast001_route_attr(n) :- kind(n, "attribute"), field(n, "object", c1), fast001_route_receiver(c1),
+    field(n, "attribute", c2),
+    glob("{get,post,put,delete,patch,options,head,trace}", c2).
+fast001_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fast001_route_attr(c3).
+
+// route_call(n): the JSON util `route-call`, used where the JSON says `matches: "route-call"`
+.decl fast001_route_call(n: node)
+fast001_route_call(n) :- kind(n, "call"), field(n, "function", c1), fast001_route_attr(c1).
+
+// route_decorator(n): the JSON util `route-decorator`, used where the JSON says `matches: "route-decorator"`
+.decl fast001_route_decorator(n: node)
+fast001_route_decorator(n) :- kind(n, "decorator"), child(n, c1, _), fast001_route_call_expr(c1).
+
+// route_call_expr(n): the JSON util `route-call-expr`, used where the JSON says `matches: "route-call-expr"`
+.decl fast001_route_call_expr(n: node)
+fast001_route_call_expr(n) :- fast001_route_call(n).
+fast001_route_call_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast001_route_call_expr(c1).
+
+// type_shape(n): the JSON util `type-shape`, used where the JSON says `matches: "type-shape"`
+.decl fast001_type_shape(n: node)
+fast001_type_shape(n) :- fast001_type_shape_u7(n).
+
+// decorator_host(n): the JSON util `decorator-host`, used where the JSON says `matches: "decorator-host"`
+//   RET, RETS: metavariables this relation binds for the calling rule
+.decl fast001_decorator_host(n: node, ret: loc, rets: loc)
+fast001_decorator_host(n, RET, RETS) :- fast001_route_decorator(n), child(p1, n, _),
+    kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "function_definition"), node(_, c2, _, _, _), FN = c2, field(c2, "return_type", c3),
+    kind(c3, "type"), child(c3, c4, _), node(_, c4, _, _, _), RET = c4, fast001_type_shape(c4),
+    (fast001_plain_shape(c4), node(_, c4, _, _, _), RETS = c4 ; !fast001_plain_shape(c4), unset(RETS)),
+    count : { field(c2, "return_type", c5), has(c5, c6, "identifier"), ref_site(c6, b7), site_form(b7, "typeParameter"), inside(b7, p8, "function_definition"), node(_, p8, _, _, _), SF = p8, text(SF, t9), text(FN, t9), @doc(SF) = @doc(FN) } = 0.
+fast001_decorator_host(n, RET, RETS) :- kind(n, "parenthesized_expression"), child(p11, n, _),
+    fast001_decorator_host(p11, RET, RETS).
+
+// in_multi(n): the JSON util `in-multi`, used where the JSON says `matches: "in-multi"`
+.decl fast001_in_multi(n: node)
+fast001_in_multi(n) :- fast001_tok_follows_2(n).
+fast001_in_multi(n) :- fast001_tok_precedes_3(n).
+fast001_in_multi(n) :- child(p15, n, _), kind(p15, "tuple").
+fast001_in_multi(n) :- child(p16, n, _),
+    (kind(p16, "parenthesized_expression") ; kind(p16, "type")), fast001_in_multi(p16).
+
+// risky_node(n): the JSON util `risky-node`, used where the JSON says `matches: "risky-node"`
+.decl fast001_risky_node(n: node)
+fast001_risky_node(n) :- (kind(n, "tuple") ; kind(n, "subscript") ; kind(n, "type_parameter")),
+    child(n, c1, _), glob("\\,", c1), fast001_tok_precedes_4(c1), !fast001_tok_follows_5(c1).
+fast001_risky_node(n) :- kind(n, "tuple"), fast001_in_multi(n).
+
+// plain_shape(n): the JSON util `plain-shape`, used where the JSON says `matches: "plain-shape"`
+.decl fast001_plain_shape(n: node)
+fast001_plain_shape(n) :- node(_, n, _, _, _), !fast001_alt_6(n).
+
+.decl fast001_alt_4_u0(n: node)
+fast001_alt_4_u0(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u0(n) :- kind(n, "comment").
+
+.decl fast001_alt_4_u1(n: node)
+fast001_alt_4_u1(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u1(n) :- kind(n, "comment").
+fast001_alt_4_u1(n) :- fast001_type_shape_u0(n).
+
+.decl fast001_alt_4_u2(n: node)
+fast001_alt_4_u2(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u2(n) :- kind(n, "comment").
+fast001_alt_4_u2(n) :- fast001_type_shape_u1(n).
+
+.decl fast001_alt_4_u3(n: node)
+fast001_alt_4_u3(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u3(n) :- kind(n, "comment").
+fast001_alt_4_u3(n) :- fast001_type_shape_u2(n).
+
+.decl fast001_alt_4_u4(n: node)
+fast001_alt_4_u4(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u4(n) :- kind(n, "comment").
+fast001_alt_4_u4(n) :- fast001_type_shape_u3(n).
+
+.decl fast001_alt_4_u5(n: node)
+fast001_alt_4_u5(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u5(n) :- kind(n, "comment").
+fast001_alt_4_u5(n) :- fast001_type_shape_u4(n).
+
+.decl fast001_alt_4_u6(n: node)
+fast001_alt_4_u6(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u6(n) :- kind(n, "comment").
+fast001_alt_4_u6(n) :- fast001_type_shape_u5(n).
+
+.decl fast001_alt_4_u7(n: node)
+fast001_alt_4_u7(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+fast001_alt_4_u7(n) :- kind(n, "comment").
+fast001_alt_4_u7(n) :- fast001_type_shape_u6(n).
+
+.decl fast001_type_shape_u0(n: node)
+fast001_type_shape_u0(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u0(n) :- kind(n, k7), fast001_set_3(k7), count : { child(n, c8, _) } = 0.
+
+.decl fast001_type_shape_u1(n: node)
+fast001_type_shape_u1(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u1(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u0(c8) } = 0.
+fast001_type_shape_u1(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u0(c9).
+
+.decl fast001_type_shape_u2(n: node)
+fast001_type_shape_u2(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u2(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u1(c8) } = 0.
+fast001_type_shape_u2(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u1(c9).
+
+.decl fast001_type_shape_u3(n: node)
+fast001_type_shape_u3(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u3(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u2(c8) } = 0.
+fast001_type_shape_u3(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u2(c9).
+
+.decl fast001_type_shape_u4(n: node)
+fast001_type_shape_u4(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u4(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u3(c8) } = 0.
+fast001_type_shape_u4(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u3(c9).
+
+.decl fast001_type_shape_u5(n: node)
+fast001_type_shape_u5(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u5(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u4(c8) } = 0.
+fast001_type_shape_u5(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u4(c9).
+
+.decl fast001_type_shape_u6(n: node)
+fast001_type_shape_u6(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u6(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u5(c8) } = 0.
+fast001_type_shape_u6(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u5(c9).
+
+.decl fast001_type_shape_u7(n: node)
+fast001_type_shape_u7(n) :- kind(n, "identifier"), !fast001_alt_2(n).
+fast001_type_shape_u7(n) :- kind(n, k7), fast001_set_3(k7),
+    count : { child(n, c8, _), !fast001_alt_4_u6(c8) } = 0.
+fast001_type_shape_u7(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fast001_type_shape_u6(c9).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast001_tok_precedes_1(n: node)
+.stored fast001_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast001_tok_precedes_1(n) :- precedes(n, s7), glob("as", s7).
+fast001_tok_precedes_1(n) :- child(p10, n, _), node(_, n, _, _, en13),
+    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
+fast001_tok_precedes_1(n) :- structural_after(n, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+fast001_tok_precedes_1(n) :- precedes(n, o11), structural_after(o11, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl fast001_all_expr(x: node)
+fast001_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+fast001_all_expr(y) :- fast001_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+fast001_all_expr(y) :- fast001_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+fast001_all_expr(y) :- fast001_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+fast001_all_expr(y) :- fast001_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+fast001_all_expr(y) :- fast001_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl fast001_all_entry(e: node, x: symbol)
+fast001_all_entry(e, x) :- fast001_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast001_tok_follows_2(n: node)
+.stored fast001_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast001_tok_follows_2(n) :- next_sibling(s1, n), glob("\\,", s1).
+fast001_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match(",", t2).
+fast001_tok_follows_2(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:,)\\s*)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast001_tok_precedes_3(n: node)
+.stored fast001_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast001_tok_precedes_3(n) :- next_sibling(n, s8), glob("\\,", s8).
+fast001_tok_precedes_3(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match(",", t9).
+fast001_tok_precedes_3(n) :- structural_after(n, g10), match("(?s)^(?:\\s*(?:,).*)$", g10).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^[\\])]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast001_tok_precedes_4(n: node)
+.stored fast001_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast001_tok_precedes_4(n) :- next_sibling(n, s2), glob("[\\])]", s2).
+fast001_tok_precedes_4(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("[\\])]", t3).
+fast001_tok_precedes_4(n) :- structural_after(n, g4), match("(?s)^(?:\\s*(?:[\\])]).*)$", g4).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast001_tok_follows_5(n: node)
+.stored fast001_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast001_tok_follows_5(n) :- precedes(s9, n), glob("\\,", s9).
+fast001_tok_follows_5(n) :- child(p12, n, _), node(_, n, _, st14, _),
+    token(p12, _, t10, _, en15), en15 <= st14, match(",", t10).
+fast001_tok_follows_5(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:,).*)$", g11).
+fast001_tok_follows_5(n) :- precedes(o13, n), structural_before(o13, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
+
+// alt_4_u0_empty: level -1 of an unrolled recursion, empty
+.decl fast001_alt_4_u0_empty(n: node)
+
+// type_shape_u0_empty: level -1 of an unrolled recursion, empty
+.decl fast001_type_shape_u0_empty(n: node)
+
+// set_3: node kinds from a JSON `any`
+.decl fast001_set_3(v: symbol)
+fast001_set_3("subscript"). fast001_set_3("tuple"). fast001_set_3("type"). fast001_set_3("generic_type").
+fast001_set_3("type_parameter").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl fast001_alt_1(n: node)
+fast001_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast001_route_init(x2),
+    count : { child(b1, c3, _), kind(c3, "type") } = 0.
+fast001_alt_1(n) :- ref_site(n, b4), kind(b4, "as_pattern"), child(p5, b4, _),
+    kind(p5, "with_item"), child(b4, c6, _), fast001_route_init(c6), fast001_tok_precedes_1(c6),
+    child(b4, c14, _), kind(c14, "as_pattern_target"), child(c14, c15, _),
+    fast001_plain_target(c15).
+fast001_alt_1(n) :- ref_site(n, b16), site_annotation(b16, o17), fast001_route_ann(o17),
+    count : { child(b16, c18, _), (kind(c18, "list_splat_pattern") ; kind(c18, "dictionary_splat_pattern")) } = 0.
+fast001_alt_1(n) :- ref_site(n, b19), kind(b19, "function_definition"),
+    field(b19, "return_type", c20), fast001_route_ann(c20).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl fast001_alt_2(n: node)
+fast001_alt_2(n) :- docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), fast001_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3).
+fast001_alt_2(n) :- docof(n, d5), modnode(d5, m6),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x4)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), fast001_all_entry(n, x4), !bound_in(m6, x4)
+    ),
+    !builtin(x4), star(m6).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl fast001_alt_4(n: node)
+fast001_alt_4(n) :- fast001_alt_4_u7(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl fast001_alt_6(n: node)
+fast001_alt_6(n) :- fast001_risky_node(n).
+fast001_alt_6(n) :- within(c1, n), fast001_risky_node(c1).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl fast001_alt_8(n: node)
+fast001_alt_8(n) :- kind(n, "dotted_name"), glob("annotations", n).
+fast001_alt_8(n) :- kind(n, "aliased_import"), child(n, c1, _), kind(c1, "dotted_name"),
+    glob("annotations", c1).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl FAST001_raw(at: node, rm: loc)
+FAST001(v0, v1) :- FAST001_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

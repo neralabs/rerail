@@ -1,0 +1,142 @@
+.policy "bandit-b609-linux-commands-wildcard-injection" revision 1
+.guests off
+.description "Avoid wildcards in shell commands that run chown, chmod, tar or rsync; crafted file names can inject extra options."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B609(n): findings from clauses `bandit-b609-shell-functions`, `bandit-b609-subprocess`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on F, CMD are added to every rule.
+// The JSON `constraints` on F, CMD, SHELL are added to every rule.
+.violation B609(at: node, f: node) "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options."
+    suppress nosec "B609"
+B609(F, n) :- n ~ `$F($$$CALL_ARGS)`, kind(n, "call"), b609_arg_command_1(n, a1), CMD = a1,
+    sym_of(F, q2), b609_set_1(q2), value(CMD, v3),
+    value(CMD, v4), match("(?s).*(\\*|\\?|\\[).*", v4),
+    value(CMD, v5), match("(?s).*(chown|chmod|tar|rsync).*", v5).
+B609(F, n) :- n ~ `$F($$$CALL_ARGS)`, kind(n, "call"), b609_arg_args_2(n, a1), CMD = a1,
+    b609_arg_shell_3(n, a2), SHELL = a2,
+    (sym_of(F, "subprocess.Popen") ; sym_of(F, "subprocess.call")), value(CMD, v3),
+    value(CMD, v4), match("(?s).*(\\*|\\?|\\[).*", v4),
+    value(CMD, v5), match("(?s).*(chown|chmod|tar|rsync).*", v5), value(SHELL, v6),
+    b609_truthy_value(SHELL, "true").
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b609_args_plain(l: node, a: node, i: number)
+b609_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b609_args_splat(l: node, i: number)
+b609_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b609_args_pos(l: node, a: node, j: number)
+b609_args_pos(l, a, j) :- b609_args_plain(l, a, i), count : { b609_args_splat(l, k), k < i } = 0,
+    j = count : { b609_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b609_args_star(l: node, j: number)
+b609_args_star(l, j) :- b609_args_splat(l, i), count : { b609_args_splat(l, k), k < i } = 0,
+    j = count : { b609_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b609_args_kwp(l: node, k: symbol, v: node)
+b609_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b609_args_lit_dict(s: node, d: node)
+b609_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b609_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b609_args_str_pair(p: node)
+b609_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b609_args_kw(l: node, k: symbol, v: node)
+b609_args_kw(l, k, v) :- b609_args_kwp(l, k, v).
+b609_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b609_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b609_args_kw_spread(l: node)
+b609_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b609_args_lit_dict(s, _).
+
+// arg_command_1: call n passes v for slot `command` of (command, arg2, arg3, arg4), as Python binds the call
+.decl b609_arg_command_1(n: node, v: node)
+b609_arg_command_1(n, v) :- kind(n, "call"), field(n, "arguments", l), b609_args_pos(l, v, 0),
+    !b609_args_kw(l, "command", _).
+b609_arg_command_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+b609_arg_command_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b609_args_kw(l, "command", v), count : { b609_args_kw(l, "command", _) } = 1,
+    !b609_args_pos(l, _, 0).
+
+// arg_no_command_1: call n does not pass slot `command` of (command, arg2, arg3, arg4), as Python binds the call
+.decl b609_arg_no_command_1(n: node)
+b609_arg_no_command_1(n) :- kind(n, "call"), field(n, "arguments", l), !b609_args_pos(l, _, 0),
+    count : { b609_args_star(l, j), j <= 0 } = 0, !kind(l, "generator_expression"),
+    !b609_args_kw(l, "command", _), !b609_args_kw_spread(l).
+
+// arg_args_2: call n passes v for slot `args` of (args, bufsize, executable, stdin, stdout, stderr, preexec_fn, close_fds, shell), as Python binds the call
+.decl b609_arg_args_2(n: node, v: node)
+b609_arg_args_2(n, v) :- kind(n, "call"), field(n, "arguments", l), b609_args_pos(l, v, 0),
+    !b609_args_kw(l, "args", _).
+b609_arg_args_2(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+b609_arg_args_2(n, v) :- kind(n, "call"), field(n, "arguments", l), b609_args_kw(l, "args", v),
+    count : { b609_args_kw(l, "args", _) } = 1, !b609_args_pos(l, _, 0).
+
+// arg_no_args_2: call n does not pass slot `args` of (args, bufsize, executable, stdin, stdout, stderr, preexec_fn, close_fds, shell), as Python binds the call
+.decl b609_arg_no_args_2(n: node)
+b609_arg_no_args_2(n) :- kind(n, "call"), field(n, "arguments", l), !b609_args_pos(l, _, 0),
+    count : { b609_args_star(l, j), j <= 0 } = 0, !kind(l, "generator_expression"),
+    !b609_args_kw(l, "args", _), !b609_args_kw_spread(l).
+
+// arg_shell_3: call n passes v for slot `shell` of (args, bufsize, executable, stdin, stdout, stderr, preexec_fn, close_fds, shell), as Python binds the call
+.decl b609_arg_shell_3(n: node, v: node)
+b609_arg_shell_3(n, v) :- kind(n, "call"), field(n, "arguments", l), b609_args_pos(l, v, 8),
+    !b609_args_kw(l, "shell", _).
+b609_arg_shell_3(n, v) :- kind(n, "call"), field(n, "arguments", l), b609_args_kw(l, "shell", v),
+    count : { b609_args_kw(l, "shell", _) } = 1, !b609_args_pos(l, _, 8).
+
+// arg_no_shell_3: call n does not pass slot `shell` of (args, bufsize, executable, stdin, stdout, stderr, preexec_fn, close_fds, shell), as Python binds the call
+.decl b609_arg_no_shell_3(n: node)
+b609_arg_no_shell_3(n) :- kind(n, "call"), field(n, "arguments", l), !b609_args_pos(l, _, 8),
+    count : { b609_args_star(l, j), j <= 8 } = 0, !b609_args_kw(l, "shell", _),
+    !b609_args_kw_spread(l).
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl b609_truthy_value(n: node, b: symbol)
+b609_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+b609_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+b609_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+b609_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+b609_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+b609_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b609_set_1(v: symbol)
+b609_set_1("os.system"). b609_set_1("os.popen"). b609_set_1("os.popen2"). b609_set_1("os.popen3").
+b609_set_1("os.popen4"). b609_set_1("popen2.popen2"). b609_set_1("popen2.popen3").
+b609_set_1("popen2.popen4"). b609_set_1("popen2.Popen3"). b609_set_1("popen2.Popen4").
+b609_set_1("commands.getoutput"). b609_set_1("commands.getstatusoutput").

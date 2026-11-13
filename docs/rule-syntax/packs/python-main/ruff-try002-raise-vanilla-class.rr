@@ -1,0 +1,33 @@
+.policy "ruff-try002-raise-vanilla-class" revision 1
+.guests off
+.description "Raise a specific built-in or custom exception instead of the generic base exception classes; callers can then catch it without capturing unrelated errors."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY002(n): a finding at node n, from clause `raise-vanilla-class`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TRY002(at: node) "Raise a specific built-in exception such as `ValueError` or `RuntimeError`, or define a subclass, instead of `Exception`/`BaseException`, so callers can catch it precisely."
+    suppress noqa "TRY002"
+TRY002(n) :- try002_raised(n),
+    (try002_vanilla_ref(n) ; kind(n, "call"), field(n, "function", c1), try002_vanilla(c1)).
+
+// vanilla_ref(n): the JSON util `vanilla-ref`, used where the JSON says `matches: "vanilla-ref"`
+.decl try002_vanilla_ref(n: node)
+try002_vanilla_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "Exception") ; global_ref(n, "BaseException")),
+    (sym_of(n, "builtins.Exception") ; sym_of(n, "builtins.BaseException")).
+
+// vanilla(n): the JSON util `vanilla`, used where the JSON says `matches: "vanilla"`
+.decl try002_vanilla(n: node)
+try002_vanilla(n) :- try002_vanilla_ref(n).
+try002_vanilla(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), try002_vanilla(c1).
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl try002_raised(n: node)
+try002_raised(n) :- child(p1, n, _), kind(p1, "raise_statement"),
+    count : { field(p2, "cause", n), kind(p2, "raise_statement") } = 0.
+try002_raised(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), try002_raised(p3).

@@ -1,0 +1,18 @@
+.policy "ruff-f402-import-shadowed-by-loop-var" revision 1
+.guests off
+.description "Don't reuse an imported name as a for-loop variable; the loop silently overwrites the import."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// F402(n): a finding at node n, from clause `import-shadowed-by-loop-var`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F402(at: node, name: loc) "Import `{name}` shadowed by loop variable"
+    suppress noqa "F402"
+F402(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, site_form(n, "for"),
+    kind(n, "for_statement"), ast(n, {"redefines": {"form": "import"}}).

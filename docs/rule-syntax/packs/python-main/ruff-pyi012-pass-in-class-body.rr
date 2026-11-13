@@ -1,0 +1,25 @@
+.policy "ruff-pyi012-pass-in-class-body" revision 1
+.guests off
+.description "Remove pass statements from class bodies in stub files that already contain other statements; they do nothing there."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI012(n): a finding at node n, from clause `pass-in-class-body`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI012(at: node) "Delete this `pass`; the class body already has other statements, so it is redundant in a stub."
+    suppress noqa "PYI012"
+PYI012_raw(n) :- kind(n, "pass_statement"), child(p1, n, _), kind(p1, "block"),
+    field(p2, "body", p1), kind(p2, "class_definition"),
+    (precedes(s1, n), !pyi012_filler(s1) ; precedes(n, s2), !pyi012_filler(s2)).
+
+// filler(n): the JSON util `filler`, used where the JSON says `matches: "filler"`
+.decl pyi012_filler(n: node)
+pyi012_filler(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi012_filler(n) :- node(_, n, _, _, _), glob(";", n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI012_raw(at: node)
+PYI012(v0) :- PYI012_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

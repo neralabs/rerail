@@ -1,0 +1,136 @@
+.policy "ruff-ruf061-legacy-form-pytest-raises" revision 1
+.guests off
+.description "Use the context-manager form of pytest raises, warns and deprecated_call instead of passing the callable as an argument; it reads better and accepts extra arguments."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee_of(n, key): 3 copies of one rule set (`callee-deprecated-call`, `callee-raises`, `callee-warns`), folded into one: row `key` of
+// callee_of_case gives the strings each copy had.
+.decl ruf061_callee_of(n: node, key: symbol)
+ruf061_callee_of(n, q1) :- ruf061_callee_of_case(q1, s1),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, s1).
+ruf061_callee_of(n, q1) :- ruf061_callee_of_case(q1, s1), kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf061_callee_of(c1, q1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf061_trivia(n: node)
+ruf061_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// plain_arg(n): the JSON util `plain-arg`, used where the JSON says `matches: "plain-arg"`
+.decl ruf061_plain_arg(n: node)
+ruf061_plain_arg(n) :- node(_, n, _, _, _), !ruf061_alt_1(n).
+
+// func_keyword(n): the JSON util `func-keyword`, used where the JSON says `matches: "func-keyword"`
+.decl ruf061_func_keyword(n: node)
+ruf061_func_keyword(n) :- child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _),
+    kind(c2, "keyword_argument"), match("func[\\s=#\\\\].*", c2).
+
+// first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
+.decl ruf061_first_arg(n: node)
+ruf061_first_arg(n) :- ruf061_plain_arg(n), precedes_stop(s1, n, ruf061_stop_2), glob("(", s1).
+
+// second_arg(n): the JSON util `second-arg`, used where the JSON says `matches: "second-arg"`
+.decl ruf061_second_arg(n: node)
+ruf061_second_arg(n) :- ruf061_plain_arg(n), precedes_stop(s1, n, ruf061_stop_2), glob("\\,", s1),
+    precedes_stop(s2, s1, ruf061_stop_2), ruf061_first_arg(s2).
+
+// func_second(n): the JSON util `func-second`, used where the JSON says `matches: "func-second"`
+.decl ruf061_func_second(n: node)
+ruf061_func_second(n) :- child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _),
+    ruf061_second_arg(c2).
+
+// func_first(n): the JSON util `func-first`, used where the JSON says `matches: "func-first"`
+.decl ruf061_func_first(n: node)
+ruf061_func_first(n) :- child(n, c1, _),
+    ( kind(c1, "argument_list"), child(c1, c2, _), ruf061_first_arg(c2)
+    ; kind(c1, "generator_expression")
+    ).
+
+
+// raises_call(n): the JSON util `raises-call`, used where the JSON says `matches: "raises-call"`
+.decl ruf061_raises_call(n: node)
+ruf061_raises_call(n) :- kind(n, "call"), child(n, c1, _), ruf061_callee_of(c1, "raises"), ruf061_alt_6(n).
+
+// raises_in_string(n): the JSON util `raises-in-string`, used where the JSON says `matches: "raises-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_raises_in_string(n: node, c: loc)
+ruf061_raises_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf061_alt_7(c2, C).
+
+// warns_call(n): the JSON util `warns-call`, used where the JSON says `matches: "warns-call"`
+.decl ruf061_warns_call(n: node)
+ruf061_warns_call(n) :- kind(n, "call"), child(n, c1, _), ruf061_callee_of(c1, "warns"), ruf061_alt_6(n).
+
+// warns_in_string(n): the JSON util `warns-in-string`, used where the JSON says `matches: "warns-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_warns_in_string(n: node, c: loc)
+ruf061_warns_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf061_alt_9(c2, C).
+
+// deprecated_call_call(n): the JSON util `deprecated-call-call`, used where the JSON says `matches: "deprecated-call-call"`
+.decl ruf061_deprecated_call_call(n: node)
+ruf061_deprecated_call_call(n) :- kind(n, "call"), child(n, c1, _),
+    ruf061_callee_of(c1, "deprecated_call"), (ruf061_func_keyword(n) ; ruf061_func_first(n)).
+
+// deprecated_call_in_string(n): the JSON util `deprecated-call-in-string`, used where the JSON says `matches: "deprecated-call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_deprecated_call_in_string(n: node, c: loc)
+ruf061_deprecated_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf061_alt_11(c2, C).
+
+// RUF061(n, detail): findings from clauses `legacy-raises`, `legacy-warns`, `legacy-deprecated-call`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF061(at: node, c: node, detail: symbol) "Use `with {detail}."
+    suppress noqa "RUF061"
+RUF061(C, n, "pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`") :- ruf061_raises_call(n),
+    node(_, n, _, _, _), C = n.
+RUF061(C, n, "pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`") :- ruf061_raises_in_string(n, C).
+RUF061(C, n, "pytest.warns(Warn):` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.warns`") :- ruf061_warns_call(n),
+    node(_, n, _, _, _), C = n.
+RUF061(C, n, "pytest.warns(Warn):` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.warns`") :- ruf061_warns_in_string(n, C).
+RUF061(C, n, "pytest.deprecated_call():` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.deprecated_call`") :- ruf061_deprecated_call_call(n),
+    node(_, n, _, _, _), C = n.
+RUF061(C, n, "pytest.deprecated_call():` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.deprecated_call`") :- ruf061_deprecated_call_in_string(n, C).
+
+// callee_of_case: one row per relation folded into callee_of: its key, then the strings that differed.
+.decl ruf061_callee_of_case(key: symbol, s1: symbol)
+ruf061_callee_of_case("deprecated_call", "pytest.deprecated_call").
+ruf061_callee_of_case("raises", "pytest.raises"). ruf061_callee_of_case("warns", "pytest.warns").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf061_alt_1(n: node)
+ruf061_alt_1(n) :- (kind(n, "keyword_argument") ; kind(n, "list_splat") ; kind(n, "dictionary_splat")).
+ruf061_alt_1(n) :- ruf061_trivia(n).
+ruf061_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf061_stop_2(n: node)
+ruf061_stop_2(n) :- node(_, n, _, _, _), !ruf061_trivia(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf061_alt_6(n: node)
+ruf061_alt_6(n) :- ruf061_func_keyword(n).
+ruf061_alt_6(n) :- ruf061_func_second(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_alt_7(n: node, c: loc)
+ruf061_alt_7(n, C) :- ruf061_raises_call(n), C = n.
+ruf061_alt_7(n, C) :- ruf061_raises_in_string(n, C).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_alt_9(n: node, c: loc)
+ruf061_alt_9(n, C) :- ruf061_warns_call(n), C = n.
+ruf061_alt_9(n, C) :- ruf061_warns_in_string(n, C).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf061_alt_11(n: node, c: loc)
+ruf061_alt_11(n, C) :- ruf061_deprecated_call_call(n), C = n.
+ruf061_alt_11(n, C) :- ruf061_deprecated_call_in_string(n, C).

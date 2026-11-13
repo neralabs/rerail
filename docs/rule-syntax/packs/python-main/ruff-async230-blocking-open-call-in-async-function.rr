@@ -1,0 +1,135 @@
+.policy "ruff-async230-blocking-open-call-in-async-function" revision 1
+.guests off
+.description "Don't open files with open(), io.open or Path.open() inside async functions; use an async file API so file I/O doesn't block the event loop."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ASYNC230(n): a finding at node n, from clause `blocking-open`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ASYNC230(at: node) "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`."
+    suppress noqa "ASYNC230"
+ASYNC230(n) :- async230_callee_position(n), async230_async_context(n), async230_target(n).
+
+// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
+.decl async230_scope_body(n: node)
+async230_scope_body(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+.decl async230_lambda_body(n: node)
+async230_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async230_tok_follows_1(n).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl async230_callee_position(n: node)
+async230_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async230_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    async230_callee_position(p3).
+
+// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
+.decl async230_async_context(n: node)
+async230_async_context(n) :- async230_demand_async_context(n), async230_up_1(n, p1), child(p2, p1, _),
+    kind(p2, "function_definition"), async230_tok_has_2(p2).
+
+// init(n): the JSON util `init`, used where the JSON says `matches: "init"`
+.decl async230_init(n: node)
+async230_init(n) :- kind(n, "call"), child(n, c1, _),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, "pathlib.Path"),
+    next_sibling(c1, s2), kind(s2, "argument_list").
+async230_init(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), async230_init(c3).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl async230_plain_target(n: node)
+async230_plain_target(n) :- kind(n, "identifier").
+async230_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    async230_plain_target(c1).
+
+// typed_name(n): the JSON util `typed-name`, used where the JSON says `matches: "typed-name"`
+.decl async230_typed_name(n: node)
+async230_typed_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
+    ( ref_site(n, b1_1), binding_value(b1_1, x2_1), async230_init(x2_1)
+    ; ref_site(n, b3_2), kind(b3_2, "as_pattern"), child(p4_2, b3_2, _), kind(p4_2, "with_item"), child(b3_2, c5_2, _), async230_init(c5_2), async230_tok_precedes_3(c5_2), child(b3_2, c13_2, _), kind(c13_2, "as_pattern_target"), child(c13_2, c14_2, _), async230_plain_target(c14_2)
+    ; ref_site(n, b15_3), kind(b15_3, "assignment"), field(b15_3, "left", c16_3), child(c16_3, c17_3, _), kind(c17_3, "identifier"), node(_, c17_3, _, _, _), UT = c17_3, value(UT, t18_3), value(TN, t18_3), count : { precedes(c17_3, s20_3), kind(s20_3, "identifier"), node(_, s20_3, _, _, _), UU = s20_3, value(UU, t21_3), value(TN, t21_3) } = 0, field(b15_3, "right", c23_3), child(c23_3, c24_3, _), async230_init(c24_3), node(_, c24_3, _, _, _), UV = c24_3, value(UV, t25_3), value(UT, t25_3)
+    ).
+
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async230_target(n: node)
+async230_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "open"),
+    (sym_of(n, "builtins.open") ; sym_of(n, "io.open") ; sym_of(n, "io.open_code")).
+async230_target(n) :- kind(n, "attribute"), n ~ `$OBJ.$METH`, child(n, c1, _), node(_, c1, _, _, _), OBJ = c1,
+    async230_tok_precedes_4(c1), (async230_init(c1) ; async230_typed_name(c1)), child(n, c9, _),
+    kind(c9, "identifier"), node(_, c9, _, _, _), METH = c9, glob("open", c9), async230_tok_follows_5(c9).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async230_tok_follows_1(n: node)
+.stored async230_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async230_tok_follows_1(n) :- precedes(s2, n), glob(":", s2).
+async230_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+async230_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async230_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async230_tok_has_2(n: node)
+.stored async230_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async230_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+async230_tok_has_2(n) :- op(n, t4), match("async", t4).
+async230_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async230_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async230_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async230_tok_precedes_3(n: node)
+.stored async230_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async230_tok_precedes_3(n) :- precedes(n, s6), glob("as", s6).
+async230_tok_precedes_3(n) :- child(p9, n, _), node(_, n, _, _, en12),
+    token(p9, _, t7, st11, _), st11 >= en12, match("as", t7).
+async230_tok_precedes_3(n) :- structural_after(n, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+async230_tok_precedes_3(n) :- precedes(n, o10), structural_after(o10, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async230_tok_precedes_4(n: node)
+.stored async230_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async230_tok_precedes_4(n) :- precedes(n, s2), glob(".", s2).
+async230_tok_precedes_4(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("\\.", t3).
+async230_tok_precedes_4(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async230_tok_precedes_4(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async230_tok_follows_5(n: node)
+.stored async230_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async230_tok_follows_5(n) :- precedes(s10, n), glob(".", s10).
+async230_tok_follows_5(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match("\\.", t11).
+async230_tok_follows_5(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+async230_tok_follows_5(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
+.decl async230_demand_async_context(n: node)
+async230_demand_async_context(n) :- async230_callee_position(n), async230_target(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async230_up_1(n: node, p: node)
+async230_up_1(n, p) :- async230_demand_async_context(n), within_stop(n, p, async230_stop_1), kind(p, "block").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async230_stop_1(n: node)
+async230_stop_1(n) :- async230_scope_body(n).
+async230_stop_1(n) :- async230_lambda_body(n).

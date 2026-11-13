@@ -1,0 +1,139 @@
+.policy "ruff-ann205-missing-return-type-static-method" revision 1
+.guests off
+.description "Annotate the return type of static methods; the annotation documents what they return and lets a type checker verify it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ANN205(n): a finding at node n, from clause `missing-return-type-static-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation ANN205(at: node, n: loc) "Add a return type annotation to static method `{n}`, such as `-> int`, naming the type it returns."
+    suppress noqa "ANN205"
+ANN205(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, field(p1, "name", n),
+    kind(p1, "function_definition"), ann205_unannotated_method(p1), !ann205_overload_impl(p1, N),
+    count : { child(p2, p1, _), kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"), child(c3, c4, _), ann205_class_ref(c4) } = 0,
+    child(p5, p1, _), kind(p5, "decorated_definition"), child(p5, c6, _),
+    kind(c6, "decorator"), child(c6, c7, _), ann205_static_ref(c7).
+
+// seen_builtins(n): the JSON util `seen-builtins`, used where the JSON says `matches: "seen-builtins"`
+.decl ann205_seen_builtins(n: node)
+ann205_seen_builtins(n) :- inside(n, p1, "module"), has(p1, c2, "dotted_name"),
+    match("builtins\\b.*", c2),
+    ( field(p2, "name", c2), kind(p2, "import_statement")
+    ; child(p3, c2, _), kind(p3, "aliased_import"), child(p4, p3, _), kind(p4, "import_statement")
+    ; field(p5, "module_name", c2), kind(p5, "import_from_statement")
+    ).
+
+
+// static_ref(n): the JSON util `static-ref`, used where the JSON says `matches: "static-ref"`
+.decl ann205_static_ref(n: node)
+ann205_static_ref(n) :- kind(n, "identifier"), glob("staticmethod", n), !ann205_alt_3(n).
+ann205_static_ref(n) :- ann205_seen_builtins(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "staticmethod"), sym_of(n, "builtins.staticmethod").
+ann205_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ann205_static_ref(c3).
+
+// class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
+.decl ann205_class_ref(n: node)
+ann205_class_ref(n) :- kind(n, "identifier"), glob("classmethod", n), !ann205_alt_6(n).
+ann205_class_ref(n) :- ann205_seen_builtins(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "classmethod"), sym_of(n, "builtins.classmethod").
+ann205_class_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ann205_class_ref(c3).
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl ann205_overload_ref(n: node)
+ann205_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+ann205_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann205_overload_ref(c1).
+
+// def_like(n): the JSON util `def-like`, used where the JSON says `matches: "def-like"`
+.decl ann205_def_like(n: node)
+ann205_def_like(n) :-
+    ( kind(n, "function_definition")
+    ; kind(n, "class_definition")
+    ; kind(n, "decorated_definition")
+    ).
+
+
+// overload_of_name(n): the JSON util `overload-of-name`, used where the JSON says `matches: "overload-of-name"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann205_overload_of_name(n: node, n_mv: loc)
+ann205_overload_of_name(n, N) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "decorator"), child(c1, c2, _), ann205_overload_ref(c2), child(n, c3, _),
+    kind(c3, "function_definition"), field(c3, "name", c4), node(_, c4, _, _, _), N = c4.
+
+// has_def(n): the JSON util `has-def`, used where the JSON says `matches: "has-def"`
+.decl ann205_has_def(n: node)
+ann205_has_def(n) :- ann205_def_like(n).
+ann205_has_def(n) :- within(c1, n), ann205_def_like(c1).
+
+// ends_with_overload(n): the JSON util `ends-with-overload`, used where the JSON says `matches: "ends-with-overload"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann205_ends_with_overload(n: node, n_mv: loc)
+ann205_ends_with_overload(n, N) :- ann205_overload_of_name(n, N).
+ann205_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1, _),
+    ann205_has_def(c1), count : { precedes(c1, s2), ann205_has_def(s2) } = 0,
+    ann205_ends_with_overload(c1, N).
+
+// after_overload(n): the JSON util `after-overload`, used where the JSON says `matches: "after-overload"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann205_after_overload(n: node, n_mv: loc)
+ann205_after_overload(n, N) :- precedes_stop(s1, n, ann205_stop_8), ann205_ends_with_overload(s1, N).
+ann205_after_overload(n, N) :- count : { precedes(s2, n), ann205_has_def(s2) } = 0, child(p3, n, _),
+    !kind(p3, "function_definition"), !kind(p3, "class_definition"),
+    !kind(p3, "module"), ann205_after_overload(p3, N).
+
+// overload_impl(n): the JSON util `overload-impl`, used where the JSON says `matches: "overload-impl"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann205_overload_impl(n: node, n_mv: loc)
+ann205_overload_impl(n, N) :- ann205_demand_overload_impl(n, N), kind(n, "function_definition"),
+    count : { child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _), ann205_overload_ref(c3) } = 0,
+    ann205_after_overload(n, N).
+
+// unannotated_method(n): the JSON util `unannotated-method`, used where the JSON says `matches: "unannotated-method"`
+.decl ann205_unannotated_method(n: node)
+ann205_unannotated_method(n) :- kind(n, "function_definition"),
+    count : { field(n, "return_type", c1), match("(?s).*..*", c1) } = 0,
+    within_stop(n, p2, ann205_stop_9), kind(p2, "class_definition").
+
+// demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
+.decl ann205_demand_overload_impl(n: node, n_mv: loc)
+ann205_demand_overload_impl(p1, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, field(p1, "name", n),
+    kind(p1, "function_definition"), ann205_unannotated_method(p1), child(p5, p1, _),
+    kind(p5, "decorated_definition"), child(p5, c6, _), kind(c6, "decorator"),
+    child(c6, c7, _), ann205_static_ref(c7).
+
+// stop_9: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann205_stop_9(kind: symbol)
+ann205_stop_9("function_definition"). ann205_stop_9("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ann205_alt_2(n: node)
+ann205_alt_2(n) :- site_form(n, "annotation").
+ann205_alt_2(n) :- site_form(n, "except").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ann205_alt_3(n: node)
+ann205_alt_3(n) :- ann205_seen_builtins(n).
+ann205_alt_3(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
+    site_scope(c2, "module"), !ann205_alt_2(c2).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ann205_alt_6(n: node)
+ann205_alt_6(n) :- ann205_seen_builtins(n).
+ann205_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
+    site_scope(c2, "module"), !ann205_alt_2(c2).
+
+// stop_8(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann205_stop_8(n: node)
+ann205_stop_8(n) :- ann205_has_def(n).

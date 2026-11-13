@@ -1,0 +1,86 @@
+.policy "ruff-int002-format-in-get-text-func-call" revision 1
+.guests off
+.description "Pass a constant template to a gettext call and format the translated result; a format method call is evaluated before the catalog lookup."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// INT002(n): a finding at node n, from clause `format-in-gettext-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation INT002(at: node, arg: node) "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+    suppress noqa "INT002"
+INT002(ARG, n) :- int002_target(n), node(_, n, _, _, _), ARG = n.
+INT002(ARG, n) :- int002_in_annotation(n, ARG).
+
+// gettext_callee(n): the JSON util `gettext-callee`, used where the JSON says `matches: "gettext-callee"`
+.decl int002_gettext_callee(n: node)
+int002_gettext_callee(n) :- kind(n, "identifier"), glob("{_,gettext,ngettext}", n).
+int002_gettext_callee(n) :- kind(n, "identifier"),
+    (global_ref(n, "_") ; global_ref(n, "gettext") ; global_ref(n, "ngettext")).
+int002_gettext_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), int002_set_1(q1).
+int002_gettext_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    int002_gettext_callee(c2).
+
+// first_gettext_arg(n): the JSON util `first-gettext-arg`, used where the JSON says `matches: "first-gettext-arg"`
+.decl int002_first_gettext_arg(n: node)
+int002_first_gettext_arg(n) :- child(p1, n, _), kind(p1, "argument_list"), child(p2, p1, _),
+    kind(p2, "call"), child(p2, c3, _), int002_gettext_callee(c3),
+    count : { precedes(s4, n), !int002_alt_2(s4) } = 0.
+int002_first_gettext_arg(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    int002_first_gettext_arg(p5).
+
+// format_attribute(n): the JSON util `format-attribute`, used where the JSON says `matches: "format-attribute"`
+.decl int002_format_attribute(n: node)
+int002_format_attribute(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("format", c1), int002_tok_follows_1(c1).
+int002_format_attribute(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    int002_format_attribute(c9).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl int002_target(n: node)
+int002_target(n) :- kind(n, "call"), int002_first_gettext_arg(n), child(n, c1, _),
+    int002_format_attribute(c1).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   ARG: metavariable this relation binds for the calling rule
+.decl int002_in_annotation(n: node, arg: loc)
+int002_in_annotation(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), int002_alt_3(c2, ARG).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl int002_tok_follows_1(n: node)
+.stored int002_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+int002_tok_follows_1(n) :- precedes(s2, n), glob(".", s2).
+int002_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\.", t3).
+int002_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+int002_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl int002_set_1(v: symbol)
+int002_set_1("gettext.gettext"). int002_set_1("gettext.ngettext"). int002_set_1("builtins._").
+int002_set_1("builtins.gettext"). int002_set_1("builtins.ngettext").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl int002_alt_2(n: node)
+int002_alt_2(n) :-
+    ( kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ; kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ).
+
+int002_alt_2(n) :- node(_, n, _, _, _), glob("[(,]", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   ARG: metavariable this relation binds for the calling rule
+.decl int002_alt_3(n: node, arg: loc)
+int002_alt_3(n, ARG) :- int002_target(n), ARG = n.
+int002_alt_3(n, ARG) :- int002_in_annotation(n, ARG).

@@ -1,0 +1,155 @@
+.policy "ruff-up013-convert-typed-dict-functional-to-class" revision 1
+.guests off
+.description "Define typed dictionaries with class syntax instead of the functional TypedDict call; the class form is easier to read."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// plain_text(n): the JSON util `plain-text`, used where the JSON says `matches: "plain-text"`
+.decl up013_plain_text(n: node)
+up013_plain_text(n) :- kind(n, "string"), !match("[A-Za-z]*[bBfFtT].*", n).
+up013_plain_text(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[bBfFtT].*", c1) } = 0.
+up013_plain_text(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up013_plain_text(c2).
+
+// arg_node(n): the JSON util `arg-node`, used where the JSON says `matches: "arg-node"`
+.decl up013_arg_node(n: node)
+up013_arg_node(n) :- node(_, n, _, _, _), !up013_alt_1(n).
+
+// keyword_arg(n): the JSON util `keyword-arg`, used where the JSON says `matches: "keyword-arg"`
+.decl up013_keyword_arg(n: node)
+up013_keyword_arg(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+
+// positional_arg(n): the JSON util `positional-arg`, used where the JSON says `matches: "positional-arg"`
+.decl up013_positional_arg(n: node)
+up013_positional_arg(n) :- up013_arg_node(n), !up013_keyword_arg(n).
+
+// one_positional(n): the JSON util `one-positional`, used where the JSON says `matches: "one-positional"`
+.decl up013_one_positional(n: node)
+up013_one_positional(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), up013_positional_arg(c1) }, k2 >= 1, k2 <= 1.
+
+// no_keywords(n): the JSON util `no-keywords`, used where the JSON says `matches: "no-keywords"`
+.decl up013_no_keywords(n: node)
+up013_no_keywords(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), up013_keyword_arg(c1) } = 0.
+
+// no_splat_keywords(n): the JSON util `no-splat-keywords`, used where the JSON says `matches: "no-splat-keywords"`
+.decl up013_no_splat_keywords(n: node)
+up013_no_splat_keywords(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), kind(c1, "dictionary_splat") } = 0.
+
+// two_positional(n): the JSON util `two-positional`, used where the JSON says `matches: "two-positional"`
+.decl up013_two_positional(n: node)
+up013_two_positional(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), up013_positional_arg(c1) }, k2 >= 2, k2 <= 2.
+
+// second_positional(n): the JSON util `second-positional`, used where the JSON says `matches: "second-positional"`
+.decl up013_second_positional(n: node)
+up013_second_positional(n) :- up013_positional_arg(n), precedes(s1, n), up013_positional_arg(s1).
+
+// typed_dict_ref(n): the JSON util `typed-dict-ref`, used where the JSON says `matches: "typed-dict-ref"`
+//   BASE: metavariable this relation binds for the calling rule
+.decl up013_typed_dict_ref(n: node, base: loc)
+up013_typed_dict_ref(n, BASE) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), BASE = n,
+    ( sym_of(n, "typing.TypedDict")
+    ; sym_of(n, "typing_extensions.TypedDict")
+    ; sym_of(n, "_typeshed.TypedDict")
+    ).
+
+
+// typed_dict_callee(n): the JSON util `typed-dict-callee`, used where the JSON says `matches: "typed-dict-callee"`
+//   BASE: metavariable this relation binds for the calling rule
+.decl up013_typed_dict_callee(n: node, base: loc)
+up013_typed_dict_callee(n, BASE) :- up013_typed_dict_ref(n, BASE).
+up013_typed_dict_callee(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up013_typed_dict_callee(c1, BASE).
+
+// name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl up013_name_target(n: node, name: loc)
+up013_name_target(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+up013_name_target(n, NAME) :- kind(n, "tuple_pattern"), !up013_tok_has_1(n), child(n, c9, _),
+    up013_name_target(c9, NAME).
+
+// typed_dict_value(n): the JSON util `typed-dict-value`, used where the JSON says `matches: "typed-dict-value"`
+//   BASE: metavariable this relation binds for the calling rule
+.decl up013_typed_dict_value(n: node, base: loc)
+up013_typed_dict_value(n, BASE) :- kind(n, "call"), field(n, "function", c1),
+    up013_typed_dict_callee(c1, BASE), field(n, "arguments", c2), up013_typed_dict_arguments(c2).
+up013_typed_dict_value(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    up013_typed_dict_value(c3, BASE).
+
+// typed_dict_field_name(n): the JSON util `typed-dict-field-name`, used where the JSON says `matches: "typed-dict-field-name"`
+.decl up013_typed_dict_field_name(n: node)
+up013_typed_dict_field_name(n) :- up013_plain_text(n),
+    value(n, v1), match("[\\p{XID_Start}_]\\p{XID_Continue}*", v1), !up013_alt_2(n).
+
+// typed_dict_literal(n): the JSON util `typed-dict-literal`, used where the JSON says `matches: "typed-dict-literal"`
+.decl up013_typed_dict_literal(n: node)
+up013_typed_dict_literal(n) :- kind(n, "dictionary"),
+    count : { child(n, c1, _), up013_alt_3(c1) } = 0.
+
+// dict_name(n): the JSON util `dict-name`, used where the JSON says `matches: "dict-name"`
+.decl up013_dict_name(n: node)
+up013_dict_name(n) :- kind(n, "identifier"), glob("dict", n).
+up013_dict_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up013_dict_name(c1).
+
+// dict_call(n): the JSON util `dict-call`, used where the JSON says `matches: "dict-call"`
+.decl up013_dict_call(n: node)
+up013_dict_call(n) :- kind(n, "call"), field(n, "function", c1), up013_dict_name(c1),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "dictionary_splat") } = 0.
+
+// typed_dict_fields(n): the JSON util `typed-dict-fields`, used where the JSON says `matches: "typed-dict-fields"`
+.decl up013_typed_dict_fields(n: node)
+up013_typed_dict_fields(n) :- up013_typed_dict_literal(n).
+up013_typed_dict_fields(n) :- up013_dict_call(n).
+up013_typed_dict_fields(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up013_typed_dict_fields(c1).
+
+// typed_dict_arguments(n): the JSON util `typed-dict-arguments`, used where the JSON says `matches: "typed-dict-arguments"`
+.decl up013_typed_dict_arguments(n: node)
+up013_typed_dict_arguments(n) :- kind(n, "generator_expression").
+up013_typed_dict_arguments(n) :- up013_one_positional(n), up013_no_splat_keywords(n).
+up013_typed_dict_arguments(n) :- up013_two_positional(n), child(n, c1, _), up013_second_positional(c1),
+    up013_typed_dict_fields(c1).
+
+// UP013(n): a finding at node n, from clause `typed-dict-functional`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP013(at: node, name: loc, base: loc) "Define `{name}` as `class {name}({base}):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords."
+    suppress noqa "UP013"
+UP013(n, NAME, BASE) :- kind(n, "assignment"),
+    count : { child(p1, n, _), kind(p1, "assignment") } = 0, field(n, "left", c2),
+    up013_name_target(c2, NAME), count : { field(n, "type", c3), kind(c3, "type") } = 0,
+    field(n, "right", c4), up013_typed_dict_value(c4, BASE).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up013_tok_has_1(n: node)
+.stored up013_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up013_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+up013_tok_has_1(n) :- op(n, t2), match(",", t2).
+up013_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up013_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up013_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up013_alt_1(n: node)
+up013_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+up013_alt_1(n) :- node(_, n, _, _, _), glob("[()\\[\\],]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl up013_alt_2(n: node)
+up013_alt_2(n) :- value(n, v1), glob("{False,None,True,and,as,assert,async,await,break,class,continue,def,del,elif,else,except,finally,for,from,global,if,import,in,is,lambda,nonlocal,not,or,pass,raise,return,try,while,with,yield}", v1).
+up013_alt_2(n) :- value(n, v2), prefix("__", v2).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up013_alt_3(n: node)
+up013_alt_3(n) :- kind(n, "dictionary_splat").
+up013_alt_3(n) :- kind(n, "pair"),
+    count : { field(n, "key", c1), up013_typed_dict_field_name(c1) } = 0.

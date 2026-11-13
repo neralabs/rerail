@@ -1,0 +1,114 @@
+.policy "ruff-pt012-pytest-raises-with-multiple-statements" revision 1
+.guests off
+.description "Keep a pytest.raises block to a single simple statement; extra statements can raise the expected exception before the code under test runs, so the test passes for the wrong reason."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
+.decl pt012_raises(n: node)
+pt012_raises(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt012_raises(c1).
+pt012_raises(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.raises").
+
+// raises_call(n): the JSON util `raises-call`, used where the JSON says `matches: "raises-call"`
+.decl pt012_raises_call(n: node)
+pt012_raises_call(n) :- kind(n, "call"), field(n, "function", c1), pt012_raises(c1).
+pt012_raises_call(n) :- (kind(n, "parenthesized_expression") ; kind(n, "as_pattern")),
+    child(n, c2, _), pt012_raises_call(c2).
+
+// raises_with(n): the JSON util `raises-with`, used where the JSON says `matches: "raises-with"`
+//   S: metavariable this relation binds for the calling rule
+.decl pt012_raises_with(n: node, s: loc)
+pt012_raises_with(n, S) :- kind(n, "with_statement"), child(n, c1, _),
+    kind(c1, "with_clause"), child(c1, c2, _), kind(c2, "with_item"),
+    field(c2, "value", c3),
+    (pt012_raises_call(c3) ; kind(c3, "tuple"), child(c3, c4, _), pt012_raises_call(c4)),
+    match("(?P<S>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|#[^\\n]*)*", n).
+
+// stmt(n): the JSON util `stmt`, used where the JSON says `matches: "stmt"`
+.decl pt012_stmt(n: node)
+pt012_stmt(n) :- node(_, n, _, _, _), !pt012_alt_2(n).
+
+// ellipsis_expr(n): the JSON util `ellipsis-expr`, used where the JSON says `matches: "ellipsis-expr"`
+.decl pt012_ellipsis_expr(n: node)
+pt012_ellipsis_expr(n) :- kind(n, "ellipsis").
+pt012_ellipsis_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt012_ellipsis_expr(c1).
+
+// compound(n): the JSON util `compound`, used where the JSON says `matches: "compound"`
+.decl pt012_compound(n: node)
+pt012_compound(n) :- kind(n, k1), pt012_set_3(k1).
+
+// many_stmts(n): the JSON util `many-stmts`, used where the JSON says `matches: "many-stmts"`
+.decl pt012_many_stmts(n: node)
+pt012_many_stmts(n) :- kind(n, "block"), child(n, c1, _), pt012_stmt(c1), precedes(s2, c1),
+    pt012_stmt(s2).
+
+// nontrivial_for(n): the JSON util `nontrivial-for`, used where the JSON says `matches: "nontrivial-for"`
+.decl pt012_nontrivial_for(n: node)
+pt012_nontrivial_for(n) :- kind(n, "for_statement"), field(n, "body", c1), kind(c1, "block"),
+    (pt012_many_stmts(c1) ; child(c1, c2, _), pt012_stmt(c2), !pt012_alt_4(c2)).
+
+// nontrivial_with(n): the JSON util `nontrivial-with`, used where the JSON says `matches: "nontrivial-with"`
+.decl pt012_nontrivial_with(n: node)
+pt012_nontrivial_with(n) :- kind(n, "with_statement"), field(n, "body", c1),
+    kind(c1, "block"), (pt012_many_stmts(c1) ; child(c1, c2, _), pt012_compound(c2)).
+
+// single_compound(n): the JSON util `single-compound`, used where the JSON says `matches: "single-compound"`
+.decl pt012_single_compound(n: node)
+pt012_single_compound(n) :-
+    ( kind(n, "if_statement")
+    ; kind(n, "while_statement")
+    ; kind(n, "match_statement")
+    ; kind(n, "try_statement")
+    ).
+
+pt012_single_compound(n) :- pt012_nontrivial_with(n).
+pt012_single_compound(n) :- pt012_nontrivial_for(n).
+
+// ellipsis_stmt(n): the JSON util `ellipsis-stmt`, used where the JSON says `matches: "ellipsis-stmt"`
+.decl pt012_ellipsis_stmt(n: node)
+pt012_ellipsis_stmt(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    pt012_ellipsis_expr(c1), !pt012_tok_has_1(n).
+
+// PT012(n, detail): findings from clauses `raises-with-multiple-statements`, `raises-with-compound-statement`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT012(at: node, s: node, detail: symbol) "{detail} is needed to trigger the error."
+    suppress noqa "PT012"
+PT012(S, n, "Keep only the statement that should raise inside `pytest.raises`; move setup and follow-up statements before or after the `with` block, unless each one") :- pt012_raises_with(n, S),
+    field(n, "body", c1), kind(c1, "block"), pt012_many_stmts(c1).
+PT012(S, n, "Put only the call that should raise inside `pytest.raises`; move the surrounding `if`, loop, `try` or nested `with` logic out of the block, unless it") :- pt012_raises_with(n, S),
+    field(n, "body", c1), kind(c1, "block"), !pt012_many_stmts(c1), child(c1, c2, _),
+    pt012_single_compound(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt012_tok_has_1(n: node)
+.stored pt012_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt012_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pt012_tok_has_1(n) :- op(n, t3), match(",", t3).
+pt012_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pt012_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pt012_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// set_3: node kinds from a JSON `any`
+.decl pt012_set_3(v: symbol)
+pt012_set_3("if_statement"). pt012_set_3("while_statement"). pt012_set_3("for_statement").
+pt012_set_3("match_statement"). pt012_set_3("with_statement"). pt012_set_3("try_statement").
+pt012_set_3("function_definition"). pt012_set_3("class_definition"). pt012_set_3("decorated_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt012_alt_2(n: node)
+pt012_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt012_alt_2(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pt012_alt_4(n: node)
+pt012_alt_4(n) :- kind(n, "pass_statement").
+pt012_alt_4(n) :- pt012_ellipsis_stmt(n).

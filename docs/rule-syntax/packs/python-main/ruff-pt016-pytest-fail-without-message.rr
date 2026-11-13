@@ -1,0 +1,342 @@
+.policy "ruff-pt016-pytest-fail-without-message" revision 1
+.guests off
+.description "Pass a non-empty message to pytest.fail calls; a bare failure gives no hint why the test failed."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// fail_ref(n): the JSON util `fail-ref`, used where the JSON says `matches: "fail-ref"`
+.decl pt016_fail_ref(n: node)
+pt016_fail_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.fail").
+
+// fail_callee(n): the JSON util `fail-callee`, used where the JSON says `matches: "fail-callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt016_fail_callee(n: node, f: loc)
+pt016_fail_callee(n, F) :- pt016_fail_ref(n), node(_, n, _, _, _), F = n.
+pt016_fail_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt016_fail_callee(c1, F).
+
+// fail_call(n): the JSON util `fail-call`, used where the JSON says `matches: "fail-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt016_fail_call(n: node, f: loc)
+pt016_fail_call(n, F) :- kind(n, "call"), field(n, "function", c1), pt016_fail_callee(c1, F).
+
+// part_has_text(n): the JSON util `part-has-text`, used where the JSON says `matches: "part-has-text"`
+.decl pt016_part_has_text(n: node)
+pt016_part_has_text(n) :- child(n, c1, _), kind(c1, "string_content"),
+    !match("(\\\\\\r?\\n)+", c1).
+
+// part_empty(n): the JSON util `part-empty`, used where the JSON says `matches: "part-empty"`
+.decl pt016_part_empty(n: node)
+pt016_part_empty(n) :- pt016_part_empty_u7(n).
+
+// empty_or_null(n): the JSON util `empty-or-null`, used where the JSON says `matches: "empty-or-null"`
+.decl pt016_empty_or_null(n: node)
+pt016_empty_or_null(n) :- pt016_empty_or_null_u7(n).
+
+// PT016(n): a finding at node n, from clause `pytest-fail-without-message`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT016(at: node, f: node) "Add a message to `{f}(...)` that says why the test is failing, so the failure report explains itself."
+    suppress noqa "PT016"
+PT016(F, n) :- pt016_fail_call(n, F), kind(n, "call"), pt016_arg_no_reason_1(n), pt016_arg_no_msg_2(n).
+
+// PT016_pytest_fail_empty_reason(n): a finding at node n, from clause `pytest-fail-empty-reason`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on R are added to every rule.
+.violation PT016_pytest_fail_empty_reason(at: node, f: node) code "PT016" "Give `{f}(...)` a message that is not empty or `None`, saying why the test is failing."
+    suppress noqa "PT016"
+PT016_pytest_fail_empty_reason(F, n) :- pt016_fail_call(n, F), kind(n, "call"),
+    pt016_arg_reason_1(n, a1), R = a1, pt016_empty_or_null(R).
+
+// PT016_pytest_fail_empty_msg(n): a finding at node n, from clause `pytest-fail-empty-msg`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on M are added to every rule.
+.violation PT016_pytest_fail_empty_msg(at: node, f: node) code "PT016" "Give `{f}(...)` a `msg=` value that is not empty or `None`, saying why the test is failing."
+    suppress noqa "PT016"
+PT016_pytest_fail_empty_msg(F, n) :- pt016_fail_call(n, F), kind(n, "call"),
+    pt016_arg_no_reason_1(n), pt016_arg_msg_2(n, a1), M = a1, pt016_empty_or_null(M).
+
+.decl pt016_alt_1_u0(n: node)
+pt016_alt_1_u0(n) :- pt016_part_has_text(n).
+pt016_alt_1_u0(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u0_empty(c2) } = 0.
+
+.decl pt016_alt_1_u1(n: node)
+pt016_alt_1_u1(n) :- pt016_part_has_text(n).
+pt016_alt_1_u1(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u0(c2) } = 0.
+
+.decl pt016_alt_1_u2(n: node)
+pt016_alt_1_u2(n) :- pt016_part_has_text(n).
+pt016_alt_1_u2(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u1(c2) } = 0.
+
+.decl pt016_alt_1_u3(n: node)
+pt016_alt_1_u3(n) :- pt016_part_has_text(n).
+pt016_alt_1_u3(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u2(c2) } = 0.
+
+.decl pt016_alt_1_u4(n: node)
+pt016_alt_1_u4(n) :- pt016_part_has_text(n).
+pt016_alt_1_u4(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u3(c2) } = 0.
+
+.decl pt016_alt_1_u5(n: node)
+pt016_alt_1_u5(n) :- pt016_part_has_text(n).
+pt016_alt_1_u5(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u4(c2) } = 0.
+
+.decl pt016_alt_1_u6(n: node)
+pt016_alt_1_u6(n) :- pt016_part_has_text(n).
+pt016_alt_1_u6(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u5(c2) } = 0.
+
+.decl pt016_alt_1_u7(n: node)
+pt016_alt_1_u7(n) :- pt016_part_has_text(n).
+pt016_alt_1_u7(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt016_empty_or_null_u6(c2) } = 0.
+
+.decl pt016_alt_2_u0(n: node)
+pt016_alt_2_u0(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1).
+pt016_alt_2_u0(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u1(n: node)
+pt016_alt_2_u1(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u0(n).
+pt016_alt_2_u1(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u2(n: node)
+pt016_alt_2_u2(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u1(n).
+pt016_alt_2_u2(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u3(n: node)
+pt016_alt_2_u3(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u2(n).
+pt016_alt_2_u3(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u4(n: node)
+pt016_alt_2_u4(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u3(n).
+pt016_alt_2_u4(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u5(n: node)
+pt016_alt_2_u5(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u4(n).
+pt016_alt_2_u5(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u6(n: node)
+pt016_alt_2_u6(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u5(n).
+pt016_alt_2_u6(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_alt_2_u7(n: node)
+pt016_alt_2_u7(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt016_alt_1_u6(n).
+pt016_alt_2_u7(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt016_empty_or_null_u0(n: node)
+pt016_empty_or_null_u0(n) :- kind(n, "none").
+pt016_empty_or_null_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string") } = 0.
+
+.decl pt016_empty_or_null_u1(n: node)
+pt016_empty_or_null_u1(n) :- kind(n, "none").
+pt016_empty_or_null_u1(n) :- pt016_part_empty_u0(n).
+pt016_empty_or_null_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u0(c1) } = 0.
+pt016_empty_or_null_u1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u0(c2).
+
+.decl pt016_empty_or_null_u2(n: node)
+pt016_empty_or_null_u2(n) :- kind(n, "none").
+pt016_empty_or_null_u2(n) :- pt016_part_empty_u1(n).
+pt016_empty_or_null_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u1(c1) } = 0.
+pt016_empty_or_null_u2(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u1(c2).
+
+.decl pt016_empty_or_null_u3(n: node)
+pt016_empty_or_null_u3(n) :- kind(n, "none").
+pt016_empty_or_null_u3(n) :- pt016_part_empty_u2(n).
+pt016_empty_or_null_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u2(c1) } = 0.
+pt016_empty_or_null_u3(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u2(c2).
+
+.decl pt016_empty_or_null_u4(n: node)
+pt016_empty_or_null_u4(n) :- kind(n, "none").
+pt016_empty_or_null_u4(n) :- pt016_part_empty_u3(n).
+pt016_empty_or_null_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u3(c1) } = 0.
+pt016_empty_or_null_u4(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u3(c2).
+
+.decl pt016_empty_or_null_u5(n: node)
+pt016_empty_or_null_u5(n) :- kind(n, "none").
+pt016_empty_or_null_u5(n) :- pt016_part_empty_u4(n).
+pt016_empty_or_null_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u4(c1) } = 0.
+pt016_empty_or_null_u5(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u4(c2).
+
+.decl pt016_empty_or_null_u6(n: node)
+pt016_empty_or_null_u6(n) :- kind(n, "none").
+pt016_empty_or_null_u6(n) :- pt016_part_empty_u5(n).
+pt016_empty_or_null_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u5(c1) } = 0.
+pt016_empty_or_null_u6(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u5(c2).
+
+.decl pt016_empty_or_null_u7(n: node)
+pt016_empty_or_null_u7(n) :- kind(n, "none").
+pt016_empty_or_null_u7(n) :- pt016_part_empty_u6(n).
+pt016_empty_or_null_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt016_part_empty_u6(c1) } = 0.
+pt016_empty_or_null_u7(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt016_empty_or_null_u6(c2).
+
+.decl pt016_part_empty_u1(n: node)
+pt016_part_empty_u1(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u0(n).
+
+.decl pt016_part_empty_u2(n: node)
+pt016_part_empty_u2(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u1(n).
+
+.decl pt016_part_empty_u3(n: node)
+pt016_part_empty_u3(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u2(n).
+
+.decl pt016_part_empty_u4(n: node)
+pt016_part_empty_u4(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u3(n).
+
+.decl pt016_part_empty_u5(n: node)
+pt016_part_empty_u5(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u4(n).
+
+.decl pt016_part_empty_u6(n: node)
+pt016_part_empty_u6(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u5(n).
+
+.decl pt016_part_empty_u7(n: node)
+pt016_part_empty_u7(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt016_alt_2_u6(n).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pt016_args_plain(l: node, a: node, i: number)
+pt016_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pt016_args_splat(l: node, i: number)
+pt016_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pt016_args_pos(l: node, a: node, j: number)
+pt016_args_pos(l, a, j) :- pt016_args_plain(l, a, i), count : { pt016_args_splat(l, k), k < i } = 0,
+    j = count : { pt016_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pt016_args_star(l: node, j: number)
+pt016_args_star(l, j) :- pt016_args_splat(l, i), count : { pt016_args_splat(l, k), k < i } = 0,
+    j = count : { pt016_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pt016_args_kwp(l: node, k: symbol, v: node)
+pt016_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pt016_args_lit_dict(s: node, d: node)
+pt016_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pt016_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pt016_args_str_pair(p: node)
+pt016_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pt016_args_kw(l: node, k: symbol, v: node)
+pt016_args_kw(l, k, v) :- pt016_args_kwp(l, k, v).
+pt016_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pt016_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pt016_args_kw_spread(l: node)
+pt016_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pt016_args_lit_dict(s, _).
+
+// arg_reason_1: call n passes v for slot `reason` of (reason), syntactic: Ruff's find_argument
+.decl pt016_arg_reason_1(n: node, v: node)
+pt016_arg_reason_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pt016_args_kwp(l, "reason", v).
+pt016_arg_reason_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pt016_args_pos(l, v, 0),
+    !pt016_args_kwp(l, "reason", _).
+pt016_arg_reason_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_reason_1: call n does not pass slot `reason` of (reason), syntactic: Ruff's find_argument
+.decl pt016_arg_no_reason_1(n: node)
+pt016_arg_no_reason_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pt016_args_kwp(l, "reason", _), !pt016_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// arg_msg_2: call n passes v for slot `msg` of (*, msg), syntactic: Ruff's find_argument
+.decl pt016_arg_msg_2(n: node, v: node)
+pt016_arg_msg_2(n, v) :- kind(n, "call"), field(n, "arguments", l), pt016_args_kwp(l, "msg", v).
+
+// arg_no_msg_2: call n does not pass slot `msg` of (*, msg), syntactic: Ruff's find_argument
+.decl pt016_arg_no_msg_2(n: node)
+pt016_arg_no_msg_2(n) :- kind(n, "call"), field(n, "arguments", l), !pt016_args_kwp(l, "msg", _).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt016_alt_1_u0_empty(n: node)
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt016_alt_2_u0_empty(n: node)
+
+// empty_or_null_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt016_empty_or_null_u0_empty(n: node)
+
+// part_empty_u0: level -1 of an unrolled recursion, empty
+.decl pt016_part_empty_u0(n: node)
+
+// part_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt016_part_empty_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt016_alt_1(n: node)
+pt016_alt_1(n) :- pt016_alt_1_u7(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt016_alt_2(n: node)
+pt016_alt_2(n) :- pt016_alt_2_u7(n).

@@ -1,0 +1,93 @@
+.policy "ruff-e721-type-comparison" revision 1
+.guests off
+.description "Use isinstance(), or is and is not, instead of == or != to compare types; equality on types misses subclasses and can be overridden."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// E721(n): a finding at node n, from clause `type-comparison`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation E721(at: node, cmp: node) "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks"
+    suppress noqa "E721"
+E721(CMP, n) :- e721_offending_op(n), child(p1, n, _), kind(p1, "comparison_operator"),
+    node(_, p1, _, _, _), CMP = p1.
+
+// type_callee(n): the JSON util `type-callee`, used where the JSON says `matches: "type-callee"`
+.decl e721_type_callee(n: node)
+e721_type_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "type"), sym_of(n, "builtins.type").
+e721_type_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    e721_type_callee(c1).
+
+// is_type(n): the JSON util `is-type`, used where the JSON says `matches: "is-type"`
+.decl e721_is_type(n: node)
+e721_is_type(n) :- kind(n, "call"), child(n, c1, _), !e721_tok_follows_1(c1), e721_type_callee(c1).
+e721_is_type(n) :- kind(n, "identifier"), global_ref(n, g9), e721_set_1(g9).
+e721_is_type(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), e721_is_type(c10).
+
+// dtype_callee(n): the JSON util `dtype-callee`, used where the JSON says `matches: "dtype-callee"`
+.decl e721_dtype_callee(n: node)
+e721_dtype_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.dtype").
+e721_dtype_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    e721_dtype_callee(c1).
+
+// is_dtype(n): the JSON util `is-dtype`, used where the JSON says `matches: "is-dtype"`
+.decl e721_is_dtype(n: node)
+e721_is_dtype(n) :- kind(n, "attribute"), n ~ `$OBJ.dtype`.
+e721_is_dtype(n) :- kind(n, "call"), child(n, c1, _), !e721_tok_follows_1(c1), e721_dtype_callee(c1).
+e721_is_dtype(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), e721_is_dtype(c9).
+
+// eq_op(n): the JSON util `eq-op`, used where the JSON says `matches: "eq-op"`
+.decl e721_eq_op(n: node)
+e721_eq_op(n) :- node(_, n, _, _, _), glob("{==,!=}", n).
+
+// offending_op(n): the JSON util `offending-op`, used where the JSON says `matches: "offending-op"`
+.decl e721_offending_op(n: node)
+e721_offending_op(n) :- e721_eq_op(n),
+    (next_sibling(s1, n), e721_is_type(s1) ; next_sibling(n, s2), e721_is_type(s2)),
+    count : { next_sibling(s3, n), e721_is_dtype(s3) } = 0,
+    count : { next_sibling(n, s4), e721_is_dtype(s4) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e721_tok_follows_1(n: node)
+.stored e721_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e721_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+e721_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+e721_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// set_1: names from the JSON `resolves.global`
+.decl e721_set_1(v: symbol)
+e721_set_1("bool"). e721_set_1("bytearray"). e721_set_1("bytes"). e721_set_1("classmethod").
+e721_set_1("complex"). e721_set_1("dict"). e721_set_1("enumerate"). e721_set_1("filter"). e721_set_1("float").
+e721_set_1("frozenset"). e721_set_1("int"). e721_set_1("list"). e721_set_1("map"). e721_set_1("memoryview").
+e721_set_1("object"). e721_set_1("property"). e721_set_1("range"). e721_set_1("reversed"). e721_set_1("set").
+e721_set_1("slice"). e721_set_1("staticmethod"). e721_set_1("str"). e721_set_1("super"). e721_set_1("tuple").
+e721_set_1("type"). e721_set_1("zip"). e721_set_1("ArithmeticError"). e721_set_1("AssertionError").
+e721_set_1("AttributeError"). e721_set_1("BaseException"). e721_set_1("BlockingIOError").
+e721_set_1("BrokenPipeError"). e721_set_1("BufferError"). e721_set_1("BytesWarning").
+e721_set_1("ChildProcessError"). e721_set_1("ConnectionAbortedError"). e721_set_1("ConnectionError").
+e721_set_1("ConnectionRefusedError"). e721_set_1("ConnectionResetError").
+e721_set_1("DeprecationWarning"). e721_set_1("EnvironmentError"). e721_set_1("EOFError").
+e721_set_1("Exception"). e721_set_1("FileExistsError"). e721_set_1("FileNotFoundError").
+e721_set_1("FloatingPointError"). e721_set_1("FutureWarning"). e721_set_1("GeneratorExit").
+e721_set_1("ImportError"). e721_set_1("ImportWarning"). e721_set_1("IndentationError").
+e721_set_1("IndexError"). e721_set_1("InterruptedError"). e721_set_1("IOError").
+e721_set_1("IsADirectoryError"). e721_set_1("KeyboardInterrupt"). e721_set_1("KeyError").
+e721_set_1("LookupError"). e721_set_1("MemoryError"). e721_set_1("ModuleNotFoundError").
+e721_set_1("NameError"). e721_set_1("NotADirectoryError"). e721_set_1("NotImplementedError").
+e721_set_1("OSError"). e721_set_1("OverflowError"). e721_set_1("PendingDeprecationWarning").
+e721_set_1("PermissionError"). e721_set_1("ProcessLookupError"). e721_set_1("RecursionError").
+e721_set_1("ReferenceError"). e721_set_1("ResourceWarning"). e721_set_1("RuntimeError").
+e721_set_1("RuntimeWarning"). e721_set_1("StopAsyncIteration"). e721_set_1("StopIteration").
+e721_set_1("SyntaxError"). e721_set_1("SyntaxWarning"). e721_set_1("SystemError"). e721_set_1("SystemExit").
+e721_set_1("TabError"). e721_set_1("TimeoutError"). e721_set_1("TypeError").
+e721_set_1("UnboundLocalError"). e721_set_1("UnicodeDecodeError"). e721_set_1("UnicodeEncodeError").
+e721_set_1("UnicodeError"). e721_set_1("UnicodeTranslateError"). e721_set_1("UnicodeWarning").
+e721_set_1("UserWarning"). e721_set_1("ValueError"). e721_set_1("Warning"). e721_set_1("ZeroDivisionError").

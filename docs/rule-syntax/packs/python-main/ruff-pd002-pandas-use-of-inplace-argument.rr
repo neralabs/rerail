@@ -1,0 +1,121 @@
+.policy "ruff-pd002-pandas-use-of-inplace-argument" revision 1
+.guests off
+.description "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// true_literal(n): the JSON util `true-literal`, used where the JSON says `matches: "true-literal"`
+.decl pd002_true_literal(n: node)
+pd002_true_literal(n) :- kind(n, "true").
+pd002_true_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pd002_true_literal(c1).
+
+// inplace_method(n): the JSON util `inplace-method`, used where the JSON says `matches: "inplace-method"`
+.decl pd002_inplace_method(n: node)
+pd002_inplace_method(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("{where,mask,query,clip,eval,backfill,bfill,ffill,fillna,interpolate,dropna,pad,replace,drop,drop_duplicates,rename,rename_axis,reset_index,set_index,sort_values,sort_index,set_names}", c1).
+pd002_inplace_method(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pd002_inplace_method(c2).
+
+// inplace_keyword(n): the JSON util `inplace-keyword`, used where the JSON says `matches: "inplace-keyword"`
+.decl pd002_inplace_keyword(n: node)
+pd002_inplace_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("inplace", c1), field(n, "value", c2), pd002_true_literal(c2),
+    count : { precedes(n, s3), kind(s3, "keyword_argument"), field(s3, "name", c4), glob("inplace", c4) } = 0,
+    child(p5, n, _), kind(p5, "argument_list"), child(p6, p5, _), kind(p6, "call"),
+    field(p6, "function", c7), pd002_inplace_method(c7).
+
+// pandas_import_file(n): the JSON util `pandas-import-file`, used where the JSON says `matches: "pandas-import-file"`
+.decl pd002_pandas_import_file(n: node)
+pd002_pandas_import_file(n) :- kind(n, "module"), within(c1, n),
+    ( kind(c1, "import_statement"), has(c1, c2, "dotted_name"), match("pandas(\\s*\\.|$).*", c2)
+    ; kind(c1, "import_from_statement"), field(c1, "module_name", c3), kind(c3, "dotted_name"), match("pandas(\\s*\\.|$).*", c3)
+    ).
+
+
+// annotation_type(n): the JSON util `annotation-type`, used where the JSON says `matches: "annotation-type"`
+.decl pd002_annotation_type(n: node)
+pd002_annotation_type(n) :- kind(n, "type"), child(p1, n, _),
+    ( kind(p1, "typed_parameter")
+    ; kind(p1, "typed_default_parameter")
+    ; kind(p1, "function_definition")
+    ; kind(p1, "assignment")
+    ).
+
+
+// deferred_annotation(n): the JSON util `deferred-annotation`, used where the JSON says `matches: "deferred-annotation"`
+.decl pd002_deferred_annotation(n: node)
+pd002_deferred_annotation(n) :- within(n, p1), pd002_annotation_type(p1), inside(n, p2, "module"),
+    child(p2, c3, _), kind(c3, "future_import_statement"), has(c3, c4, "dotted_name"),
+    imported_sym(c4, "__future__.annotations"), within(n, p5), pd002_pandas_import_file(p5).
+
+// pandas_gate(n): the JSON util `pandas-gate`, used where the JSON says `matches: "pandas-gate"`
+.decl pd002_pandas_gate(n: node)
+pd002_pandas_gate(n) :- node(d1, n, _, st2, _), pd002_seen_import(s3, h5, ks6), (h5 = "pandas"),
+    node(d1, s3, _, so4, _),
+    kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") },
+    ( ks6 < kn7
+    ; ks6 = kn7, so4 < st2
+    ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0
+    ).
+
+pd002_pandas_gate(n) :- pd002_deferred_annotation(n).
+
+// hit(n): the JSON util `hit`, used where the JSON says `matches: "hit"`
+.decl pd002_hit(n: node)
+pd002_hit(n) :- pd002_inplace_keyword(n), pd002_pandas_gate(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   KW: metavariable this relation binds for the calling rule
+.decl pd002_in_string(n: node, kw: loc)
+pd002_in_string(n, KW) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd002_alt_2(c2, KW).
+
+// PD002(n): a finding at node n, from clause `pandas-use-of-inplace-argument`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PD002(at: node, kw: node) "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
+    suppress noqa "PD002"
+PD002(KW, n) :- pd002_hit(n), node(_, n, _, _, _), KW = n.
+PD002(KW, n) :- pd002_in_string(n, KW).
+
+// PD002_stub_annotation(n): a finding at node n, from clause `stub-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PD002_stub_annotation(at: node, kw: node) code "PD002" "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
+    suppress noqa "PD002"
+PD002_stub_annotation_raw(KW, n) :- pd002_inplace_keyword(n), node(_, n, _, _, _), KW = n, pd002_up_1(n, p1),
+    pd002_up_2(n, p2), !pd002_pandas_gate(n).
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl pd002_seen_import(s: node, h: symbol, k: number)
+pd002_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+pd002_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pd002_up_1(n: node, p: node)
+pd002_up_1(n, p) :- pd002_inplace_keyword(n), within(n, p), pd002_annotation_type(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pd002_up_2(n: node, p: node)
+pd002_up_2(n, p) :- pd002_inplace_keyword(n), within(n, p), pd002_pandas_import_file(p).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   KW: metavariable this relation binds for the calling rule
+.decl pd002_alt_2(n: node, kw: loc)
+pd002_alt_2(n, KW) :- pd002_hit(n), KW = n.
+pd002_alt_2(n, KW) :- pd002_in_string(n, KW).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PD002_stub_annotation_raw(at: node, kw: node)
+PD002_stub_annotation(v0, v1) :- PD002_stub_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

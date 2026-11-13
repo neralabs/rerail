@@ -1,0 +1,22 @@
+.policy "ruff-f701-break-outside-loop" revision 1
+.guests off
+.description "Keep break inside a for or while loop body; outside one (including a loop's else block) it is a Python syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F701(n): a finding at node n, from clause `break-outside-loop`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F701(at: node) "`break` outside loop"
+    suppress noqa "F701"
+F701(n) :- kind(n, "break_statement"),
+    count : { f701_stop_1_within(n, p1), kind(p1, "block"), child(p2, p1, _), (kind(p2, "for_statement") ; kind(p2, "while_statement")) } = 0.
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl f701_stop_1(kind: symbol)
+f701_stop_1("function_definition"). f701_stop_1("class_definition").
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl f701_stop_1_within(n: node, a: node)
+f701_stop_1_within(x, y) :- within_stop(x, y, f701_stop_1).

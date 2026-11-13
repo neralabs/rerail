@@ -1,0 +1,128 @@
+.policy "ruff-b039-mutable-contextvar-default" revision 1
+.guests off
+.description "Don't give a ContextVar a mutable default such as a list, dict or set; the one default object is shared across every context."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"flake8-bugbear.extend-immutable-calls": {"type": "array", "items": "string", "default": [], "description": "Qualified names of further calls that return immutable values."}}
+
+// B039(n): a finding at node n, from clause `mutable-contextvar-default`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B039(at: node) "Default this ContextVar to None and set the mutable value with .set(); a mutable default is shared by every context."
+    suppress noqa "B039"
+B039(n) :- b039_mutable_default(n), b039_default_slot(n).
+
+// contextvar(n): the JSON util `contextvar`, used where the JSON says `matches: "contextvar"`
+.decl b039_contextvar(n: node)
+b039_contextvar(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "contextvars.ContextVar").
+b039_contextvar(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b039_contextvar(c1).
+
+// immutable_func(n): the JSON util `immutable-func`, used where the JSON says `matches: "immutable-func"`
+.decl b039_immutable_func(n: node)
+b039_immutable_func(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, g1), b039_set_1(g1), sym_of(n, q2), b039_set_2(q2).
+
+// callee_of_contextvar(n): the JSON util `callee-of-contextvar`, used where the JSON says `matches: "callee-of-contextvar"`
+.decl b039_callee_of_contextvar(n: node)
+b039_callee_of_contextvar(n) :- b039_contextvar(n).
+b039_callee_of_contextvar(n) :- kind(n, "subscript"), child(n, c1, _), !b039_tok_follows_1(c1),
+    b039_contextvar(c1).
+b039_callee_of_contextvar(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    b039_callee_of_contextvar(c9).
+
+// immutable_callee(n): the JSON util `immutable-callee`, used where the JSON says `matches: "immutable-callee"`
+.decl b039_immutable_callee(n: node)
+b039_immutable_callee(n) :- b039_immutable_func(n).
+b039_immutable_callee(n) :- kind(n, "subscript"), child(n, c1, _), !b039_tok_follows_1(c1),
+    b039_immutable_func(c1).
+b039_immutable_callee(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    b039_immutable_callee(c9).
+
+// mutable_default(n): the JSON util `mutable-default`, used where the JSON says `matches: "mutable-default"`
+.decl b039_mutable_default(n: node)
+b039_mutable_default(n) :- kind(n, k1), b039_set_3(k1).
+b039_mutable_default(n) :- kind(n, "call"),
+    count : { child(n, c2, _), !b039_tok_follows_2(c2), b039_immutable_callee(c2) } = 0.
+
+// default_slot(n): the JSON util `default-slot`, used where the JSON says `matches: "default-slot"`
+.decl b039_default_slot(n: node)
+b039_default_slot(n) :- b039_tok_follows_3(n), child(p8, n, _), kind(p8, "keyword_argument"),
+    child(p8, c9, _), kind(c9, "identifier"), glob("default", c9), b039_tok_precedes_4(c9),
+    count : { precedes(s17, p8), kind(s17, "keyword_argument"), child(s17, c18, _), kind(c18, "identifier"), glob("default", c18), b039_tok_precedes_5(c18) } = 0,
+    child(p26, p8, _), kind(p26, "argument_list"), next_sibling(s27, p26),
+    b039_callee_of_contextvar(s27).
+b039_default_slot(n) :- child(p28, n, _), kind(p28, "parenthesized_expression"),
+    b039_default_slot(p28).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b039_tok_follows_1(n: node)
+.stored b039_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b039_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+b039_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+b039_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b039_tok_follows_2(n: node)
+.stored b039_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b039_tok_follows_2(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+b039_tok_follows_2(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+b039_tok_follows_2(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b039_tok_follows_3(n: node)
+.stored b039_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b039_tok_follows_3(n) :- next_sibling(s1, n), glob("=", s1).
+b039_tok_follows_3(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("=", t2).
+b039_tok_follows_3(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g3).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b039_tok_precedes_4(n: node)
+.stored b039_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b039_tok_precedes_4(n) :- next_sibling(n, s10), glob("=", s10).
+b039_tok_precedes_4(n) :- structural_after(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, _, en16), o14 = en16 + strlen(g12), token(p13, _, t11, o14, _),
+    match("=", t11).
+b039_tok_precedes_4(n) :- structural_after(n, g12),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b039_tok_precedes_5(n: node)
+.stored b039_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b039_tok_precedes_5(n) :- next_sibling(n, s19), glob("=", s19).
+b039_tok_precedes_5(n) :- structural_after(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, _, en25), o23 = en25 + strlen(g21), token(p22, _, t20, o23, _),
+    match("=", t20).
+b039_tok_precedes_5(n) :- structural_after(n, g21),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g21).
+
+// set_1: names from the JSON `resolves.global`
+.decl b039_set_1(v: symbol)
+b039_set_1("bool"). b039_set_1("bytes"). b039_set_1("complex"). b039_set_1("float"). b039_set_1("frozenset").
+b039_set_1("int"). b039_set_1("range"). b039_set_1("str"). b039_set_1("tuple"). b039_set_1("slice").
+b039_set_1("frozendict").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl b039_set_2(v: symbol)
+b039_set_2("datetime.date"). b039_set_2("datetime.datetime"). b039_set_2("datetime.time").
+b039_set_2("datetime.timedelta"). b039_set_2("datetime.timezone"). b039_set_2("datetime.tzinfo").
+b039_set_2("decimal.Decimal"). b039_set_2("fractions.Fraction"). b039_set_2("operator.attrgetter").
+b039_set_2("operator.itemgetter"). b039_set_2("operator.methodcaller"). b039_set_2("pathlib.Path").
+b039_set_2("types.MappingProxyType"). b039_set_2("re.compile").
+
+// set_3: node kinds from a JSON `any`
+.decl b039_set_3(v: symbol)
+b039_set_3("list"). b039_set_3("dictionary"). b039_set_3("set"). b039_set_3("list_comprehension").
+b039_set_3("dictionary_comprehension"). b039_set_3("set_comprehension").
+b039_set_2(x) :- option_item("flake8-bugbear.extend-immutable-calls", _, x).

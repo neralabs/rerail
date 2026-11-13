@@ -1,0 +1,233 @@
+.policy "ruff-ruf005-collection-literal-concatenation" revision 1
+.guests off
+.description "Prefer iterable unpacking over adding a list or tuple literal to another collection with the plus operator; it reads better and accepts any iterable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// splat_ok(n): the JSON util `splat-ok`, used where the JSON says `matches: "splat-ok"`
+.decl ruf005_splat_ok(n: node)
+ruf005_splat_ok(n) :- (kind(n, "identifier") ; kind(n, "attribute") ; kind(n, "call")).
+ruf005_splat_ok(n) :- kind(n, "subscript"), child(n, c1, _), kind(c1, "slice"), !ruf005_tok_has_1(n).
+ruf005_splat_ok(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), ruf005_splat_ok(c10).
+
+// list_expr(n): the JSON util `list-expr`, used where the JSON says `matches: "list-expr"`
+.decl ruf005_list_expr(n: node)
+ruf005_list_expr(n) :- kind(n, "list").
+ruf005_list_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf005_list_expr(c1).
+ruf005_list_expr(n) :- ruf005_list_add(n).
+
+// tuple_expr(n): the JSON util `tuple-expr`, used where the JSON says `matches: "tuple-expr"`
+.decl ruf005_tuple_expr(n: node)
+ruf005_tuple_expr(n) :- kind(n, "tuple").
+ruf005_tuple_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf005_tuple_expr(c1).
+ruf005_tuple_expr(n) :- ruf005_tuple_add(n).
+
+// list_add(n): the JSON util `list-add`, used where the JSON says `matches: "list-add"`
+.decl ruf005_list_add(n: node)
+ruf005_list_add(n) :- kind(n, "binary_operator"), ruf005_tok_has_2(n), ruf005_alt_1(n).
+
+// list_or_splat(n): the JSON util `list-or-splat`, used where the JSON says `matches: "list-or-splat"`
+.decl ruf005_list_or_splat(n: node)
+ruf005_list_or_splat(n) :- ruf005_splat_ok(n).
+ruf005_list_or_splat(n) :- ruf005_list_expr(n).
+
+// tuple_add(n): the JSON util `tuple-add`, used where the JSON says `matches: "tuple-add"`
+.decl ruf005_tuple_add(n: node)
+ruf005_tuple_add(n) :- kind(n, "binary_operator"), ruf005_tok_has_2(n), ruf005_alt_2(n).
+
+// tuple_or_splat(n): the JSON util `tuple-or-splat`, used where the JSON says `matches: "tuple-or-splat"`
+.decl ruf005_tuple_or_splat(n: node)
+ruf005_tuple_or_splat(n) :- ruf005_splat_ok(n).
+ruf005_tuple_or_splat(n) :- ruf005_tuple_expr(n).
+
+// concat_core(n): the JSON util `concat-core`, used where the JSON says `matches: "concat-core"`
+.decl ruf005_concat_core(n: node)
+ruf005_concat_core(n) :- kind(n, "binary_operator"), (ruf005_list_add(n) ; ruf005_tuple_add(n)).
+
+// concat(n): the JSON util `concat`, used where the JSON says `matches: "concat"`
+.decl ruf005_concat(n: node)
+ruf005_concat(n) :- ruf005_concat_core(n),
+    count : { ruf005_stop_4_within(n, p1), kind(p1, "binary_operator"), ruf005_tok_has_11(p1) } = 0.
+
+// plus_op(n): the JSON util `plus-op`, used where the JSON says `matches: "plus-op"`
+.decl ruf005_plus_op(n: node)
+ruf005_plus_op(n) :- kind(n, "binary_operator"), ruf005_tok_has_2(n).
+
+// outer_operand(n): the JSON util `outer-operand`, used where the JSON says `matches: "outer-operand"`
+//   E: metavariable this relation binds for the calling rule
+.decl ruf005_outer_operand(n: node, e: loc)
+ruf005_outer_operand(n, E) :- ruf005_concat_core(n), node(_, n, _, _, _), E = n.
+ruf005_outer_operand(n, E) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf005_outer_operand(c1, E).
+
+// type_string(n): the JSON util `type-string`, used where the JSON says `matches: "type-string"`
+//   E: metavariable this relation binds for the calling rule
+.decl ruf005_type_string(n: node, e: loc)
+ruf005_type_string(n, E) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf005_alt_5(c2, E).
+
+// RUF005(n): findings from clauses `collection-literal-concatenation`, `collection-literal-concatenation-in-string-type`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF005(at: node, e: node) "Write one literal with unpacking, such as `[*a, 1, *b]` or `(*a, 1)`, instead of adding collections with `+`. Keep `+` if an operand defines its own `__add__`."
+    suppress noqa "RUF005"
+RUF005(E, n) :- !ruf005_alt_6(n), child(n, c1, _), ruf005_outer_operand(c1, E).
+RUF005(E, n) :- ruf005_type_string(n, E).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_has_1(n: node)
+.stored ruf005_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf005_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf005_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf005_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf005_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_has_2(n: node)
+.stored ruf005_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_has_2(n) :- child(n, c1, _), glob("+", c1).
+ruf005_tok_has_2(n) :- op(n, t2), match("\\+", t2).
+ruf005_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf005_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf005_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_precedes_3(n: node)
+.stored ruf005_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_precedes_3(n) :- precedes(n, s10), glob("+", s10).
+ruf005_tok_precedes_3(n) :- child(p13, n, _), node(_, n, _, _, en16),
+    token(p13, _, t11, st15, _), st15 >= en16, match("\\+", t11).
+ruf005_tok_precedes_3(n) :- structural_after(n, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+ruf005_tok_precedes_3(n) :- precedes(n, o14), structural_after(o14, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_follows_4(n: node)
+.stored ruf005_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_follows_4(n) :- precedes(s18, n), glob("+", s18).
+ruf005_tok_follows_4(n) :- child(p21, n, _), node(_, n, _, st23, _),
+    token(p21, _, t19, _, en24), en24 <= st23, match("\\+", t19).
+ruf005_tok_follows_4(n) :- structural_before(n, g20),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+ruf005_tok_follows_4(n) :- precedes(o22, n), structural_before(o22, g20),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_precedes_5(n: node)
+.stored ruf005_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_precedes_5(n) :- precedes(n, s26), glob("+", s26).
+ruf005_tok_precedes_5(n) :- child(p29, n, _), node(_, n, _, _, en32),
+    token(p29, _, t27, st31, _), st31 >= en32, match("\\+", t27).
+ruf005_tok_precedes_5(n) :- structural_after(n, g28),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g28).
+ruf005_tok_precedes_5(n) :- precedes(n, o30), structural_after(o30, g28),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g28).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_follows_6(n: node)
+.stored ruf005_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_follows_6(n) :- precedes(s34, n), glob("+", s34).
+ruf005_tok_follows_6(n) :- child(p37, n, _), node(_, n, _, st39, _),
+    token(p37, _, t35, _, en40), en40 <= st39, match("\\+", t35).
+ruf005_tok_follows_6(n) :- structural_before(n, g36),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g36).
+ruf005_tok_follows_6(n) :- precedes(o38, n), structural_before(o38, g36),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g36).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_precedes_7(n: node)
+.stored ruf005_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_precedes_7(n) :- precedes(n, s2), glob("+", s2).
+ruf005_tok_precedes_7(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("\\+", t3).
+ruf005_tok_precedes_7(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf005_tok_precedes_7(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_follows_8(n: node)
+.stored ruf005_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_follows_8(n) :- precedes(s10, n), glob("+", s10).
+ruf005_tok_follows_8(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match("\\+", t11).
+ruf005_tok_follows_8(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+ruf005_tok_follows_8(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_precedes_9(n: node)
+.stored ruf005_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_precedes_9(n) :- precedes(n, s18), glob("+", s18).
+ruf005_tok_precedes_9(n) :- child(p21, n, _), node(_, n, _, _, en24),
+    token(p21, _, t19, st23, _), st23 >= en24, match("\\+", t19).
+ruf005_tok_precedes_9(n) :- structural_after(n, g20),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+ruf005_tok_precedes_9(n) :- precedes(n, o22), structural_after(o22, g20),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+
+// tok_follows_10(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_follows_10(n: node)
+.stored ruf005_tok_follows_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_follows_10(n) :- precedes(s26, n), glob("+", s26).
+ruf005_tok_follows_10(n) :- child(p29, n, _), node(_, n, _, st31, _),
+    token(p29, _, t27, _, en32), en32 <= st31, match("\\+", t27).
+ruf005_tok_follows_10(n) :- structural_before(n, g28),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g28).
+ruf005_tok_follows_10(n) :- precedes(o30, n), structural_before(o30, g28),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g28).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf005_tok_has_11(n: node)
+.stored ruf005_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf005_tok_has_11(n) :- child(n, c2, _), glob("+", c2).
+ruf005_tok_has_11(n) :- op(n, t3), match("\\+", t3).
+ruf005_tok_has_11(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf005_tok_has_11(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf005_tok_has_11(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf005_alt_1(n: node)
+ruf005_alt_1(n) :- child(n, c1, _), ruf005_list_expr(c1), ruf005_tok_precedes_7(c1), child(n, c9, _),
+    ruf005_list_or_splat(c9), ruf005_tok_follows_8(c9).
+ruf005_alt_1(n) :- child(n, c17, _), ruf005_splat_ok(c17), ruf005_tok_precedes_9(c17), child(n, c25, _),
+    ruf005_list_expr(c25), ruf005_tok_follows_10(c25).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf005_alt_2(n: node)
+ruf005_alt_2(n) :- child(n, c1, _), ruf005_tuple_expr(c1), ruf005_tok_precedes_7(c1), child(n, c9, _),
+    ruf005_tuple_or_splat(c9), ruf005_tok_follows_8(c9).
+ruf005_alt_2(n) :- child(n, c17, _), ruf005_splat_ok(c17), ruf005_tok_precedes_9(c17), child(n, c25, _),
+    ruf005_tuple_expr(c25), ruf005_tok_follows_10(c25).
+
+// stop_4(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf005_stop_4(n: node)
+ruf005_stop_4(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   E: metavariable this relation binds for the calling rule
+.decl ruf005_alt_5(n: node, e: loc)
+ruf005_alt_5(n, E) :- ruf005_concat(n), E = n.
+ruf005_alt_5(n, E) :- ruf005_type_string(n, E).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf005_alt_6(n: node)
+ruf005_alt_6(n) :- ruf005_plus_op(n).
+ruf005_alt_6(n) :- kind(n, "parenthesized_expression").
+
+// stop_4_within: within_stop over the stop set stop_4, read inside an aggregate
+.decl ruf005_stop_4_within(n: node, a: node)
+ruf005_stop_4_within(x, y) :- within_stop(x, y, ruf005_stop_4).

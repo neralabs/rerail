@@ -1,0 +1,90 @@
+.policy "ruff-g201-logging-exc-info" revision 1
+.guests off
+.description "Use the exception logging method instead of error with exc_info inside exception handlers; it logs the same traceback at ERROR level."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// G201(n): a finding at node n, from clause `logging-exc-info`.
+// Each rule below is one way the JSON `rule` can match.
+.violation G201(at: node) "Call `exception(...)` instead and drop `exc_info`: in an except block it logs the same traceback at ERROR level. Leave it if this object is not a standard logger."
+    suppress noqa "G201"
+G201(n) :- kind(n, "identifier"),
+    ( field(p1, "attribute", n), kind(p1, "attribute"), g201_level_callee(p1), g201_callee(p1)
+    ; g201_level_callee(n), g201_callee(n)
+    ).
+
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl g201_logger_object(n: node)
+g201_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+g201_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g201_logger_object(c2).
+g201_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+g201_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g201_name_chain(c2)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl g201_name_chain(n: node)
+g201_name_chain(n) :- kind(n, "identifier").
+g201_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), g201_name_chain(c1).
+g201_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g201_name_chain(c2).
+
+// in_handler(n): the JSON util `in-handler`, used where the JSON says `matches: "in-handler"`
+.decl g201_in_handler(n: node)
+g201_in_handler(n) :- g201_demand_in_handler(n), g201_up_1(n, p1).
+
+// exc_info_set(n): the JSON util `exc-info-set`, used where the JSON says `matches: "exc-info-set"`
+.decl g201_exc_info_set(n: node)
+g201_exc_info_set(n) :- kind(n, "true").
+g201_exc_info_set(n) :- kind(n, "call"), field(n, "function", c1),
+    sym_of(c1, "sys.exc_info").
+g201_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g201_exc_info_set(c2).
+
+// exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
+.decl g201_exc_info_kwarg(n: node)
+g201_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("exc_info", c1), field(n, "value", c2), g201_exc_info_set(c2).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl g201_level_callee(n: node)
+g201_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("error", c1),
+    field(n, "object", c2), g201_logger_object(c2).
+g201_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.error").
+g201_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    g201_level_callee(c3).
+
+// error_call(n): the JSON util `error-call`, used where the JSON says `matches: "error-call"`
+.decl g201_error_call(n: node)
+g201_error_call(n) :- kind(n, "call"), g201_in_handler(n), field(n, "arguments", c1),
+    child(c1, c2, _), g201_exc_info_kwarg(c2).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl g201_callee(n: node)
+g201_callee(n) :- field(p1, "function", n), kind(p1, "call"), g201_error_call(p1).
+g201_callee(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), g201_callee(p2).
+
+// demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
+.decl g201_demand_in_handler(n: node)
+g201_demand_in_handler(n) :- kind(n, "call"), field(n, "arguments", c1), child(c1, c2, _),
+    g201_exc_info_kwarg(c2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl g201_up_1(n: node, p: node)
+g201_up_1(n, p) :- g201_demand_in_handler(n), within_stop(n, p, g201_stop_2),
+    kind(p, "except_clause").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl g201_stop_2(n: node)
+g201_stop_2(n) :- kind(n, "except_clause").
+g201_stop_2(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).

@@ -1,0 +1,49 @@
+.policy "ruff-d200-unnecessary-multiline-docstring" revision 1
+.guests off
+.description "Write a docstring with a single line of text on one line, with the quotes beside the text, not on lines of their own."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D200(n): a finding at node n, from clause `unnecessary-multiline-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+.violation D200(at: node) "Put this docstring's only line of text on one line with its quotes: `\"\"\"Text.\"\"\"`; escape a quote or backslash that would then touch the closing quotes."
+    suppress noqa "D200"
+D200(n) :- d200_docstring(n), child(n, c1, _), kind(c1, "string_content"),
+    match("(?:(?:[^\\S\\r\\n]*(?:\\r\\n?|\\n))+[^\\r\\n]*\\S[^\\r\\n]*(?:(?:\\r\\n?|\\n)[^\\S\\r\\n]*)*|[^\\r\\n]*\\S[^\\r\\n]*(?:(?:\\r\\n?|\\n)[^\\S\\r\\n]*)+)", c1).
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d200_doc_stmt(n: node)
+d200_doc_stmt(n) :- kind(n, "expression_statement"), !d200_alt_1(n),
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d200_doc_holder(n: node)
+d200_doc_holder(n) :- d200_doc_stmt(n).
+d200_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d200_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d200_docstring(n: node)
+d200_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d200_doc_holder(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d200_tok_has_1(n: node)
+.stored d200_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d200_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d200_tok_has_1(n) :- op(n, t2), match(",", t2).
+d200_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d200_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d200_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d200_alt_1(n: node)
+d200_alt_1(n) :- d200_tok_has_1(n).
+d200_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").

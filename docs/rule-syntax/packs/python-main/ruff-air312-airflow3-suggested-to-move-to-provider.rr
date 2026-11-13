@@ -1,0 +1,407 @@
+.policy "ruff-air312-airflow3-suggested-to-move-to-provider" revision 2
+.guests off
+.description "Import Airflow operators, sensors, hooks and triggers from the standard provider package instead of their deprecated core modules; the core paths are due for removal after Airflow 3.0."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// AIR312(n): a finding at node n, from clause `airflow3-suggested-to-move-to-provider`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation AIR312(at: node, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
+    suppress noqa "AIR312"
+AIR312(ATTR, n) :- air312_alt_20(n, ATTR), inside(n, p3, "module"), within(c4, p3),
+    air312_airflow_name(c4), air312_seen_airflow(n).
+
+// deprecated(n): the JSON util `deprecated`, used where the JSON says `matches: "deprecated"`
+.decl air312_deprecated(n: node)
+air312_deprecated(n) :- sym_of(n, q1), air312_set_1(q1).
+
+// aug_target(n): the JSON util `aug-target`, used where the JSON says `matches: "aug-target"`
+.decl air312_aug_target(n: node)
+air312_aug_target(n) :- field(p1, "left", n), kind(p1, "augmented_assignment").
+air312_aug_target(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), air312_aug_target(p2).
+
+// del_target(n): the JSON util `del-target`, used where the JSON says `matches: "del-target"`
+.decl air312_del_target(n: node)
+air312_del_target(n) :- child(p1, n, _), kind(p1, "delete_statement").
+air312_del_target(n) :- child(p2, n, _),
+    ( kind(p2, "parenthesized_expression")
+    ; kind(p2, "expression_list")
+    ; kind(p2, "tuple")
+    ; kind(p2, "list")
+    ),
+    air312_del_target(p2).
+
+// import_error(n): the JSON util `import-error`, used where the JSON says `matches: "import-error"`
+.decl air312_import_error(n: node)
+air312_import_error(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "ImportError") ; global_ref(n, "ModuleNotFoundError")),
+    (sym_of(n, "builtins.ImportError") ; sym_of(n, "builtins.ModuleNotFoundError")).
+air312_import_error(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air312_import_error(c1).
+
+// import_error_type(n): the JSON util `import-error-type`, used where the JSON says `matches: "import-error-type"`
+.decl air312_import_error_type(n: node)
+air312_import_error_type(n) :- air312_import_error(n).
+air312_import_error_type(n) :- kind(n, "tuple"), child(n, c1, _), air312_import_error(c1).
+air312_import_error_type(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    air312_import_error_type(c2).
+
+// attribute_error(n): the JSON util `attribute-error`, used where the JSON says `matches: "attribute-error"`
+.decl air312_attribute_error(n: node)
+air312_attribute_error(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "AttributeError"), sym_of(n, "builtins.AttributeError").
+air312_attribute_error(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air312_attribute_error(c1).
+
+// attribute_error_type(n): the JSON util `attribute-error-type`, used where the JSON says `matches: "attribute-error-type"`
+.decl air312_attribute_error_type(n: node)
+air312_attribute_error_type(n) :- air312_attribute_error(n).
+air312_attribute_error_type(n) :- kind(n, "tuple"), child(n, c1, _), air312_attribute_error(c1).
+air312_attribute_error_type(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    air312_attribute_error_type(c2).
+
+// guarded_import(n): the JSON util `guarded-import`, used where the JSON says `matches: "guarded-import"`
+.decl air312_guarded_import(n: node)
+air312_guarded_import(n) :- air312_alt_2(n, REAL), within_stop(n, p10, air312_stop_3),
+    kind(p10, "except_clause"), within_stop(n, p11, "try_statement"),
+    kind(p11, "try_statement"), child(p11, c12, _), kind(c12, "except_clause"),
+    field(c12, "value", c13),
+    ( air312_import_error_type(c13)
+    ; kind(c13, "as_pattern"), child(c13, c1, _), air312_import_error_type(c1)
+    ),
+    has(p11, c15, "dotted_name"), field(_, "body", c15), node(_, c15, _, _, _), REAL = c15,
+    air312_statement_name(c15, q16),
+    ( q16 = "airflow.providers.standard.hooks.filesystem.FSHook"
+    ; q16 = "airflow.providers.standard.hooks.package_index.PackageIndexHook"
+    ; q16 = "airflow.providers.standard.hooks.subprocess.SubprocessHook"
+    ; q16 = "airflow.providers.standard.operators.bash.BashOperator"
+    ; q16 = "airflow.providers.standard.operators.datetime.BranchDateTimeOperator"
+    ; q16 = "airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator"
+    ; q16 = "airflow.providers.standard.operators.empty.EmptyOperator"
+    ; q16 = "airflow.providers.standard.operators.latest_only.LatestOnlyOperator"
+    ; q16 = "airflow.providers.standard.operators.python.BranchPythonOperator"
+    ; q16 = "airflow.providers.standard.operators.python.PythonOperator"
+    ; q16 = "airflow.providers.standard.operators.python.PythonVirtualenvOperator"
+    ; q16 = "airflow.providers.standard.operators.python.ShortCircuitOperator"
+    ; q16 = "airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator"
+    ; q16 = "airflow.providers.standard.sensor.bash.BashSensor"
+    ; q16 = "airflow.providers.standard.sensors.date_time.DateTimeSensor"
+    ; q16 = "airflow.providers.standard.sensors.date_time.DateTimeSensorAsync"
+    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskMarker"
+    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensor"
+    ; q16 = "airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink"
+    ; q16 = "airflow.providers.standard.sensors.filesystem.FileSensor"
+    ; q16 = "airflow.providers.standard.sensors.python.PythonSensor"
+    ; q16 = "airflow.providers.standard.sensors.time.TimeSensor"
+    ; q16 = "airflow.providers.standard.sensors.time.TimeSensorAsync"
+    ; q16 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensor"
+    ; q16 = "airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync"
+    ; q16 = "airflow.providers.standard.sensors.weekday.DayOfWeekSensor"
+    ; q16 = "airflow.providers.standard.triggers.external_task.DagStateTrigger"
+    ; q16 = "airflow.providers.standard.triggers.external_task.WorkflowTrigger"
+    ; q16 = "airflow.providers.standard.triggers.file.FileTrigger"
+    ; q16 = "airflow.providers.standard.triggers.temporal.DateTimeTrigger"
+    ; q16 = "airflow.providers.standard.triggers.temporal.TimeDeltaTrigger"
+    ).
+
+
+// guarded_attribute(n): the JSON util `guarded-attribute`, used where the JSON says `matches: "guarded-attribute"`
+//   ATTR: metavariable of the calling rule, passed in (bound by the caller)
+.decl air312_guarded_attribute(n: node, attr: loc)
+air312_guarded_attribute(n, ATTR) :- air312_demand_guarded_attribute(n, ATTR),
+    within_stop(n, p1, air312_stop_3), kind(p1, "except_clause"),
+    within_stop(n, p2, "try_statement"), kind(p2, "try_statement"), child(p2, c3, _),
+    kind(c3, "except_clause"), field(c3, "value", c4),
+    ( air312_attribute_error_type(c4)
+    ; kind(c4, "as_pattern"), child(c4, c1, _), air312_attribute_error_type(c1)
+    ),
+    has(p2, c6, "attribute"), field(_, "body", c6), field(c6, "attribute", c7),
+    node(_, c7, _, _, _), PATTR = c7, sym_of(c6, q8), air312_set_7(q8), text(PATTR, t9), text(ATTR, t9), @doc(PATTR) = @doc(ATTR).
+
+// guarded_local(n): the JSON util `guarded-local`, used where the JSON says `matches: "guarded-local"`
+//   ATTR: metavariable of the calling rule, passed in (bound by the caller)
+.decl air312_guarded_local(n: node, attr: loc)
+air312_guarded_local(n, ATTR) :- air312_demand_guarded_local(n, ATTR), air312_alt_8(n, LOCAL),
+    text(LOCAL, t3), text(ATTR, t3), @doc(LOCAL) = @doc(ATTR).
+
+// guarded_forward(n): the JSON util `guarded-forward`, used where the JSON says `matches: "guarded-forward"`
+//   ATTR: metavariable of the calling rule, passed in (bound by the caller)
+.decl air312_guarded_forward(n: node, attr: loc)
+air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), inside(n, p1, "module"),
+    has(p1, c2, "except_clause"), within(c3, c2), air312_guarded_local(c3, ATTR),
+    count : { within(c3, p4), (kind(p4, "function_definition") ; kind(p4, "class_definition")) } = 0.
+air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), air312_alt_12(n, ATTR),
+    count : { inside(n, p15, "module"), within(c16, p15), (kind(c16, "import_from_statement") ; kind(c16, "import_statement")), within(c17, c16), (kind(c17, "identifier") ; kind(c17, "dotted_name")), node(_, c17, _, _, _), MOD = c17, site_scope(c17, "module"), text(MOD, t18), text(ATTR, t18), @doc(MOD) = @doc(ATTR) } = 0.
+
+// string_name(n): the JSON util `string-name`, used where the JSON says `matches: "string-name"`
+//   ATTR: metavariable this relation binds for the calling rule
+.decl air312_string_name(n: node, attr: loc)
+air312_string_name(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), air312_alt_16(c2, ATTR).
+
+// string_attribute(n): the JSON util `string-attribute`, used where the JSON says `matches: "string-attribute"`
+//   ATTR: metavariable this relation binds for the calling rule
+.decl air312_string_attribute(n: node, attr: loc)
+air312_string_attribute(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), air312_alt_17(c2, ATTR).
+
+// seen_airflow(n): the JSON util `seen-airflow`, used where the JSON says `matches: "seen-airflow"`
+.decl air312_seen_airflow(n: node)
+air312_seen_airflow(n) :- air312_demand_seen_airflow(n), inside(n, p1, "module"),
+    air312_imports_airflow(p1).
+
+// airflow_name(n): the JSON util `airflow-name`, used where the JSON says `matches: "airflow-name"`
+.decl air312_airflow_name(n: node)
+air312_airflow_name(n) :- kind(n, "dotted_name"), match("airflow([^0-9A-Za-z_]|$).*", n).
+
+// imports_airflow(n): the JSON util `imports-airflow`, used where the JSON says `matches: "imports-airflow"`
+.decl air312_imports_airflow(n: node)
+air312_imports_airflow(n) :- within(c1, n), air312_airflow_name(c1),
+    ( child(p1, c1, _), kind(p1, "import_statement")
+    ; child(p2, c1, _), kind(p2, "aliased_import"), child(p3, p2, _), kind(p3, "import_statement")
+    ; field(p4, "module_name", c1), kind(p4, "import_from_statement")
+    ).
+
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air312_tok_precedes_1(n: node)
+.stored air312_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air312_tok_precedes_1(n) :- next_sibling(n, s3), match("(?s).*..*", s3).
+air312_tok_precedes_1(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match("(?s).*..*", t4).
+air312_tok_precedes_1(n) :- structural_after(n, g5), match("(?s)^\\s*\\S.*$", g5).
+
+// from_module: the module text of from-import s, read as `relative: "text"` does (dots dropped)
+.decl air312_from_module(s: node, m: symbol)
+air312_from_module(s, m) :- kind(s, "future_import_statement"), m = "__future__".
+air312_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), name(x, m).
+air312_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), child(x, y, _), kind(y, "dotted_name"), name(y, m).
+air312_from_module(s, "") :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), count : { child(x, y, _), kind(y, "dotted_name") } = 0.
+
+// statement_name: dotted name n in an import statement imports q (relative modules by their text)
+.decl air312_statement_name(n: node, q: symbol)
+air312_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "import_statement"), name(n, q).
+air312_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "relative_import"), name(n, q).
+air312_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _), kind(s, "import_statement"), name(n, q).
+air312_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    air312_from_module(s, m), name(n, x), q = @dot(m, x).
+air312_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    air312_from_module(s, m).
+air312_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    !field(s, "module_name", n), air312_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air312_tok_precedes_2(n: node)
+.stored air312_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air312_tok_precedes_2(n) :- next_sibling(n, s4), match("(?s).*..*", s4).
+air312_tok_precedes_2(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("(?s).*..*", t5).
+air312_tok_precedes_2(n) :- structural_after(n, g6), match("(?s)^\\s*\\S.*$", g6).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air312_tok_precedes_3(n: node)
+.stored air312_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air312_tok_precedes_3(n) :- next_sibling(n, s2), match("(?s).*..*", s2).
+air312_tok_precedes_3(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("(?s).*..*", t3).
+air312_tok_precedes_3(n) :- structural_after(n, g4), match("(?s)^\\s*\\S.*$", g4).
+
+// demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
+.decl air312_demand_alt_2(n: node, real: loc)
+air312_demand_alt_2(n, REAL) :- within_stop(n, p10, air312_stop_3), kind(p10, "except_clause"),
+    within_stop(n, p11, "try_statement"), kind(p11, "try_statement"),
+    child(p11, c12, _), kind(c12, "except_clause"), field(c12, "value", c13),
+    ( air312_import_error_type(c13)
+    ; kind(c13, "as_pattern"), child(c13, c1, _), air312_import_error_type(c1)
+    ),
+    has(p11, c15, "dotted_name"), field(_, "body", c15), node(_, c15, _, _, _), REAL = c15,
+    air312_statement_name(c15, q16).
+
+// demand_guarded_attribute: the rows of guarded_attribute its callers ask for (the metavariable columns they pass in)
+.decl air312_demand_guarded_attribute(n: node, attr: loc)
+air312_demand_guarded_attribute(p2, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
+    field(p2, "attribute", n), kind(p2, "attribute"), air312_deprecated(p2).
+air312_demand_guarded_attribute(n, ATTR) :- air312_string_attribute(n, ATTR).
+
+// demand_guarded_forward: the rows of guarded_forward its callers ask for (the metavariable columns they pass in)
+.decl air312_demand_guarded_forward(n: node, attr: loc)
+air312_demand_guarded_forward(n, ATTR) :- air312_string_name(n, ATTR).
+
+// demand_alt_12: the rows of alt_12 its callers ask for (the metavariable columns they pass in)
+.decl air312_demand_alt_12(n: node, attr: loc)
+air312_demand_alt_12(n, ATTR) :- air312_demand_guarded_forward(n, ATTR).
+
+// demand_guarded_local: the rows of guarded_local its callers ask for (the metavariable columns they pass in)
+.decl air312_demand_guarded_local(n: node, attr: loc)
+air312_demand_guarded_local(c3, ATTR) :- air312_demand_guarded_forward(n, ATTR),
+    inside(n, p1, "module"), has(p1, c2, "except_clause"), within(c3, c2).
+air312_demand_guarded_local(c4, ATTR) :- air312_demand_alt_12(n, ATTR), inside(n, p1, "block"),
+    child(p2, p1, _), kind(p2, "function_definition"), has(p2, c3, "except_clause"),
+    within(c4, c3), within_stop(c4, p5, air312_stop_11), kind(p5, "function_definition").
+air312_demand_guarded_local(c9, ATTR) :- air312_demand_alt_12(n, ATTR), within_stop(n, p6, air312_stop_10),
+    kind(p6, "block"), child(p7, p6, _), kind(p7, "class_definition"),
+    has(p7, c8, "except_clause"), within(c9, c8), within_stop(c9, p10, air312_stop_11),
+    kind(p10, "class_definition").
+
+// demand_seen_airflow: the nodes seen_airflow is asked at (it looks at every ancestor of every node)
+.decl air312_demand_seen_airflow(n: node)
+air312_demand_seen_airflow(n) :- inside(n, p3, "module"), within(c4, p3), air312_airflow_name(c4).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl air312_set_1(v: symbol)
+air312_set_1("airflow.hooks.filesystem.FSHook").
+air312_set_1("airflow.hooks.package_index.PackageIndexHook").
+air312_set_1("airflow.hooks.subprocess.SubprocessHook").
+air312_set_1("airflow.operators.bash.BashOperator").
+air312_set_1("airflow.operators.datetime.BranchDateTimeOperator").
+air312_set_1("airflow.operators.trigger_dagrun.TriggerDagRunOperator").
+air312_set_1("airflow.operators.empty.EmptyOperator").
+air312_set_1("airflow.operators.latest_only.LatestOnlyOperator").
+air312_set_1("airflow.operators.python.BranchPythonOperator").
+air312_set_1("airflow.operators.python.PythonOperator").
+air312_set_1("airflow.operators.python.PythonVirtualenvOperator").
+air312_set_1("airflow.operators.python.ShortCircuitOperator").
+air312_set_1("airflow.operators.weekday.BranchDayOfWeekOperator").
+air312_set_1("airflow.sensors.bash.BashSensor").
+air312_set_1("airflow.sensors.date_time.DateTimeSensor").
+air312_set_1("airflow.sensors.date_time.DateTimeSensorAsync").
+air312_set_1("airflow.sensors.external_task.ExternalTaskMarker").
+air312_set_1("airflow.sensors.external_task.ExternalTaskSensor").
+air312_set_1("airflow.sensors.external_task.ExternalTaskSensorLink").
+air312_set_1("airflow.sensors.filesystem.FileSensor").
+air312_set_1("airflow.sensors.python.PythonSensor").
+air312_set_1("airflow.sensors.time_sensor.TimeSensor").
+air312_set_1("airflow.sensors.time_sensor.TimeSensorAsync").
+air312_set_1("airflow.sensors.time_delta.TimeDeltaSensor").
+air312_set_1("airflow.sensors.time_delta.TimeDeltaSensorAsync").
+air312_set_1("airflow.sensors.weekday.DayOfWeekSensor").
+air312_set_1("airflow.triggers.external_task.DagStateTrigger").
+air312_set_1("airflow.triggers.external_task.WorkflowTrigger").
+air312_set_1("airflow.triggers.file.FileTrigger").
+air312_set_1("airflow.triggers.temporal.DateTimeTrigger").
+air312_set_1("airflow.triggers.temporal.TimeDeltaTrigger").
+
+// set_7: symbols from the JSON `resolves.import`
+.decl air312_set_7(v: symbol)
+air312_set_7("airflow.providers.standard.hooks.filesystem.FSHook").
+air312_set_7("airflow.providers.standard.hooks.package_index.PackageIndexHook").
+air312_set_7("airflow.providers.standard.hooks.subprocess.SubprocessHook").
+air312_set_7("airflow.providers.standard.operators.bash.BashOperator").
+air312_set_7("airflow.providers.standard.operators.datetime.BranchDateTimeOperator").
+air312_set_7("airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator").
+air312_set_7("airflow.providers.standard.operators.empty.EmptyOperator").
+air312_set_7("airflow.providers.standard.operators.latest_only.LatestOnlyOperator").
+air312_set_7("airflow.providers.standard.operators.python.BranchPythonOperator").
+air312_set_7("airflow.providers.standard.operators.python.PythonOperator").
+air312_set_7("airflow.providers.standard.operators.python.PythonVirtualenvOperator").
+air312_set_7("airflow.providers.standard.operators.python.ShortCircuitOperator").
+air312_set_7("airflow.providers.standard.operators.weekday.BranchDayOfWeekOperator").
+air312_set_7("airflow.providers.standard.sensor.bash.BashSensor").
+air312_set_7("airflow.providers.standard.sensors.date_time.DateTimeSensor").
+air312_set_7("airflow.providers.standard.sensors.date_time.DateTimeSensorAsync").
+air312_set_7("airflow.providers.standard.sensors.external_task.ExternalTaskMarker").
+air312_set_7("airflow.providers.standard.sensors.external_task.ExternalTaskSensor").
+air312_set_7("airflow.providers.standard.sensors.external_task.ExternalTaskSensorLink").
+air312_set_7("airflow.providers.standard.sensors.filesystem.FileSensor").
+air312_set_7("airflow.providers.standard.sensors.python.PythonSensor").
+air312_set_7("airflow.providers.standard.sensors.time.TimeSensor").
+air312_set_7("airflow.providers.standard.sensors.time.TimeSensorAsync").
+air312_set_7("airflow.providers.standard.sensors.time_delta.TimeDeltaSensor").
+air312_set_7("airflow.providers.standard.sensors.time_delta.TimeDeltaSensorAsync").
+air312_set_7("airflow.providers.standard.sensors.weekday.DayOfWeekSensor").
+air312_set_7("airflow.providers.standard.triggers.external_task.DagStateTrigger").
+air312_set_7("airflow.providers.standard.triggers.external_task.WorkflowTrigger").
+air312_set_7("airflow.providers.standard.triggers.file.FileTrigger").
+air312_set_7("airflow.providers.standard.triggers.temporal.DateTimeTrigger").
+air312_set_7("airflow.providers.standard.triggers.temporal.TimeDeltaTrigger").
+
+// stop_11: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air312_stop_11(kind: symbol)
+air312_stop_11("function_definition"). air312_stop_11("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   REAL: metavariable of the calling rule, passed in (bound by the caller)
+.decl air312_alt_2(n: node, real: loc)
+air312_alt_2(n, REAL) :- air312_demand_alt_2(n, REAL), kind(n, "dotted_name"),
+    text(n, t_real1), text(REAL, t_real1), @doc(n) = @doc(REAL).
+air312_alt_2(n, REAL) :- air312_demand_alt_2(n, REAL), kind(n, "aliased_import"),
+    field(n, "name", c1), child(c1, c2, _), kind(c2, "identifier"),
+    text(c2, t_real2), text(REAL, t_real2), !air312_tok_precedes_1(c2), @doc(c2) = @doc(REAL).
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air312_stop_3(n: node)
+air312_stop_3(n) :- kind(n, "except_clause").
+air312_stop_3(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   LOCAL: metavariable this relation binds for the calling rule
+.decl air312_alt_8(n: node, local: loc)
+air312_alt_8(n, LOCAL) :- kind(n, "dotted_name"), air312_guarded_import(n), node(_, n, _, _, _), LOCAL = n,
+    site_latest(n), count : { child(p1, n, _), kind(p1, "aliased_import") } = 0.
+air312_alt_8(n, LOCAL) :- kind(n, "aliased_import"), air312_guarded_import(n), field(n, "alias", c2),
+    node(_, c2, _, _, _), LOCAL = c2, site_latest(c2).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air312_stop_10(n: node)
+air312_stop_10(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   ATTR: metavariable of the calling rule, passed in (bound by the caller)
+.decl air312_alt_12(n: node, attr: loc)
+air312_alt_12(n, ATTR) :- air312_demand_alt_12(n, ATTR), inside(n, p1, "block"), child(p2, p1, _),
+    kind(p2, "function_definition"), has(p2, c3, "except_clause"), within(c4, c3),
+    air312_guarded_local(c4, ATTR), within_stop(c4, p5, air312_stop_11),
+    kind(p5, "function_definition").
+air312_alt_12(n, ATTR) :- air312_demand_alt_12(n, ATTR), within_stop(n, p6, air312_stop_10),
+    kind(p6, "block"), child(p7, p6, _), kind(p7, "class_definition"),
+    has(p7, c8, "except_clause"), within(c9, c8), air312_guarded_local(c9, ATTR),
+    within_stop(c9, p10, air312_stop_11), kind(p10, "class_definition").
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+//   ATTR: metavariable this relation binds for the calling rule
+.decl air312_alt_16(n: node, attr: loc)
+air312_alt_16(n, ATTR) :- kind(n, "identifier"), ATTR = n, air312_deprecated(n),
+    count : { child(p1, n, _), kind(p1, "attribute"), !air312_tok_precedes_3(n) } = 0.
+air312_alt_16(n, ATTR) :- air312_string_name(n, ATTR).
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+//   ATTR: metavariable this relation binds for the calling rule
+.decl air312_alt_17(n: node, attr: loc)
+air312_alt_17(n, ATTR) :- kind(n, "identifier"), ATTR = n, child(p1, n, _),
+    kind(p1, "attribute"), air312_deprecated(p1), !air312_tok_precedes_3(n).
+air312_alt_17(n, ATTR) :- air312_string_attribute(n, ATTR).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl air312_alt_19(n: node)
+air312_alt_19(n) :- air312_aug_target(n).
+air312_alt_19(n) :- air312_del_target(n).
+air312_alt_19(n) :- ref_site(n, b1), air312_guarded_import(b1).
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+//   ATTR: metavariable this relation binds for the calling rule
+.decl air312_alt_20(n: node, attr: loc)
+air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, air312_deprecated(n), !air312_alt_19(n).
+air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, field(p2, "attribute", n),
+    kind(p2, "attribute"), air312_deprecated(p2), !air312_guarded_attribute(p2, ATTR).
+air312_alt_20(n, ATTR) :- air312_string_name(n, ATTR), !air312_guarded_forward(n, ATTR).
+air312_alt_20(n, ATTR) :- air312_string_attribute(n, ATTR), !air312_guarded_attribute(n, ATTR).

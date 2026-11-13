@@ -1,0 +1,597 @@
+.policy "ruff-pth123-builtin-open" revision 1
+.guests off
+.description "Use the open method of a Path object instead of the open builtin; pathlib reads better than passing path strings around."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH123(n): findings from clauses `builtin-open`, `builtin-open-in-string-annotation`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on FI, CF, OP are added to every rule.
+.violation PTH123(at: node, f: node) "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`."
+    suppress noqa "PTH123"
+PTH123(F, n) :- kind(n, "call"), field(n, "function", c1), pth123_callee(c1, F),
+    ( kind(n, "call"), pth123_arg_no_file_1(n), unset(FI)
+    ; kind(n, "call"), pth123_arg_file_1(n, a1_2), FI = a1_2
+    ),
+
+    ( kind(n, "call"), pth123_arg_no_closefd_2(n), unset(CF)
+    ; kind(n, "call"), pth123_arg_closefd_2(n, a1_4), CF = a1_4
+    ),
+
+    ( kind(n, "call"), pth123_arg_no_opener_3(n), unset(OP)
+    ; kind(n, "call"), pth123_arg_opener_3(n, a1_6), OP = a1_6
+    ),
+    !pth123_file_descriptor(FI), pth123_none_literal_family(CF, "true_literal"),
+    pth123_none_literal_family(OP, "none_literal").
+PTH123(F, n) :- pth123_ann_string(n, F).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth123_callee(n: node, f: loc)
+pth123_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "open"),
+    sym_of(n, "builtins.open"), node(_, n, _, _, _), F = n.
+pth123_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth123_callee(c1, F).
+
+// none_literal_family(n, key): 4 copies of one rule set (`none-literal`, `none-literal`, `true-literal` and 1 more), folded into one: row `key` of
+// none_literal_family_case gives the strings each copy had.
+.decl pth123_none_literal_family(n: node, key: symbol)
+pth123_none_literal_family(n, q1) :- pth123_none_literal_family_case(q1, s1), kind(n, s1).
+pth123_none_literal_family(n, q1) :- pth123_none_literal_family_case(q1, s1),
+    kind(n, "parenthesized_expression"), child(n, c1, _), pth123_none_literal_family(c1, q1).
+
+// int_name_ann(n): the JSON util `int-name-ann`, used where the JSON says `matches: "int-name-ann"`
+.decl pth123_int_name_ann(n: node)
+pth123_int_name_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "int"), sym_of(n, "builtins.int").
+
+// int_annotation(n): the JSON util `int-annotation`, used where the JSON says `matches: "int-annotation"`
+.decl pth123_int_annotation(n: node)
+pth123_int_annotation(n) :- pth123_int_name_ann(n).
+pth123_int_annotation(n) :- kind(n, "type"), child(n, c1, _), pth123_int_annotation(c1).
+pth123_int_annotation(n) :- kind(n, "subscript"), field(n, "value", c2), pth123_int_name_ann(c2).
+pth123_int_annotation(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "identifier"),
+    pth123_int_name_ann(c3).
+
+// int_call(n): the JSON util `int-call`, used where the JSON says `matches: "int-call"`
+.decl pth123_int_call(n: node)
+pth123_int_call(n) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), global_ref(c1, "int"),
+    sym_of(c1, "builtins.int").
+pth123_int_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth123_int_call(c2).
+
+// bool_type(n): the JSON util `bool-type`, used where the JSON says `matches: "bool-type"`
+.decl pth123_bool_type(n: node)
+pth123_bool_type(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "not_operator")).
+pth123_bool_type(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth123_bool_type(c1).
+pth123_bool_type(n) :- kind(n, "named_expression"), field(n, "value", c2), pth123_bool_type(c2).
+pth123_bool_type(n) :- kind(n, "conditional_expression"), child(n, c3, _), pth123_bool_type(c3),
+    pth123_tok_precedes_1(c3), child(n, c11, _), pth123_bool_type(c11), pth123_tok_follows_2(c11).
+pth123_bool_type(n) :- kind(n, "boolean_operator"), field(n, "left", c19), pth123_bool_type(c19),
+    field(n, "right", c20), pth123_bool_type(c20).
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl pth123_number(n: node)
+pth123_number(n) :- pth123_int_type(n).
+pth123_number(n) :- pth123_bool_type(n).
+
+// int_type(n): the JSON util `int-type`, used where the JSON says `matches: "int-type"`
+.decl pth123_int_type(n: node)
+pth123_int_type(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth123_int_type(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth123_int_type(c2).
+pth123_int_type(n) :- kind(n, "named_expression"), field(n, "value", c3), pth123_int_type(c3).
+pth123_int_type(n) :- kind(n, "unary_operator"), field(n, "argument", c4), pth123_number(c4).
+pth123_int_type(n) :- kind(n, "binary_operator"), field(n, "operator", c5),
+    glob("{[-+%*&|^],//,\\*\\*,<<,>>}", c5), field(n, "left", c6), pth123_number(c6),
+    field(n, "right", c7), pth123_number(c7).
+pth123_int_type(n) :- kind(n, "conditional_expression"), child(n, c8, _), pth123_number(c8),
+    pth123_tok_precedes_3(c8), child(n, c16, _), pth123_number(c16), pth123_tok_follows_4(c16), pth123_alt_1(n).
+pth123_int_type(n) :- kind(n, "boolean_operator"), field(n, "left", c40), pth123_number(c40),
+    field(n, "right", c41), pth123_number(c41), pth123_alt_2(n).
+
+// int_value(n): the JSON util `int-value`, used where the JSON says `matches: "int-value"`
+.decl pth123_int_value(n: node)
+pth123_int_value(n) :- pth123_int_type(n).
+pth123_int_value(n) :- pth123_int_call(n).
+
+// int_name(n): the JSON util `int-name`, used where the JSON says `matches: "int-name"`
+.decl pth123_int_name(n: node)
+pth123_int_name(n) :- kind(n, "identifier"), pth123_alt_3(n).
+
+// name_root(n): the JSON util `name-root`, used where the JSON says `matches: "name-root"`
+.decl pth123_name_root(n: node)
+pth123_name_root(n) :- pth123_int_name(n).
+pth123_name_root(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth123_name_root(c1).
+pth123_name_root(n) :- kind(n, "call"), field(n, "function", c2), pth123_name_root(c2).
+
+// int_class_member(n): the JSON util `int-class-member`, used where the JSON says `matches: "int-class-member"`
+//   A: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth123_int_class_member(n: node, a: loc)
+pth123_int_class_member(n, A) :- pth123_demand_int_class_member(n, A), kind(n, "identifier"),
+    text(n, t_a1), text(A, t_a1), pth123_alt_4(n), @doc(n) = @doc(A).
+
+// class_holding_int(n): the JSON util `class-holding-int`, used where the JSON says `matches: "class-holding-int"`
+//   A: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth123_class_holding_int(n: node, a: loc)
+pth123_class_holding_int(n, A) :- pth123_demand_class_holding_int(n, A), kind(n, "class_definition"),
+    field(n, "body", c1), within_stop(c2, c1, "class_definition"),
+    pth123_int_class_member(c2, A).
+
+// int_attribute(n): the JSON util `int-attribute`, used where the JSON says `matches: "int-attribute"`
+.decl pth123_int_attribute(n: node)
+pth123_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), pth123_alt_5(c2, A).
+
+// file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
+.decl pth123_file_descriptor(n: node)
+pth123_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth123_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pth123_file_descriptor(c2).
+pth123_file_descriptor(n) :- pth123_name_root(n).
+pth123_file_descriptor(n) :- pth123_int_attribute(n).
+
+// callee_builtin_open_in_string_annotation(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth123_callee_builtin_open_in_string_annotation(n: node, f: loc)
+pth123_callee_builtin_open_in_string_annotation(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "open"), sym_of(n, "builtins.open"), node(_, n, _, _, _), F = n.
+pth123_callee_builtin_open_in_string_annotation(n, F) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), pth123_callee_builtin_open_in_string_annotation(c1, F).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pth123_positional(n: node)
+pth123_positional(n) :- node(_, n, _, _, _), !pth123_alt_9(n).
+
+// unread_file(n): the JSON util `unread-file`, used where the JSON says `matches: "unread-file"`
+.decl pth123_unread_file(n: node)
+pth123_unread_file(n) :-
+    ( kind(n, "integer")
+    ; kind(n, "identifier")
+    ; kind(n, "attribute")
+    ; kind(n, "call")
+    ).
+
+pth123_unread_file(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth123_unread_file(c1).
+
+// args_ok(n): the JSON util `args-ok`, used where the JSON says `matches: "args-ok"`
+.decl pth123_args_ok(n: node)
+pth123_args_ok(n) :- kind(n, "argument_list"), count : { child(n, c1, _), pth123_alt_10(c1) } = 0.
+
+// ann_call(n): the JSON util `ann-call`, used where the JSON says `matches: "ann-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth123_ann_call(n: node, f: loc)
+pth123_ann_call(n, F) :- kind(n, "call"), child(n, c1, _),
+    pth123_callee_builtin_open_in_string_annotation(c1, F), next_sibling(c1, s2), pth123_args_ok(s2).
+
+// ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth123_ann_string(n: node, f: loc)
+pth123_ann_string(n, F) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pth123_alt_11(c3, F).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_1(n: node)
+.stored pth123_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_1(n) :- next_sibling(n, s4), glob("if", s4).
+pth123_tok_precedes_1(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("if", t5).
+pth123_tok_precedes_1(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g6).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_2(n: node)
+.stored pth123_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_2(n) :- next_sibling(s12, n), glob("else", s12).
+pth123_tok_follows_2(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("else", t13).
+pth123_tok_follows_2(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g14).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_3(n: node)
+.stored pth123_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_3(n) :- next_sibling(n, s9), glob("if", s9).
+pth123_tok_precedes_3(n) :- structural_after(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, _, en15), o13 = en15 + strlen(g11), token(p12, _, t10, o13, _),
+    match("if", t10).
+pth123_tok_precedes_3(n) :- structural_after(n, g11),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g11).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_4(n: node)
+.stored pth123_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_4(n) :- next_sibling(s17, n), glob("else", s17).
+pth123_tok_follows_4(n) :- structural_before(n, g19), match("\\s*", g19), child(p20, n, _),
+    node(_, n, _, st22, _), o21 = st22 - strlen(g19), token(p20, _, t18, _, o21),
+    match("else", t18).
+pth123_tok_follows_4(n) :- structural_before(n, g19),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g19).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_5(n: node)
+.stored pth123_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_5(n) :- next_sibling(n, s25), glob("if", s25).
+pth123_tok_precedes_5(n) :- structural_after(n, g27), match("\\s*", g27), child(p28, n, _),
+    node(_, n, _, _, en31), o29 = en31 + strlen(g27), token(p28, _, t26, o29, _),
+    match("if", t26).
+pth123_tok_precedes_5(n) :- structural_after(n, g27),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g27).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_6(n: node)
+.stored pth123_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_6(n) :- next_sibling(s33, n), glob("else", s33).
+pth123_tok_follows_6(n) :- structural_before(n, g35), match("\\s*", g35), child(p36, n, _),
+    node(_, n, _, st38, _), o37 = st38 - strlen(g35), token(p36, _, t34, _, o37),
+    match("else", t34).
+pth123_tok_follows_6(n) :- structural_before(n, g35),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g35).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_7(n: node)
+.stored pth123_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_7(n) :- next_sibling(n, s2), glob("if", s2).
+pth123_tok_precedes_7(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("if", t3).
+pth123_tok_precedes_7(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g4).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_8(n: node)
+.stored pth123_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_8(n) :- next_sibling(s10, n), glob("else", s10).
+pth123_tok_follows_8(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("else", t11).
+pth123_tok_follows_8(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g12).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth123_args_plain(l: node, a: node, i: number)
+pth123_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth123_args_splat(l: node, i: number)
+pth123_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth123_args_pos(l: node, a: node, j: number)
+pth123_args_pos(l, a, j) :- pth123_args_plain(l, a, i), count : { pth123_args_splat(l, k), k < i } = 0,
+    j = count : { pth123_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth123_args_star(l: node, j: number)
+pth123_args_star(l, j) :- pth123_args_splat(l, i), count : { pth123_args_splat(l, k), k < i } = 0,
+    j = count : { pth123_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth123_args_kwp(l: node, k: symbol, v: node)
+pth123_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth123_args_lit_dict(s: node, d: node)
+pth123_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth123_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth123_args_str_pair(p: node)
+pth123_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth123_args_kw(l: node, k: symbol, v: node)
+pth123_args_kw(l, k, v) :- pth123_args_kwp(l, k, v).
+pth123_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth123_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth123_args_kw_spread(l: node)
+pth123_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth123_args_lit_dict(s, _).
+
+// arg_file_1: call n passes v for slot `file` of (file), syntactic: Ruff's find_argument
+.decl pth123_arg_file_1(n: node, v: node)
+pth123_arg_file_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth123_args_kwp(l, "file", v).
+pth123_arg_file_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth123_args_pos(l, v, 0),
+    !pth123_args_kwp(l, "file", _).
+pth123_arg_file_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_file_1: call n does not pass slot `file` of (file), syntactic: Ruff's find_argument
+.decl pth123_arg_no_file_1(n: node)
+pth123_arg_no_file_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth123_args_kwp(l, "file", _),
+    !pth123_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// arg_closefd_2: call n passes v for slot `closefd` of (file, mode, buffering, encoding, errors, newline, closefd), syntactic: Ruff's find_argument
+.decl pth123_arg_closefd_2(n: node, v: node)
+pth123_arg_closefd_2(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pth123_args_kwp(l, "closefd", v).
+pth123_arg_closefd_2(n, v) :- kind(n, "call"), field(n, "arguments", l), pth123_args_pos(l, v, 6),
+    !pth123_args_kwp(l, "closefd", _).
+
+// arg_no_closefd_2: call n does not pass slot `closefd` of (file, mode, buffering, encoding, errors, newline, closefd), syntactic: Ruff's find_argument
+.decl pth123_arg_no_closefd_2(n: node)
+pth123_arg_no_closefd_2(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pth123_args_kwp(l, "closefd", _), !pth123_args_pos(l, _, 6).
+
+// arg_opener_3: call n passes v for slot `opener` of (file, mode, buffering, encoding, errors, newline, closefd, opener), syntactic: Ruff's find_argument
+.decl pth123_arg_opener_3(n: node, v: node)
+pth123_arg_opener_3(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pth123_args_kwp(l, "opener", v).
+pth123_arg_opener_3(n, v) :- kind(n, "call"), field(n, "arguments", l), pth123_args_pos(l, v, 7),
+    !pth123_args_kwp(l, "opener", _).
+
+// arg_no_opener_3: call n does not pass slot `opener` of (file, mode, buffering, encoding, errors, newline, closefd, opener), syntactic: Ruff's find_argument
+.decl pth123_arg_no_opener_3(n: node)
+pth123_arg_no_opener_3(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pth123_args_kwp(l, "opener", _), !pth123_args_pos(l, _, 7).
+
+// tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_9(n: node)
+.stored pth123_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_9(n) :- next_sibling(n, s5), glob("=", s5).
+pth123_tok_precedes_9(n) :- structural_after(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, _, en11), o9 = en11 + strlen(g7), token(p8, _, t6, o9, _),
+    match("=", t6).
+pth123_tok_precedes_9(n) :- structural_after(n, g7),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+
+// tok_follows_10(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_10(n: node)
+.stored pth123_tok_follows_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_10(n) :- next_sibling(s13, n), glob("=", s13).
+pth123_tok_follows_10(n) :- structural_before(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, st18, _), o17 = st18 - strlen(g15), token(p16, _, t14, _, o17),
+    match("=", t14).
+pth123_tok_follows_10(n) :- structural_before(n, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g15).
+
+// tok_precedes_11(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_11(n: node)
+.stored pth123_tok_precedes_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_11(n) :- next_sibling(n, s25), glob("=", s25).
+pth123_tok_precedes_11(n) :- structural_after(n, g27), match("\\s*", g27), child(p28, n, _),
+    node(_, n, _, _, en31), o29 = en31 + strlen(g27), token(p28, _, t26, o29, _),
+    match("=", t26).
+pth123_tok_precedes_11(n) :- structural_after(n, g27),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g27).
+
+// tok_follows_12(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_12(n: node)
+.stored pth123_tok_follows_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_12(n) :- next_sibling(s33, n), glob("=", s33).
+pth123_tok_follows_12(n) :- structural_before(n, g35), match("\\s*", g35), child(p36, n, _),
+    node(_, n, _, st38, _), o37 = st38 - strlen(g35), token(p36, _, t34, _, o37),
+    match("=", t34).
+pth123_tok_follows_12(n) :- structural_before(n, g35),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g35).
+
+// tok_precedes_13(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_13(n: node)
+.stored pth123_tok_precedes_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_13(n) :- next_sibling(n, s41), glob("=", s41).
+pth123_tok_precedes_13(n) :- structural_after(n, g43), match("\\s*", g43), child(p44, n, _),
+    node(_, n, _, _, en47), o45 = en47 + strlen(g43), token(p44, _, t42, o45, _),
+    match("=", t42).
+pth123_tok_precedes_13(n) :- structural_after(n, g43),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g43).
+
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_14(n: node)
+.stored pth123_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_14(n) :- next_sibling(s49, n), glob("=", s49).
+pth123_tok_follows_14(n) :- structural_before(n, g51), match("\\s*", g51), child(p52, n, _),
+    node(_, n, _, st54, _), o53 = st54 - strlen(g51), token(p52, _, t50, _, o53),
+    match("=", t50).
+pth123_tok_follows_14(n) :- structural_before(n, g51),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g51).
+
+// tok_precedes_15(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_15(n: node)
+.stored pth123_tok_precedes_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_15(n) :- next_sibling(n, s4), glob("=", s4).
+pth123_tok_precedes_15(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("=", t5).
+pth123_tok_precedes_15(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_16(n: node)
+.stored pth123_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_16(n) :- next_sibling(s12, n), glob("=", s12).
+pth123_tok_follows_16(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("=", t13).
+pth123_tok_follows_16(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g14).
+
+// tok_precedes_17(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_17(n: node)
+.stored pth123_tok_precedes_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_17(n) :- next_sibling(n, s24), glob("=", s24).
+pth123_tok_precedes_17(n) :- structural_after(n, g26), match("\\s*", g26), child(p27, n, _),
+    node(_, n, _, _, en30), o28 = en30 + strlen(g26), token(p27, _, t25, o28, _),
+    match("=", t25).
+pth123_tok_precedes_17(n) :- structural_after(n, g26),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g26).
+
+// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_18(n: node)
+.stored pth123_tok_follows_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_18(n) :- next_sibling(s32, n), glob("=", s32).
+pth123_tok_follows_18(n) :- structural_before(n, g34), match("\\s*", g34), child(p35, n, _),
+    node(_, n, _, st37, _), o36 = st37 - strlen(g34), token(p35, _, t33, _, o36),
+    match("=", t33).
+pth123_tok_follows_18(n) :- structural_before(n, g34),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g34).
+
+// tok_precedes_19(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_precedes_19(n: node)
+.stored pth123_tok_precedes_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_precedes_19(n) :- next_sibling(n, s40), glob("=", s40).
+pth123_tok_precedes_19(n) :- structural_after(n, g42), match("\\s*", g42), child(p43, n, _),
+    node(_, n, _, _, en46), o44 = en46 + strlen(g42), token(p43, _, t41, o44, _),
+    match("=", t41).
+pth123_tok_precedes_19(n) :- structural_after(n, g42),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g42).
+
+// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth123_tok_follows_20(n: node)
+.stored pth123_tok_follows_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth123_tok_follows_20(n) :- next_sibling(s48, n), glob("=", s48).
+pth123_tok_follows_20(n) :- structural_before(n, g50), match("\\s*", g50), child(p51, n, _),
+    node(_, n, _, st53, _), o52 = st53 - strlen(g50), token(p51, _, t49, _, o52),
+    match("=", t49).
+pth123_tok_follows_20(n) :- structural_before(n, g50),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g50).
+
+// demand_alt_5: the rows of alt_5 its callers ask for (the metavariable columns they pass in)
+.decl pth123_demand_alt_5(n: node, a: loc)
+pth123_demand_alt_5(c2, A) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2).
+
+// demand_class_holding_int: the rows of class_holding_int its callers ask for (the metavariable columns they pass in)
+.decl pth123_demand_class_holding_int(n: node, a: loc)
+pth123_demand_class_holding_int(b1, A) :- pth123_demand_alt_5(n, A), kind(n, "identifier"),
+    ref_site(n, b1).
+pth123_demand_class_holding_int(c6, A) :- pth123_demand_alt_5(n, A), kind(n, "attribute"),
+    field(n, "attribute", c2), kind(c2, "identifier"), node(_, c2, _, _, _), B = c2,
+    field(n, "object", c3), kind(c3, "identifier"), ref_site(c3, b4),
+    kind(b4, "class_definition"), field(b4, "body", c5),
+    within_stop(c6, c5, "class_definition"), field(c6, "name", c7), node(_, c7, _, _, _), B = c7,
+    site_scope(c7, "class"), site_latest(c7).
+
+// demand_int_class_member: the rows of int_class_member its callers ask for (the metavariable columns they pass in)
+.decl pth123_demand_int_class_member(n: node, a: loc)
+pth123_demand_int_class_member(c2, A) :- pth123_demand_class_holding_int(n, A),
+    kind(n, "class_definition"), field(n, "body", c1),
+    within_stop(c2, c1, "class_definition").
+
+// none_literal_family_case: one row per relation folded into none_literal_family: its key, then the strings that differed.
+.decl pth123_none_literal_family_case(key: symbol, s1: symbol)
+pth123_none_literal_family_case("none_literal", "none").
+pth123_none_literal_family_case("none_literal_builtin_open_in_string_annotation", "none").
+pth123_none_literal_family_case("true_literal", "true").
+pth123_none_literal_family_case("true_literal_builtin_open_in_string_annotation", "true").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_1(n: node)
+pth123_alt_1(n) :- child(n, c1, _), pth123_int_type(c1), pth123_tok_precedes_7(c1).
+pth123_alt_1(n) :- child(n, c9, _), pth123_int_type(c9), pth123_tok_follows_8(c9).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_2(n: node)
+pth123_alt_2(n) :- field(n, "left", c1), pth123_int_type(c1).
+pth123_alt_2(n) :- field(n, "right", c2), pth123_int_type(c2).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_3(n: node)
+pth123_alt_3(n) :- ref_site(n, b1), site_only(b1),
+    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    pth123_int_value(x2).
+pth123_alt_3(n) :- ref_site(n, b3), site_only(b3), kind(b3, "as_pattern"), child(b3, c4, _),
+    pth123_int_value(c4), child(b3, c5, _), kind(c5, "as_pattern_target"), child(c5, c6, _),
+    kind(c6, "identifier").
+pth123_alt_3(n) :- ref_site(n, b7), site_only(b7),
+    ( site_form(b7, "annotated")
+    ; site_form(b7, "annotation")
+    ; site_form(b7, "parameter")
+    ),
+
+    count : { child(b7, c8, _), (kind(c8, "list_splat_pattern") ; kind(c8, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b7, o9), pth123_int_annotation(o9).
+pth123_alt_3(n) :- ref_site(n, b10), site_only(b10), kind(b10, "function_definition"),
+    field(b10, "return_type", c11), pth123_int_annotation(c11).
+pth123_alt_3(n) :- node(_, n, _, _, _), PW = n, ref_site(n, b12), site_only(b12), kind(b12, "assignment"),
+    field(b12, "left", c13),
+    ( kind(c13, "list_pattern")
+    ; kind(c13, "tuple_pattern")
+    ; kind(c13, "pattern_list")
+    ),
+    child(c13, c14, _), kind(c14, "identifier"), node(_, c14, _, _, _), UT = c14,
+    value(UT, t15), value(PW, t15), field(b12, "right", c17), kind(c17, "set"),
+    child(c17, c18, _), pth123_int_value(c18), node(_, c18, _, _, _), UV = c18, value(UV, t19), value(UT, t19).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_4(n: node)
+pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n),
+    (site_form(n, "assignment") ; site_form(n, "named")), binding_value(n, x1),
+    pth123_int_value(x1).
+pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n), kind(n, "as_pattern"),
+    child(n, c2, _), pth123_int_value(c2), child(n, c3, _), kind(c3, "as_pattern_target"),
+    child(c3, c4, _), kind(c4, "identifier").
+pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n),
+    ( site_form(n, "annotated")
+    ; site_form(n, "annotation")
+    ; site_form(n, "parameter")
+    ),
+
+    count : { child(n, c5, _), (kind(c5, "list_splat_pattern") ; kind(c5, "dictionary_splat_pattern")) } = 0,
+    site_annotation(n, o6), pth123_int_annotation(o6).
+pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n), kind(n, "function_definition"),
+    field(n, "return_type", c7), pth123_int_annotation(c7).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   A: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth123_alt_5(n: node, a: loc)
+pth123_alt_5(n, A) :- pth123_demand_alt_5(n, A), kind(n, "identifier"), ref_site(n, b1),
+    pth123_class_holding_int(b1, A).
+pth123_alt_5(n, A) :- pth123_demand_alt_5(n, A), kind(n, "attribute"), field(n, "attribute", c2),
+    kind(c2, "identifier"), node(_, c2, _, _, _), B = c2, field(n, "object", c3), kind(c3, "identifier"),
+    ref_site(c3, b4), kind(b4, "class_definition"), field(b4, "body", c5),
+    within_stop(c6, c5, "class_definition"), pth123_class_holding_int(c6, A),
+    field(c6, "name", c7), node(_, c7, _, _, _), B = c7, site_scope(c7, "class"), site_latest(c7).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_9(n: node)
+pth123_alt_9(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pth123_alt_9(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pth123_alt_10(n: node)
+pth123_alt_10(n) :- pth123_positional(n), k2 = count : { precedes(s1, n), pth123_positional(s1) }, k2 >= 0,
+    k2 <= 0, pth123_unread_file(n).
+pth123_alt_10(n) :- kind(n, "keyword_argument"), child(n, c3, _), kind(c3, "identifier"),
+    glob("file", c3), pth123_tok_precedes_15(c3), child(n, c11, _), pth123_unread_file(c11),
+    pth123_tok_follows_16(c11).
+pth123_alt_10(n) :- pth123_positional(n), k20 = count : { precedes(s19, n), pth123_positional(s19) },
+    k20 >= 6, k20 <= 6,
+    !pth123_none_literal_family(n, "true_literal_builtin_open_in_string_annotation").
+pth123_alt_10(n) :- pth123_positional(n), k22 = count : { precedes(s21, n), pth123_positional(s21) },
+    k22 >= 7, k22 <= 7,
+    !pth123_none_literal_family(n, "none_literal_builtin_open_in_string_annotation").
+pth123_alt_10(n) :- kind(n, "keyword_argument"), child(n, c23, _), kind(c23, "identifier"),
+    glob("closefd", c23), pth123_tok_precedes_17(c23),
+    count : { child(n, c31, _), pth123_none_literal_family(c31, "true_literal_builtin_open_in_string_annotation"), pth123_tok_follows_18(c31) } = 0.
+pth123_alt_10(n) :- kind(n, "keyword_argument"), child(n, c39, _), kind(c39, "identifier"),
+    glob("opener", c39), pth123_tok_precedes_19(c39),
+    count : { child(n, c47, _), pth123_none_literal_family(c47, "none_literal_builtin_open_in_string_annotation"), pth123_tok_follows_20(c47) } = 0.
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth123_alt_11(n: node, f: loc)
+pth123_alt_11(n, F) :- pth123_ann_call(n, F).
+pth123_alt_11(n, F) :- pth123_ann_string(n, F).

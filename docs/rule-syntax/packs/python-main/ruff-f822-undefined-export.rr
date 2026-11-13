@@ -1,0 +1,45 @@
+.policy "ruff-f822-undefined-export" revision 1
+.guests off
+.description "List only names the module actually defines in its __all__ (outside __init__.py); an undefined entry breaks star imports."
+.language python
+.mode steer
+.scope include "**/*"
+.scope exclude "**/__init__.py", "**/__init__.pyi", "__init__.py", "__init__.pyi"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// F822(n): a finding at node n, from clause `undefined-export`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F822(at: node, s: loc) "Undefined name {s} in `__all__`"
+    suppress noqa "F822"
+F822(n, S) :- (kind(n, "string") ; kind(n, "concatenated_string")), node(_, n, _, _, _), S = n,
+    docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), f822_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl f822_all_expr(x: node)
+f822_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+f822_all_expr(y) :- f822_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+f822_all_expr(y) :- f822_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+f822_all_expr(y) :- f822_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+f822_all_expr(y) :- f822_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+f822_all_expr(y) :- f822_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl f822_all_entry(e: node, x: symbol)
+f822_all_entry(e, x) :- f822_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).

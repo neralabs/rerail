@@ -1,0 +1,26 @@
+.policy "ruff-up050-useless-class-metaclass-type" revision 1
+.guests off
+.description "Remove an explicit type metaclass from a class definition; it is already the default metaclass."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP050(n): a finding at node n, from clause `useless-class-metaclass-type`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP050(at: node, name: loc) "Remove `metaclass=type` from class `{name}`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too."
+    suppress noqa "UP050"
+UP050(n, NAME) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("metaclass", c1), field(n, "value", c2), up050_builtin_type(c2), child(p3, n, _),
+    kind(p3, "argument_list"), field(p4, "superclasses", p3),
+    kind(p4, "class_definition"), field(p4, "name", c5), node(_, c5, _, _, _), NAME = c5.
+
+// builtin_type(n): the JSON util `builtin-type`, used where the JSON says `matches: "builtin-type"`
+.decl up050_builtin_type(n: node)
+up050_builtin_type(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "type"), sym_of(n, "builtins.type").
+up050_builtin_type(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up050_builtin_type(c1).

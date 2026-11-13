@@ -1,0 +1,54 @@
+.policy "ruff-ret502-implicit-return-value" revision 1
+.guests off
+.description "Use return None instead of a bare return in Python functions that also return a value; make the None result explicit."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RET502(n): a finding at node n, from clause `implicit-return-value`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RET502(at: node) "Write `return None` instead of a bare `return`, since this function returns a value elsewhere."
+    suppress noqa "RET502"
+RET502(n) :- kind(n, "return_statement"), glob("return", n),
+    within_stop(n, p1, ret502_stop_1), kind(p1, "function_definition"), ret502_analysed_function(p1),
+    ret502_has_result(p1).
+
+// analysed_function(n): the JSON util `analysed-function`, used where the JSON says `matches: "analysed-function"`
+.decl ret502_analysed_function(n: node)
+ret502_analysed_function(n) :- kind(n, "function_definition"),
+    count : { ret502_stop_1_within(c1, n), kind(c1, "yield") } = 0,
+    count : { child(n, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "return_statement"), count : { child(c2, c4, _), !kind(c4, "return_statement"), !kind(c4, "comment") } = 0 } = 0.
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl ret502_none_literal(n: node)
+ret502_none_literal(n) :- kind(n, "none").
+ret502_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ret502_none_literal(c1).
+
+// value_return(n): the JSON util `value-return`, used where the JSON says `matches: "value-return"`
+.decl ret502_value_return(n: node)
+ret502_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
+    match("(?s).*..*", c1), !ret502_alt_2(c1).
+
+// own_return(n): the JSON util `own-return`, used where the JSON says `matches: "own-return"`
+.decl ret502_own_return(n: node)
+ret502_own_return(n) :- kind(n, "return_statement").
+
+// has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
+.decl ret502_has_result(n: node)
+ret502_has_result(n) :- within_stop(c1, n, ret502_stop_1), ret502_value_return(c1).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ret502_stop_1(kind: symbol)
+ret502_stop_1("function_definition"). ret502_stop_1("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ret502_alt_2(n: node)
+ret502_alt_2(n) :- node(_, n, _, _, _), glob("return", n).
+ret502_alt_2(n) :- kind(n, "comment").
+ret502_alt_2(n) :- ret502_none_literal(n).
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl ret502_stop_1_within(n: node, a: node)
+ret502_stop_1_within(x, y) :- within_stop(x, y, ret502_stop_1).

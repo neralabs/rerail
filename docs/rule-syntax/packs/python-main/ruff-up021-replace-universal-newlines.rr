@@ -1,0 +1,78 @@
+.policy "ruff-up021-replace-universal-newlines" revision 1
+.guests off
+.description "Pass text instead of universal_newlines to subprocess.run; universal_newlines is the legacy name for the same option."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// run_callee(n): the JSON util `run-callee`, used where the JSON says `matches: "run-callee"`
+.decl up021_run_callee(n: node)
+up021_run_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "subprocess.run").
+up021_run_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up021_run_callee(c1).
+
+// legacy_keyword(n): the JSON util `legacy-keyword`, used where the JSON says `matches: "legacy-keyword"`
+.decl up021_legacy_keyword(n: node)
+up021_legacy_keyword(n) :- kind(n, "identifier"), glob("universal_newlines", n),
+    field(p1, "name", n), kind(p1, "keyword_argument"),
+    count : { precedes(s2, p1), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("universal_newlines", c3) } = 0.
+
+// run_arguments(n): the JSON util `run-arguments`, used where the JSON says `matches: "run-arguments"`
+.decl up021_run_arguments(n: node)
+up021_run_arguments(n) :- kind(n, "argument_list"), child(p1, n, _), kind(p1, "call"),
+    field(p1, "function", c2), up021_run_callee(c2).
+
+// text_keyword(n): the JSON util `text-keyword`, used where the JSON says `matches: "text-keyword"`
+.decl up021_text_keyword(n: node)
+up021_text_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    kind(c1, "identifier"), glob("text", c1).
+
+// rename_keyword(n): the JSON util `rename-keyword`, used where the JSON says `matches: "rename-keyword"`
+.decl up021_rename_keyword(n: node)
+up021_rename_keyword(n) :- up021_legacy_keyword(n), child(p1, n, _), kind(p1, "keyword_argument"),
+    child(p2, p1, _), up021_run_arguments(p2),
+    count : { child(p2, c3, _), up021_text_keyword(c3) } = 0.
+
+// drop_keyword(n): the JSON util `drop-keyword`, used where the JSON says `matches: "drop-keyword"`
+.decl up021_drop_keyword(n: node)
+up021_drop_keyword(n) :- up021_legacy_keyword(n), child(p1, n, _), kind(p1, "keyword_argument"),
+    child(p2, p1, _), up021_run_arguments(p2), child(p2, c3, _), up021_text_keyword(c3).
+
+// rename_in_string(n): the JSON util `rename-in-string`, used where the JSON says `matches: "rename-in-string"`
+//   K: metavariable this relation binds for the calling rule
+.decl up021_rename_in_string(n: node, k: loc)
+up021_rename_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up021_alt_1(c2, K).
+
+// drop_in_string(n): the JSON util `drop-in-string`, used where the JSON says `matches: "drop-in-string"`
+//   K: metavariable this relation binds for the calling rule
+.decl up021_drop_in_string(n: node, k: loc)
+up021_drop_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up021_alt_2(c2, K).
+
+// UP021(n, detail): findings from clauses `rename-to-text`, `drop-duplicate`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP021(at: node, k: node, detail: symbol) "{detail}."
+    suppress noqa "UP021"
+UP021(K, n, "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name") :- up021_rename_keyword(n),
+    node(_, n, _, _, _), K = n.
+UP021(K, n, "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name") :- up021_rename_in_string(n, K).
+UP021(K, n, "Remove the `universal_newlines` keyword; `text` is already passed and sets the same option, so keep the value you meant on `text`") :- up021_drop_keyword(n),
+    node(_, n, _, _, _), K = n.
+UP021(K, n, "Remove the `universal_newlines` keyword; `text` is already passed and sets the same option, so keep the value you meant on `text`") :- up021_drop_in_string(n, K).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   K: metavariable this relation binds for the calling rule
+.decl up021_alt_1(n: node, k: loc)
+up021_alt_1(n, K) :- up021_rename_keyword(n), K = n.
+up021_alt_1(n, K) :- up021_rename_in_string(n, K).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   K: metavariable this relation binds for the calling rule
+.decl up021_alt_2(n: node, k: loc)
+up021_alt_2(n, K) :- up021_drop_keyword(n), K = n.
+up021_alt_2(n, K) :- up021_drop_in_string(n, K).

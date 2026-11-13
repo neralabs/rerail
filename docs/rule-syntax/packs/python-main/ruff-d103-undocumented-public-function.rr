@@ -1,0 +1,121 @@
+.policy "ruff-d103-undocumented-public-function" revision 1
+.guests off
+.description "Document each public Python function with a docstring describing its behavior, arguments and return value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// D103(n): a finding at node n, from clause `undocumented-public-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D103(at: node, n: loc) "Add a docstring as the first statement of function `{n}`, describing what it does, its arguments and its return value."
+    suppress noqa "D103"
+D103_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, match("[^_].*", n),
+    field(p1, "name", n), kind(p1, "function_definition"),
+    count : { within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
+    count : { field(p1, "body", c3), child(c3, c4, _), d103_docstring(c4) } = 0,
+    count : { child(p5, p1, _), kind(p5, "decorated_definition"), child(p5, c6, _), kind(c6, "decorator"), child(c6, c7, _), d103_overload_ref(c7) } = 0,
+    ( count : { inside(n, p1_1, "module"), d103_stop_3_within(c2_1, p1_1), d103_all_stmt(c2_1) } = 0
+    ; site_exported(n)
+    ; inside(n, p3_3, "module"), within_stop(c4_3, p3_3, d103_stop_3), kind(c4_3, "string"), node(_, c4_3, _, _, _), S = c4_3, value(S, t5_3), value(N, t5_3), d103_all_entry(c4_3)
+    ).
+
+
+// doc_string(n): the JSON util `doc-string`, used where the JSON says `matches: "doc-string"`
+.decl d103_doc_string(n: node)
+d103_doc_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0.
+d103_doc_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), glob("**[bBfFtT]**", c3) } = 0.
+d103_doc_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), d103_doc_string(c4).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d103_docstring(n: node)
+d103_docstring(n) :- kind(n, "expression_statement"),
+    count : { precedes(s1, n), !kind(s1, "comment") } = 0, child(n, c2, _),
+    d103_doc_string(c2), !d103_tok_has_1(n).
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl d103_overload_ref(n: node)
+d103_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+d103_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    d103_overload_ref(c1).
+
+// all_stmt(n): the JSON util `all-stmt`, used where the JSON says `matches: "all-stmt"`
+.decl d103_all_stmt(n: node)
+d103_all_stmt(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
+    child(p1, n, _), kind(p1, "expression_statement"), field(n, "left", c2),
+    match("[(\\s]*__all__[\\s)]*", c2).
+
+// all_value(n): the JSON util `all-value`, used where the JSON says `matches: "all-value"`
+.decl d103_all_value(n: node)
+d103_all_value(n) :- field(p1, "right", n), d103_all_stmt(p1).
+d103_all_value(n) :- field(p2, "right", n), kind(p2, "assignment"), d103_all_value(p2).
+d103_all_value(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), d103_all_value(p3).
+d103_all_value(n) :- field(p4, "left", n), kind(p4, "binary_operator"), d103_all_value(p4).
+
+// all_list(n): the JSON util `all-list`, used where the JSON says `matches: "all-list"`
+.decl d103_all_list(n: node)
+d103_all_list(n) :- d103_all_value(n).
+d103_all_list(n) :- field(p1, "right", n), kind(p1, "binary_operator"), d103_all_value(p1).
+d103_all_list(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), d103_all_list(p2).
+d103_all_list(n) :- field(p3, "value", n), kind(p3, "named_expression"), d103_all_list(p3).
+
+// list_arg(n): the JSON util `list-arg`, used where the JSON says `matches: "list-arg"`
+.decl d103_list_arg(n: node)
+d103_list_arg(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), d103_list_arg(p1).
+d103_list_arg(n) :- child(p2, n, _), kind(p2, "argument_list"),
+    k4 = count : { child(p2, c3, _), !d103_alt_1(c3) }, k4 <= 1, child(p5, p2, _),
+    kind(p5, "call"), d103_all_list(p5), field(p5, "function", c6),
+    (kind(c6, "subscript"), field(c6, "value", c1), d103_list_func(c1) ; d103_list_func(c6)).
+
+// list_func(n): the JSON util `list-func`, used where the JSON says `matches: "list-func"`
+.decl d103_list_func(n: node)
+d103_list_func(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "list") ; global_ref(n, "tuple")),
+    (sym_of(n, "builtins.list") ; sym_of(n, "builtins.tuple")).
+
+// all_entry(n): the JSON util `all-entry`, used where the JSON says `matches: "all-entry"`
+.decl d103_all_entry(n: node)
+d103_all_entry(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), d103_all_entry(p1).
+d103_all_entry(n) :- child(p2, n, _),
+    (kind(p2, "list") ; kind(p2, "tuple") ; kind(p2, "expression_list")), d103_all_list(p2).
+d103_all_entry(n) :- child(p3, n, _),
+    (kind(p3, "list") ; kind(p3, "tuple") ; kind(p3, "set")), d103_list_arg(p3).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d103_tok_has_1(n: node)
+.stored d103_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d103_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+d103_tok_has_1(n) :- op(n, t4), match(",", t4).
+d103_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d103_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d103_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d103_stop_3(kind: symbol)
+d103_stop_3("function_definition"). d103_stop_3("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d103_alt_1(n: node)
+d103_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+d103_alt_1(n) :- kind(n, "comment").
+
+// stop_3_within: within_stop over the stop set stop_3, read inside an aggregate
+.decl d103_stop_3_within(n: node, a: node)
+d103_stop_3_within(x, y) :- within_stop(x, y, d103_stop_3).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D103_raw(at: node, n: loc)
+D103(v0, v1) :- D103_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

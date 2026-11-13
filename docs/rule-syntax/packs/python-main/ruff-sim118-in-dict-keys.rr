@@ -1,0 +1,106 @@
+.policy "ruff-sim118-in-dict-keys" revision 1
+.guests off
+.description "Test membership in or iterate over a dict directly instead of calling .keys() on it; the keys view adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM118(n): a finding at node n, from clause `in-dict-keys`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM118(at: node) "Use `key in dict` instead of `key in dict.keys()`"
+    suppress noqa "SIM118"
+SIM118(n) :- kind(n, "comparison_operator"), k9 = count : { sim118_tok_has_4(n) }, k9 <= 3,
+    child(n, c10, _), match("(in|not\\s+in)", c10), next_sibling(c10, s11),
+    sim118_keys_call(s11).
+SIM118(n) :- sim118_tok_follows_5(n), next_sibling(n, s19), glob("in", s19),
+    next_sibling(s19, s20), sim118_keys_call(s20),
+    ( child(p1, n, _), kind(p1, "for_statement"), !sim118_tok_has_7(p1)
+    ; child(p2, n, _), kind(p2, "for_in_clause")
+    ).
+
+
+// self_name(n): the JSON util `self-name`, used where the JSON says `matches: "self-name"`
+.decl sim118_self_name(n: node)
+sim118_self_name(n) :- kind(n, "identifier"), glob("self", n).
+sim118_self_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim118_self_name(c1).
+
+// keys_call(n): the JSON util `keys-call`, used where the JSON says `matches: "keys-call"`
+.decl sim118_keys_call(n: node)
+sim118_keys_call(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "argument_list"),
+    match("\\(\\s*\\)", c1), child(n, c2, _), !sim118_tok_follows_1(c2),
+    kind(c2, "attribute"), child(c2, c10, _), kind(c10, "identifier"),
+    glob("keys", c10), sim118_tok_follows_2(c10),
+    count : { child(c2, c18, _), !sim118_tok_follows_3(c18), sim118_self_name(c18) } = 0.
+sim118_keys_call(n) :- kind(n, "parenthesized_expression"), child(n, c26, _), sim118_keys_call(c26).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_follows_1(n: node)
+.stored sim118_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_follows_1(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+sim118_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+sim118_tok_follows_1(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_follows_2(n: node)
+.stored sim118_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_follows_2(n) :- next_sibling(s11, n), glob(".", s11).
+sim118_tok_follows_2(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("\\.", t12).
+sim118_tok_follows_2(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_follows_3(n: node)
+.stored sim118_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_follows_3(n) :- next_sibling(s19, n), match("(?s).*..*", s19).
+sim118_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("(?s).*..*", t20).
+sim118_tok_follows_3(n) :- structural_before(n, g21), match("(?s)^.*\\S\\s*$", g21).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_has_4(n: node)
+.stored sim118_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_has_4(n) :- child(n, c1, _), match("(?s).*..*", c1).
+sim118_tok_has_4(n) :- op(n, t2), match("(?s).*..*", t2).
+sim118_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3), match("(?s)^.*\\S.*$", g3).
+sim118_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3), match("(?s)^.*\\S.*$", g3).
+sim118_tok_has_4(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^.*\\S.*$", g3).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^for$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_follows_5(n: node)
+.stored sim118_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_follows_5(n) :- next_sibling(s12, n), glob("for", s12).
+sim118_tok_follows_5(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("for", t13).
+sim118_tok_follows_5(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:for)\\s*)$", g14).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_has_6(n: node)
+.stored sim118_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_has_6(n) :- child(n, c22, _), glob("async", c22).
+sim118_tok_has_6(n) :- op(n, t23), match("async", t23).
+sim118_tok_has_6(n) :- child(n, c29, _), structural_before(c29, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
+sim118_tok_has_6(n) :- child(n, c29, _), structural_after(c29, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
+sim118_tok_has_6(n) :- node_text(n, g24), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g24).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim118_tok_has_7(n: node)
+.stored sim118_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim118_tok_has_7(n) :- child(n, c2, _), glob("async", c2).
+sim118_tok_has_7(n) :- op(n, t3), match("async", t3).
+sim118_tok_has_7(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).
+sim118_tok_has_7(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).
+sim118_tok_has_7(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g4).

@@ -1,0 +1,128 @@
+.policy "ruff-log014-exc-info-outside-except-handler" revision 1
+.guests off
+.description "Remove exc_info from logging calls made outside an except handler; with no active exception it only logs a meaningless None traceback."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG014(n): a finding at node n, from clause `exc-info-outside-except-handler`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation LOG014(at: node, k: node) "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+    suppress noqa "LOG014"
+LOG014(K, n) :- count : { inside(n, p1, "except_clause"), node(_, p1, _, _, _) } = 0,
+    log014_alt_5(n, K).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl log014_logger_object(n: node)
+log014_logger_object(n) :- kind(n, "call"), child(n, c1, _),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+log014_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    log014_logger_object(c2).
+log014_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+log014_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), match(".*(?:\\W(log|LOG)\\w*|(logger|logging|LOGGER|LOGGING))", n), child(n, c1, _), log014_name_chain(c1), !log014_tok_follows_2(c1)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl log014_name_chain(n: node)
+log014_name_chain(n) :- kind(n, "identifier").
+log014_name_chain(n) :- kind(n, "attribute"), child(n, c1, _), log014_name_chain(c1),
+    !log014_tok_follows_2(c1).
+log014_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), log014_name_chain(c9).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl log014_level_callee(n: node)
+log014_level_callee(n) :- kind(n, "attribute"),
+    match(".*\\W(debug|critical|error|exception|info|warn|warning)", n),
+    child(n, c1, _), log014_logger_object(c1), !log014_tok_follows_2(c1).
+log014_level_callee(n) :- kind(n, "identifier"), sym_of(n, q9), log014_set_2(q9).
+log014_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    log014_level_callee(c10).
+
+// prefixed_string(n): the JSON util `prefixed-string`, used where the JSON says `matches: "prefixed-string"`
+.decl log014_prefixed_string(n: node)
+log014_prefixed_string(n) :- child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fFtT].*", c1).
+
+// truthy_literal(n): the JSON util `truthy-literal`, used where the JSON says `matches: "truthy-literal"`
+.decl log014_truthy_literal(n: node)
+log014_truthy_literal(n) :-
+    ( (kind(n, "true") ; kind(n, "ellipsis"))
+    ; (kind(n, "integer") ; kind(n, "float")), value(n, v1), log014_truthy_value(n, "true")
+    ; kind(n, "string"), !log014_prefixed_string(n), value(n, v2), log014_truthy_value(n, "true")
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), log014_prefixed_string(c1) } = 0, value(n, v3), log014_truthy_value(n, "true")
+    ).
+
+log014_truthy_literal(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    log014_truthy_literal(c5).
+
+// exc_info_kw(n): the JSON util `exc-info-kw`, used where the JSON says `matches: "exc-info-kw"`
+.decl log014_exc_info_kw(n: node)
+log014_exc_info_kw(n) :- kind(n, "keyword_argument"), match("exc_info\\b.*", n).
+
+// kw_in_string(n): the JSON util `kw-in-string`, used where the JSON says `matches: "kw-in-string"`
+//   K: metavariable this relation binds for the calling rule
+.decl log014_kw_in_string(n: node, k: loc)
+log014_kw_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), log014_alt_4(c2, K).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log014_tok_follows_1(n: node)
+.stored log014_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log014_tok_follows_1(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+log014_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+log014_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log014_tok_follows_2(n: node)
+.stored log014_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log014_tok_follows_2(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+log014_tok_follows_2(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+log014_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl log014_truthy_value(n: node, b: symbol)
+log014_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+log014_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+log014_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+log014_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+log014_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+log014_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// set_2: symbols from the JSON `resolves.import`
+.decl log014_set_2(v: symbol)
+log014_set_2("logging.debug"). log014_set_2("logging.critical"). log014_set_2("logging.error").
+log014_set_2("logging.exception"). log014_set_2("logging.info"). log014_set_2("logging.warn").
+log014_set_2("logging.warning"). log014_set_2("logging.log").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   K: metavariable this relation binds for the calling rule
+.decl log014_alt_4(n: node, k: loc)
+log014_alt_4(n, K) :- log014_exc_info_kw(n), child(n, c1, _), log014_truthy_literal(c1), child(p2, n, _),
+    kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"), child(p3, c4, _),
+    log014_level_callee(c4), count : { precedes(s5, n), log014_exc_info_kw(s5) } = 0, K = n.
+log014_alt_4(n, K) :- log014_kw_in_string(n, K).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   K: metavariable this relation binds for the calling rule
+.decl log014_alt_5(n: node, k: loc)
+log014_alt_5(n, K) :- log014_exc_info_kw(n), child(n, c1, _), log014_truthy_literal(c1), child(p2, n, _),
+    kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"), child(p3, c4, _),
+    log014_level_callee(c4), count : { precedes(s5, n), log014_exc_info_kw(s5) } = 0, node(_, n, _, _, _), K = n.
+log014_alt_5(n, K) :- log014_kw_in_string(n, K).

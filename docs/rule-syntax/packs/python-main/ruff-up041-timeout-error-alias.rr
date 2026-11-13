@@ -1,0 +1,62 @@
+.policy "ruff-up041-timeout-error-alias" revision 1
+.guests off
+.description "Use the builtin TimeoutError instead of socket.timeout or asyncio.TimeoutError; since Python 3.10 and 3.11 they are plain aliases of it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
+.decl up041_handler_type(n: node)
+up041_handler_type(n) :- field(p1, "value", n), kind(p1, "except_clause").
+up041_handler_type(n) :- child(p2, n, _), kind(p2, "as_pattern"), field(p3, "value", p2),
+    kind(p3, "except_clause").
+up041_handler_type(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    up041_handler_type(p4).
+
+// atom_site(n): the JSON util `atom-site`, used where the JSON says `matches: "atom-site"`
+.decl up041_atom_site(n: node)
+up041_atom_site(n) :- up041_handler_type(n).
+up041_atom_site(n) :- child(p1, n, _), kind(p1, "raise_statement"),
+    count : { field(p2, "cause", n), kind(p2, "raise_statement") } = 0.
+up041_atom_site(n) :- field(p3, "function", n), kind(p3, "call").
+up041_atom_site(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"), up041_atom_site(p4).
+
+// socket_timeout(n): the JSON util `socket-timeout`, used where the JSON says `matches: "socket-timeout"`
+.decl up041_socket_timeout(n: node)
+up041_socket_timeout(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "socket.timeout").
+
+// asyncio_timeout(n): the JSON util `asyncio-timeout`, used where the JSON says `matches: "asyncio-timeout"`
+.decl up041_asyncio_timeout(n: node)
+up041_asyncio_timeout(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "asyncio.TimeoutError").
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl up041_element(n: node)
+up041_element(n) :- child(p1, n, _), kind(p1, "tuple"), up041_handler_type(p1).
+up041_element(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), up041_element(p2).
+
+// UP041(n): a finding at node n, from clause `socket-timeout-alias`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP041(at: node) "Use the builtin `TimeoutError` instead of `socket.timeout`, the same class since Python 3.10; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`."
+    suppress noqa "UP041"
+UP041(n) :- up041_socket_timeout(n), up041_atom_site(n).
+UP041(n) :- kind(n, "tuple"), up041_handler_type(n), within(c1, n), up041_socket_timeout(c1),
+    up041_element(c1).
+
+// UP041_asyncio_timeout_alias(n): a finding at node n, from clause `asyncio-timeout-alias`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP041_asyncio_timeout_alias(at: node) code "UP041" "Use the builtin `TimeoutError` instead of `asyncio.TimeoutError`, the same class since Python 3.11; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`."
+    suppress noqa "UP041"
+UP041_asyncio_timeout_alias_raw(n) :- up041_asyncio_timeout(n), up041_atom_site(n).
+UP041_asyncio_timeout_alias_raw(n) :- kind(n, "tuple"), up041_handler_type(n), within(c1, n),
+    up041_asyncio_timeout(c1), up041_element(c1),
+    count : { within(c2, n), up041_socket_timeout(c2), up041_element(c2) } = 0.
+
+// pythonVersion {"min": "3.11"} excludes Python 3.10, main's default: no findings.
+.decl UP041_asyncio_timeout_alias_raw(at: node)

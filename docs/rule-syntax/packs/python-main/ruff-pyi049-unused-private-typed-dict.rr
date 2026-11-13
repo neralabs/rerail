@@ -1,0 +1,130 @@
+.policy "ruff-pyi049-unused-private-typed-dict" revision 1
+.guests off
+.description "Use, make public or remove a private TypedDict that nothing in its file references; an unused private TypedDict is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// typeddict_ref(n): the JSON util `typeddict-ref`, used where the JSON says `matches: "typeddict-ref"`
+.decl pyi049_typeddict_ref(n: node)
+pyi049_typeddict_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.TypedDict")
+    ; sym_of(n, "typing_extensions.TypedDict")
+    ; sym_of(n, "_typeshed.TypedDict")
+    ).
+
+pyi049_typeddict_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi049_typeddict_ref(c1).
+
+// typeddict_site(n): the JSON util `typeddict-site`, used where the JSON says `matches: "typeddict-site"`
+.decl pyi049_typeddict_site(n: node)
+pyi049_typeddict_site(n) :- kind(n, "class_definition"), field(n, "superclasses", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), pyi049_typeddict_ref(c2).
+pyi049_typeddict_site(n) :- kind(n, "assignment"), field(n, "right", c3), pyi049_typeddict_call(c3),
+    !pyi049_alt_1(n), field(n, "left", c13), pyi049_simple_target(c13).
+
+// typeddict_call(n): the JSON util `typeddict-call`, used where the JSON says `matches: "typeddict-call"`
+.decl pyi049_typeddict_call(n: node)
+pyi049_typeddict_call(n) :- kind(n, "call"), field(n, "function", c1), pyi049_typeddict_ref(c1).
+pyi049_typeddict_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi049_typeddict_call(c2).
+
+// simple_target(n): the JSON util `simple-target`, used where the JSON says `matches: "simple-target"`
+.decl pyi049_simple_target(n: node)
+pyi049_simple_target(n) :- kind(n, "identifier").
+pyi049_simple_target(n) :- (kind(n, "tuple_pattern"), !pyi049_tok_has_3(n) ; kind(n, "parenthesized_expression")),
+    child(n, c9, _), pyi049_simple_target(c9).
+
+// PYI049(n): a finding at node n, from clause `unused-private-typed-dict`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI049(at: node, name: loc) "Nothing in this file uses the private TypedDict `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+    suppress noqa "PYI049"
+PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
+    (site_form(n, "definition") ; site_form(n, "assignment")), pyi049_typeddict_site(n),
+    site_latest(n), !site_used(n),
+    (site_scope(n, "module") ; site_scope(n, "function")).
+
+// PYI049_unused_private_typed_dict_stub(n): a finding at node n, from clause `unused-private-typed-dict-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI049_unused_private_typed_dict_stub(at: node, name: loc) code "PYI049" "Nothing in this file uses the private TypedDict `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+    suppress noqa "PYI049"
+PYI049_unused_private_typed_dict_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    prefix("_", n), (site_form(n, "definition") ; site_form(n, "assignment")),
+    pyi049_typeddict_site(n), site_latest(n), !site_used(n).
+
+// PYI049_unused_comprehension_variable_in_stub_typed_dict(n): a finding at node n, from clause `unused-comprehension-variable-in-stub-typed-dict`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI049_unused_comprehension_variable_in_stub_typed_dict(at: node, name: loc) code "PYI049" "The comprehension variable `{name}` in this stub TypedDict definition is never read. Replace the comprehension with literal fields or plain types; stubs only declare types."
+    suppress noqa "PYI049"
+PYI049_unused_comprehension_variable_in_stub_typed_dict_raw(n, NAME) :- kind(n, "identifier"),
+    node(_, n, _, _, _), NAME = n, prefix("_", n), site_scope(n, "comprehension"), site_latest(n),
+    !site_used(n), within_stop(n, p1, pyi049_stop_3),
+    ( pyi049_typeddict_site(p1)
+    ; kind(p1, "decorated_definition"), field(p1, "definition", c1), pyi049_typeddict_site(c1)
+    ).
+
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi049_tok_has_1(n: node)
+.stored pyi049_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi049_tok_has_1(n) :- child(n, c4, _), glob(":", c4).
+pyi049_tok_has_1(n) :- op(n, t5), match(":", t5).
+pyi049_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+pyi049_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+pyi049_tok_has_1(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi049_tok_has_2(n: node)
+.stored pyi049_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi049_tok_has_2(n) :- child(n, c1, _), glob(":", c1).
+pyi049_tok_has_2(n) :- op(n, t2), match(":", t2).
+pyi049_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi049_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi049_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi049_tok_has_3(n: node)
+.stored pyi049_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi049_tok_has_3(n) :- child(n, c1, _), glob("\\,", c1).
+pyi049_tok_has_3(n) :- op(n, t2), match(",", t2).
+pyi049_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi049_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi049_tok_has_3(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi049_stop_3(kind: symbol)
+pyi049_stop_3("block"). pyi049_stop_3("module").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi049_alt_1(n: node)
+pyi049_alt_1(n) :- pyi049_tok_has_2(n).
+pyi049_alt_1(n) :- child(p9, n, _), kind(p9, "assignment").
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl PYI049_raw(at: node, name: loc)
+PYI049(v0, v1) :- PYI049_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI049_unused_private_typed_dict_stub_raw(at: node, name: loc)
+PYI049_unused_private_typed_dict_stub(v0, v1) :- PYI049_unused_private_typed_dict_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI049_unused_comprehension_variable_in_stub_typed_dict_raw(at: node, name: loc)
+PYI049_unused_comprehension_variable_in_stub_typed_dict(v0, v1) :- PYI049_unused_comprehension_variable_in_stub_typed_dict_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

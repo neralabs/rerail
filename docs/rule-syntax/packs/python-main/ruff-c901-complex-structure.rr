@@ -1,0 +1,76 @@
+.policy "ruff-c901-complex-structure" revision 1
+.guests off
+.description "Split Python functions with many branches, loops, exception handlers and nested functions into smaller ones; heavily branching code is hard to read, test and change."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+.options {"mccabe.max-complexity": {"type": "integer", "default": 10, "description": "The highest complexity a function may have: one, plus one for each decision point and nested function in its body."}}
+
+// C901(n): a finding at node n, from clause `complex-structure`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C901(at: node, name: loc) "Extract parts of `{name}` into functions defined outside it (nested ones still count), or turn an if/elif chain that maps values into a lookup table; leave it if the branching is inherent."
+    suppress noqa "C901"
+C901(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
+    kind(p1, "function_definition"),
+    count : { k3 = count : { within(c2, p1), c901_decision_point(c2) }, option("mccabe.max-complexity", o_mccabe_max_complexity), k3 <= to_number(o_mccabe_max_complexity) } = 0.
+
+// irrefutable(n): the JSON util `irrefutable`, used where the JSON says `matches: "irrefutable"`
+.decl c901_irrefutable(n: node)
+c901_irrefutable(n) :- node(_, n, _, _, _), glob("_", n).
+c901_irrefutable(n) :- kind(n, "dotted_name"), !c901_tok_has_1(n).
+c901_irrefutable(n) :- (kind(n, "case_pattern") ; kind(n, "as_pattern") ; kind(n, "union_pattern")),
+    child(n, c9, _), c901_irrefutable(c9).
+c901_irrefutable(n) :- kind(n, "tuple_pattern"), child(n, c10, _),
+    kind(c10, "case_pattern"), c901_irrefutable(c10), !c901_tok_has_2(n).
+
+// decision_point(n): the JSON util `decision-point`, used where the JSON says `matches: "decision-point"`
+.decl c901_decision_point(n: node)
+c901_decision_point(n) :- kind(n, k1), c901_set_1(k1).
+c901_decision_point(n) :- kind(n, "else_clause"), child(p2, n, _),
+    kind(p2, "try_statement").
+c901_decision_point(n) :- kind(n, "block"), child(p3, n, _),
+    kind(p3, "function_definition").
+c901_decision_point(n) :- kind(n, "case_clause"),
+    count : { count : { precedes(n, s4), kind(s4, "case_clause") } = 0, count : { child(n, c5, _), kind(c5, "if_clause") } = 0, !c901_tok_has_3(n), child(n, c14, _), kind(c14, "case_pattern"), c901_irrefutable(c14) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c901_tok_has_1(n: node)
+.stored c901_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c901_tok_has_1(n) :- child(n, c1, _), glob(".", c1).
+c901_tok_has_1(n) :- op(n, t2), match("\\.", t2).
+c901_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+c901_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+c901_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c901_tok_has_2(n: node)
+.stored c901_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c901_tok_has_2(n) :- child(n, c11, _), glob("\\,", c11).
+c901_tok_has_2(n) :- op(n, t12), match(",", t12).
+c901_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
+c901_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
+c901_tok_has_2(n) :- node_text(n, g13), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g13).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c901_tok_has_3(n: node)
+.stored c901_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c901_tok_has_3(n) :- child(n, c6, _), glob("\\,", c6).
+c901_tok_has_3(n) :- op(n, t7), match(",", t7).
+c901_tok_has_3(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+c901_tok_has_3(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+c901_tok_has_3(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// set_1: node kinds from a JSON `any`
+.decl c901_set_1(v: symbol)
+c901_set_1("if_statement"). c901_set_1("elif_clause"). c901_set_1("for_statement").
+c901_set_1("while_statement"). c901_set_1("except_clause").

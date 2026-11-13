@@ -1,0 +1,59 @@
+.policy "ruff-up025-unicode-kind-prefix" revision 1
+.guests off
+.description "Remove the u prefix from string literals; all Python 3 strings are already Unicode."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// u_string(n): the JSON util `u-string`, used where the JSON says `matches: "u-string"`
+.decl up025_u_string(n: node)
+up025_u_string(n) :- kind(n, "string"), glob("[uU]['\"]**", n).
+
+// whole_annotation(n): the JSON util `whole-annotation`, used where the JSON says `matches: "whole-annotation"`
+.decl up025_whole_annotation(n: node)
+up025_whole_annotation(n) :- within_stop(n, p1, up025_stop_1), kind(p1, "type"), child(p2, p1, _),
+    ( kind(p2, "assignment")
+    ; kind(p2, "typed_parameter")
+    ; kind(p2, "typed_default_parameter")
+    ; kind(p2, "function_definition")
+    ).
+
+
+// type_alias_value(n): the JSON util `type-alias-value`, used where the JSON says `matches: "type-alias-value"`
+.decl up025_type_alias_value(n: node)
+up025_type_alias_value(n) :- within_stop(n, p1, up025_stop_1), kind(p1, "assignment"),
+    field(p1, "type", c2), glob("{typing{_extensions,}.,}TypeAlias", c2).
+
+// UP025(n): a finding at node n, from clause `unicode-kind-prefix`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP025(at: node) "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2."
+    suppress noqa "UP025"
+UP025_raw(n) :- up025_u_string(n),
+    count : { up025_whole_annotation(n), inside(n, p1, "module"), child(p1, c2, _), kind(c2, "future_import_statement"), has(c2, c3, "dotted_name"), glob("annotations", c3) } = 0.
+
+// UP025_unicode_kind_prefix_in_stub(n): a finding at node n, from clause `unicode-kind-prefix-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP025_unicode_kind_prefix_in_stub(at: node) code "UP025" "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2."
+    suppress noqa "UP025"
+UP025_unicode_kind_prefix_in_stub_raw(n) :- up025_u_string(n), !up025_alt_3(n).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up025_stop_1(n: node)
+up025_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "concatenated_string").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up025_alt_3(n: node)
+up025_alt_3(n) :- up025_whole_annotation(n).
+up025_alt_3(n) :- up025_type_alias_value(n).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl UP025_raw(at: node)
+UP025(v0) :- UP025_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl UP025_unicode_kind_prefix_in_stub_raw(at: node)
+UP025_unicode_kind_prefix_in_stub(v0) :- UP025_unicode_kind_prefix_in_stub_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

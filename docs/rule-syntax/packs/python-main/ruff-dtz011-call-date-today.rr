@@ -1,0 +1,21 @@
+.policy "ruff-dtz011-call-date-today" revision 1
+.guests off
+.description "Derive today's date from a timezone-aware current datetime instead of the naive local date; the local date depends on the machine's timezone."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// DTZ011(n): a finding at node n, from clause `call-date-today`.
+// Each rule below is one way the JSON `rule` can match.
+.violation DTZ011(at: node) "Use `datetime.datetime.now(tz=...).date()` with the timezone whose calendar date you need; `date.today()` is the naive local date, so keep it only if that is intended."
+    suppress noqa "DTZ011"
+DTZ011(n) :- kind(n, "call"), field(n, "function", c1), dtz011_callee(c1).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz011_callee(n: node)
+dtz011_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.date.today").
+dtz011_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz011_callee(c1).

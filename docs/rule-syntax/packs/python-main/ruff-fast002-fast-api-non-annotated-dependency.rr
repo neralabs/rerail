@@ -1,0 +1,146 @@
+.policy "ruff-fast002-fast-api-non-annotated-dependency" revision 1
+.guests off
+.description "Declare FastAPI route dependencies and parameter markers inside Annotated type hints instead of as default values, so the function keeps ordinary defaults when called directly."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// route_ctor(n): the JSON util `route-ctor`, used where the JSON says `matches: "route-ctor"`
+.decl fast002_route_ctor(n: node)
+fast002_route_ctor(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "fastapi.FastAPI") ; sym_of(n, "fastapi.APIRouter")).
+fast002_route_ctor(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), fast002_route_ctor(c1).
+
+// route_ann(n): the JSON util `route-ann`, used where the JSON says `matches: "route-ann"`
+.decl fast002_route_ann(n: node)
+fast002_route_ann(n) :- fast002_route_ctor(n).
+fast002_route_ann(n) :- kind(n, "type"), child(n, c1, _), fast002_route_ann(c1).
+
+// route_init(n): the JSON util `route-init`, used where the JSON says `matches: "route-init"`
+.decl fast002_route_init(n: node)
+fast002_route_init(n) :- kind(n, "call"), field(n, "function", c1), fast002_route_ctor(c1).
+fast002_route_init(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fast002_route_init(c2).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl fast002_plain_target(n: node)
+fast002_plain_target(n) :- kind(n, "identifier").
+fast002_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast002_plain_target(c1).
+
+// route_name(n): the JSON util `route-name`, used where the JSON says `matches: "route-name"`
+.decl fast002_route_name(n: node)
+fast002_route_name(n) :- kind(n, "identifier"), fast002_alt_1(n).
+
+// route_receiver(n): the JSON util `route-receiver`, used where the JSON says `matches: "route-receiver"`
+.decl fast002_route_receiver(n: node)
+fast002_route_receiver(n) :- fast002_route_name(n).
+fast002_route_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast002_route_receiver(c1).
+
+// route_attr(n): the JSON util `route-attr`, used where the JSON says `matches: "route-attr"`
+.decl fast002_route_attr(n: node)
+fast002_route_attr(n) :- kind(n, "attribute"), field(n, "object", c1), fast002_route_receiver(c1),
+    field(n, "attribute", c2),
+    glob("{get,post,put,delete,patch,options,head,trace}", c2).
+fast002_route_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fast002_route_attr(c3).
+
+// route_call(n): the JSON util `route-call`, used where the JSON says `matches: "route-call"`
+.decl fast002_route_call(n: node)
+fast002_route_call(n) :- kind(n, "call"), field(n, "function", c1), fast002_route_attr(c1).
+
+// route_decorator(n): the JSON util `route-decorator`, used where the JSON says `matches: "route-decorator"`
+.decl fast002_route_decorator(n: node)
+fast002_route_decorator(n) :- kind(n, "decorator"), child(n, c1, _), fast002_route_call_expr(c1).
+
+// route_call_expr(n): the JSON util `route-call-expr`, used where the JSON says `matches: "route-call-expr"`
+.decl fast002_route_call_expr(n: node)
+fast002_route_call_expr(n) :- fast002_route_call(n).
+fast002_route_call_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast002_route_call_expr(c1).
+
+// route_param(n): the JSON util `route-param`, used where the JSON says `matches: "route-param"`
+//   NAME, TYPE: metavariables this relation binds for the calling rule
+.decl fast002_route_param(n: node, name: loc, type: loc)
+fast002_route_param(n, NAME, TYPE) :- kind(n, "typed_default_parameter"),
+    count : { precedes(n, s1), kind(s1, "positional_separator") } = 0, child(p2, n, _),
+    kind(p2, "parameters"), child(p3, p2, _), kind(p3, "function_definition"),
+    child(p4, p3, _), kind(p4, "decorated_definition"), child(p4, c5, _),
+    fast002_route_decorator(c5), field(n, "name", c6), node(_, c6, _, _, _), NAME = c6, field(n, "type", c7),
+    node(_, c7, _, _, _), TYPE = c7.
+
+// param_marker_ref(n): the JSON util `param-marker-ref`, used where the JSON says `matches: "param-marker-ref"`
+.decl fast002_param_marker_ref(n: node)
+fast002_param_marker_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), fast002_set_2(q1).
+fast002_param_marker_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    fast002_param_marker_ref(c2).
+
+// param_marker(n): the JSON util `param-marker`, used where the JSON says `matches: "param-marker"`
+.decl fast002_param_marker(n: node)
+fast002_param_marker(n) :- fast002_param_marker_ref(n).
+fast002_param_marker(n) :- kind(n, "call"), field(n, "function", c1), fast002_param_marker_ref(c1).
+fast002_param_marker(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    fast002_param_marker(c2).
+
+// depends_marker_ref(n): the JSON util `depends-marker-ref`, used where the JSON says `matches: "depends-marker-ref"`
+.decl fast002_depends_marker_ref(n: node)
+fast002_depends_marker_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "fastapi.Depends") ; sym_of(n, "fastapi.Security")).
+fast002_depends_marker_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fast002_depends_marker_ref(c1).
+
+// depends_marker(n): the JSON util `depends-marker`, used where the JSON says `matches: "depends-marker"`
+.decl fast002_depends_marker(n: node)
+fast002_depends_marker(n) :- fast002_depends_marker_ref(n).
+fast002_depends_marker(n) :- kind(n, "call"), field(n, "function", c1), fast002_depends_marker_ref(c1).
+fast002_depends_marker(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    fast002_depends_marker(c2).
+
+// FAST002(n): a finding at node n, from clause `param-default`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation FAST002(at: node, default: loc, name: loc, type: loc) "Move `{default}` into `{name}: Annotated[{type}, ...]`; if the call has a default argument, take it out of the call and keep it as the plain `= default`, dropping it when it is `...`."
+    suppress noqa "FAST002"
+FAST002(n, DEFAULT, NAME, TYPE) :- fast002_route_param(n, NAME, TYPE), field(n, "value", c1),
+    node(_, c1, _, _, _), DEFAULT = c1, fast002_param_marker(c1).
+
+// FAST002_dependency_default(n): a finding at node n, from clause `dependency-default`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation FAST002_dependency_default(at: node, name: loc, type: loc, default: loc) code "FAST002" "Declare `{name}: Annotated[{type}, {default}]` instead of passing the dependency as the default; move the parameter before any with defaults, or make it keyword-only, if needed."
+    suppress noqa "FAST002"
+FAST002_dependency_default(n, NAME, TYPE, DEFAULT) :- fast002_route_param(n, NAME, TYPE),
+    field(n, "value", c1), node(_, c1, _, _, _), DEFAULT = c1, fast002_depends_marker(c1).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fast002_tok_precedes_1(n: node)
+.stored fast002_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fast002_tok_precedes_1(n) :- precedes(n, s7), glob("as", s7).
+fast002_tok_precedes_1(n) :- child(p10, n, _), node(_, n, _, _, en13),
+    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
+fast002_tok_precedes_1(n) :- structural_after(n, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+fast002_tok_precedes_1(n) :- precedes(n, o11), structural_after(o11, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+
+// set_2: symbols from the JSON `resolves.import`
+.decl fast002_set_2(v: symbol)
+fast002_set_2("fastapi.Query"). fast002_set_2("fastapi.Path"). fast002_set_2("fastapi.Body").
+fast002_set_2("fastapi.Cookie"). fast002_set_2("fastapi.Header"). fast002_set_2("fastapi.File").
+fast002_set_2("fastapi.Form").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl fast002_alt_1(n: node)
+fast002_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast002_route_init(x2),
+    count : { child(b1, c3, _), kind(c3, "type") } = 0.
+fast002_alt_1(n) :- ref_site(n, b4), kind(b4, "as_pattern"), child(p5, b4, _),
+    kind(p5, "with_item"), child(b4, c6, _), fast002_route_init(c6), fast002_tok_precedes_1(c6),
+    child(b4, c14, _), kind(c14, "as_pattern_target"), child(c14, c15, _),
+    fast002_plain_target(c15).
+fast002_alt_1(n) :- ref_site(n, b16), site_annotation(b16, o17), fast002_route_ann(o17),
+    count : { child(b16, c18, _), (kind(c18, "list_splat_pattern") ; kind(c18, "dictionary_splat_pattern")) } = 0.
+fast002_alt_1(n) :- ref_site(n, b19), kind(b19, "function_definition"),
+    field(b19, "return_type", c20), fast002_route_ann(c20).

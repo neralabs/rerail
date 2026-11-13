@@ -1,0 +1,468 @@
+.policy "ruff-pt030-pytest-warns-too-broad" revision 1
+.guests off
+.description "Pass a match pattern to pytest.warns for Warning, UserWarning or DeprecationWarning, or expect a more specific warning; a generic warning also catches unrelated ones."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// warns_ref(n): the JSON util `warns-ref`, used where the JSON says `matches: "warns-ref"`
+.decl pt030_warns_ref(n: node)
+pt030_warns_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.warns").
+
+// warns_callee(n): the JSON util `warns-callee`, used where the JSON says `matches: "warns-callee"`
+.decl pt030_warns_callee(n: node)
+pt030_warns_callee(n) :- pt030_warns_ref(n).
+pt030_warns_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt030_warns_callee(c1).
+
+// broad_warning(n): the JSON util `broad-warning`, used where the JSON says `matches: "broad-warning"`
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_broad_warning(n: node, w: loc)
+pt030_broad_warning(n, W) :- kind(n, "identifier"), node(_, n, _, _, _), W = n,
+    ( global_ref(n, "Warning")
+    ; global_ref(n, "UserWarning")
+    ; global_ref(n, "DeprecationWarning")
+    ).
+
+pt030_broad_warning(n, W) :- kind(n, "identifier"), node(_, n, _, _, _), W = n,
+    (sym_of(n, "Warning") ; sym_of(n, "UserWarning") ; sym_of(n, "DeprecationWarning")).
+pt030_broad_warning(n, W) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt030_broad_warning(c1, W).
+
+// part_has_text(n): the JSON util `part-has-text`, used where the JSON says `matches: "part-has-text"`
+.decl pt030_part_has_text(n: node)
+pt030_part_has_text(n) :- child(n, c1, _), kind(c1, "string_content"),
+    !match("(\\\\\\r?\\n)+", c1).
+pt030_part_has_text(n) :- child(n, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2),
+    ( child(n, c1, _), kind(c1, "string_content")
+    ; child(n, c3, _), kind(c3, "string_end"), prefix("\\", c3)
+    ).
+
+
+// part_empty(n): the JSON util `part-empty`, used where the JSON says `matches: "part-empty"`
+.decl pt030_part_empty(n: node)
+pt030_part_empty(n) :- pt030_part_empty_u7(n).
+
+// empty_or_null(n): the JSON util `empty-or-null`, used where the JSON says `matches: "empty-or-null"`
+.decl pt030_empty_or_null(n: node)
+pt030_empty_or_null(n) :- pt030_empty_or_null_u7(n).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pt030_positional(n: node)
+pt030_positional(n) :- node(_, n, _, _, _), !pt030_alt_5(n).
+
+// pos0(n): the JSON util `pos0`, used where the JSON says `matches: "pos0"`
+.decl pt030_pos0(n: node)
+pt030_pos0(n) :- pt030_positional(n), !pt030_alt_6(n).
+
+// keyword_named(n): the JSON util `keyword-named`, used where the JSON says `matches: "keyword-named"`
+.decl pt030_keyword_named(n: node)
+pt030_keyword_named(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("expected_warning", c1),
+    count : { precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3), glob("expected_warning", c3) } = 0.
+
+// unmatched_warns_args(n): the JSON util `unmatched-warns-args`, used where the JSON says `matches: "unmatched-warns-args"`
+.decl pt030_unmatched_warns_args(n: node)
+pt030_unmatched_warns_args(n) :- kind(n, "argument_list"), field(p1, "arguments", n),
+    kind(p1, "call"), field(p1, "function", c2), pt030_warns_callee(c2),
+    count : { child(n, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("match", c4), !pt030_alt_7(c3) } = 0.
+
+// callable_args(n): the JSON util `callable-args`, used where the JSON says `matches: "callable-args"`
+.decl pt030_callable_args(n: node)
+pt030_callable_args(n) :- kind(n, "argument_list"), child(n, c1, _), pt030_positional(c1),
+    precedes(s2, c1), pt030_positional(s2).
+
+// in_callable_form(n): the JSON util `in-callable-form`, used where the JSON says `matches: "in-callable-form"`
+.decl pt030_in_callable_form(n: node)
+pt030_in_callable_form(n) :- child(p1, n, _), pt030_callable_args(p1).
+pt030_in_callable_form(n) :- child(p2, n, _), kind(p2, "keyword_argument"), child(p3, p2, _),
+    pt030_callable_args(p3).
+
+// flagged_warning(n): the JSON util `flagged-warning`, used where the JSON says `matches: "flagged-warning"`
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_flagged_warning(n: node, w: loc)
+pt030_flagged_warning(n, W) :- pt030_broad_warning(n, W),
+    ( field(p1, "value", n), pt030_keyword_named(p1), child(p2, p1, _), pt030_unmatched_warns_args(p2)
+    ; pt030_pos0(n), child(p3, n, _), pt030_unmatched_warns_args(p3), count : { child(p3, c1, _), pt030_keyword_named(c1) } = 0
+    ).
+
+
+// ann_empty_or_null(n): the JSON util `ann-empty-or-null`, used where the JSON says `matches: "ann-empty-or-null"`
+.decl pt030_ann_empty_or_null(n: node)
+pt030_ann_empty_or_null(n) :- kind(n, "none").
+pt030_ann_empty_or_null(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTfFbB]**", c1) } = 0,
+    value(n, "").
+pt030_ann_empty_or_null(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_ann_empty_or_null(c2).
+
+// ann_keyword_named(n): the JSON util `ann-keyword-named`, used where the JSON says `matches: "ann-keyword-named"`
+.decl pt030_ann_keyword_named(n: node)
+pt030_ann_keyword_named(n) :- kind(n, "keyword_argument"), child(n, c1, _),
+    kind(c1, "identifier"), glob("expected_warning", c1), pt030_tok_precedes_1(c1),
+    count : { precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, _), kind(c10, "identifier"), glob("expected_warning", c10), pt030_tok_precedes_2(c10) } = 0.
+
+// ann_unmatched_args(n): the JSON util `ann-unmatched-args`, used where the JSON says `matches: "ann-unmatched-args"`
+.decl pt030_ann_unmatched_args(n: node)
+pt030_ann_unmatched_args(n) :- kind(n, "argument_list"), next_sibling(s1, n),
+    pt030_warns_callee(s1),
+    count : { child(n, c2, _), kind(c2, "keyword_argument"), child(c2, c3, _), kind(c3, "identifier"), glob("match", c3), pt030_tok_precedes_3(c3), !pt030_alt_9(c2) } = 0.
+
+// ann_flagged_warning(n): the JSON util `ann-flagged-warning`, used where the JSON says `matches: "ann-flagged-warning"`
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_ann_flagged_warning(n: node, w: loc)
+pt030_ann_flagged_warning(n, W) :- pt030_broad_warning(n, W),
+    ( pt030_tok_follows_7(n), child(p1, n, _), pt030_ann_keyword_named(p1), child(p2, p1, _), pt030_ann_unmatched_args(p2)
+    ; pt030_pos0(n), child(p3, n, _), pt030_ann_unmatched_args(p3), count : { child(p3, c1, _), pt030_ann_keyword_named(c1) } = 0
+    ).
+
+
+// ann_string_context_manager(n): the JSON util `ann-string-context-manager`, used where the JSON says `matches: "ann-string-context-manager"`
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_ann_string_context_manager(n: node, w: loc)
+pt030_ann_string_context_manager(n, W) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pt030_alt_11(c3, W).
+
+// ann_string_callable(n): the JSON util `ann-string-callable`, used where the JSON says `matches: "ann-string-callable"`
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_ann_string_callable(n: node, w: loc)
+pt030_ann_string_callable(n, W) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pt030_alt_12(c3, W).
+
+// PT030(n): a finding at node n, from clause `context-manager-form`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT030(at: node, w: node) "Give `pytest.warns({w})` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it."
+    suppress noqa "PT030"
+PT030(W, n) :- pt030_flagged_warning(n, W), !pt030_in_callable_form(n).
+PT030(W, n) :- pt030_ann_string_context_manager(n, W).
+
+// PT030_callable_form(n): a finding at node n, from clause `callable-form`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT030_callable_form(at: node, w: node) code "PT030" "`pytest.warns({w}, func)` ignores `match=`; call the function inside `with pytest.warns({w}, match=...):` instead, or expect a more specific warning class."
+    suppress noqa "PT030"
+PT030_callable_form(W, n) :- pt030_flagged_warning(n, W), pt030_in_callable_form(n).
+PT030_callable_form(W, n) :- pt030_ann_string_callable(n, W).
+
+.decl pt030_alt_2_u0(n: node)
+pt030_alt_2_u0(n) :- pt030_part_has_text(n).
+pt030_alt_2_u0(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u0_empty(c2) } = 0.
+
+.decl pt030_alt_2_u1(n: node)
+pt030_alt_2_u1(n) :- pt030_part_has_text(n).
+pt030_alt_2_u1(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u0(c2) } = 0.
+
+.decl pt030_alt_2_u2(n: node)
+pt030_alt_2_u2(n) :- pt030_part_has_text(n).
+pt030_alt_2_u2(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u1(c2) } = 0.
+
+.decl pt030_alt_2_u3(n: node)
+pt030_alt_2_u3(n) :- pt030_part_has_text(n).
+pt030_alt_2_u3(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u2(c2) } = 0.
+
+.decl pt030_alt_2_u4(n: node)
+pt030_alt_2_u4(n) :- pt030_part_has_text(n).
+pt030_alt_2_u4(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u3(c2) } = 0.
+
+.decl pt030_alt_2_u5(n: node)
+pt030_alt_2_u5(n) :- pt030_part_has_text(n).
+pt030_alt_2_u5(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u4(c2) } = 0.
+
+.decl pt030_alt_2_u6(n: node)
+pt030_alt_2_u6(n) :- pt030_part_has_text(n).
+pt030_alt_2_u6(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u5(c2) } = 0.
+
+.decl pt030_alt_2_u7(n: node)
+pt030_alt_2_u7(n) :- pt030_part_has_text(n).
+pt030_alt_2_u7(n) :- child(n, c1, _), kind(c1, "interpolation"),
+    count : { field(c1, "expression", c2), pt030_empty_or_null_u6(c2) } = 0.
+
+.decl pt030_alt_3_u0(n: node)
+pt030_alt_3_u0(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1).
+pt030_alt_3_u0(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u1(n: node)
+pt030_alt_3_u1(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u0(n).
+pt030_alt_3_u1(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u2(n: node)
+pt030_alt_3_u2(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u1(n).
+pt030_alt_3_u2(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u3(n: node)
+pt030_alt_3_u3(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u2(n).
+pt030_alt_3_u3(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u4(n: node)
+pt030_alt_3_u4(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u3(n).
+pt030_alt_3_u4(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u5(n: node)
+pt030_alt_3_u5(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u4(n).
+pt030_alt_3_u5(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u6(n: node)
+pt030_alt_3_u6(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u5(n).
+pt030_alt_3_u6(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_alt_3_u7(n: node)
+pt030_alt_3_u7(n) :- child(n, c1, _), kind(c1, "string_start"), glob("**[fF]**", c1),
+    !pt030_alt_2_u6(n).
+pt030_alt_3_u7(n) :- count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fF]**", c4) } = 0,
+    value(n, "").
+
+.decl pt030_empty_or_null_u0(n: node)
+pt030_empty_or_null_u0(n) :- kind(n, "none").
+pt030_empty_or_null_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string") } = 0.
+
+.decl pt030_empty_or_null_u1(n: node)
+pt030_empty_or_null_u1(n) :- kind(n, "none").
+pt030_empty_or_null_u1(n) :- pt030_part_empty_u0(n).
+pt030_empty_or_null_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u0(c1) } = 0.
+pt030_empty_or_null_u1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u0(c2).
+
+.decl pt030_empty_or_null_u2(n: node)
+pt030_empty_or_null_u2(n) :- kind(n, "none").
+pt030_empty_or_null_u2(n) :- pt030_part_empty_u1(n).
+pt030_empty_or_null_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u1(c1) } = 0.
+pt030_empty_or_null_u2(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u1(c2).
+
+.decl pt030_empty_or_null_u3(n: node)
+pt030_empty_or_null_u3(n) :- kind(n, "none").
+pt030_empty_or_null_u3(n) :- pt030_part_empty_u2(n).
+pt030_empty_or_null_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u2(c1) } = 0.
+pt030_empty_or_null_u3(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u2(c2).
+
+.decl pt030_empty_or_null_u4(n: node)
+pt030_empty_or_null_u4(n) :- kind(n, "none").
+pt030_empty_or_null_u4(n) :- pt030_part_empty_u3(n).
+pt030_empty_or_null_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u3(c1) } = 0.
+pt030_empty_or_null_u4(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u3(c2).
+
+.decl pt030_empty_or_null_u5(n: node)
+pt030_empty_or_null_u5(n) :- kind(n, "none").
+pt030_empty_or_null_u5(n) :- pt030_part_empty_u4(n).
+pt030_empty_or_null_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u4(c1) } = 0.
+pt030_empty_or_null_u5(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u4(c2).
+
+.decl pt030_empty_or_null_u6(n: node)
+pt030_empty_or_null_u6(n) :- kind(n, "none").
+pt030_empty_or_null_u6(n) :- pt030_part_empty_u5(n).
+pt030_empty_or_null_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u5(c1) } = 0.
+pt030_empty_or_null_u6(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u5(c2).
+
+.decl pt030_empty_or_null_u7(n: node)
+pt030_empty_or_null_u7(n) :- kind(n, "none").
+pt030_empty_or_null_u7(n) :- pt030_part_empty_u6(n).
+pt030_empty_or_null_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pt030_part_empty_u6(c1) } = 0.
+pt030_empty_or_null_u7(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt030_empty_or_null_u6(c2).
+
+.decl pt030_part_empty_u1(n: node)
+pt030_part_empty_u1(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u0(n).
+
+.decl pt030_part_empty_u2(n: node)
+pt030_part_empty_u2(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u1(n).
+
+.decl pt030_part_empty_u3(n: node)
+pt030_part_empty_u3(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u2(n).
+
+.decl pt030_part_empty_u4(n: node)
+pt030_part_empty_u4(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u3(n).
+
+.decl pt030_part_empty_u5(n: node)
+pt030_part_empty_u5(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u4(n).
+
+.decl pt030_part_empty_u6(n: node)
+pt030_part_empty_u6(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u5(n).
+
+.decl pt030_part_empty_u7(n: node)
+pt030_part_empty_u7(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[tTbB]**", c1) } = 0,
+    pt030_alt_3_u6(n).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_1(n: node)
+.stored pt030_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_1(n) :- next_sibling(n, s2), glob("=", s2).
+pt030_tok_precedes_1(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("=", t3).
+pt030_tok_precedes_1(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_2(n: node)
+.stored pt030_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_2(n) :- next_sibling(n, s11), glob("=", s11).
+pt030_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("=", t12).
+pt030_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_3(n: node)
+.stored pt030_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_3(n) :- next_sibling(n, s4), glob("=", s4).
+pt030_tok_precedes_3(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("=", t5).
+pt030_tok_precedes_3(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_4(n: node)
+.stored pt030_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_4(n) :- next_sibling(s12, n), glob("=", s12).
+pt030_tok_follows_4(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("=", t13).
+pt030_tok_follows_4(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g14).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_precedes_5(n: node)
+.stored pt030_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_precedes_5(n) :- next_sibling(n, s21), glob("=", s21).
+pt030_tok_precedes_5(n) :- structural_after(n, g23), match("\\s*", g23), child(p24, n, _),
+    node(_, n, _, _, en27), o25 = en27 + strlen(g23), token(p24, _, t22, o25, _),
+    match("=", t22).
+pt030_tok_precedes_5(n) :- structural_after(n, g23),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g23).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_6(n: node)
+.stored pt030_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_6(n) :- next_sibling(s2, n), glob("=", s2).
+pt030_tok_follows_6(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("=", t3).
+pt030_tok_follows_6(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g4).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt030_tok_follows_7(n: node)
+.stored pt030_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt030_tok_follows_7(n) :- next_sibling(s1, n), glob("=", s1).
+pt030_tok_follows_7(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("=", t2).
+pt030_tok_follows_7(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g3).
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt030_alt_2_u0_empty(n: node)
+
+// alt_3_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt030_alt_3_u0_empty(n: node)
+
+// empty_or_null_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt030_empty_or_null_u0_empty(n: node)
+
+// part_empty_u0: level -1 of an unrolled recursion, empty
+.decl pt030_part_empty_u0(n: node)
+
+// part_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt030_part_empty_u0_empty(n: node)
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_2(n: node)
+pt030_alt_2(n) :- pt030_alt_2_u7(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_3(n: node)
+pt030_alt_3(n) :- pt030_alt_3_u7(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_5(n: node)
+pt030_alt_5(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pt030_alt_5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_6(n: node)
+pt030_alt_6(n) :- kind(n, "list_splat").
+pt030_alt_6(n) :- precedes(s1, n), pt030_positional(s1).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_7(n: node)
+pt030_alt_7(n) :- field(n, "value", c1), pt030_empty_or_null(c1).
+pt030_alt_7(n) :- precedes(s2, n), kind(s2, "keyword_argument"), field(s2, "name", c3),
+    glob("match", c3).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pt030_alt_9(n: node)
+pt030_alt_9(n) :- child(n, c1, _), pt030_ann_empty_or_null(c1), pt030_tok_follows_6(c1).
+pt030_alt_9(n) :- precedes(s9, n), kind(s9, "keyword_argument"), child(s9, c10, _),
+    kind(c10, "identifier"), glob("match", c10), pt030_tok_precedes_2(c10).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_alt_11(n: node, w: loc)
+pt030_alt_11(n, W) :- pt030_ann_flagged_warning(n, W), !pt030_in_callable_form(n).
+pt030_alt_11(n, W) :- pt030_ann_string_context_manager(n, W).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   W: metavariable this relation binds for the calling rule
+.decl pt030_alt_12(n: node, w: loc)
+pt030_alt_12(n, W) :- pt030_ann_flagged_warning(n, W), pt030_in_callable_form(n).
+pt030_alt_12(n, W) :- pt030_ann_string_callable(n, W).

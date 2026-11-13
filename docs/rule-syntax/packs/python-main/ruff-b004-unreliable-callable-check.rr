@@ -1,0 +1,51 @@
+.policy "ruff-b004-unreliable-callable-check" revision 1
+.guests off
+.description "Use callable() instead of checking hasattr() or getattr() for __call__; the attribute check gives wrong answers for some objects."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B004(n): a finding at node n, from clause `unreliable-callable-check`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on FUNC, GETATTR, OBJ, ATTR, DEFAULT are added to every rule.
+.violation B004(at: node) "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results."
+    suppress noqa "B004"
+B004(n) :- kind(n, "call"),
+    ( n ~ `$FUNC($OBJ, $ATTR)`, unset(DEFAULT), unset(GETATTR)
+    ; n ~ `$GETATTR($OBJ, $ATTR, $DEFAULT)`, unset(FUNC)
+    ),
+    b004_builtin_callee(FUNC), b004_getattr_callee(GETATTR), b004_positional(OBJ), b004_call_string(ATTR),
+    b004_positional(DEFAULT).
+
+// call_string(n): the JSON util `call-string`, used where the JSON says `matches: "call-string"`
+.decl b004_call_string(n: node)
+b004_call_string(n) :-
+    ( kind(n, "string"), match("[rRuU]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, "__call__").
+b004_call_string(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    b004_call_string(c2).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl b004_positional(n: node)
+b004_positional(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").
+
+// builtin_callee(n): the JSON util `builtin-callee`, used where the JSON says `matches: "builtin-callee"`
+.decl b004_builtin_callee(n: node)
+b004_builtin_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "hasattr") ; global_ref(n, "getattr")),
+    (sym_of(n, "builtins.hasattr") ; sym_of(n, "builtins.getattr")).
+b004_builtin_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b004_builtin_callee(c1).
+
+// getattr_callee(n): the JSON util `getattr-callee`, used where the JSON says `matches: "getattr-callee"`
+.decl b004_getattr_callee(n: node)
+b004_getattr_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "getattr"), sym_of(n, "builtins.getattr").
+b004_getattr_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b004_getattr_callee(c1).

@@ -1,0 +1,29 @@
+.policy "ruff-up023-deprecated-c-element-tree" revision 1
+.guests off
+.description "Import the ElementTree module instead of the deprecated cElementTree one; the C accelerator is used automatically."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP023(n): a finding at node n, from clause `deprecated-c-element-tree`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP023(at: node) "`cElementTree` is deprecated and was removed in Python 3.9; import `xml.etree.ElementTree` instead, which uses the C accelerator automatically. Keep it only for Python 2 code."
+    suppress noqa "UP023"
+UP023(n) :- kind(n, "aliased_import"), field(n, "name", c1), up023_c_module(c1),
+    child(p2, n, _), kind(p2, "import_statement").
+UP023(n) :- kind(n, "import_from_statement"), field(n, "module_name", c3),
+    up023_c_module(c3).
+UP023(n) :- kind(n, "aliased_import"), field(n, "name", c4), kind(c4, "dotted_name"),
+    glob("cElementTree", c4), child(p5, n, _), kind(p5, "import_from_statement"),
+    field(p5, "module_name", c6), up023_etree_package(c6).
+
+// c_module(n): the JSON util `c-module`, used where the JSON says `matches: "c-module"`
+.decl up023_c_module(n: node)
+up023_c_module(n) :- kind(n, "dotted_name"),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*cElementTree", n).
+
+// etree_package(n): the JSON util `etree-package`, used where the JSON says `matches: "etree-package"`
+.decl up023_etree_package(n: node)
+up023_etree_package(n) :- kind(n, "dotted_name"),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", n).

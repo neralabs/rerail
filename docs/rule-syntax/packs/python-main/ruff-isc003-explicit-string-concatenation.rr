@@ -1,0 +1,75 @@
+.policy "ruff-isc003-explicit-string-concatenation" revision 1
+.guests off
+.description "Join string literals split across lines by implicit concatenation inside parentheses instead of the + operator, which adds noise without changing the result."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// ISC003(n): a finding at node n, from clause `explicit-string-concatenation`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ISC003(at: node) "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring."
+    suppress noqa "ISC003"
+ISC003(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("+", c1),
+    field(n, "left", c2), isc003_left_string(c2, L), field(n, "right", c3),
+    isc003_right_string_on_later_line(c3, L),
+    ( field(n, "left", c4), isc003_text(c4), field(n, "right", c5), isc003_text(c5)
+    ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
+    ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
+    ).
+
+
+// string_like(n): the JSON util `string-like`, used where the JSON says `matches: "string-like"`
+.decl isc003_string_like(n: node)
+isc003_string_like(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+
+// left_string(n): the JSON util `left-string`, used where the JSON says `matches: "left-string"`
+//   L: metavariable this relation binds for the calling rule
+.decl isc003_left_string(n: node, l: loc)
+isc003_left_string(n, L) :- isc003_string_like(n), node(_, n, _, _, _), L = n.
+isc003_left_string(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    isc003_left_string(c1, L).
+
+// right_string_on_later_line(n): the JSON util `right-string-on-later-line`, used where the JSON says `matches: "right-string-on-later-line"`
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+.decl isc003_right_string_on_later_line(n: node, l: loc)
+isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
+    isc003_string_like(n), t2 = L, node(_, n, _, s5, e6), node(_, L, _, s7, e8), e8 <= s5,
+    line(n, l4), end_line(t2, l3), k1 = l4 - l3, k1 >= 1.
+isc003_right_string_on_later_line(n, L) :- isc003_demand_right_string_on_later_line(n, L),
+    kind(n, "parenthesized_expression"), child(n, c9, _),
+    isc003_right_string_on_later_line(c9, L).
+
+// bytes(n): the JSON util `bytes`, used where the JSON says `matches: "bytes"`
+.decl isc003_bytes(n: node)
+isc003_bytes(n) :- kind(n, "string"), match("[^'\"]*[bB].*", n).
+isc003_bytes(n) :- kind(n, "concatenated_string"), child(n, c1, _), isc003_bytes(c1).
+isc003_bytes(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), isc003_bytes(c2).
+
+// template(n): the JSON util `template`, used where the JSON says `matches: "template"`
+.decl isc003_template(n: node)
+isc003_template(n) :- kind(n, "string"), match("[^'\"]*[tT].*", n).
+isc003_template(n) :- kind(n, "concatenated_string"), child(n, c1, _), isc003_template(c1).
+isc003_template(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), isc003_template(c2).
+
+// text(n): the JSON util `text`, used where the JSON says `matches: "text"`
+.decl isc003_text(n: node)
+isc003_text(n) :- node(_, n, _, _, _), !isc003_alt_1(n).
+
+// demand_right_string_on_later_line: the rows of right_string_on_later_line its callers ask for (the metavariable columns they pass in)
+.decl isc003_demand_right_string_on_later_line(n: node, l: loc)
+isc003_demand_right_string_on_later_line(c3, L) :- kind(n, "binary_operator"),
+    field(n, "operator", c1), glob("+", c1), field(n, "left", c2), isc003_left_string(c2, L),
+    field(n, "right", c3),
+    ( field(n, "left", c4), isc003_text(c4), field(n, "right", c5), isc003_text(c5)
+    ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
+    ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
+    ).
+
+isc003_demand_right_string_on_later_line(c9, L) :- isc003_demand_right_string_on_later_line(n, L),
+    kind(n, "parenthesized_expression"), child(n, c9, _).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl isc003_alt_1(n: node)
+isc003_alt_1(n) :- isc003_bytes(n).
+isc003_alt_1(n) :- isc003_template(n).

@@ -1,0 +1,227 @@
+.policy "ruff-up029-unnecessary-builtin-import" revision 1
+.guests off
+.description "Remove imports of Python 3 builtins from compatibility shims such as builtins, six and io; the names are already available without importing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP029(n): a finding at node n, from clause `unnecessary-builtin-import`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP029(at: node) "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2."
+    suppress noqa "UP029"
+UP029(n) :- kind(n, "import_from_statement"), up029_alt_10(n).
+
+// shadowed(n): the JSON util `shadowed`, used where the JSON says `matches: "shadowed"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl up029_shadowed(n: node, n_mv: loc)
+up029_shadowed(n, N) :- up029_demand_shadowed(n, N), within_stop(n, p1, up029_stop_1), precedes(s2, p1),
+    up029_alt_4(s2, N).
+up029_shadowed(n, N) :- up029_demand_shadowed(n, N),
+    (precedes(n, s1), up029_alias_binding(s1, N) ; precedes(s2, n), up029_alias_binding(s2, N)).
+
+// alias_binding(n): the JSON util `alias-binding`, used where the JSON says `matches: "alias-binding"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl up029_alias_binding(n: node, n_mv: loc)
+up029_alias_binding(n, N) :- up029_demand_alias_binding(n, N), up029_tok_follows_4(n), up029_alt_8(n, N).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_has_1(n: node)
+.stored up029_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_has_1(n) :- child(n, c13, _), glob("=", c13).
+up029_tok_has_1(n) :- op(n, t14), match("=", t14).
+up029_tok_has_1(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+up029_tok_has_1(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+up029_tok_has_1(n) :- node_text(n, g15), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_has_2(n: node)
+.stored up029_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_has_2(n) :- child(n, c7, _), glob("=", c7).
+up029_tok_has_2(n) :- op(n, t8), match("=", t8).
+up029_tok_has_2(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g9).
+up029_tok_has_2(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g9).
+up029_tok_has_2(n) :- node_text(n, g9), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g9).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_has_3(n: node)
+.stored up029_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_has_3(n) :- child(n, c11, _), glob("=", c11).
+up029_tok_has_3(n) :- op(n, t12), match("=", t12).
+up029_tok_has_3(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+up029_tok_has_3(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+up029_tok_has_3(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_4(n: node)
+.stored up029_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_4(n) :- precedes(s1, n), glob("import", s1).
+up029_tok_follows_4(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("import", t2).
+up029_tok_follows_4(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g3).
+up029_tok_follows_4(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g3).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_5(n: node)
+.stored up029_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_5(n) :- precedes(s4, n), glob("import", s4).
+up029_tok_follows_5(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match("import", t5).
+up029_tok_follows_5(n) :- structural_before(n, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g6).
+up029_tok_follows_5(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g6).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_6(n: node)
+.stored up029_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_6(n) :- precedes(s3, n), glob("import", s3).
+up029_tok_follows_6(n) :- child(p6, n, _), node(_, n, _, st8, _), token(p6, _, t4, _, en9),
+    en9 <= st8, match("import", t4).
+up029_tok_follows_6(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g5).
+up029_tok_follows_6(n) :- precedes(o7, n), structural_before(o7, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g5).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_7(n: node)
+.stored up029_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_7(n) :- precedes(s13, n), glob("import", s13).
+up029_tok_follows_7(n) :- child(p16, n, _), node(_, n, _, st18, _),
+    token(p16, _, t14, _, en19), en19 <= st18, match("import", t14).
+up029_tok_follows_7(n) :- structural_before(n, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g15).
+up029_tok_follows_7(n) :- precedes(o17, n), structural_before(o17, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g15).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_8(n: node)
+.stored up029_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_8(n) :- precedes(s22, n), glob("import", s22).
+up029_tok_follows_8(n) :- child(p25, n, _), node(_, n, _, st27, _),
+    token(p25, _, t23, _, en28), en28 <= st27, match("import", t23).
+up029_tok_follows_8(n) :- structural_before(n, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g24).
+up029_tok_follows_8(n) :- precedes(o26, n), structural_before(o26, g24),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g24).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up029_tok_follows_9(n: node)
+.stored up029_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up029_tok_follows_9(n) :- precedes(s31, n), glob("import", s31).
+up029_tok_follows_9(n) :- child(p34, n, _), node(_, n, _, st36, _),
+    token(p34, _, t32, _, en37), en37 <= st36, match("import", t32).
+up029_tok_follows_9(n) :- structural_before(n, g33),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g33).
+up029_tok_follows_9(n) :- precedes(o35, n), structural_before(o35, g33),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g33).
+
+// demand_shadowed: the rows of shadowed its callers ask for (the metavariable columns they pass in)
+.decl up029_demand_shadowed(n: node, n_mv: loc)
+up029_demand_shadowed(c2, N) :- child(n, c2, _), kind(c2, "dotted_name"),
+    glob("{ascii,bytes,chr,dict,filter,hex,input,int,isinstance,list,map,max,min,next,object,oct,open,pow,range,round,str,super,zip}", c2),
+    node(_, c2, _, _, _), N = c2, up029_tok_follows_6(c2).
+up029_demand_shadowed(c12, N) :- field(n, "module_name", c11), kind(c11, "dotted_name"),
+    glob("io", c11), child(n, c12, _), kind(c12, "dotted_name"), glob("open", c12),
+    node(_, c12, _, _, _), N = c12, up029_tok_follows_7(c12).
+up029_demand_shadowed(c21, N) :- field(n, "module_name", c20), kind(c20, "dotted_name"),
+    glob("six", c20), child(n, c21, _), kind(c21, "dotted_name"),
+    glob("{callable,next}", c21), node(_, c21, _, _, _), N = c21, up029_tok_follows_8(c21).
+up029_demand_shadowed(c30, N) :- field(n, "module_name", c29), kind(c29, "dotted_name"),
+    match("(six\\s*\\.\\s*moves)", c29), child(n, c30, _), kind(c30, "dotted_name"),
+    glob("{filter,input,map,range,zip}", c30), node(_, c30, _, _, _), N = c30, up029_tok_follows_9(c30).
+
+// demand_alias_binding: the rows of alias_binding its callers ask for (the metavariable columns they pass in)
+.decl up029_demand_alias_binding(n: node, n_mv: loc)
+up029_demand_alias_binding(s1, N) :- up029_demand_shadowed(n, N), precedes(n, s1).
+up029_demand_alias_binding(s2, N) :- up029_demand_shadowed(n, N), precedes(s2, n).
+
+// demand_alt_4: the rows of alt_4 its callers ask for (the metavariable columns they pass in)
+.decl up029_demand_alt_4(n: node, n_mv: loc)
+up029_demand_alt_4(s2, N) :- up029_demand_shadowed(n, N), within_stop(n, p1, up029_stop_1),
+    precedes(s2, p1).
+
+// demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
+.decl up029_demand_alt_3(n: node, n_mv: loc)
+up029_demand_alt_3(c4, N) :- up029_demand_alt_4(n, N), within_stop(c4, n, up029_stop_2).
+
+// demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
+.decl up029_demand_alt_8(n: node, n_mv: loc)
+up029_demand_alt_8(n, N) :- up029_demand_alias_binding(n, N), up029_tok_follows_4(n).
+
+// stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up029_stop_2(kind: symbol)
+up029_stop_2("function_definition"). up029_stop_2("class_definition"). up029_stop_2("lambda").
+up029_stop_2("list_comprehension"). up029_stop_2("set_comprehension").
+up029_stop_2("dictionary_comprehension"). up029_stop_2("generator_expression").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up029_stop_1(n: node)
+up029_stop_1(n) :- kind(n, "module").
+up029_stop_1(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl up029_alt_3(n: node, n_mv: loc)
+up029_alt_3(n, N) :- up029_demand_alt_3(n, N),
+    (kind(n, "function_definition") ; kind(n, "class_definition")),
+    field(n, "name", c1), kind(c1, "identifier"), node(_, c1, _, _, _), J = c1, text(J, t2), text(N, t2), @doc(J) = @doc(N).
+up029_alt_3(n, N) :- up029_demand_alt_3(n, N), (kind(n, "identifier") ; kind(n, "dotted_name")),
+    node(_, n, _, _, _), J = n, (bind_only(n) ; aug_target(n)), text(J, t4), text(N, t4),
+    count : { child(p6, n, _), kind(p6, "assignment"), !up029_tok_has_2(p6) } = 0, @doc(J) = @doc(N).
+up029_alt_3(n, N) :- up029_demand_alt_3(n, N), kind(n, "identifier"), node(_, n, _, _, _), J = n,
+    text(J, t15), text(N, t15), child(p17, n, _),
+    (kind(p17, "global_statement") ; kind(p17, "nonlocal_statement")), @doc(J) = @doc(N).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl up029_alt_4(n: node, n_mv: loc)
+up029_alt_4(n, N) :- up029_demand_alt_4(n, N),
+    (kind(n, "function_definition") ; kind(n, "class_definition")),
+    field(n, "name", c1), kind(c1, "identifier"), node(_, c1, _, _, _), J = c1, text(J, t2), text(N, t2), @doc(J) = @doc(N).
+up029_alt_4(n, N) :- up029_demand_alt_4(n, N), within_stop(c4, n, up029_stop_2), up029_alt_3(c4, N),
+    !kind(n, "type_parameter").
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl up029_alt_8(n: node, n_mv: loc)
+up029_alt_8(n, N) :- up029_demand_alt_8(n, N), kind(n, "dotted_name"), node(_, n, _, _, _), J = n,
+    text(J, t1), text(N, t1), @doc(J) = @doc(N).
+up029_alt_8(n, N) :- up029_demand_alt_8(n, N), kind(n, "aliased_import"), field(n, "alias", c3),
+    node(_, c3, _, _, _), J = c3, text(J, t4), text(N, t4), @doc(J) = @doc(N).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl up029_alt_11(n: node)
+up029_alt_11(n) :- child(n, c1, _), kind(c1, "wildcard_import").
+up029_alt_11(n) :- child(n, c2, _), kind(c2, "dotted_name"),
+    glob("{ascii,bytes,chr,dict,filter,hex,input,int,isinstance,list,map,max,min,next,object,oct,open,pow,range,round,str,super,zip}", c2),
+    node(_, c2, _, _, _), N = c2, up029_tok_follows_6(c2), !up029_shadowed(c2, N).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl up029_alt_10(n: node)
+up029_alt_10(n) :- field(n, "module_name", c1), kind(c1, "dotted_name"),
+    match("(builtins|six\\s*\\.\\s*moves\\s*\\.\\s*builtins)", c1), up029_alt_11(n).
+up029_alt_10(n) :- field(n, "module_name", c11), kind(c11, "dotted_name"), glob("io", c11),
+    child(n, c12, _), kind(c12, "dotted_name"), glob("open", c12), node(_, c12, _, _, _), N = c12,
+    up029_tok_follows_7(c12), !up029_shadowed(c12, N).
+up029_alt_10(n) :- field(n, "module_name", c20), kind(c20, "dotted_name"), glob("six", c20),
+    child(n, c21, _), kind(c21, "dotted_name"), glob("{callable,next}", c21),
+    node(_, c21, _, _, _), N = c21, up029_tok_follows_8(c21), !up029_shadowed(c21, N).
+up029_alt_10(n) :- field(n, "module_name", c29), kind(c29, "dotted_name"),
+    match("(six\\s*\\.\\s*moves)", c29), child(n, c30, _), kind(c30, "dotted_name"),
+    glob("{filter,input,map,range,zip}", c30), node(_, c30, _, _, _), N = c30, up029_tok_follows_9(c30),
+    !up029_shadowed(c30, N).

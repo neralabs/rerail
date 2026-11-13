@@ -1,0 +1,67 @@
+.policy "ruff-n803-invalid-argument-name" revision 1
+.guests off
+.description "Name function parameters in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// override_ref(n): the JSON util `override-ref`, used where the JSON says `matches: "override-ref"`
+.decl n803_override_ref(n: node)
+n803_override_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.override")
+    ; sym_of(n, "typing_extensions.override")
+    ; sym_of(n, "_typeshed.override")
+    ).
+
+n803_override_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    n803_override_ref(c1).
+
+// bad_name(n): the JSON util `bad-name`, used where the JSON says `matches: "bad-name"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl n803_bad_name(n: node, name: loc)
+n803_bad_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
+    !glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).
+
+// bad_param(n): the JSON util `bad-param`, used where the JSON says `matches: "bad-param"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl n803_bad_param(n: node, name: loc)
+n803_bad_param(n, NAME) :- kind(n, "identifier"), n803_bad_name(n, NAME).
+n803_bad_param(n, NAME) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "name", c1), n803_bad_name(c1, NAME).
+n803_bad_param(n, NAME) :- kind(n, "typed_parameter"), child(n, c2, _),
+    ( n803_bad_name(c2, NAME)
+    ; (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")), child(c2, c1, _), n803_bad_name(c1, NAME)
+    ).
+
+n803_bad_param(n, NAME) :- (kind(n, "list_splat_pattern") ; kind(n, "dictionary_splat_pattern")),
+    child(n, c4, _), n803_bad_name(c4, NAME).
+
+// exempt_override_method(n): the JSON util `exempt-override-method`, used where the JSON says `matches: "exempt-override-method"`
+.decl n803_exempt_override_method(n: node)
+n803_exempt_override_method(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _), n803_override_ref(c3),
+    within_stop(n, p4, n803_stop_2), kind(p4, "class_definition").
+
+// N803(n): a finding at node n, from clause `invalid-argument-name`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N803(at: node, name: loc) "Rename parameter `{name}` to lowercase snake_case and update callers that pass it by keyword; if this method overrides a superclass method, mark it `@typing.override` instead."
+    suppress noqa "N803"
+N803(n, NAME) :- n803_bad_param(n, NAME), child(p1, n, _), kind(p1, "parameters"),
+    child(p2, p1, _), kind(p2, "function_definition"), !n803_exempt_override_method(p2).
+
+// N803_invalid_lambda_argument_name(n): a finding at node n, from clause `invalid-lambda-argument-name`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N803_invalid_lambda_argument_name(at: node, name: loc) code "N803" "Rename lambda parameter `{name}` to lowercase snake_case and update its uses in the lambda body."
+    suppress noqa "N803"
+N803_invalid_lambda_argument_name(n, NAME) :- n803_bad_param(n, NAME), child(p1, n, _),
+    kind(p1, "lambda_parameters").
+
+// stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n803_stop_2(kind: symbol)
+n803_stop_2("function_definition"). n803_stop_2("class_definition").

@@ -1,0 +1,138 @@
+.policy "ruff-pie794-duplicate-class-field-definition" revision 1
+.guests off
+.description "Define each class field once; a later definition silently replaces the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PIE794(n): a finding at node n, from clause `duplicate-class-field-definition`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PIE794(at: node, n: loc) "Class field `{n}` is defined multiple times"
+    suppress noqa "PIE794"
+PIE794(n, N) :- pie794_field_def(n, N), child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
+    kind(p2, "class_definition"), precedes(s3, n), pie794_field_def(s3, N).
+
+// target_n(n): the JSON util `target-n`, used where the JSON says `matches: "target-n"`
+//   N: metavariable this relation binds for the calling rule
+.decl pie794_target_n(n: node, n_mv: loc)
+pie794_target_n(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
+pie794_target_n(n, N) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern")),
+    !pie794_tok_has_1(n), child(n, c9, _), pie794_target_n(c9, N).
+
+// field_def(n): the JSON util `field-def`, used where the JSON says `matches: "field-def"`
+//   N: metavariable this relation binds for the calling rule
+.decl pie794_field_def(n: node, n_mv: loc)
+pie794_field_def(n, N) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), child(c1, c2, _), !pie794_tok_follows_2(c2), pie794_target_n(c2, N),
+    count : { child(c1, c10, _), kind(c10, "assignment") } = 0,
+    count : { child(c1, c11, _), pie794_tok_follows_3(c11), pie794_alt_2(c11, N) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_has_1(n: node)
+.stored pie794_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pie794_tok_has_1(n) :- op(n, t2), match(",", t2).
+pie794_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pie794_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pie794_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_follows_2(n: node)
+.stored pie794_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_follows_2(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+pie794_tok_follows_2(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+pie794_tok_follows_2(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_follows_3(n: node)
+.stored pie794_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_follows_3(n) :- next_sibling(s12, n), glob("=", s12).
+pie794_tok_follows_3(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("=", t13).
+pie794_tok_follows_3(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g14).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_follows_4(n: node)
+.stored pie794_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_follows_4(n) :- next_sibling(s20, n), glob(".", s20).
+pie794_tok_follows_4(n) :- structural_before(n, g22), match("\\s*", g22), child(p23, n, _),
+    node(_, n, _, st25, _), o24 = st25 - strlen(g22), token(p23, _, t21, _, o24),
+    match("\\.", t21).
+pie794_tok_follows_4(n) :- structural_before(n, g22),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g22).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_precedes_5(n: node)
+.stored pie794_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_precedes_5(n) :- next_sibling(n, s28), glob("=", s28).
+pie794_tok_precedes_5(n) :- structural_after(n, g30), match("\\s*", g30), child(p31, n, _),
+    node(_, n, _, _, en34), o32 = en34 + strlen(g30), token(p31, _, t29, o32, _),
+    match("=", t29).
+pie794_tok_precedes_5(n) :- structural_after(n, g30),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g30).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_follows_6(n: node)
+.stored pie794_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_follows_6(n) :- next_sibling(s1, n), glob(".", s1).
+pie794_tok_follows_6(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+pie794_tok_follows_6(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_precedes_7(n: node)
+.stored pie794_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_precedes_7(n) :- next_sibling(n, s9), glob("=", s9).
+pie794_tok_precedes_7(n) :- structural_after(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, _, en15), o13 = en15 + strlen(g11), token(p12, _, t10, o13, _),
+    match("=", t10).
+pie794_tok_precedes_7(n) :- structural_after(n, g11),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_follows_8(n: node)
+.stored pie794_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_follows_8(n) :- next_sibling(s2, n), glob(".", s2).
+pie794_tok_follows_8(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+pie794_tok_follows_8(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie794_tok_precedes_9(n: node)
+.stored pie794_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie794_tok_precedes_9(n) :- next_sibling(n, s10), glob("=", s10).
+pie794_tok_precedes_9(n) :- structural_after(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, _, en16), o14 = en16 + strlen(g12), token(p13, _, t11, o14, _),
+    match("=", t11).
+pie794_tok_precedes_9(n) :- structural_after(n, g12),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
+.decl pie794_demand_alt_2(n: node, n_mv: loc)
+pie794_demand_alt_2(c11, N) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), child(c1, c2, _), pie794_target_n(c2, N), child(c1, c11, _),
+    pie794_tok_follows_3(c11).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pie794_alt_1(n: node)
+pie794_alt_1(n) :- pie794_tok_follows_6(n).
+pie794_alt_1(n) :- child(p8, n, _), kind(p8, "keyword_argument"), pie794_tok_precedes_7(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pie794_alt_2(n: node, n_mv: loc)
+pie794_alt_2(n, N) :- pie794_demand_alt_2(n, N), kind(n, "identifier"), text(n, t_n1), text(N, t_n1), @doc(n) = @doc(N).
+pie794_alt_2(n, N) :- pie794_demand_alt_2(n, N), has(n, c1, "identifier"),
+    text(c1, t_n2), text(N, t_n2), !pie794_alt_1(c1), @doc(c1) = @doc(N).

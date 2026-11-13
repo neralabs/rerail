@@ -1,0 +1,155 @@
+.policy "ruff-d412-blank-lines-between-header-and-content" revision 1
+.guests off
+.description "Start each docstring section's content on the line right after its header, without blank lines in between, for a consistent docstring layout."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d412_doc_stmt(n: node)
+d412_doc_stmt(n) :- kind(n, "expression_statement"), !d412_alt_1(n),
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d412_doc_holder(n: node)
+d412_doc_holder(n) :- d412_doc_stmt(n).
+d412_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d412_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d412_docstring(n: node)
+d412_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d412_doc_holder(p2).
+
+// numpy_mode(n): the JSON util `numpy-mode`, used where the JSON says `matches: "numpy-mode"`
+.decl d412_numpy_mode(n: node)
+d412_numpy_mode(n) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:other param(?:eters|s)|parameters)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:other param(?:eters|s)|parameters)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n).
+d412_numpy_mode(n) :- !match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:arg(?:s|uments)|keyword arg(?:s|uments)|other arg(?:s|uments))):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:arg(?:s|uments)|keyword arg(?:s|uments)|other arg(?:s|uments))):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n),
+    match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n),
+    d412_alt_4(n).
+
+// underlined(n): the JSON util `underlined`, used where the JSON says `matches: "underlined"`
+.decl d412_underlined(n: node)
+d412_underlined(n) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*)\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?s:.*)", n).
+
+// directive_hides_header(n): the JSON util `directive-hides-header`, used where the JSON says `matches: "directive-hides-header"`
+.decl d412_directive_hides_header(n: node)
+d412_directive_hides_header(n) :- child(p1, n, _), kind(p1, "string"),
+    value(p1, v2), match("(?s:.*)\\n([^\\S\\n]*)\\.\\.[ ][^\\n]*(?:\\n(?:[^\\S\\n]*|\\1[^\\S\\n]+[^\\n]*))*\\n\\1[^\\S\\n]+(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|x(?:amples?|tended summary))|hint|important|keyword arg(?:s|uments)|methods|notes?|other (?:arg(?:s|uments)|param(?:eters|s))|parameters|r(?:aises|e(?:ceives|ferences|turns?))|s(?:ee also|hort summary)|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*(?:\\n|\\z)(?s:.*)", v2).
+
+// spaced_header_numpy(n): the JSON util `spaced-header-numpy`, used where the JSON says `matches: "spaced-header-numpy"`
+//   K, L, N: metavariables this relation binds for the calling rule
+.decl d412_spaced_header_numpy(n: node, k: loc, l: loc, n_mv: loc)
+d412_spaced_header_numpy(n, K, L, N) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*)(?:(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:ttributes)|E(?i:x(?:amples|tended summary))|M(?i:ethods)|N(?i:otes)|O(?i:ther param(?:eters|s))|P(?i:arameters)|R(?i:(?:aises|e(?:ceives|ferences|turns)))|S(?i:(?:ee also|hort summary))|W(?i:arn(?:ings|s))|Y(?i:ields))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<K>(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))(?s:.*)", n).
+
+// spaced_first_numpy(n): the JSON util `spaced-first-numpy`, used where the JSON says `matches: "spaced-first-numpy"`
+//   F: metavariable this relation binds for the calling rule
+.decl d412_spaced_first_numpy(n: node, f: loc)
+d412_spaced_first_numpy(n, F) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*?)(?:(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*|^[^\\S\\n]*\\n[ ]{5}[^\\S\\n]*)(?:(?:a(?i:ttributes)|e(?i:x(?:amples|tended summary))|m(?i:ethods)|n(?i:otes)|o(?i:ther param(?:eters|s))|p(?i:arameters)|r(?i:(?:aises|e(?:ceives|ferences|turns)))|s(?i:(?:ee also|hort summary))|w(?i:arn(?:ings|s))|y(?i:ields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*|^[^\\S\\n]*\\n[ ]{5}[^\\S\\n]*)(?P<F>(?:a(?i:ttributes)|e(?i:x(?:amples|tended summary))|m(?i:ethods)|n(?i:otes)|o(?i:ther param(?:eters|s))|p(?i:arameters)|r(?i:(?:aises|e(?:ceives|ferences|turns)))|s(?i:(?:ee also|hort summary))|w(?i:arn(?:ings|s))|y(?i:ields))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?i:(?:attributes|ex(?:amples|tended summary)|methods|notes|other param(?:eters|s)|parameters|r(?:aises|e(?:ceives|ferences|turns))|s(?:ee also|hort summary)|warn(?:ings|s)|yields)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$))(?s:.*)", n).
+
+// spaced_header_google(n): the JSON util `spaced-header-google`, used where the JSON says `matches: "spaced-header-google"`
+//   K, L, N: metavariables this relation binds for the calling rule
+.decl d412_spaced_header_google(n: node, k: loc, l: loc, n_mv: loc)
+d412_spaced_header_google(n, K, L, N) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*)(?:(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?)):?[^\\S\\n]*$|^[^\\S\\n]*\\n[ ]{0,4}(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:^[^\\S\\n]*\\n[ ]{0,4}(?P<L>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$|(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?P<N>(?:A(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|C(?i:aution)|D(?i:anger)|E(?i:(?:rror|xamples?))|H(?i:int)|I(?i:mportant)|K(?i:eyword arg(?:s|uments))|M(?i:ethods)|N(?i:otes?)|O(?i:ther arg(?:s|uments))|R(?i:(?:aises|e(?:ferences|turns?)))|S(?i:ee also)|T(?i:(?:ip|odo))|W(?i:arn(?:ings?|s))|Y(?i:ields?))):?[^\\S\\n]*$)(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?P<K>(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?))):?[^\\S\\n]*$\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))(?s:.*)", n).
+
+// spaced_first_google(n): the JSON util `spaced-first-google`, used where the JSON says `matches: "spaced-first-google"`
+//   F: metavariable this relation binds for the calling rule
+.decl d412_spaced_first_google(n: node, f: loc)
+d412_spaced_first_google(n, F) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*?)(?:(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*|^[^\\S\\n]*\\n[ ]{5}[^\\S\\n]*)(?:(?:a(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|c(?i:aution)|d(?i:anger)|e(?i:(?:rror|xamples?))|h(?i:int)|i(?i:mportant)|k(?i:eyword arg(?:s|uments))|m(?i:ethods)|n(?i:otes?)|o(?i:ther arg(?:s|uments))|r(?i:(?:aises|e(?:ferences|turns?)))|s(?i:ee also)|t(?i:(?:ip|odo))|w(?i:arn(?:ings?|s))|y(?i:ields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)*\\n[^\\S\\n]*-+[^\\S\\n]*$)?(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|(?:[,;.\\-\\\\/\\]})][^\\S\\n]*\\n[^\\S\\n]*|^[^\\S\\n]*\\n[ ]{5}[^\\S\\n]*)(?P<F>(?:a(?i:(?:rg(?:s|uments)|tt(?:ention|ributes)))|c(?i:aution)|d(?i:anger)|e(?i:(?:rror|xamples?))|h(?i:int)|i(?i:mportant)|k(?i:eyword arg(?:s|uments))|m(?i:ethods)|n(?i:otes?)|o(?i:ther arg(?:s|uments))|r(?i:(?:aises|e(?:ferences|turns?)))|s(?i:ee also)|t(?i:(?:ip|odo))|w(?i:arn(?:ings?|s))|y(?i:ields?))):?[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s\\-.]|-+[^\\S\\n]*[^\\s\\-]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]|(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*-+[^\\S\\n]*$(?:(?:\\n[^\\S\\n]*)+\\n[^\\S\\n]*(?:[^\\s.]|\\.(?:[^.\\n]|$)|\\.\\.(?:[^ \\n]|$))|(?:\\n[^\\S\\n]*){2,}\\n[^\\S\\n]*\\.\\.[ ]))|(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$|\\n[^\\S\\n]*(?i:(?:a(?:rg(?:s|uments)|tt(?:ention|ributes))|caution|danger|e(?:rror|xamples?)|hint|important|keyword arg(?:s|uments)|methods|notes?|other arg(?:s|uments)|r(?:aises|e(?:ferences|turns?))|see also|t(?:ip|odo)|warn(?:ings?|s)|yields?)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$))(?s:.*)", n).
+
+// D412(n): findings from clauses `blank-lines-between-header-and-content-numpy-lowercase-after-blank`, `blank-lines-between-header-and-content-google-lowercase-after-blank`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation D412(at: node, l: node) "Remove the blank lines between the `{l}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+    suppress noqa "D412"
+// L: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412(rr_at, L) :- kind(n, "string_content"), child(p1_5, n, _), d412_docstring(p1_5), (d412_spaced_header_numpy(n, w5_k, L, w5_n) ; d412_spaced_first_numpy(n, w5_f)), d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(L),
+    (unset(L), rr_at = n ; !unset(L), rr_at = L).
+// L: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412(rr_at, L) :- kind(n, "string_content"), child(p1_1, n, _), d412_docstring(p1_1), (d412_spaced_header_google(n, w1_k, L, w1_n) ; d412_spaced_first_google(n, w1_f)), !d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(L),
+    (unset(L), rr_at = n ; !unset(L), rr_at = L).
+
+// D412_blank_lines_between_header_and_content_numpy_capitalized(n): findings from clauses `blank-lines-between-header-and-content-numpy-capitalized`, `blank-lines-between-header-and-content-google-capitalized`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation D412_blank_lines_between_header_and_content_numpy_capitalized(at: node, n: node) code "D412" "Remove the blank lines between the `{n}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+    suppress noqa "D412"
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_capitalized(rr_at, N) :- kind(n, "string_content"), child(p1_6, n, _), d412_docstring(p1_6), (d412_spaced_header_numpy(n, w6_k, w6_l, N) ; d412_spaced_first_numpy(n, w6_f)), d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(N),
+    (unset(N), rr_at = n ; !unset(N), rr_at = N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_capitalized(rr_at, N) :- kind(n, "string_content"), child(p1_2, n, _), d412_docstring(p1_2), (d412_spaced_header_google(n, w2_k, w2_l, N) ; d412_spaced_first_google(n, w2_f)), !d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(N),
+    (unset(N), rr_at = n ; !unset(N), rr_at = N).
+
+// D412_blank_lines_between_header_and_content_numpy_underlined(n): findings from clauses `blank-lines-between-header-and-content-numpy-underlined`, `blank-lines-between-header-and-content-google-underlined`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation D412_blank_lines_between_header_and_content_numpy_underlined(at: node, k: node) code "D412" "Remove the blank lines between the `{k}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+    suppress noqa "D412"
+// K: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_underlined(rr_at, K) :- kind(n, "string_content"), child(p1_7, n, _), d412_docstring(p1_7), (d412_spaced_header_numpy(n, K, w7_l, w7_n) ; d412_spaced_first_numpy(n, w7_f)), d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(K),
+    (unset(K), rr_at = n ; !unset(K), rr_at = K).
+// K: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_underlined(rr_at, K) :- kind(n, "string_content"), child(p1_3, n, _), d412_docstring(p1_3), (d412_spaced_header_google(n, K, w3_l, w3_n) ; d412_spaced_first_google(n, w3_f)), !d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(K),
+    (unset(K), rr_at = n ; !unset(K), rr_at = K).
+
+// D412_blank_lines_between_header_and_content_numpy_first_lowercase(n): findings from clauses `blank-lines-between-header-and-content-numpy-first-lowercase`, `blank-lines-between-header-and-content-google-first-lowercase`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation D412_blank_lines_between_header_and_content_numpy_first_lowercase(at: node, f: node) code "D412" "Remove the blank lines between the `{f}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+    suppress noqa "D412"
+// F: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_first_lowercase(rr_at, F) :- kind(n, "string_content"), child(p1_8, n, _), d412_docstring(p1_8), (d412_spaced_header_numpy(n, w8_k, w8_l, w8_n) ; d412_spaced_first_numpy(n, F)), d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(F),
+    (unset(F), rr_at = n ; !unset(F), rr_at = F).
+// F: not bound by this rule, so empty (unset) here, as in ast-grep.
+D412_blank_lines_between_header_and_content_numpy_first_lowercase(rr_at, F) :- kind(n, "string_content"), child(p1_4, n, _), d412_docstring(p1_4), (d412_spaced_header_google(n, w4_k, w4_l, w4_n) ; d412_spaced_first_google(n, F)), !d412_numpy_mode(n), !d412_directive_hides_header(n),
+    unset(F),
+    (unset(F), rr_at = n ; !unset(F), rr_at = F).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d412_tok_has_1(n: node)
+.stored d412_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d412_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d412_tok_has_1(n) :- op(n, t2), match(",", t2).
+d412_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d412_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d412_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d412_alt_1(n: node)
+d412_alt_1(n) :- d412_tok_has_1(n).
+d412_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl d412_alt_3(n: node)
+d412_alt_3(n) :- node(_, n, _, _, _),
+    match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n).
+d412_alt_3(n) :- d412_underlined(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl d412_alt_4(n: node)
+d412_alt_4(n) :- node(_, n, _, _, _),
+    !match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n).
+d412_alt_4(n) :- !match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:attention|caution|danger|e(?:rror|xample)|hint|important|note|return|t(?:ip|odo)|warning|yield)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n),
+    d412_alt_3(n).
+d412_alt_4(n) :- match("(?m)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)(?:(?:^[^\\S\\n]*|[,;.\\-\\\\/\\]})][^\\S\\n]*)\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$|\\S[^\\S\\n]*\\n[^\\S\\n]*(?i:(?:extended summary|receives|short summary)):?[^\\S\\n]*$\\n[^\\S\\n]*[-=]+[^\\S\\n]*$)(?s:.*)", n),
+    d412_underlined(n).

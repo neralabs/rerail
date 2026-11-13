@@ -1,0 +1,86 @@
+.policy "ruff-async210-blocking-http-call-in-async-function" revision 2
+.guests off
+.description "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ASYNC210(n): a finding at node n, from clause `blocking-http-call`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ASYNC210(at: node) "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options."
+    suppress noqa "ASYNC210"
+ASYNC210(n) :- async210_callee_position(n), async210_async_context(n), async210_target(n).
+
+// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
+.decl async210_scope_body(n: node)
+async210_scope_body(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+.decl async210_lambda_body(n: node)
+async210_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async210_tok_follows_1(n).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl async210_callee_position(n: node)
+async210_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async210_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    async210_callee_position(p3).
+
+// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
+.decl async210_async_context(n: node)
+async210_async_context(n) :- async210_demand_async_context(n), async210_up_1(n, p1), child(p2, p1, _),
+    kind(p2, "function_definition"), async210_tok_has_2(p2).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async210_target(n: node)
+async210_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async210_set_2(q1).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async210_tok_follows_1(n: node)
+.stored async210_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async210_tok_follows_1(n) :- precedes(s2, n), glob(":", s2).
+async210_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+async210_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async210_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async210_tok_has_2(n: node)
+.stored async210_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async210_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+async210_tok_has_2(n) :- op(n, t4), match("async", t4).
+async210_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async210_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async210_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
+.decl async210_demand_async_context(n: node)
+async210_demand_async_context(n) :- async210_callee_position(n), async210_target(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async210_up_1(n: node, p: node)
+async210_up_1(n, p) :- async210_demand_async_context(n), within_stop(n, p, async210_stop_1), kind(p, "block").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl async210_set_2(v: symbol)
+async210_set_2("urllib.request.urlopen"). async210_set_2("urllib3.request"). async210_set_2("httpx.request").
+async210_set_2("httpx.get"). async210_set_2("httpx.post"). async210_set_2("httpx.delete"). async210_set_2("httpx.patch").
+async210_set_2("httpx.put"). async210_set_2("httpx.head"). async210_set_2("httpx.connect"). async210_set_2("httpx.options").
+async210_set_2("httpx.trace"). async210_set_2("requests.request"). async210_set_2("requests.get").
+async210_set_2("requests.post"). async210_set_2("requests.delete"). async210_set_2("requests.patch").
+async210_set_2("requests.put"). async210_set_2("requests.head"). async210_set_2("requests.connect").
+async210_set_2("requests.options"). async210_set_2("requests.trace").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async210_stop_1(n: node)
+async210_stop_1(n) :- async210_scope_body(n).
+async210_stop_1(n) :- async210_lambda_body(n).

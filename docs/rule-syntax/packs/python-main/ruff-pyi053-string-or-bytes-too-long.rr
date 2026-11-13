@@ -1,0 +1,385 @@
+.policy "ruff-pyi053-string-or-bytes-too-long" revision 1
+.guests off
+.description "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI053(n): a finding at node n, from clause `string-or-bytes-too-long`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI053(at: node) "Replace this literal with `...`: it is longer than 50 characters, and a stub only needs the type, so the full value is an implementation detail."
+    suppress noqa "PYI053"
+PYI053_raw(n) :- pyi053_long_literal(n), !pyi053_stub_skip(n).
+
+// plain_str(n): the JSON util `plain-str`, used where the JSON says `matches: "plain-str"`
+.decl pyi053_plain_str(n: node)
+pyi053_plain_str(n) :- kind(n, "string"), match("[rRuU]{0,2}['\\\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+pyi053_plain_str(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuU]{0,2}['\\\"].*", c2) } = 0.
+
+// long_part(n): the JSON util `long-part`, used where the JSON says `matches: "long-part"`
+.decl pyi053_long_part(n: node)
+pyi053_long_part(n) :- kind(n, "string"), pyi053_alt_1(n).
+
+// long_literal(n): the JSON util `long-literal`, used where the JSON says `matches: "long-literal"`
+.decl pyi053_long_literal(n: node)
+pyi053_long_literal(n) :- pyi053_long_part(n),
+    count : { child(p1, n, _), kind(p1, "concatenated_string") } = 0.
+pyi053_long_literal(n) :- kind(n, "concatenated_string"), pyi053_alt_2(n).
+
+// deprecated_ref(n): the JSON util `deprecated-ref`, used where the JSON says `matches: "deprecated-ref"`
+.decl pyi053_deprecated_ref(n: node)
+pyi053_deprecated_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "warnings.deprecated") ; sym_of(n, "typing_extensions.deprecated")).
+
+// ref_of(n, key): 8 copies of one rule set (`alias-ref`, `aliastype-ref`, `cast-ref` and 5 more), folded into one: row `key` of
+// ref_of_case gives the strings each copy had.
+.decl pyi053_ref_of(n: node, key: symbol)
+pyi053_ref_of(n, q1) :- pyi053_ref_of_case(q1, s1, s2, s3),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, s1) ; sym_of(n, s2) ; sym_of(n, s3)).
+
+// generic_ref(n): the JSON util `generic-ref`, used where the JSON says `matches: "generic-ref"`
+.decl pyi053_generic_ref(n: node)
+pyi053_generic_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pyi053_set_3(q1).
+pyi053_generic_ref(n) :- kind(n, "identifier"),
+    glob("{dict,frozendict,frozenset,list,set,slice,tuple,type}", n), !ref_site(n, _).
+
+// annotated_ref(n): the JSON util `annotated-ref`, used where the JSON says `matches: "annotated-ref"`
+.decl pyi053_annotated_ref(n: node)
+pyi053_annotated_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.Annotated") ; sym_of(n, "typing_extensions.Annotated")).
+
+// generic_callee(n): the JSON util `generic-callee`, used where the JSON says `matches: "generic-callee"`
+.decl pyi053_generic_callee(n: node)
+pyi053_generic_callee(n) :- pyi053_generic_ref(n).
+pyi053_generic_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi053_generic_callee(c1).
+
+// annotated_callee(n): the JSON util `annotated-callee`, used where the JSON says `matches: "annotated-callee"`
+.decl pyi053_annotated_callee(n: node)
+pyi053_annotated_callee(n) :- pyi053_annotated_ref(n).
+pyi053_annotated_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi053_annotated_callee(c1).
+
+// typedef_root(n): the JSON util `typedef-root`, used where the JSON says `matches: "typedef-root"`
+.decl pyi053_typedef_root(n: node)
+pyi053_typedef_root(n) :- child(p1, n, _), kind(p1, "subscript"), field(p1, "value", c2),
+    pyi053_generic_callee(c2).
+pyi053_typedef_root(n) :- child(p3, n, _), pyi053_counted(n),
+    k5 = count : { child(p3, s4, _), precedes(s4, n), pyi053_counted(s4) }, k5 = 1,
+    child(p6, n, _), kind(p6, "subscript"), field(p6, "value", c7),
+    pyi053_annotated_callee(c7).
+pyi053_typedef_root(n) :- pyi053_cast_arg(n).
+pyi053_typedef_root(n) :- pyi053_typeform_arg(n).
+pyi053_typedef_root(n) :- pyi053_newtype_arg(n).
+pyi053_typedef_root(n) :- pyi053_typevar_arg(n).
+pyi053_typedef_root(n) :- pyi053_aliastype_arg(n).
+pyi053_typedef_root(n) :- pyi053_namedtuple_arg(n).
+pyi053_typedef_root(n) :- pyi053_typeddict_arg(n).
+pyi053_typedef_root(n) :- pyi053_mypy_arg(n).
+pyi053_typedef_root(n) :- pyi053_namedtuple_kw(n).
+pyi053_typedef_root(n) :- pyi053_typeddict_kw(n).
+
+// typedef_expr(n): the JSON util `typedef-expr`, used where the JSON says `matches: "typedef-expr"`
+.decl pyi053_typedef_expr(n: node)
+pyi053_typedef_expr(n) :- pyi053_typedef_root(n).
+pyi053_typedef_expr(n) :- within(n, p1), pyi053_typedef_root(p1).
+
+// cast_arg(n): the JSON util `cast-arg`, used where the JSON says `matches: "cast-arg"`
+.decl pyi053_cast_arg(n: node)
+pyi053_cast_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), pyi053_ref_of(c3, "cast"), child(p4, n, _), pyi053_counted(n),
+    k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 0.
+pyi053_cast_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
+    field(p7, "name", c8), glob("typ", c8), child(p9, p7, _),
+    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
+    field(p10, "function", c11), pyi053_ref_of(c11, "cast").
+
+// typeform_arg(n): the JSON util `typeform-arg`, used where the JSON says `matches: "typeform-arg"`
+.decl pyi053_typeform_arg(n: node)
+pyi053_typeform_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), pyi053_ref_of(c3, "typeform"), child(p4, n, _), pyi053_counted(n),
+    k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 0.
+
+// newtype_arg(n): the JSON util `newtype-arg`, used where the JSON says `matches: "newtype-arg"`
+.decl pyi053_newtype_arg(n: node)
+pyi053_newtype_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), pyi053_ref_of(c3, "newtype"), child(p4, n, _), pyi053_counted(n),
+    k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 1.
+pyi053_newtype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
+    field(p7, "name", c8), glob("tp", c8), child(p9, p7, _), kind(p9, "argument_list"),
+    child(p10, p9, _), kind(p10, "call"), field(p10, "function", c11),
+    pyi053_ref_of(c11, "newtype").
+
+// typevar_arg(n): the JSON util `typevar-arg`, used where the JSON says `matches: "typevar-arg"`
+.decl pyi053_typevar_arg(n: node)
+pyi053_typevar_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), pyi053_ref_of(c3, "typevar"),
+    count : { child(p4, n, _), pyi053_counted(n), k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 0 } = 0.
+pyi053_typevar_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
+    field(p7, "name", c8), glob("{bound,default}", c8), child(p9, p7, _),
+    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
+    field(p10, "function", c11), pyi053_ref_of(c11, "typevar").
+
+// aliastype_arg(n): the JSON util `aliastype-arg`, used where the JSON says `matches: "aliastype-arg"`
+.decl pyi053_aliastype_arg(n: node)
+pyi053_aliastype_arg(n) :- !kind(n, "keyword_argument"), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), pyi053_ref_of(c3, "aliastype"), child(p4, n, _), pyi053_counted(n),
+    k6 = count : { child(p4, s5, _), precedes(s5, n), pyi053_counted(s5) }, k6 = 1.
+pyi053_aliastype_arg(n) :- field(p7, "value", n), kind(p7, "keyword_argument"),
+    field(p7, "name", c8), glob("{value,type_params}", c8), child(p9, p7, _),
+    kind(p9, "argument_list"), child(p10, p9, _), kind(p10, "call"),
+    field(p10, "function", c11), pyi053_ref_of(c11, "aliastype").
+
+// namedtuple_arg(n): the JSON util `namedtuple-arg`, used where the JSON says `matches: "namedtuple-arg"`
+.decl pyi053_namedtuple_arg(n: node)
+pyi053_namedtuple_arg(n) :- child(p1, n, _), pyi053_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), pyi053_counted(s2) }, k3 = 1,
+    child(p4, n, _), (kind(p4, "tuple") ; kind(p4, "list")),
+    count : { child(p4, c5, _), child(p6, c5, _), pyi053_counted(c5), k8 = count : { child(p6, s7, _), precedes(s7, c5), pyi053_counted(s7) }, k8 = 2 } = 0,
+    child(p9, p4, _), (kind(p9, "tuple") ; kind(p9, "list")), child(p10, p9, _),
+    kind(p10, "argument_list"), child(p11, p10, _), kind(p11, "call"),
+    field(p11, "function", c12), pyi053_ref_of(c12, "namedtuple").
+
+// typeddict_arg(n): the JSON util `typeddict-arg`, used where the JSON says `matches: "typeddict-arg"`
+.decl pyi053_typeddict_arg(n: node)
+pyi053_typeddict_arg(n) :- field(p1, "value", n), kind(p1, "pair"), child(p2, p1, _),
+    kind(p2, "dictionary"), child(p3, p2, _), kind(p3, "argument_list"),
+    child(p4, p3, _), kind(p4, "call"), field(p4, "function", c5),
+    pyi053_ref_of(c5, "typeddict").
+
+// stub_skip(n): the JSON util `stub-skip`, used where the JSON says `matches: "stub-skip"`
+.decl pyi053_stub_skip(n: node)
+pyi053_stub_skip(n) :- pyi053_plain_str(n), pyi053_up_1(n, p1).
+pyi053_stub_skip(n) :- inside(n, p2, "type").
+pyi053_stub_skip(n) :- pyi053_typedef_expr(n).
+pyi053_stub_skip(n) :- inside(n, p3, "assignment"), field(p3, "type", c4), kind(c4, "type"),
+    child(c4, c5, _), pyi053_ref_of(c5, "alias").
+pyi053_stub_skip(n) :- within_stop(n, p6, pyi053_stop_13), kind(p6, "argument_list"),
+    child(p7, p6, _), kind(p7, "call"), field(p7, "function", c8), pyi053_deprecated_ref(c8).
+pyi053_stub_skip(n) :- count : { within(n, p9), pyi053_alt_16(p9) } = 0,
+    inside(n, p16, "expression_statement"), child(p16, c17, _),
+    (kind(c17, "assignment") ; kind(c17, "augmented_assignment")),
+    field(c17, "left", c18), pyi053_all_name(c18).
+
+// mypy_ref(n): the JSON util `mypy-ref`, used where the JSON says `matches: "mypy-ref"`
+.decl pyi053_mypy_ref(n: node)
+pyi053_mypy_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pyi053_set_19(q1).
+
+// mypy_arg(n): the JSON util `mypy-arg`, used where the JSON says `matches: "mypy-arg"`
+.decl pyi053_mypy_arg(n: node)
+pyi053_mypy_arg(n) :- child(p1, n, _), pyi053_counted_of(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), pyi053_counted_of(s2) }, k3 = 0,
+    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
+    field(p5, "function", c6), pyi053_mypy_ref(c6).
+
+// namedtuple_kw(n): the JSON util `namedtuple-kw`, used where the JSON says `matches: "namedtuple-kw"`
+.decl pyi053_namedtuple_kw(n: node)
+pyi053_namedtuple_kw(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
+    field(p1, "name", c2), glob("**", c2), child(p3, p1, _), kind(p3, "argument_list"),
+    child(p4, p3, _), kind(p4, "call"), field(p4, "function", c5),
+    pyi053_ref_of(c5, "namedtuple").
+pyi053_namedtuple_kw(n) :- field(p6, "value", n), kind(p6, "pair"), child(p7, p6, _),
+    kind(p7, "dictionary"), within_stop(p7, p8, "dictionary_splat"),
+    kind(p8, "dictionary_splat"), child(p9, p8, _), kind(p9, "argument_list"),
+    child(p10, p9, _), kind(p10, "call"), field(p10, "function", c11),
+    pyi053_ref_of(c11, "namedtuple").
+
+// typeddict_kw(n): the JSON util `typeddict-kw`, used where the JSON says `matches: "typeddict-kw"`
+.decl pyi053_typeddict_kw(n: node)
+pyi053_typeddict_kw(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
+    field(p1, "name", c2), glob("extra_items", c2), child(p3, p1, _),
+    kind(p3, "argument_list"), child(p4, p3, _), kind(p4, "call"),
+    field(p4, "function", c5), pyi053_ref_of(c5, "typeddict").
+pyi053_typeddict_kw(n) :- field(p6, "value", n), kind(p6, "keyword_argument"),
+    field(p6, "name", c7), !glob("{total,extra_items}", c7), child(p8, p6, _),
+    kind(p8, "argument_list"), child(p9, p8, _), kind(p9, "call"),
+    field(p9, "function", c10), pyi053_ref_of(c10, "typeddict"), child(p8, c11, _),
+    child(p12, c11, _), pyi053_counted_of(c11),
+    k14 = count : { child(p12, s13, _), precedes(s13, c11), pyi053_counted_of(s13) }, k14 = 0,
+    !pyi053_alt_24(p8).
+pyi053_typeddict_kw(n) :- child(p23, n, _), kind(p23, "dictionary_splat"), child(p24, p23, _),
+    kind(p24, "argument_list"), child(p25, p24, _), kind(p25, "call"),
+    field(p25, "function", c26), pyi053_ref_of(c26, "typeddict").
+pyi053_typeddict_kw(n) :- field(p27, "value", n), kind(p27, "keyword_argument"),
+    field(p27, "name", c28), glob("extra_items", c28), child(p29, p27, _),
+    kind(p29, "argument_list"), child(p29, c30, _),
+    ( pyi053_ref_of(c30, "typeddict")
+    ; kind(c30, "subscript"), field(c30, "value", c1), pyi053_ref_of(c1, "typeddict")
+    ),
+    child(p32, p29, _), kind(p32, "class_definition").
+
+// all_name(n): the JSON util `all-name`, used where the JSON says `matches: "all-name"`
+.decl pyi053_all_name(n: node)
+pyi053_all_name(n) :- kind(n, "identifier"), glob("__all__", n).
+pyi053_all_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern"), !pyi053_tok_has_1(n)),
+    child(n, c9, _), pyi053_all_name(c9).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi053_tok_has_1(n: node)
+.stored pyi053_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi053_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pyi053_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi053_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi053_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi053_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi053_up_1(n: node, p: node)
+pyi053_up_1(n, p) :- pyi053_plain_str(n), within_stop(n, p, pyi053_stop_12),
+    kind(p, "expression_statement").
+
+// set_3: symbols from the JSON `resolves.import`
+.decl pyi053_set_3(v: symbol)
+pyi053_set_3("builtins.dict"). pyi053_set_3("builtins.frozendict"). pyi053_set_3("builtins.frozenset").
+pyi053_set_3("builtins.list"). pyi053_set_3("builtins.set"). pyi053_set_3("builtins.slice").
+pyi053_set_3("builtins.tuple"). pyi053_set_3("builtins.type"). pyi053_set_3("collections.ChainMap").
+pyi053_set_3("collections.Counter"). pyi053_set_3("collections.OrderedDict").
+pyi053_set_3("collections.defaultdict"). pyi053_set_3("collections.deque"). pyi053_set_3("typing.ChainMap").
+pyi053_set_3("typing.Counter"). pyi053_set_3("typing.OrderedDict"). pyi053_set_3("typing.AbstractSet").
+pyi053_set_3("typing.AsyncContextManager"). pyi053_set_3("typing.AsyncGenerator").
+pyi053_set_3("typing.AsyncIterator"). pyi053_set_3("typing.Awaitable"). pyi053_set_3("typing.BinaryIO").
+pyi053_set_3("typing.ByteString"). pyi053_set_3("typing.Callable"). pyi053_set_3("typing.ClassVar").
+pyi053_set_3("typing.Collection"). pyi053_set_3("typing.Concatenate"). pyi053_set_3("typing.Container").
+pyi053_set_3("typing.ContextManager"). pyi053_set_3("typing.Coroutine"). pyi053_set_3("typing.DefaultDict").
+pyi053_set_3("typing.Deque"). pyi053_set_3("typing.Dict"). pyi053_set_3("typing.Final").
+pyi053_set_3("typing.FrozenSet"). pyi053_set_3("typing.Generator"). pyi053_set_3("typing.Generic").
+pyi053_set_3("typing.IO"). pyi053_set_3("typing.ItemsView"). pyi053_set_3("typing.Iterable").
+pyi053_set_3("typing.Iterator"). pyi053_set_3("typing.KeysView"). pyi053_set_3("typing.List").
+pyi053_set_3("typing.Mapping"). pyi053_set_3("typing.MutableMapping").
+pyi053_set_3("typing.MutableSequence"). pyi053_set_3("typing.MutableSet"). pyi053_set_3("typing.Optional").
+pyi053_set_3("typing.Reversible"). pyi053_set_3("typing.Sequence"). pyi053_set_3("typing.Set").
+pyi053_set_3("typing.TextIO"). pyi053_set_3("typing.Tuple"). pyi053_set_3("typing.Type").
+pyi053_set_3("typing.TypeForm"). pyi053_set_3("typing.TypeGuard"). pyi053_set_3("typing.TypeIs").
+pyi053_set_3("typing.Union"). pyi053_set_3("typing.Unpack"). pyi053_set_3("typing.ValuesView").
+pyi053_set_3("typing.Match"). pyi053_set_3("typing.Pattern"). pyi053_set_3("typing.io.BinaryIO").
+pyi053_set_3("typing.io.IO"). pyi053_set_3("typing.io.TextIO"). pyi053_set_3("typing.re.Match").
+pyi053_set_3("typing.re.Pattern"). pyi053_set_3("typing_extensions.ChainMap").
+pyi053_set_3("typing_extensions.Counter"). pyi053_set_3("typing_extensions.AsyncContextManager").
+pyi053_set_3("typing_extensions.AsyncGenerator"). pyi053_set_3("typing_extensions.AsyncIterable").
+pyi053_set_3("typing_extensions.AsyncIterator"). pyi053_set_3("typing_extensions.Awaitable").
+pyi053_set_3("typing_extensions.ClassVar"). pyi053_set_3("typing_extensions.Concatenate").
+pyi053_set_3("typing_extensions.ContextManager"). pyi053_set_3("typing_extensions.Coroutine").
+pyi053_set_3("typing_extensions.DefaultDict"). pyi053_set_3("typing_extensions.Deque").
+pyi053_set_3("typing_extensions.Type"). pyi053_set_3("typing_extensions.TypeForm").
+pyi053_set_3("typing_extensions.TypeGuard"). pyi053_set_3("typing_extensions.TypeIs").
+pyi053_set_3("collections.abc.AsyncGenerator"). pyi053_set_3("collections.abc.AsyncIterable").
+pyi053_set_3("collections.abc.AsyncIterator"). pyi053_set_3("collections.abc.Awaitable").
+pyi053_set_3("collections.abc.ByteString"). pyi053_set_3("collections.abc.Callable").
+pyi053_set_3("collections.abc.Collection"). pyi053_set_3("collections.abc.Container").
+pyi053_set_3("collections.abc.Coroutine"). pyi053_set_3("collections.abc.Generator").
+pyi053_set_3("collections.abc.ItemsView"). pyi053_set_3("collections.abc.Iterable").
+pyi053_set_3("collections.abc.Iterator"). pyi053_set_3("collections.abc.KeysView").
+pyi053_set_3("collections.abc.Mapping"). pyi053_set_3("collections.abc.MappingView").
+pyi053_set_3("collections.abc.MutableMapping"). pyi053_set_3("collections.abc.MutableSequence").
+pyi053_set_3("collections.abc.MutableSet"). pyi053_set_3("collections.abc.Reversible").
+pyi053_set_3("collections.abc.Sequence"). pyi053_set_3("collections.abc.Set").
+pyi053_set_3("collections.abc.ValuesView"). pyi053_set_3("contextlib.AbstractAsyncContextManager").
+pyi053_set_3("contextlib.AbstractContextManager"). pyi053_set_3("re.Match"). pyi053_set_3("re.Pattern").
+pyi053_set_3("weakref.WeakKeyDictionary"). pyi053_set_3("weakref.WeakSet").
+pyi053_set_3("weakref.WeakValueDictionary").
+
+// set_19: symbols from the JSON `resolves.import`
+.decl pyi053_set_19(v: symbol)
+pyi053_set_19("mypy_extensions.Arg"). pyi053_set_19("mypy_extensions.DefaultArg").
+pyi053_set_19("mypy_extensions.NamedArg"). pyi053_set_19("mypy_extensions.DefaultNamedArg").
+pyi053_set_19("mypy_extensions.VarArg"). pyi053_set_19("mypy_extensions.KwArg").
+
+// ref_of_case: one row per relation folded into ref_of: its key, then the strings that differed.
+.decl pyi053_ref_of_case(key: symbol, s1: symbol, s2: symbol, s3: symbol)
+pyi053_ref_of_case("alias", "typing.TypeAlias", "typing_extensions.TypeAlias", "_typeshed.TypeAlias").
+pyi053_ref_of_case("aliastype", "typing.TypeAliasType", "typing_extensions.TypeAliasType", "_typeshed.TypeAliasType").
+pyi053_ref_of_case("cast", "typing.cast", "typing_extensions.cast", "_typeshed.cast").
+pyi053_ref_of_case("namedtuple", "typing.NamedTuple", "typing_extensions.NamedTuple", "_typeshed.NamedTuple").
+pyi053_ref_of_case("newtype", "typing.NewType", "typing_extensions.NewType", "_typeshed.NewType").
+pyi053_ref_of_case("typeddict", "typing.TypedDict", "typing_extensions.TypedDict", "_typeshed.TypedDict").
+pyi053_ref_of_case("typeform", "typing.TypeForm", "typing_extensions.TypeForm", "_typeshed.TypeForm").
+pyi053_ref_of_case("typevar", "typing.TypeVar", "typing_extensions.TypeVar", "_typeshed.TypeVar").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi053_alt_1(n: node)
+pyi053_alt_1(n) :- node(_, n, _, _, _),
+    match("(?:[bB]\"(?:\\\\\\r?\\n)*(?:(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|[^xabfnrtv'\\\"\\\\0-7\\r\\n]))(?:\\\\\\r?\\n)*){51,}\"|(?:[bB][rR]|[rR][bB])\"(?:[^\\\\\"]|\\\\\"?){51,}\"|[bB]\"\"\"(?:\\\\\\r?\\n)*(?:(?:[^\\\\]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|[^xabfnrtv'\\\"\\\\0-7\\r\\n]))(?:\\\\\\r?\\n)*){51,}\"\"\"|(?:[bB][rR]|[rR][bB])\"\"\"(?:[^\\\\]|\\\\\"?){51,}\"\"\"|[bB]'(?:\\\\\\r?\\n)*(?:(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|[^xabfnrtv'\\\"\\\\0-7\\r\\n]))(?:\\\\\\r?\\n)*){51,}'|(?:[bB][rR]|[rR][bB])'(?:[^\\\\']|\\\\'?){51,}'|[bB]'''(?:\\\\\\r?\\n)*(?:(?:[^\\\\]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|[^xabfnrtv'\\\"\\\\0-7\\r\\n]))(?:\\\\\\r?\\n)*){51,}'''|(?:[bB][rR]|[rR][bB])'''(?:[^\\\\]|\\\\'?){51,}''')", n).
+pyi053_alt_1(n) :- match("(?:[fF]\"(?:\\\\\\r?\\n)*(?:(?:[^\\\\\"]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|N\\{[^}\\r\\n]*\\}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[^xabfnrtv'\\\"\\\\0-7NuU\\r\\n]))(?:\\\\\\r?\\n)*){51,}\"|(?:[fF][rR]|[rR][fF])\"(?:[^\\\\\"]|\\\\\"?){51,}\"|[fF]\"\"\"(?:\\\\\\r?\\n)*(?:(?:[^\\\\]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|N\\{[^}\\r\\n]*\\}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[^xabfnrtv'\\\"\\\\0-7NuU\\r\\n]))(?:\\\\\\r?\\n)*){51,}\"\"\"|(?:[fF][rR]|[rR][fF])\"\"\"(?:[^\\\\]|\\\\\"?){51,}\"\"\"|[fF]'(?:\\\\\\r?\\n)*(?:(?:[^\\\\']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|N\\{[^}\\r\\n]*\\}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[^xabfnrtv'\\\"\\\\0-7NuU\\r\\n]))(?:\\\\\\r?\\n)*){51,}'|(?:[fF][rR]|[rR][fF])'(?:[^\\\\']|\\\\'?){51,}'|[fF]'''(?:\\\\\\r?\\n)*(?:(?:[^\\\\]|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|N\\{[^}\\r\\n]*\\}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[^xabfnrtv'\\\"\\\\0-7NuU\\r\\n]))(?:\\\\\\r?\\n)*){51,}'''|(?:[fF][rR]|[rR][fF])'''(?:[^\\\\]|\\\\'?){51,}''')", n),
+    has(n, c1, "interpolation").
+pyi053_alt_1(n) :- value(n, v2), match("[\\s\\S]{51}.*", v2),
+    !match("[a-zA-Z]*[tT][a-zA-Z]*['\"].*", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi053_alt_2(n: node)
+pyi053_alt_2(n) :- value(n, v1), match("[\\s\\S]{51}.*", v1).
+pyi053_alt_2(n) :- child(n, c2, _), pyi053_long_part(c2).
+pyi053_alt_2(n) :- node(_, n, _, _, _),
+    match("(?:[bB][rR]?|[rR][bB])[\\\"'](?:(?:[\\\"'][ \\t\\f\\r\\n]*(?:(?:#[^\\r\\n]*|\\\\)\\r?\\n[ \\t\\f\\r\\n]*)*(?:[bB][rR]?|[rR][bB])[\\\"']|\\\\\\r?\\n)*(?:[^\\\\\\\"']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|[^xabfnrtv'\\\"\\\\0-7\\r\\n]))){51,}(?:[\\\"'][ \\t\\f\\r\\n]*(?:(?:#[^\\r\\n]*|\\\\)\\r?\\n[ \\t\\f\\r\\n]*)*(?:[bB][rR]?|[rR][bB])[\\\"']|\\\\\\r?\\n)*[\\\"']", n).
+pyi053_alt_2(n) :- match("[fFuU]?[\\\"'](?:(?:[\\\"'][ \\t\\f\\r\\n]*(?:(?:#[^\\r\\n]*|\\\\)\\r?\\n[ \\t\\f\\r\\n]*)*[fFuU]?[\\\"']|\\\\\\r?\\n)*(?:[^\\\\\\\"']|\\\\(?:x[0-9a-fA-F]{2}|[0-7]{1,3}|[abfnrtv'\\\"\\\\]|N\\{[^}\\r\\n]*\\}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[^xabfnrtv'\\\"\\\\0-7NuU\\r\\n]))){51,}(?:[\\\"'][ \\t\\f\\r\\n]*(?:(?:#[^\\r\\n]*|\\\\)\\r?\\n[ \\t\\f\\r\\n]*)*[fFuU]?[\\\"']|\\\\\\r?\\n)*[\\\"']", n),
+    has(n, c3, "interpolation").
+
+// counted(n): 8 identical copies of one rule set (`counted_10`, `counted_11`, `counted_4` and 5 more), folded into one.
+.decl pyi053_counted(n: node)
+pyi053_counted(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// stop_12(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi053_stop_12(n: node)
+pyi053_stop_12(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi053_stop_13(n: node)
+pyi053_stop_13(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "keyword_argument").
+
+// counted_14(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi053_counted_14(n: node)
+pyi053_counted_14(n) :- kind(n, "for_in_clause").
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi053_alt_15(n: node)
+pyi053_alt_15(n) :- pyi053_long_literal(n).
+pyi053_alt_15(n) :- within(c1, n), pyi053_long_literal(c1).
+
+// counted_17(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi053_counted_17(n: node)
+pyi053_counted_17(n) :- kind(n, "for_in_clause").
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi053_alt_16(n: node)
+pyi053_alt_16(n) :- (kind(n, "class_definition") ; kind(n, "function_definition") ; kind(n, "lambda")).
+pyi053_alt_16(n) :-
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ),
+
+    count : { child(n, c1, _), kind(c1, "for_in_clause"), child(p2, c1, _), pyi053_counted_17(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi053_counted_17(s3) }, k4 = 0, field(c1, "right", c5), pyi053_alt_15(c5) } = 0.
+
+// counted_of(n): 6 identical copies of one rule set (`counted_20`, `counted_21`, `counted_22` and 3 more), folded into one.
+.decl pyi053_counted_of(n: node)
+pyi053_counted_of(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "keyword_argument"), !kind(n, "dictionary_splat").
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi053_alt_24(n: node)
+pyi053_alt_24(n) :- child(n, c1, _), child(p2, c1, _), pyi053_counted_of(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi053_counted_of(s3) }, k4 = 1,
+    !kind(c1, "none").
+pyi053_alt_24(n) :- child(n, c5, _), child(p6, c5, _), pyi053_counted_of(c5),
+    k8 = count : { child(p6, s7, _), precedes(s7, c5), pyi053_counted_of(s7) }, k8 = 2.
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI053_raw(at: node)
+PYI053(v0) :- PYI053_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

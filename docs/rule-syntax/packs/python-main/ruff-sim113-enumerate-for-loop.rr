@@ -1,0 +1,239 @@
+.policy "ruff-sim113-enumerate-for-loop" revision 1
+.guests off
+.description "Use enumerate() instead of a counter that starts at 0 and is incremented by hand in each pass of a for loop."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// SIM113(n): a finding at node n, from clause `enumerate-for-loop`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation SIM113(at: node, n: loc) "Use `enumerate()` for index variable `{n}` in `for` loop"
+    suppress noqa "SIM113"
+SIM113(n, N) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n), child(n, c9, _),
+    kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9), child(n, c17, _),
+    kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17), ref_site(c17, b25),
+    node(_, b25, _, _, _), INIT = b25, child(n, c26, _), sim113_one(c26), sim113_tok_follows_4(c26), child(p34, n, _),
+    kind(p34, "expression_statement"), child(p35, p34, _), kind(p35, "block"),
+    child(p36, p35, _), kind(p36, "for_statement"), node(_, p36, _, _, _), LOOP = p36,
+    count : { sim113_tok_has_6(p36) } = 0, count : { child(p36, c9_4, _), kind(c9_4, "block"), sim113_stop_12_within(c10_4, c9_4), kind(c10_4, "continue_statement") } = 0, count : { sim113_stop_11_within(p36, p1_8), sim113_scope_root(p1_8), has(p1_8, c2_8, "identifier"), text(c2_8, t_n1_8), text(N, t_n1_8), count : { inside(c2_8, p3_8, "for_statement"), node(_, p3_8, _, _, _), L2 = p3_8, text(L2, t4_8), text(LOOP, t4_8), @doc(L2) = @doc(LOOP) } = 0, sim113_alt_8(c2_8, INIT), ref_site(c2_8, b15_8), (node(_, b15_8, _, _, _), S = b15_8, text(S, t1_1_8), text(INIT, t1_1_8), @doc(S) = @doc(INIT) ; sim113_stop_11_within(b15_8, p3_2_8), kind(p3_2_8, "for_statement"), node(_, p3_2_8, _, _, _), L3 = p3_2_8, text(L3, t4_2_8), text(LOOP, t4_2_8), @doc(L3) = @doc(LOOP) ), @doc(c2_8) = @doc(N) } = 0,
+    child(n, c47, _), kind(c47, "identifier"), node(_, c47, _, _, _), N = c47, sim113_tok_precedes_7(c47),
+    site_form(c47, "augmented"), ast(c47, {"bindings": {"within": "LOOP", "max": 1}}),
+    child(n, c55, _), kind(c55, "identifier"), node(_, c55, _, _, _), N = c55, sim113_tok_precedes_8(c55),
+    ( ref_site(c55, b1_6), binding_value(b1_6, x2_6), sim113_zero(x2_6), sim113_initial_site(b1_6, LOOP)
+    ; ref_site(c55, b3_7), sim113_initial_site(b3_7, LOOP), kind(b3_7, "assignment"), field(b3_7, "left", c4_7), child(c4_7, c5_7, _), kind(c5_7, "identifier"), node(_, c5_7, _, _, _), UT = c5_7, value(UT, t6_7), value(N, t6_7), count : { precedes(c5_7, s8_7), kind(s8_7, "identifier"), node(_, s8_7, _, _, _), UU = s8_7, value(UU, t9_7), value(N, t9_7) } = 0, field(b3_7, "right", c11_7), child(c11_7, c12_7, _), sim113_zero(c12_7), node(_, c12_7, _, _, _), UV = c12_7, value(UV, t13_7), value(UT, t13_7)
+    ).
+
+
+// one(n): the JSON util `one`, used where the JSON says `matches: "one"`
+.decl sim113_one(n: node)
+sim113_one(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+sim113_one(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim113_one(c2).
+
+// zero(n): the JSON util `zero`, used where the JSON says `matches: "zero"`
+.decl sim113_zero(n: node)
+sim113_zero(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+sim113_zero(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim113_zero(c2).
+
+// statement(n): the JSON util `statement`, used where the JSON says `matches: "statement"`
+.decl sim113_statement(n: node)
+sim113_statement(n) :- kind(n, k1), sim113_set_1(k1).
+sim113_statement(n) :- kind(n, "module").
+
+// initial_site(n): the JSON util `initial-site`, used where the JSON says `matches: "initial-site"`
+//   LOOP: metavariable of the calling rule, passed in (bound by the caller)
+.decl sim113_initial_site(n: node, loop: loc)
+sim113_initial_site(n, LOOP) :- sim113_demand_initial_site(n, LOOP), kind(n, "assignment"),
+    within_stop(n, p1, "expression_statement"), kind(p1, "expression_statement"),
+    within_stop(p1, p2, sim113_stop_2), sim113_statement(p2), within_stop(c3, p2, sim113_stop_3),
+    kind(c3, "for_statement"), node(_, c3, _, _, _), L1 = c3, text(L1, t4), text(LOOP, t4),
+    count : { sim113_stop_11_within(n, p6), sim113_scope_root(p6), sim113_stop_12_within(c7, p6), (kind(c7, "global_statement") ; kind(c7, "nonlocal_statement")), child(c7, c8, _), kind(c8, "identifier"), node(_, c8, _, _, _), N = c8 } = 0, @doc(L1) = @doc(LOOP).
+
+// scope_root(n): the JSON util `scope-root`, used where the JSON says `matches: "scope-root"`
+.decl sim113_scope_root(n: node)
+sim113_scope_root(n) :- kind(n, "module").
+sim113_scope_root(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_has_1(n: node)
+.stored sim113_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_has_1(n) :- child(n, c1, _), glob("+=", c1).
+sim113_tok_has_1(n) :- op(n, t2), match("\\+=", t2).
+sim113_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim113_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim113_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_precedes_2(n: node)
+.stored sim113_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_precedes_2(n) :- next_sibling(n, s10), glob("+=", s10).
+sim113_tok_precedes_2(n) :- structural_after(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, _, en16), o14 = en16 + strlen(g12), token(p13, _, t11, o14, _),
+    match("\\+=", t11).
+sim113_tok_precedes_2(n) :- structural_after(n, g12),
+    match("(?s)^(?:\\s*(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_precedes_3(n: node)
+.stored sim113_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_precedes_3(n) :- next_sibling(n, s18), glob("+=", s18).
+sim113_tok_precedes_3(n) :- structural_after(n, g20), match("\\s*", g20), child(p21, n, _),
+    node(_, n, _, _, en24), o22 = en24 + strlen(g20), token(p21, _, t19, o22, _),
+    match("\\+=", t19).
+sim113_tok_precedes_3(n) :- structural_after(n, g20),
+    match("(?s)^(?:\\s*(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_follows_4(n: node)
+.stored sim113_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_follows_4(n) :- next_sibling(s27, n), glob("+=", s27).
+sim113_tok_follows_4(n) :- structural_before(n, g29), match("\\s*", g29), child(p30, n, _),
+    node(_, n, _, st32, _), o31 = st32 - strlen(g29), token(p30, _, t28, _, o31),
+    match("\\+=", t28).
+sim113_tok_follows_4(n) :- structural_before(n, g29),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+=)\\s*)$", g29).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_has_5(n: node)
+.stored sim113_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_has_5(n) :- child(n, c37, _), glob("async", c37).
+sim113_tok_has_5(n) :- op(n, t38), match("async", t38).
+sim113_tok_has_5(n) :- child(n, c44, _), structural_before(c44, g39),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g39).
+sim113_tok_has_5(n) :- child(n, c44, _), structural_after(c44, g39),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g39).
+sim113_tok_has_5(n) :- node_text(n, g39), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g39).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_has_6(n: node)
+.stored sim113_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_has_6(n) :- child(n, c1, _), glob("async", c1).
+sim113_tok_has_6(n) :- op(n, t2), match("async", t2).
+sim113_tok_has_6(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+sim113_tok_has_6(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+sim113_tok_has_6(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_precedes_7(n: node)
+.stored sim113_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_precedes_7(n) :- next_sibling(n, s48), glob("+=", s48).
+sim113_tok_precedes_7(n) :- structural_after(n, g50), match("\\s*", g50), child(p51, n, _),
+    node(_, n, _, _, en54), o52 = en54 + strlen(g50), token(p51, _, t49, o52, _),
+    match("\\+=", t49).
+sim113_tok_precedes_7(n) :- structural_after(n, g50),
+    match("(?s)^(?:\\s*(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g50).
+
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^\\+=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim113_tok_precedes_8(n: node)
+.stored sim113_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim113_tok_precedes_8(n) :- next_sibling(n, s56), glob("+=", s56).
+sim113_tok_precedes_8(n) :- structural_after(n, g58), match("\\s*", g58), child(p59, n, _),
+    node(_, n, _, _, en62), o60 = en62 + strlen(g58), token(p59, _, t57, o60, _),
+    match("\\+=", t57).
+sim113_tok_precedes_8(n) :- structural_after(n, g58),
+    match("(?s)^(?:\\s*(?:\\+=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g58).
+
+// demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
+.decl sim113_demand_alt_8(n: node, init: loc)
+sim113_demand_alt_8(c2_8, INIT) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n),
+    child(n, c9, _), kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9),
+    child(n, c17, _), kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17),
+    ref_site(c17, b25), node(_, b25, _, _, _), INIT = b25, child(n, c26, _), sim113_one(c26), sim113_tok_follows_4(c26),
+    child(p34, n, _), kind(p34, "expression_statement"), child(p35, p34, _),
+    kind(p35, "block"), child(p36, p35, _), kind(p36, "for_statement"), node(_, p36, _, _, _), LOOP = p36,
+    child(n, c47, _), kind(c47, "identifier"), node(_, c47, _, _, _), N = c47, sim113_tok_precedes_7(c47),
+    site_form(c47, "augmented"), ast(c47, {"bindings": {"within": "LOOP", "max": 1}}),
+    child(n, c55, _), kind(c55, "identifier"), node(_, c55, _, _, _), N = c55, sim113_tok_precedes_8(c55),
+    within_stop(p36, p1_8, sim113_stop_11), sim113_scope_root(p1_8), has(p1_8, c2_8, "identifier"),
+    text(c2_8, t_n1_8), text(N, t_n1_8), ref_site(c2_8, b15_8),
+    ( node(_, b15_8, _, _, _), S = b15_8, text(S, t1_1_8), text(INIT, t1_1_8), @doc(S) = @doc(INIT) ; within_stop(b15_8, p3_2_8, sim113_stop_11), kind(p3_2_8, "for_statement"), node(_, p3_2_8, _, _, _), L3 = p3_2_8, text(L3, t4_2_8), text(LOOP, t4_2_8), @doc(L3) = @doc(LOOP) ), @doc(c2_8) = @doc(N).
+
+
+// demand_initial_site: the rows of initial_site its callers ask for (the metavariable columns they pass in)
+.decl sim113_demand_initial_site(n: node, loop: loc)
+sim113_demand_initial_site(b1_6, LOOP) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n),
+    child(n, c9, _), kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9),
+    child(n, c17, _), kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17),
+    ref_site(c17, b25), node(_, b25, _, _, _), INIT = b25, child(n, c26, _), sim113_one(c26), sim113_tok_follows_4(c26),
+    child(p34, n, _), kind(p34, "expression_statement"), child(p35, p34, _),
+    kind(p35, "block"), child(p36, p35, _), kind(p36, "for_statement"), node(_, p36, _, _, _), LOOP = p36,
+    child(n, c47, _), kind(c47, "identifier"), node(_, c47, _, _, _), N = c47, sim113_tok_precedes_7(c47),
+    site_form(c47, "augmented"), ast(c47, {"bindings": {"within": "LOOP", "max": 1}}),
+    child(n, c55, _), kind(c55, "identifier"), node(_, c55, _, _, _), N = c55, sim113_tok_precedes_8(c55),
+    ref_site(c55, b1_6), binding_value(b1_6, x2_6), sim113_zero(x2_6).
+sim113_demand_initial_site(b3_7, LOOP) :- kind(n, "augmented_assignment"), sim113_tok_has_1(n),
+    child(n, c9, _), kind(c9, "identifier"), node(_, c9, _, _, _), N = c9, sim113_tok_precedes_2(c9),
+    child(n, c17, _), kind(c17, "identifier"), node(_, c17, _, _, _), N = c17, sim113_tok_precedes_3(c17),
+    ref_site(c17, b25), node(_, b25, _, _, _), INIT = b25, child(n, c26, _), sim113_one(c26), sim113_tok_follows_4(c26),
+    child(p34, n, _), kind(p34, "expression_statement"), child(p35, p34, _),
+    kind(p35, "block"), child(p36, p35, _), kind(p36, "for_statement"), node(_, p36, _, _, _), LOOP = p36,
+    child(n, c47, _), kind(c47, "identifier"), node(_, c47, _, _, _), N = c47, sim113_tok_precedes_7(c47),
+    site_form(c47, "augmented"), ast(c47, {"bindings": {"within": "LOOP", "max": 1}}),
+    child(n, c55, _), kind(c55, "identifier"), node(_, c55, _, _, _), N = c55, sim113_tok_precedes_8(c55),
+    ref_site(c55, b3_7), kind(b3_7, "assignment"), field(b3_7, "left", c4_7),
+    child(c4_7, c5_7, _), kind(c5_7, "identifier"), node(_, c5_7, _, _, _), UT = c5_7, value(UT, t6_7),
+    value(N, t6_7), field(b3_7, "right", c11_7), child(c11_7, c12_7, _), sim113_zero(c12_7),
+    node(_, c12_7, _, _, _), UV = c12_7, value(UV, t13_7), value(UT, t13_7).
+
+// set_1: node kinds from a JSON `any`
+.decl sim113_set_1(v: symbol)
+sim113_set_1("expression_statement"). sim113_set_1("return_statement"). sim113_set_1("with_statement").
+sim113_set_1("if_statement"). sim113_set_1("for_statement"). sim113_set_1("while_statement").
+sim113_set_1("try_statement"). sim113_set_1("function_definition"). sim113_set_1("class_definition").
+sim113_set_1("decorated_definition"). sim113_set_1("assert_statement"). sim113_set_1("raise_statement").
+sim113_set_1("delete_statement"). sim113_set_1("pass_statement"). sim113_set_1("break_statement").
+sim113_set_1("continue_statement"). sim113_set_1("global_statement"). sim113_set_1("nonlocal_statement").
+sim113_set_1("import_statement"). sim113_set_1("import_from_statement").
+sim113_set_1("future_import_statement"). sim113_set_1("print_statement"). sim113_set_1("exec_statement").
+sim113_set_1("type_alias_statement"). sim113_set_1("match_statement").
+
+// set_4: node kinds from a JSON `any`
+.decl sim113_set_4(v: symbol)
+sim113_set_4("block"). sim113_set_4("elif_clause"). sim113_set_4("else_clause"). sim113_set_4("except_clause").
+sim113_set_4("finally_clause"). sim113_set_4("case_clause").
+
+// stop_12: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim113_stop_12(kind: symbol)
+sim113_stop_12("function_definition"). sim113_stop_12("class_definition").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim113_stop_2(n: node)
+sim113_stop_2(n) :- sim113_statement(n).
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim113_stop_3(n: node)
+sim113_stop_3(n) :- node(_, n, _, _, _), count : { kind(n, k1), sim113_set_4(k1) } = 0.
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   INIT: metavariable of the calling rule, passed in (bound by the caller)
+.decl sim113_alt_8(n: node, init: loc)
+sim113_alt_8(n, INIT) :- sim113_demand_alt_8(n, INIT), precedes(s1, n),
+    kind(s1, "expression_statement"), child(s1, c2, _), node(_, c2, _, _, _), S4 = c2,
+    text(S4, t3), text(INIT, t3), @doc(S4) = @doc(INIT).
+sim113_alt_8(n, INIT) :- sim113_demand_alt_8(n, INIT), within(n, p5), precedes(s6, p5),
+    kind(s6, "expression_statement"), child(s6, c7, _), node(_, c7, _, _, _), S4 = c7,
+    text(S4, t8), text(INIT, t8), @doc(S4) = @doc(INIT).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim113_stop_11(n: node)
+sim113_stop_11(n) :- sim113_scope_root(n).
+
+// stop_12_within: within_stop over the stop set stop_12, read inside an aggregate
+.decl sim113_stop_12_within(n: node, a: node)
+sim113_stop_12_within(x, y) :- within_stop(x, y, sim113_stop_12).
+
+// stop_11_within: within_stop over the stop set stop_11, read inside an aggregate
+.decl sim113_stop_11_within(n: node, a: node)
+sim113_stop_11_within(x, y) :- within_stop(x, y, sim113_stop_11).

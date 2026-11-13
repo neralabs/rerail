@@ -1,0 +1,82 @@
+.policy "bandit-b614-pytorch-load" revision 1
+.guests off
+.description "Load PyTorch files with weights_only=True or use safetensors; a full torch.load unpickles the file and can run arbitrary code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B614(n): a finding at node n, from clause `bandit-B614`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on F, WEIGHTS are added to every rule.
+.violation B614(at: node, f: node) "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
+    suppress nosec "B614"
+B614(F, n) :- node(_, WEIGHTS, _, _, _), n ~ `$F($$$ARGS)`,
+    ( kind(n, "call"), b614_arg_no_weights_only_1(n), unset(WEIGHTS)
+    ; kind(n, "call"), b614_arg_weights_only_1(n, a1_2), WEIGHTS = a1_2
+    ),
+    (sym_of(F, "torch.load") ; sym_of(F, "torch.serialization.load")),
+    value(WEIGHTS, false).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b614_args_plain(l: node, a: node, i: number)
+b614_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b614_args_splat(l: node, i: number)
+b614_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b614_args_pos(l: node, a: node, j: number)
+b614_args_pos(l, a, j) :- b614_args_plain(l, a, i), count : { b614_args_splat(l, k), k < i } = 0,
+    j = count : { b614_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b614_args_star(l: node, j: number)
+b614_args_star(l, j) :- b614_args_splat(l, i), count : { b614_args_splat(l, k), k < i } = 0,
+    j = count : { b614_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b614_args_kwp(l: node, k: symbol, v: node)
+b614_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b614_args_lit_dict(s: node, d: node)
+b614_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b614_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b614_args_str_pair(p: node)
+b614_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b614_args_kw(l: node, k: symbol, v: node)
+b614_args_kw(l, k, v) :- b614_args_kwp(l, k, v).
+b614_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b614_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b614_args_kw_spread(l: node)
+b614_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b614_args_lit_dict(s, _).
+
+// arg_weights_only_1: call n passes v for slot `weights_only` of (f, map_location, pickle_module, *, weights_only, mmap), as Python binds the call
+.decl b614_arg_weights_only_1(n: node, v: node)
+b614_arg_weights_only_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b614_args_kw(l, "weights_only", v), count : { b614_args_kw(l, "weights_only", _) } = 1.
+
+// arg_no_weights_only_1: call n does not pass slot `weights_only` of (f, map_location, pickle_module, *, weights_only, mmap), as Python binds the call
+.decl b614_arg_no_weights_only_1(n: node)
+b614_arg_no_weights_only_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !b614_args_kw(l, "weights_only", _), !b614_args_kw_spread(l).

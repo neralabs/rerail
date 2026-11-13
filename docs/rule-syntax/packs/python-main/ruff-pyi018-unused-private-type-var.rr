@@ -1,0 +1,67 @@
+.policy "ruff-pyi018-unused-private-type-var" revision 1
+.guests off
+.description "Remove private type variables that are never used, or use them; an unused underscore-prefixed type variable is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// typevar_call(n): the JSON util `typevar-call`, used where the JSON says `matches: "typevar-call"`
+.decl pyi018_typevar_call(n: node)
+pyi018_typevar_call(n) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, q2), pyi018_set_1(q2).
+pyi018_typevar_call(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi018_typevar_call(c3).
+
+// PYI018(n): findings from clauses `unused-private-type-var`, `unused-private-type-var-in-function-calling-locals`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI018(at: node, name: loc) "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
+    suppress noqa "PYI018"
+PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n),
+    site_form(n, "assignment"), (site_scope(n, "module") ; site_scope(n, "function")),
+    site_latest(n), !site_used(n), !site_exported(n), kind(n, "assignment"),
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, child(p2, n, _),
+    kind(p2, "expression_statement"), field(n, "right", c3), pyi018_typevar_call(c3).
+PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n),
+    site_form(n, "assignment"), site_scope(n, "function"), site_latest(n),
+    !site_exported(n), kind(n, "assignment"),
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, child(p2, n, _),
+    kind(p2, "expression_statement"), field(n, "right", c3), pyi018_typevar_call(c3),
+    node(_, n, _, _, _), V = n, pyi018_up_1(n, p4), within_stop(c5, p4, pyi018_stop_2), kind(c5, "call"),
+    c5 ~ `locals()`,
+    count : { has(p4, c6, "identifier"), node(_, c6, _, _, _), V = c6, count : { field(p7, "left", c6), kind(p7, "assignment") } = 0 } = 0.
+
+// PYI018_unused_private_type_var_in_stub_class(n): a finding at node n, from clause `unused-private-type-var-in-stub-class`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI018_unused_private_type_var_in_stub_class(at: node, name: loc) code "PYI018" "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
+    suppress noqa "PYI018"
+PYI018_unused_private_type_var_in_stub_class_raw(n, NAME) :- kind(n, "identifier"),
+    match("(?P<NAME>_.*)", n), site_form(n, "assignment"), site_scope(n, "class"),
+    site_latest(n), !site_used(n), !site_exported(n), kind(n, "assignment"),
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, child(p2, n, _),
+    kind(p2, "expression_statement"), field(n, "right", c3), pyi018_typevar_call(c3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi018_up_1(n: node, p: node)
+pyi018_up_1(n, p) :- site_latest(n), within_stop(n, p, "function_definition"),
+    kind(p, "function_definition").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi018_set_1(v: symbol)
+pyi018_set_1("typing.TypeVar"). pyi018_set_1("typing_extensions.TypeVar"). pyi018_set_1("_typeshed.TypeVar").
+pyi018_set_1("typing.ParamSpec"). pyi018_set_1("typing_extensions.ParamSpec").
+pyi018_set_1("_typeshed.ParamSpec"). pyi018_set_1("typing.TypeVarTuple").
+pyi018_set_1("typing_extensions.TypeVarTuple"). pyi018_set_1("_typeshed.TypeVarTuple").
+
+// stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi018_stop_2(kind: symbol)
+pyi018_stop_2("function_definition"). pyi018_stop_2("lambda"). pyi018_stop_2("class_definition").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI018_unused_private_type_var_in_stub_class_raw(at: node, name: loc)
+PYI018_unused_private_type_var_in_stub_class(v0, v1) :- PYI018_unused_private_type_var_in_stub_class_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

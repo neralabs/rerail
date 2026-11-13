@@ -1,0 +1,51 @@
+.policy "ruff-log002-invalid-get-logger-argument" revision 1
+.guests off
+.description "Pass __name__ to logging.getLogger() instead of __file__ or __cached__; logger names should be dotted module names, not file paths."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG002(n): a finding at node n, from clause `invalid-get-logger-argument`.
+// Each rule below is one way the JSON `rule` can match.
+.violation LOG002(at: node) "Pass `__name__` to `logging.getLogger()` instead of `__file__` or `__cached__`; logger names should be dotted module names, not paths. Keep it only if existing config targets the path-named logger."
+    suppress noqa "LOG002"
+LOG002(n) :- kind(n, "identifier"), glob("{__file__,__cached__}", n),
+    (global_ref(n, "__file__") ; global_ref(n, "__cached__")),
+    count : { field(p1, "name", n), kind(p1, "keyword_argument") } = 0,
+    ( within_stop(n, p2, log002_stop_2), kind(p2, "keyword_argument"), field(p2, "name", c1), glob("name", c1), child(p3, p2, _), log002_get_logger_args(p3)
+    ; log002_first_positional(n)
+    ).
+
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl log002_callee(n: node)
+log002_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "logging.getLogger").
+log002_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), log002_callee(c1).
+
+// get_logger_args(n): the JSON util `get-logger-args`, used where the JSON says `matches: "get-logger-args"`
+.decl log002_get_logger_args(n: node)
+log002_get_logger_args(n) :- kind(n, "argument_list"), child(p1, n, _), kind(p1, "call"),
+    field(p1, "function", c2), log002_callee(c2).
+
+// first_positional(n): the JSON util `first-positional`, used where the JSON says `matches: "first-positional"`
+.decl log002_first_positional(n: node)
+log002_first_positional(n) :- child(p1, n, _), log002_counted_1(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), log002_counted_1(s2) }, k3 = 0,
+    !kind(n, "keyword_argument"), !kind(n, "dictionary_splat"), !kind(n, "comment"),
+    !kind(n, "line_continuation"), child(p4, n, _), log002_get_logger_args(p4),
+    count : { child(p4, c5, _), kind(c5, "keyword_argument"), field(c5, "name", c6), glob("name", c6) } = 0.
+log002_first_positional(n) :- child(p7, n, _), kind(p7, "parenthesized_expression"),
+    log002_first_positional(p7).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl log002_counted_1(n: node)
+log002_counted_1(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat"), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl log002_stop_2(n: node)
+log002_stop_2(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

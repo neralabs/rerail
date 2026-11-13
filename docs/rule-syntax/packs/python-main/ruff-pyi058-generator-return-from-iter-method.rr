@@ -1,0 +1,252 @@
+.policy "ruff-pyi058-generator-return-from-iter-method" revision 1
+.guests off
+.description "Annotate a simple iteration method as returning an iterator, not a generator; the kind of iterator it returns is an implementation detail."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// any_or_none(n): the JSON util `any-or-none`, used where the JSON says `matches: "any-or-none"`
+.decl pyi058_any_or_none(n: node)
+pyi058_any_or_none(n) :- kind(n, "none").
+pyi058_any_or_none(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Any")
+    ; sym_of(n, "typing_extensions.Any")
+    ; sym_of(n, "_typeshed.Any")
+    ).
+
+pyi058_any_or_none(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), pyi058_any_or_none(c1).
+
+// generator_tuple(n): the JSON util `generator-tuple`, used where the JSON says `matches: "generator-tuple"`
+.decl pyi058_generator_tuple(n: node)
+pyi058_generator_tuple(n) :- kind(n, "tuple"),
+    k5 = count : { child(n, c1, _), child(p2, c1, _), pyi058_counted(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi058_counted(s3) }, k4 >= 0 },
+    k5 >= 3, k5 <= 3,
+    count : { child(n, c6, _), child(p7, c6, _), pyi058_counted(c6), k9 = count : { child(p7, s8, _), precedes(s8, c6), pyi058_counted(s8) }, k9 >= 1, !pyi058_any_or_none(c6) } = 0.
+pyi058_generator_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pyi058_generator_tuple(c10).
+
+// async_generator_tuple(n): the JSON util `async-generator-tuple`, used where the JSON says `matches: "async-generator-tuple"`
+.decl pyi058_async_generator_tuple(n: node)
+pyi058_async_generator_tuple(n) :- kind(n, "tuple"),
+    k5 = count : { child(n, c1, _), child(p2, c1, _), pyi058_counted(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi058_counted(s3) }, k4 >= 0 },
+    k5 >= 2, k5 <= 2,
+    count : { child(n, c6, _), child(p7, c6, _), pyi058_counted(c6), k9 = count : { child(p7, s8, _), precedes(s8, c6), pyi058_counted(s8) }, k9 >= 1, !pyi058_any_or_none(c6) } = 0.
+pyi058_async_generator_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pyi058_async_generator_tuple(c10).
+
+// generator_ref(n): the JSON util `generator-ref`, used where the JSON says `matches: "generator-ref"`
+.decl pyi058_generator_ref(n: node)
+pyi058_generator_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Generator")
+    ; sym_of(n, "typing_extensions.Generator")
+    ; sym_of(n, "collections.abc.Generator")
+    ).
+
+pyi058_generator_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), pyi058_generator_ref(c1).
+
+// async_generator_ref(n): the JSON util `async-generator-ref`, used where the JSON says `matches: "async-generator-ref"`
+.decl pyi058_async_generator_ref(n: node)
+pyi058_async_generator_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.AsyncGenerator")
+    ; sym_of(n, "typing_extensions.AsyncGenerator")
+    ; sym_of(n, "collections.abc.AsyncGenerator")
+    ).
+
+pyi058_async_generator_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), pyi058_async_generator_ref(c1).
+
+// generator_return(n): the JSON util `generator-return`, used where the JSON says `matches: "generator-return"`
+.decl pyi058_generator_return(n: node)
+pyi058_generator_return(n) :- kind(n, "subscript"), field(n, "value", c1), pyi058_generator_ref(c1),
+    field(n, "subscript", c2), pyi058_generator_tuple(c2), !pyi058_tok_has_1(n).
+pyi058_generator_return(n) :- kind(n, "generic_type"), child(n, c11, _),
+    kind(c11, "identifier"), pyi058_generator_ref(c11), child(n, c12, _),
+    kind(c12, "type_parameter"), !pyi058_tok_has_2(c12), child(c12, c21, _),
+    kind(c21, "type"), child(c21, c22, _), pyi058_generator_tuple(c22).
+pyi058_generator_return(n) :- pyi058_generator_ref(n).
+pyi058_generator_return(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c23, _), pyi058_generator_return(c23).
+pyi058_generator_return(n) :- kind(n, "generic_type"), child(n, c24, _),
+    kind(c24, "identifier"), pyi058_generator_ref(c24), child(n, c25, _),
+    kind(c25, "type_parameter"),
+    k27 = count : { child(c25, c26, _), kind(c26, "type") }, k27 >= 3, k27 <= 3,
+    count : { child(c25, c28, _), kind(c28, "type"), child(p29, c28, _), pyi058_counted_5(c28), k31 = count : { child(p29, s30, _), precedes(s30, c28), pyi058_counted_5(s30) }, k31 >= 1, !pyi058_any_or_none(c28) } = 0.
+pyi058_generator_return(n) :- kind(n, "subscript"), field(n, "value", c32),
+    pyi058_generator_ref(c32),
+    k37 = count : { child(n, c33, _), child(p34, c33, _), pyi058_counted(c33), k36 = count : { child(p34, s35, _), precedes(s35, c33), pyi058_counted(s35) }, k36 >= 0 },
+    k37 >= 4, k37 <= 4,
+    count : { child(n, c38, _), child(p39, c38, _), pyi058_counted(c38), k41 = count : { child(p39, s40, _), precedes(s40, c38), pyi058_counted(s40) }, k41 >= 2, !pyi058_any_or_none(c38) } = 0.
+
+// async_generator_return(n): the JSON util `async-generator-return`, used where the JSON says `matches: "async-generator-return"`
+.decl pyi058_async_generator_return(n: node)
+pyi058_async_generator_return(n) :- kind(n, "subscript"), field(n, "value", c1),
+    pyi058_async_generator_ref(c1), field(n, "subscript", c2), pyi058_async_generator_tuple(c2),
+    !pyi058_tok_has_1(n).
+pyi058_async_generator_return(n) :- kind(n, "generic_type"), child(n, c11, _),
+    kind(c11, "identifier"), pyi058_async_generator_ref(c11), child(n, c12, _),
+    kind(c12, "type_parameter"), !pyi058_tok_has_2(c12), child(c12, c21, _),
+    kind(c21, "type"), child(c21, c22, _), pyi058_async_generator_tuple(c22).
+pyi058_async_generator_return(n) :- pyi058_async_generator_ref(n).
+pyi058_async_generator_return(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c23, _), pyi058_async_generator_return(c23).
+pyi058_async_generator_return(n) :- kind(n, "generic_type"), child(n, c24, _),
+    kind(c24, "identifier"), pyi058_async_generator_ref(c24), child(n, c25, _),
+    kind(c25, "type_parameter"),
+    k27 = count : { child(c25, c26, _), kind(c26, "type") }, k27 >= 2, k27 <= 2,
+    count : { child(c25, c28, _), kind(c28, "type"), child(p29, c28, _), pyi058_counted_8(c28), k31 = count : { child(p29, s30, _), precedes(s30, c28), pyi058_counted_8(s30) }, k31 >= 1, !pyi058_any_or_none(c28) } = 0.
+pyi058_async_generator_return(n) :- kind(n, "subscript"), field(n, "value", c32),
+    pyi058_async_generator_ref(c32),
+    k37 = count : { child(n, c33, _), child(p34, c33, _), pyi058_counted(c33), k36 = count : { child(p34, s35, _), precedes(s35, c33), pyi058_counted(s35) }, k36 >= 0 },
+    k37 >= 3, k37 <= 3,
+    count : { child(n, c38, _), child(p39, c38, _), pyi058_counted(c38), k41 = count : { child(p39, s40, _), precedes(s40, c38), pyi058_counted(s40) }, k41 >= 2, !pyi058_any_or_none(c38) } = 0.
+
+// single_parameter(n): the JSON util `single-parameter`, used where the JSON says `matches: "single-parameter"`
+.decl pyi058_single_parameter(n: node)
+pyi058_single_parameter(n) :- kind(n, "parameters"),
+    count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern") ; kind(c1, "keyword_separator")) } = 0,
+    k3 = count : { child(n, c2, _), (kind(c2, "identifier") ; kind(c2, "typed_parameter") ; kind(c2, "default_parameter") ; kind(c2, "typed_default_parameter")) },
+    k3 >= 1, k3 <= 1.
+
+// plain_method(n): the JSON util `plain-method`, used where the JSON says `matches: "plain-method"`
+.decl pyi058_plain_method(n: node)
+pyi058_plain_method(n) :- kind(n, "function_definition"), !match("async\\b.*", n),
+    within_stop(n, p1, pyi058_stop_11), kind(p1, "class_definition"),
+    field(n, "parameters", c2), pyi058_single_parameter(c2).
+
+// iter_method(n): the JSON util `iter-method`, used where the JSON says `matches: "iter-method"`
+.decl pyi058_iter_method(n: node)
+pyi058_iter_method(n) :- pyi058_plain_method(n), field(n, "name", c1), glob("__iter__", c1),
+    field(n, "return_type", c2), pyi058_generator_return(c2).
+
+// aiter_method(n): the JSON util `aiter-method`, used where the JSON says `matches: "aiter-method"`
+.decl pyi058_aiter_method(n: node)
+pyi058_aiter_method(n) :- pyi058_plain_method(n), field(n, "name", c1), glob("__aiter__", c1),
+    field(n, "return_type", c2), pyi058_async_generator_return(c2).
+
+// none_value(n): the JSON util `none-value`, used where the JSON says `matches: "none-value"`
+.decl pyi058_none_value(n: node)
+pyi058_none_value(n) :- kind(n, "none").
+pyi058_none_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi058_none_value(c1).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl pyi058_plain_string(n: node)
+pyi058_plain_string(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+pyi058_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+
+// yield_expr(n): the JSON util `yield-expr`, used where the JSON says `matches: "yield-expr"`
+.decl pyi058_yield_expr(n: node)
+pyi058_yield_expr(n) :- kind(n, "yield").
+pyi058_yield_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi058_yield_expr(c1).
+
+// statement_expr(n): the JSON util `statement-expr`, used where the JSON says `matches: "statement-expr"`
+.decl pyi058_statement_expr(n: node)
+pyi058_statement_expr(n) :- pyi058_plain_string(n).
+pyi058_statement_expr(n) :- kind(n, "ellipsis").
+pyi058_statement_expr(n) :- pyi058_yield_expr(n).
+pyi058_statement_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi058_statement_expr(c1).
+
+// yield_statement(n): the JSON util `yield-statement`, used where the JSON says `matches: "yield-statement"`
+.decl pyi058_yield_statement(n: node)
+pyi058_yield_statement(n) :- kind(n, "expression_statement"), child(n, c1, _), pyi058_yield_expr(c1).
+
+// late_value_return(n): the JSON util `late-value-return`, used where the JSON says `matches: "late-value-return"`
+.decl pyi058_late_value_return(n: node)
+pyi058_late_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
+    child(p2, c1, _), pyi058_counted(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi058_counted(s3) }, k4 >= 0,
+    !pyi058_none_value(c1), precedes(s5, n), pyi058_yield_statement(s5).
+
+// simple_statement(n): the JSON util `simple-statement`, used where the JSON says `matches: "simple-statement"`
+.decl pyi058_simple_statement(n: node)
+pyi058_simple_statement(n) :- (kind(n, "pass_statement") ; kind(n, "comment")).
+pyi058_simple_statement(n) :- node(_, n, _, _, _), glob(";", n).
+pyi058_simple_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    pyi058_statement_expr(c1), !pyi058_tok_has_3(n).
+pyi058_simple_statement(n) :- kind(n, "return_statement"), !pyi058_late_value_return(n).
+
+// PYI058(n, detail): findings from clauses `generator-from-iter`, `async-generator-from-aiter`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI058(at: node, detail: symbol) "Annotate {detail}."
+    suppress noqa "PYI058"
+PYI058_raw(n, "`__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`") :- kind(n, "identifier"),
+    glob("__iter__", n), field(p1, "name", n), pyi058_iter_method(p1), field(p1, "body", c2),
+    kind(c2, "block"), count : { child(c2, c3, _), !pyi058_simple_statement(c3) } = 0.
+PYI058_raw(n, "`__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`") :- kind(n, "identifier"),
+    glob("__aiter__", n), field(p1, "name", n), pyi058_aiter_method(p1),
+    field(p1, "body", c2), kind(c2, "block"),
+    count : { child(c2, c3, _), !pyi058_simple_statement(c3) } = 0.
+
+// PYI058_generator_from_iter_stub(n, detail): findings from clauses `generator-from-iter-stub`, `async-generator-from-aiter-stub`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI058_generator_from_iter_stub(at: node, detail: symbol) code "PYI058" "Annotate {detail}."
+    suppress noqa "PYI058"
+PYI058_generator_from_iter_stub_raw(n, "`__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`") :- kind(n, "identifier"),
+    glob("__iter__", n), field(p1, "name", n), pyi058_iter_method(p1).
+PYI058_generator_from_iter_stub_raw(n, "`__aiter__` as returning `AsyncIterator[...]` with the same yield type, not `AsyncGenerator`; keep `AsyncGenerator` only if callers rely on `asend` or `athrow`") :- kind(n, "identifier"),
+    glob("__aiter__", n), field(p1, "name", n), pyi058_aiter_method(p1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi058_tok_has_1(n: node)
+.stored pyi058_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi058_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+pyi058_tok_has_1(n) :- op(n, t4), match(",", t4).
+pyi058_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi058_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi058_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi058_tok_has_2(n: node)
+.stored pyi058_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi058_tok_has_2(n) :- child(n, c13, _), glob("\\,", c13).
+pyi058_tok_has_2(n) :- op(n, t14), match(",", t14).
+pyi058_tok_has_2(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+pyi058_tok_has_2(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+pyi058_tok_has_2(n) :- node_text(n, g15), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g15).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi058_tok_has_3(n: node)
+.stored pyi058_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi058_tok_has_3(n) :- child(n, c2, _), glob("\\,", c2).
+pyi058_tok_has_3(n) :- op(n, t3), match(",", t3).
+pyi058_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi058_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi058_tok_has_3(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// stop_11: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi058_stop_11(kind: symbol)
+pyi058_stop_11("function_definition"). pyi058_stop_11("class_definition").
+
+// counted(n): 9 identical copies of one rule set (`counted_1`, `counted_10`, `counted_12` and 6 more), folded into one.
+.decl pyi058_counted(n: node)
+pyi058_counted(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// counted_5(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi058_counted_5(n: node)
+pyi058_counted_5(n) :- kind(n, "type").
+
+// counted_8(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi058_counted_8(n: node)
+pyi058_counted_8(n) :- kind(n, "type").
+
+// main's file condition {"regex": "\\.py$"}
+.decl PYI058_raw(at: node, detail: symbol)
+PYI058(v0, v1) :- PYI058_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.py$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI058_generator_from_iter_stub_raw(at: node, detail: symbol)
+PYI058_generator_from_iter_stub(v0, v1) :- PYI058_generator_from_iter_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

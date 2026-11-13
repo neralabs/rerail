@@ -1,0 +1,17 @@
+.policy "ruff-f507-percent-format-positional-count-mismatch" revision 1
+.guests off
+.description "Match the number of %-format placeholders to the number of values supplied; a mismatch raises TypeError at run time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// F507(n): a finding at node n, from clause `percent-format-positional-count-mismatch`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F507(at: node) "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError."
+    suppress noqa "F507"
+F507(n) :- n ~ `$S % $R`,
+    ( ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"not": {"kind": "pair"}}}})
+    ; ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"any": [{"kind": "star"}, {"kind": "placeholder", "not": {"has": {"kind": "mapping_key"}}}]}}})
+    ).

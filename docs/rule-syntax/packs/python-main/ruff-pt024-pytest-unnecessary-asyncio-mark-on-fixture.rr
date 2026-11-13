@@ -1,0 +1,56 @@
+.policy "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture" revision 1
+.guests off
+.description "Don't apply the pytest asyncio marker to a fixture; marks have no effect on fixtures."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT024(n): a finding at node n, from clause `asyncio-mark-on-fixture`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT024(at: node, span: node) "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead."
+    suppress noqa "PT024"
+PT024(SPAN, n) :- kind(n, "decorator"), child(n, c1, _), pt024_asyncio_expr(c1),
+    child(p2, n, _), kind(p2, "decorated_definition"), field(p2, "definition", c3),
+    kind(c3, "function_definition"), child(p2, c4, _), kind(c4, "decorator"),
+    child(c4, c5, _), pt024_fixture_expr(c5),
+    match("(?P<SPAN>(?:\"\"\"(?:(?:[^\"\\\\]|\\\\[\\s\\S])|\"(?:[^\"\\\\]|\\\\[\\s\\S])|\"\"(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:(?:[^'\\\\]|\\\\[\\s\\S])|'(?:[^'\\\\]|\\\\[\\s\\S])|''(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?", n).
+
+// asyncio_ref(n): the JSON util `asyncio-ref`, used where the JSON says `matches: "asyncio-ref"`
+.decl pt024_asyncio_ref(n: node)
+pt024_asyncio_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.mark.asyncio").
+
+// asyncio_callee(n): the JSON util `asyncio-callee`, used where the JSON says `matches: "asyncio-callee"`
+.decl pt024_asyncio_callee(n: node)
+pt024_asyncio_callee(n) :- pt024_asyncio_ref(n).
+pt024_asyncio_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt024_asyncio_callee(c1).
+
+// asyncio_expr(n): the JSON util `asyncio-expr`, used where the JSON says `matches: "asyncio-expr"`
+.decl pt024_asyncio_expr(n: node)
+pt024_asyncio_expr(n) :- pt024_asyncio_callee(n).
+pt024_asyncio_expr(n) :- kind(n, "call"), field(n, "function", c1), pt024_asyncio_callee(c1).
+pt024_asyncio_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt024_asyncio_expr(c2).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt024_fixture_ref(n: node)
+pt024_fixture_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt024_fixture_callee(n: node)
+pt024_fixture_callee(n) :- pt024_fixture_ref(n).
+pt024_fixture_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt024_fixture_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt024_fixture_expr(n: node)
+pt024_fixture_expr(n) :- pt024_fixture_callee(n).
+pt024_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt024_fixture_callee(c1).
+pt024_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt024_fixture_expr(c2).

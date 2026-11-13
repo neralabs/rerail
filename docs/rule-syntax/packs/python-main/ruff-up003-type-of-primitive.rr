@@ -1,0 +1,74 @@
+.policy "ruff-up003-type-of-primitive" revision 1
+.guests off
+.description "Use the builtin type name directly instead of calling type() on a literal; the type of a literal is known in advance."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// type_callee(n): the JSON util `type-callee`, used where the JSON says `matches: "type-callee"`
+.decl up003_type_callee(n: node)
+up003_type_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "type"), sym_of(n, "builtins.type").
+up003_type_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up003_type_callee(c1).
+
+// primitive_literal(n): the JSON util `primitive-literal`, used where the JSON says `matches: "primitive-literal"`
+.decl up003_primitive_literal(n: node)
+up003_primitive_literal(n) :- (kind(n, "integer") ; kind(n, "float") ; kind(n, "true") ; kind(n, "false")).
+up003_primitive_literal(n) :- kind(n, "string"), !match("[A-Za-z]*[fFtT].*", n).
+up003_primitive_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFtT].*", c1) } = 0.
+up003_primitive_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up003_primitive_literal(c2).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl up003_positional(n: node)
+up003_positional(n) :- node(_, n, _, _, _), !up003_alt_1(n).
+
+// sole_primitive_argument(n): the JSON util `sole-primitive-argument`, used where the JSON says `matches: "sole-primitive-argument"`
+.decl up003_sole_primitive_argument(n: node)
+up003_sole_primitive_argument(n) :- up003_primitive_literal(n), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"),
+    field(p2, "function", c3), up003_type_callee(c3), !up003_alt_2(n).
+
+// UP003(n, detail): findings from clauses `type-of-str`, `type-of-bytes`, `type-of-int`, `type-of-float` and 2 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation UP003(at: node, detail: symbol) "Replace this `type(...)` call with {detail}; the type of a literal is known in advance."
+    suppress noqa "UP003"
+UP003(n, "`str`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "str").
+UP003(n, "`bytes`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "bytes").
+UP003(n, "`int`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "int").
+UP003(n, "`float`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "float").
+UP003(n, "`complex`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "complex").
+UP003(n, "`bool`") :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
+    value(c2, v3), value_type(v3, "boolean").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up003_alt_1(n: node)
+up003_alt_1(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+up003_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl up003_alt_2(n: node)
+up003_alt_2(n) :- precedes(s1, n), up003_positional(s1).
+up003_alt_2(n) :- precedes(n, s2), up003_positional(s2).

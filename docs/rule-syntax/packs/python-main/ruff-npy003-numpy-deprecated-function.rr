@@ -1,0 +1,62 @@
+.policy "ruff-npy003-numpy-deprecated-function" revision 1
+.guests off
+.description "Replace deprecated NumPy functions with their current equivalents."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// NPY003(n, detail): findings from clauses `numpy-round`, `numpy-product`, `numpy-cumproduct`, `numpy-sometrue` and 1 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY003(at: node, name: loc, detail: symbol) "`{name}` is deprecated; use {detail} instead, which does the same."
+    suppress noqa "NPY003"
+NPY003(n, NAME, "`numpy.round`") :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.round_"), node(_, n, _, _, _), NAME = n.
+NPY003(n, NAME, "`numpy.prod`") :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.product"), node(_, n, _, _, _), NAME = n.
+NPY003(n, NAME, "`numpy.cumprod`") :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.cumproduct"), node(_, n, _, _, _), NAME = n.
+NPY003(n, NAME, "`numpy.any`") :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.sometrue"), node(_, n, _, _, _), NAME = n.
+NPY003(n, NAME, "`numpy.all`") :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.alltrue"), node(_, n, _, _, _), NAME = n.
+
+// NPY003_string_annotation_or_pattern(n): a finding at node n, from clause `string-annotation-or-pattern`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY003_string_annotation_or_pattern(at: node, name: node) code "NPY003" "`{name}` is deprecated; use its current NumPy equivalent (`round`, `prod`, `cumprod`, `any` or `all`) instead."
+    suppress noqa "NPY003"
+NPY003_string_annotation_or_pattern(NAME, n) :- npy003_pattern_name(n), node(_, n, _, _, _), NAME = n.
+NPY003_string_annotation_or_pattern(NAME, n) :- npy003_in_string(n, NAME).
+
+// reference(n): the JSON util `reference`, used where the JSON says `matches: "reference"`
+.decl npy003_reference(n: node)
+npy003_reference(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy003_set_1(q1).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy003_in_string(n: node, name: loc)
+npy003_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), npy003_alt_2(c2, NAME).
+
+// pattern_name(n): the JSON util `pattern-name`, used where the JSON says `matches: "pattern-name"`
+.decl npy003_pattern_name(n: node)
+npy003_pattern_name(n) :- kind(n, "dotted_name"),
+    match("\\w+\\s*\\.\\s*(?:round_|product|cumproduct|sometrue|alltrue)", n),
+    inside(n, p1, "case_pattern"), child(n, c2, _), kind(c2, "identifier"),
+    sym_of(c2, "numpy").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl npy003_set_1(v: symbol)
+npy003_set_1("numpy.round_"). npy003_set_1("numpy.product"). npy003_set_1("numpy.cumproduct").
+npy003_set_1("numpy.sometrue"). npy003_set_1("numpy.alltrue").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy003_alt_2(n: node, name: loc)
+npy003_alt_2(n, NAME) :- npy003_reference(n), NAME = n.
+npy003_alt_2(n, NAME) :- npy003_in_string(n, NAME).

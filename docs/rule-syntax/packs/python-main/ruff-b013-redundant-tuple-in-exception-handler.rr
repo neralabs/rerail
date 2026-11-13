@@ -1,0 +1,34 @@
+.policy "ruff-b013-redundant-tuple-in-exception-handler" revision 1
+.guests off
+.description "Remove the one-element tuple around a single exception type in an except clause; the parentheses and comma are redundant."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B013(n): a finding at node n, from clause `redundant-tuple-in-exception-handler`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B013(at: node) "A length-one tuple literal is redundant in exception handlers"
+    suppress noqa "B013"
+B013(n) :- kind(n, "tuple"), b013_handler_type(n),
+    k2 = count : { child(n, c1, _), b013_element(c1) }, k2 >= 1, k2 <= 1,
+    count : { child(n, c3, _), kind(c3, "list_splat") } = 0.
+
+// handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
+.decl b013_handler_type(n: node)
+b013_handler_type(n) :- child(p1, n, _), b013_alt_1(p1).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl b013_element(n: node)
+b013_element(n) :- node(_, n, _, _, _), !b013_alt_2(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b013_alt_1(n: node)
+b013_alt_1(n) :- kind(n, "except_clause").
+b013_alt_1(n) :- kind(n, "as_pattern"), child(p1, n, _), kind(p1, "except_clause").
+b013_alt_1(n) :- kind(n, "parenthesized_expression"), b013_handler_type(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl b013_alt_2(n: node)
+b013_alt_2(n) :- kind(n, "comment").
+b013_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).

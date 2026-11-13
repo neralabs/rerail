@@ -1,0 +1,16 @@
+.policy "bandit-b702-use-of-mako-templates" revision 1
+.guests off
+.description "Avoid Mako templates or escape every variable with Mako filters; Mako has no environment-wide escaping, so output is open to XSS."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B702(n): a finding at node n, from clause `bandit-B702`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B702(at: node) "Mako templates do not provide environment-wide escaping; sanitize variables with the n, h, or x filters."
+    suppress nosec "B702"
+B702(n) :- n ~ `$F($$$ARGS)`, sym_of(F, "mako.template.Template").

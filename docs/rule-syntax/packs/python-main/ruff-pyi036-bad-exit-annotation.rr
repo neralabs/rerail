@@ -1,0 +1,531 @@
+.policy "ruff-pyi036-bad-exit-annotation" revision 1
+.guests off
+.description "Declare exit and aexit methods with the three standard arguments or star-args, annotated as object or as the exception type, exception and traceback each unioned with None."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// none_lit(n): the JSON util `none-lit`, used where the JSON says `matches: "none-lit"`
+.decl pyi036_none_lit(n: node)
+pyi036_none_lit(n) :- kind(n, "none").
+pyi036_none_lit(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), pyi036_none_lit(c1).
+
+// object_like(n): the JSON util `object-like`, used where the JSON says `matches: "object-like"`
+.decl pyi036_object_like(n: node)
+pyi036_object_like(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "builtins.object") ; sym_of(n, "_typeshed.Unused")),
+    global_ref(n, "object").
+pyi036_object_like(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi036_object_like(c1).
+
+// type_ref(n): the JSON util `type-ref`, used where the JSON says `matches: "type-ref"`
+.decl pyi036_type_ref(n: node)
+pyi036_type_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "builtins.type")
+    ; sym_of(n, "typing.Type")
+    ; sym_of(n, "typing_extensions.Type")
+    ; sym_of(n, "_typeshed.Type")
+    ),
+    global_ref(n, "type").
+
+// optional_ref(n): the JSON util `optional-ref`, used where the JSON says `matches: "optional-ref"`
+.decl pyi036_optional_ref(n: node)
+pyi036_optional_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Optional")
+    ; sym_of(n, "typing_extensions.Optional")
+    ; sym_of(n, "_typeshed.Optional")
+    ).
+
+
+// union_ref(n): the JSON util `union-ref`, used where the JSON says `matches: "union-ref"`
+.decl pyi036_union_ref(n: node)
+pyi036_union_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl pyi036_overload_ref(n: node)
+pyi036_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+pyi036_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi036_overload_ref(c1).
+
+// base_exc(n): the JSON util `base-exc`, used where the JSON says `matches: "base-exc"`
+.decl pyi036_base_exc(n: node)
+pyi036_base_exc(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "builtins.BaseException"), global_ref(n, "BaseException").
+pyi036_base_exc(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), pyi036_base_exc(c1).
+
+// traceback(n): the JSON util `traceback`, used where the JSON says `matches: "traceback"`
+.decl pyi036_traceback(n: node)
+pyi036_traceback(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "types.TracebackType").
+pyi036_traceback(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi036_traceback(c1).
+
+// exc_type(n): the JSON util `exc-type`, used where the JSON says `matches: "exc-type"`
+.decl pyi036_exc_type(n: node)
+pyi036_exc_type(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    pyi036_type_ref(c1), child(n, c2, _), kind(c2, "type_parameter"),
+    k4 = count : { child(c2, c3, _), kind(c3, "type") }, k4 >= 1, k4 <= 1,
+    child(c2, c5, _), kind(c5, "type"), pyi036_base_exc(c5), !pyi036_tok_has_1(c2).
+pyi036_exc_type(n) :- kind(n, "subscript"), field(n, "value", c14), pyi036_type_ref(c14),
+    field(n, "subscript", c15), pyi036_base_exc(c15),
+    k17 = count : { child(n, c16, _), !pyi036_alt_1(c16) }, k17 >= 2, k17 <= 2, !pyi036_tok_has_2(n).
+pyi036_exc_type(n) :- kind(n, "parenthesized_expression"), child(n, c26, _), pyi036_exc_type(c26).
+
+// body(n): the JSON util `body`, used where the JSON says `matches: "body"`
+.decl pyi036_body(n: node)
+pyi036_body(n) :- pyi036_demand_body(n), pyi036_up_1(n, p1), child(p2, p1, _),
+    (kind(p2, "typed_parameter") ; kind(p2, "typed_default_parameter")).
+
+// or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
+.decl pyi036_or_op(n: node)
+pyi036_or_op(n) :- kind(n, "binary_operator"), pyi036_tok_has_3(n).
+
+// slot_left(n): the JSON util `slot-left`, used where the JSON says `matches: "slot-left"`
+.decl pyi036_slot_left(n: node)
+pyi036_slot_left(n) :- field(p1, "left", n), pyi036_or_op(p1), pyi036_body(p1).
+pyi036_slot_left(n) :- kind(n, "type"), count : { precedes(s2, n), kind(s2, "type") } = 0,
+    child(p3, n, _), kind(p3, "union_type"), pyi036_body(p3),
+    count : { child(p3, c4, _), kind(c4, "type"), child(c4, c5, _), pyi036_alt_3(c5) } = 0.
+pyi036_slot_left(n) :- child(p6, n, _),
+    (kind(p6, "parenthesized_expression") ; kind(p6, "type")), pyi036_slot_left(p6).
+
+// slot_right(n): the JSON util `slot-right`, used where the JSON says `matches: "slot-right"`
+.decl pyi036_slot_right(n: node)
+pyi036_slot_right(n) :- field(p1, "right", n), pyi036_or_op(p1), pyi036_body(p1), field(p1, "left", c2),
+    pyi036_none_lit(c2).
+pyi036_slot_right(n) :- kind(n, "type"), precedes(s3, n), kind(s3, "type"), pyi036_none_lit(s3),
+    child(p4, n, _), kind(p4, "union_type"), pyi036_body(p4).
+pyi036_slot_right(n) :- child(p5, n, _),
+    (kind(p5, "parenthesized_expression") ; kind(p5, "type")), pyi036_slot_right(p5).
+
+// slot_optional(n): the JSON util `slot-optional`, used where the JSON says `matches: "slot-optional"`
+.decl pyi036_slot_optional(n: node)
+pyi036_slot_optional(n) :- kind(n, "type"), child(p1, n, _), kind(p1, "type_parameter"),
+    k3 = count : { child(p1, c2, _), kind(c2, "type") }, k3 >= 1, k3 <= 1,
+    child(p4, p1, _), kind(p4, "generic_type"), pyi036_body(p4), child(p4, c5, _),
+    pyi036_optional_ref(c5).
+pyi036_slot_optional(n) :- field(p6, "subscript", n), kind(p6, "subscript"), pyi036_body(p6),
+    field(p6, "value", c7), pyi036_optional_ref(c7),
+    k9 = count : { child(p6, c8, _), !pyi036_alt_1(c8) }, k9 >= 2, k9 <= 2.
+pyi036_slot_optional(n) :- child(p10, n, _),
+    (kind(p10, "parenthesized_expression") ; kind(p10, "type")), pyi036_slot_optional(p10).
+
+// slot_union(n): the JSON util `slot-union`, used where the JSON says `matches: "slot-union"`
+.decl pyi036_slot_union(n: node)
+pyi036_slot_union(n) :- kind(n, "type"), child(p1, n, _), kind(p1, "type_parameter"),
+    k3 = count : { child(p1, c2, _), kind(c2, "type") }, k3 >= 2, k3 <= 2,
+    child(p1, c4, _), kind(c4, "type"), pyi036_none_lit(c4), child(p5, p1, _),
+    kind(p5, "generic_type"), pyi036_body(p5), child(p5, c6, _), pyi036_union_ref(c6).
+pyi036_slot_union(n) :- child(p7, n, _), kind(p7, "subscript"), pyi036_body(p7),
+    field(p7, "value", c8), pyi036_union_ref(c8), child(p7, c9, _), pyi036_none_lit(c9),
+    k11 = count : { child(p7, c10, _), !pyi036_alt_1(c10) }, k11 >= 3, k11 <= 3,
+    count : { field(p12, "value", n), kind(p12, "subscript") } = 0.
+pyi036_slot_union(n) :- child(p13, n, _), kind(p13, "tuple"),
+    k15 = count : { child(p13, c14, _), !pyi036_alt_6(c14) }, k15 >= 2, k15 <= 2,
+    child(p13, c16, _), pyi036_none_lit(c16), within_stop(p13, p17, pyi036_stop_7),
+    ( kind(p17, "subscript"), pyi036_body(p17), field(p17, "value", c1), pyi036_union_ref(c1), k1 = count : { child(p17, c2, _), !pyi036_alt_1(c2) }, k1 >= 2, k1 <= 2, !pyi036_tok_has_6(p17)
+    ; kind(p17, "type_parameter"), k2 = count : { child(p17, c3, _), kind(c3, "type") }, k2 >= 1, k2 <= 1, !pyi036_tok_has_7(p17), child(p1, p17, _), kind(p1, "generic_type"), pyi036_body(p1), child(p1, c4, _), pyi036_union_ref(c4)
+    ).
+
+pyi036_slot_union(n) :- child(p41, n, _),
+    (kind(p41, "parenthesized_expression") ; kind(p41, "type")), pyi036_slot_union(p41).
+
+// non_none_element(n): the JSON util `non-none-element`, used where the JSON says `matches: "non-none-element"`
+.decl pyi036_non_none_element(n: node)
+pyi036_non_none_element(n) :- pyi036_slot_left(n).
+pyi036_non_none_element(n) :- pyi036_slot_right(n).
+pyi036_non_none_element(n) :- pyi036_slot_optional(n).
+pyi036_non_none_element(n) :- pyi036_slot_union(n).
+
+// splat(n): the JSON util `splat`, used where the JSON says `matches: "splat"`
+.decl pyi036_splat(n: node)
+pyi036_splat(n) :-
+    ( kind(n, "keyword_separator")
+    ; kind(n, "list_splat_pattern")
+    ; kind(n, "dictionary_splat_pattern")
+    ).
+
+pyi036_splat(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")).
+
+// vararg(n): the JSON util `vararg`, used where the JSON says `matches: "vararg"`
+.decl pyi036_vararg(n: node)
+pyi036_vararg(n) :- kind(n, "list_splat_pattern").
+pyi036_vararg(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pyi036_positional(n: node)
+pyi036_positional(n) :-
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier")
+    ),
+    count : { precedes(s2, n), pyi036_splat(s2) } = 0.
+
+// bare_parameter(n): the JSON util `bare-parameter`, used where the JSON says `matches: "bare-parameter"`
+.decl pyi036_bare_parameter(n: node)
+pyi036_bare_parameter(n) :- kind(n, "identifier").
+pyi036_bare_parameter(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "identifier").
+
+// class_member(n): the JSON util `class-member`, used where the JSON says `matches: "class-member"`
+.decl pyi036_class_member(n: node)
+pyi036_class_member(n) :- child(p1, n, _), kind(p1, "block"), field(p2, "body", p1),
+    kind(p2, "class_definition").
+pyi036_class_member(n) :- child(p3, n, _), kind(p3, "decorated_definition"), pyi036_class_member(p3).
+
+// exit_kind(n): the JSON util `exit-kind`, used where the JSON says `matches: "exit-kind"`
+.decl pyi036_exit_kind(n: node)
+pyi036_exit_kind(n) :- kind(n, "function_definition"),
+    ( field(n, "name", c1), glob("__exit__", c1), !match("async\\b.*", n)
+    ; field(n, "name", c2), glob("__aexit__", c2), match("async\\b.*", n)
+    ).
+
+
+// overloaded(n): the JSON util `overloaded`, used where the JSON says `matches: "overloaded"`
+.decl pyi036_overloaded(n: node)
+pyi036_overloaded(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi036_overload_ref(c3).
+
+// exit_method(n): the JSON util `exit-method`, used where the JSON says `matches: "exit-method"`
+.decl pyi036_exit_method(n: node)
+pyi036_exit_method(n) :- pyi036_exit_kind(n), pyi036_class_member(n), !pyi036_overloaded(n).
+
+// short_list(n): the JSON util `short-list`, used where the JSON says `matches: "short-list"`
+.decl pyi036_short_list(n: node)
+pyi036_short_list(n) :- kind(n, "parameters"),
+    k2 = count : { child(n, c1, _), pyi036_positional(c1) }, k2 <= 3.
+
+// exit_shape(n): the JSON util `exit-shape`, used where the JSON says `matches: "exit-shape"`
+.decl pyi036_exit_shape(n: node)
+pyi036_exit_shape(n) :- kind(n, "parameters"), count : { child(n, c1, _), pyi036_splat(c1) } = 0,
+    k3 = count : { child(n, c2, _), pyi036_positional(c2) }, k3 >= 4, k3 <= 4.
+
+// named_overload(n): the JSON util `named-overload`, used where the JSON says `matches: "named-overload"`
+.decl pyi036_named_overload(n: node)
+pyi036_named_overload(n) :- node(_, NAME, _, _, _), pyi036_demand_named_overload(n),
+    kind(n, "decorated_definition"), child(n, c1, _), kind(c1, "decorator"),
+    child(c1, c2, _), pyi036_overload_ref(c2), field(n, "definition", c3),
+    kind(c3, "function_definition"), field(c3, "name", c4),
+    text(c4, t_name1), text(NAME, t_name1), @doc(c4) = @doc(NAME).
+
+// usable_overload(n): the JSON util `usable-overload`, used where the JSON says `matches: "usable-overload"`
+.decl pyi036_usable_overload(n: node)
+pyi036_usable_overload(n) :- pyi036_demand_usable_overload(n), pyi036_named_overload(n),
+    field(n, "definition", c1), pyi036_exit_kind(c1), field(c1, "parameters", c2),
+    pyi036_exit_shape(c2).
+
+// loose_none(n): the JSON util `loose-none`, used where the JSON says `matches: "loose-none"`
+.decl pyi036_loose_none(n: node)
+pyi036_loose_none(n) :- kind(n, "type"), child(n, c1, _), (pyi036_none_lit(c1) ; pyi036_object_like(c1)).
+
+// loose_exc_2(n): the JSON util `loose-exc-2`, used where the JSON says `matches: "loose-exc-2"`
+.decl pyi036_loose_exc_2(n: node)
+pyi036_loose_exc_2(n) :- kind(n, "type"), child(n, c1, _), (pyi036_exc_type(c1) ; pyi036_object_like(c1)).
+
+// loose_exc_3(n): the JSON util `loose-exc-3`, used where the JSON says `matches: "loose-exc-3"`
+.decl pyi036_loose_exc_3(n: node)
+pyi036_loose_exc_3(n) :- kind(n, "type"), child(n, c1, _), (pyi036_base_exc(c1) ; pyi036_object_like(c1)).
+
+// loose_exc_4(n): the JSON util `loose-exc-4`, used where the JSON says `matches: "loose-exc-4"`
+.decl pyi036_loose_exc_4(n: node)
+pyi036_loose_exc_4(n) :- kind(n, "type"), child(n, c1, _), (pyi036_traceback(c1) ; pyi036_object_like(c1)).
+
+// PYI036(n): a finding at node n, from clause `missing-args`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036(at: node, m: loc) "Give `{m}` three positional parameters after `self` (exception type, exception, traceback) or `*args: object`; the interpreter always passes those three."
+    suppress noqa "PYI036"
+PYI036(n, M) :- kind(n, "parameters"), pyi036_short_list(n),
+    count : { child(n, c1, _), pyi036_vararg(c1) } = 0, field(p2, "parameters", n),
+    pyi036_exit_method(p2), field(p2, "name", c3), node(_, c3, _, _, _), M = c3.
+
+// PYI036_star_args_annotation(n): a finding at node n, from clause `star-args-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_star_args_annotation(at: node, m: loc) code "PYI036" "Annotate the star-args of `{m}` as `object`; they only receive the exception type, exception and traceback, which the method need not read through their types."
+    suppress noqa "PYI036"
+PYI036_star_args_annotation(n, M) :- !pyi036_alt_17(n), within_stop(n, p1, pyi036_stop_18),
+    kind(p1, "type"), field(p2, "type", p1), kind(p2, "typed_parameter"),
+    child(p2, c3, _), kind(c3, "list_splat_pattern"), child(p4, p2, _),
+    kind(p4, "parameters"), pyi036_short_list(p4), field(p5, "parameters", p4),
+    pyi036_exit_method(p5), field(p5, "name", c6), node(_, c6, _, _, _), M = c6.
+
+// PYI036_extra_positional_without_default(n): a finding at node n, from clause `extra-positional-without-default`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_extra_positional_without_default(at: node, m: loc) code "PYI036" "Give every positional parameter of `{m}` beyond the exception type, exception and traceback a default value; the interpreter passes only those three."
+    suppress noqa "PYI036"
+PYI036_extra_positional_without_default(n, M) :- pyi036_bare_parameter(n),
+    child(p1, n, _), pyi036_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), pyi036_counted(s2) }, k3 >= 4,
+    child(p4, n, _), kind(p4, "parameters"), field(p5, "parameters", p4),
+    pyi036_exit_method(p5), field(p5, "name", c6), node(_, c6, _, _, _), M = c6.
+
+// PYI036_keyword_only_without_default(n): a finding at node n, from clause `keyword-only-without-default`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_keyword_only_without_default(at: node, m: loc) code "PYI036" "Give every keyword-only parameter of `{m}` a default value; the interpreter passes only the three positional arguments."
+    suppress noqa "PYI036"
+PYI036_keyword_only_without_default(n, M) :- pyi036_bare_parameter(n), precedes(s1, n),
+    (kind(s1, "keyword_separator") ; pyi036_vararg(s1)), child(p2, n, _),
+    kind(p2, "parameters"), field(p3, "parameters", p2), pyi036_exit_method(p3),
+    field(p3, "name", c4), node(_, c4, _, _, _), M = c4.
+
+// PYI036_first_argument_annotation(n): a finding at node n, from clause `first-argument-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_first_argument_annotation(at: node, m: loc) code "PYI036" "Annotate the first argument of `{m}` as `type[BaseException] | None`, or as `object`; the interpreter passes `None` when no exception occurred."
+    suppress noqa "PYI036"
+PYI036_first_argument_annotation(n, M) :- !pyi036_alt_17(n),
+    count : { within(c1, n), pyi036_exc_type(c1), pyi036_non_none_element(c1) } = 0,
+    within_stop(n, p2, pyi036_stop_18), kind(p2, "type"), field(p3, "type", p2),
+    (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")),
+    pyi036_positional(p3), child(p4, p3, _), pyi036_counted(p3),
+    k6 = count : { child(p4, s5, _), precedes(s5, p3), pyi036_counted(s5) }, k6 = 1,
+    child(p7, p3, _), kind(p7, "parameters"), field(p8, "parameters", p7),
+    pyi036_exit_method(p8), field(p8, "name", c9), node(_, c9, _, _, _), M = c9.
+
+// PYI036_second_argument_annotation(n): a finding at node n, from clause `second-argument-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_second_argument_annotation(at: node, m: loc) code "PYI036" "Annotate the second argument of `{m}` as `BaseException | None`, or as `object`; the interpreter passes `None` when no exception occurred."
+    suppress noqa "PYI036"
+PYI036_second_argument_annotation(n, M) :- !pyi036_alt_17(n),
+    count : { within(c1, n), pyi036_base_exc(c1), pyi036_non_none_element(c1) } = 0,
+    within_stop(n, p2, pyi036_stop_18), kind(p2, "type"), field(p3, "type", p2),
+    (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")),
+    pyi036_positional(p3), child(p4, p3, _), pyi036_counted(p3),
+    k6 = count : { child(p4, s5, _), precedes(s5, p3), pyi036_counted(s5) }, k6 = 2,
+    child(p7, p3, _), kind(p7, "parameters"), field(p8, "parameters", p7),
+    pyi036_exit_method(p8), field(p8, "name", c9), node(_, c9, _, _, _), M = c9.
+
+// PYI036_third_argument_annotation(n): a finding at node n, from clause `third-argument-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_third_argument_annotation(at: node, m: loc) code "PYI036" "Annotate the third argument of `{m}` as `types.TracebackType | None`, or as `object`; the interpreter passes `None` when no exception occurred."
+    suppress noqa "PYI036"
+PYI036_third_argument_annotation(n, M) :- !pyi036_alt_17(n),
+    count : { within(c1, n), pyi036_traceback(c1), pyi036_non_none_element(c1) } = 0,
+    within_stop(n, p2, pyi036_stop_18), kind(p2, "type"), field(p3, "type", p2),
+    (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")),
+    pyi036_positional(p3), child(p4, p3, _), pyi036_counted(p3),
+    k6 = count : { child(p4, s5, _), precedes(s5, p3), pyi036_counted(s5) }, k6 = 3,
+    child(p7, p3, _), kind(p7, "parameters"), field(p8, "parameters", p7),
+    pyi036_exit_method(p8), field(p8, "name", c9), node(_, c9, _, _, _), M = c9.
+
+// PYI036_unrecognized_overload(n): a finding at node n, from clause `unrecognized-overload`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI036_unrecognized_overload(at: node, params: node, name: loc) code "PYI036" "Annotate the three arguments after `self` of these `{name}` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`."
+    suppress noqa "PYI036"
+PYI036_unrecognized_overload(PARAMS, n, NAME) :- kind(n, "function_definition"),
+    pyi036_exit_kind(n), pyi036_overloaded(n), field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, child(p2, n, _),
+    kind(p2, "decorated_definition"), child(p3, p2, _), kind(p3, "block"),
+    kind(p3, "block"), k2_1 = count : { child(p3, c1_1, _), pyi036_named_overload(c1_1) }, k2_1 >= 2, k2_1 <= 2, k4_1 = count : { child(p3, c3_1, _), pyi036_usable_overload(c3_1) }, k4_1 >= 2, k4_1 <= 2,
+    field(p4, "body", p3), kind(p4, "class_definition"), field(n, "parameters", c5),
+    node(_, c5, _, _, _), PARAMS = c5, kind(c5, "parameters"), pyi036_exit_shape(c5), pyi036_alt_33(c5), pyi036_alt_40(c5).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_1(n: node)
+.stored pyi036_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+pyi036_tok_has_1(n) :- op(n, t7), match(",", t7).
+pyi036_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+pyi036_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+pyi036_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_2(n: node)
+.stored pyi036_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_2(n) :- child(n, c18, _), glob("\\,", c18).
+pyi036_tok_has_2(n) :- op(n, t19), match(",", t19).
+pyi036_tok_has_2(n) :- child(n, c25, _), structural_before(c25, g20),
+    match("(?s)^(?:.*(?:,).*)$", g20).
+pyi036_tok_has_2(n) :- child(n, c25, _), structural_after(c25, g20),
+    match("(?s)^(?:.*(?:,).*)$", g20).
+pyi036_tok_has_2(n) :- node_text(n, g20), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g20).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_3(n: node)
+.stored pyi036_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_3(n) :- child(n, c1, _), glob("|", c1).
+pyi036_tok_has_3(n) :- op(n, t2), match("\\|", t2).
+pyi036_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi036_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi036_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_4(n: node)
+.stored pyi036_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_4(n) :- child(n, c21, _), glob("\\,", c21).
+pyi036_tok_has_4(n) :- op(n, t22), match(",", t22).
+pyi036_tok_has_4(n) :- child(n, c28, _), structural_before(c28, g23),
+    match("(?s)^(?:.*(?:,).*)$", g23).
+pyi036_tok_has_4(n) :- child(n, c28, _), structural_after(c28, g23),
+    match("(?s)^(?:.*(?:,).*)$", g23).
+pyi036_tok_has_4(n) :- node_text(n, g23), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g23).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_5(n: node)
+.stored pyi036_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_5(n) :- child(n, c31, _), glob("\\,", c31).
+pyi036_tok_has_5(n) :- op(n, t32), match(",", t32).
+pyi036_tok_has_5(n) :- child(n, c38, _), structural_before(c38, g33),
+    match("(?s)^(?:.*(?:,).*)$", g33).
+pyi036_tok_has_5(n) :- child(n, c38, _), structural_after(c38, g33),
+    match("(?s)^(?:.*(?:,).*)$", g33).
+pyi036_tok_has_5(n) :- node_text(n, g33), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g33).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_6(n: node)
+.stored pyi036_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_6(n) :- child(n, c4, _), glob("\\,", c4).
+pyi036_tok_has_6(n) :- op(n, t5), match(",", t5).
+pyi036_tok_has_6(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+pyi036_tok_has_6(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+pyi036_tok_has_6(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi036_tok_has_7(n: node)
+.stored pyi036_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi036_tok_has_7(n) :- child(n, c14, _), glob("\\,", c14).
+pyi036_tok_has_7(n) :- op(n, t15), match(",", t15).
+pyi036_tok_has_7(n) :- child(n, c21, _), structural_before(c21, g16),
+    match("(?s)^(?:.*(?:,).*)$", g16).
+pyi036_tok_has_7(n) :- child(n, c21, _), structural_after(c21, g16),
+    match("(?s)^(?:.*(?:,).*)$", g16).
+pyi036_tok_has_7(n) :- node_text(n, g16), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g16).
+
+// demand_usable_overload: the rows of usable_overload its callers ask for (the metavariable columns they pass in)
+.decl pyi036_demand_usable_overload(n: node)
+pyi036_demand_usable_overload(c3_1) :- kind(n, "function_definition"), pyi036_exit_kind(n),
+    pyi036_overloaded(n), field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, child(p2, n, _),
+    kind(p2, "decorated_definition"), child(p3, p2, _), kind(p3, "block"),
+    kind(p3, "block"), field(p4, "body", p3), kind(p4, "class_definition"),
+    field(n, "parameters", c5), node(_, c5, _, _, _), PARAMS = c5, kind(c5, "parameters"), pyi036_exit_shape(c5),
+    pyi036_alt_33(c5), pyi036_alt_40(c5), child(p3, c3_1, _).
+
+// demand_named_overload: the rows of named_overload its callers ask for (the metavariable columns they pass in)
+.decl pyi036_demand_named_overload(n: node)
+pyi036_demand_named_overload(n) :- pyi036_demand_usable_overload(n), field(n, "definition", c1),
+    pyi036_exit_kind(c1), field(c1, "parameters", c2), pyi036_exit_shape(c2).
+pyi036_demand_named_overload(c1_1) :- kind(n, "function_definition"), pyi036_exit_kind(n),
+    pyi036_overloaded(n), field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, child(p2, n, _),
+    kind(p2, "decorated_definition"), child(p3, p2, _), kind(p3, "block"),
+    kind(p3, "block"), field(p4, "body", p3), kind(p4, "class_definition"),
+    field(n, "parameters", c5), node(_, c5, _, _, _), PARAMS = c5, kind(c5, "parameters"), pyi036_exit_shape(c5),
+    pyi036_alt_33(c5), pyi036_alt_40(c5), child(p3, c1_1, _).
+
+// demand_body: the nodes body is asked at (it looks at every ancestor of every node)
+.decl pyi036_demand_body(n: node)
+pyi036_demand_body(p1) :- field(p1, "left", n), pyi036_or_op(p1).
+pyi036_demand_body(p3) :- kind(n, "type"), child(p3, n, _), kind(p3, "union_type").
+pyi036_demand_body(p1) :- field(p1, "right", n), pyi036_or_op(p1), field(p1, "left", c2),
+    pyi036_none_lit(c2).
+pyi036_demand_body(p4) :- kind(n, "type"), precedes(s3, n), kind(s3, "type"), pyi036_none_lit(s3),
+    child(p4, n, _), kind(p4, "union_type").
+pyi036_demand_body(p4) :- kind(n, "type"), child(p1, n, _), kind(p1, "type_parameter"),
+    child(p4, p1, _), kind(p4, "generic_type"), child(p4, c5, _), pyi036_optional_ref(c5).
+pyi036_demand_body(p6) :- field(p6, "subscript", n), kind(p6, "subscript"),
+    field(p6, "value", c7), pyi036_optional_ref(c7).
+pyi036_demand_body(p5) :- kind(n, "type"), child(p1, n, _), kind(p1, "type_parameter"),
+    child(p1, c4, _), kind(c4, "type"), pyi036_none_lit(c4), child(p5, p1, _),
+    kind(p5, "generic_type"), child(p5, c6, _), pyi036_union_ref(c6).
+pyi036_demand_body(p7) :- child(p7, n, _), kind(p7, "subscript"), field(p7, "value", c8),
+    pyi036_union_ref(c8), child(p7, c9, _), pyi036_none_lit(c9).
+pyi036_demand_body(p17) :- child(p13, n, _), kind(p13, "tuple"), child(p13, c16, _),
+    pyi036_none_lit(c16), within_stop(p13, p17, pyi036_stop_7), kind(p17, "subscript"),
+    field(p17, "value", c1), pyi036_union_ref(c1).
+pyi036_demand_body(p1) :- child(p13, n, _), kind(p13, "tuple"), child(p13, c16, _),
+    pyi036_none_lit(c16), within_stop(p13, p17, pyi036_stop_7), kind(p17, "type_parameter"),
+    child(p1, p17, _), kind(p1, "generic_type"), child(p1, c4, _), pyi036_union_ref(c4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi036_up_1(n: node, p: node)
+pyi036_up_1(n, p) :- pyi036_demand_body(n), within_stop(n, p, pyi036_stop_18), kind(p, "type").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_1(n: node)
+pyi036_alt_1(n) :- kind(n, "comment").
+pyi036_alt_1(n) :- node(_, n, _, _, _), glob("[\\[\\],]", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_3(n: node)
+pyi036_alt_3(n) :- kind(n, "union_type").
+pyi036_alt_3(n) :- pyi036_or_op(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_6(n: node)
+pyi036_alt_6(n) :- kind(n, "comment").
+pyi036_alt_6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi036_stop_7(n: node)
+pyi036_stop_7(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "type").
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_17(n: node)
+pyi036_alt_17(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pyi036_alt_17(n) :- node(_, n, _, _, _), glob("[()]", n).
+pyi036_alt_17(n) :- pyi036_object_like(n).
+
+// stop_18(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi036_stop_18(n: node)
+pyi036_stop_18(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted(n): 16 identical copies of one rule set (`counted_19`, `counted_23`, `counted_26` and 13 more), folded into one.
+.decl pyi036_counted(n: node)
+pyi036_counted(n) :- pyi036_positional(n).
+
+// alt_33(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_33(n: node)
+pyi036_alt_33(n) :- child(n, c1, _), pyi036_positional(c1), child(p2, c1, _), pyi036_counted(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi036_counted(s3) }, k4 = 1,
+    (kind(c1, "typed_parameter") ; kind(c1, "typed_default_parameter")),
+    child(c1, c5, _), kind(c5, "type"), !pyi036_loose_none(c5).
+pyi036_alt_33(n) :- child(n, c6, _), pyi036_positional(c6), child(p7, c6, _), pyi036_counted(c6),
+    k9 = count : { child(p7, s8, _), precedes(s8, c6), pyi036_counted(s8) }, k9 = 2,
+    (kind(c6, "typed_parameter") ; kind(c6, "typed_default_parameter")),
+    child(c6, c10, _), kind(c10, "type"), !pyi036_loose_none(c10).
+pyi036_alt_33(n) :- child(n, c11, _), pyi036_positional(c11), child(p12, c11, _), pyi036_counted(c11),
+    k14 = count : { child(p12, s13, _), precedes(s13, c11), pyi036_counted(s13) }, k14 = 3,
+    (kind(c11, "typed_parameter") ; kind(c11, "typed_default_parameter")),
+    child(c11, c15, _), kind(c15, "type"), !pyi036_loose_none(c15).
+
+// alt_40(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi036_alt_40(n: node)
+pyi036_alt_40(n) :- child(n, c1, _), pyi036_positional(c1), child(p2, c1, _), pyi036_counted(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi036_counted(s3) }, k4 = 1,
+    (kind(c1, "typed_parameter") ; kind(c1, "typed_default_parameter")),
+    child(c1, c5, _), kind(c5, "type"), !pyi036_loose_exc_2(c5).
+pyi036_alt_40(n) :- child(n, c6, _), pyi036_positional(c6), child(p7, c6, _), pyi036_counted(c6),
+    k9 = count : { child(p7, s8, _), precedes(s8, c6), pyi036_counted(s8) }, k9 = 2,
+    (kind(c6, "typed_parameter") ; kind(c6, "typed_default_parameter")),
+    child(c6, c10, _), kind(c10, "type"), !pyi036_loose_exc_3(c10).
+pyi036_alt_40(n) :- child(n, c11, _), pyi036_positional(c11), child(p12, c11, _), pyi036_counted(c11),
+    k14 = count : { child(p12, s13, _), precedes(s13, c11), pyi036_counted(s13) }, k14 = 3,
+    (kind(c11, "typed_parameter") ; kind(c11, "typed_default_parameter")),
+    child(c11, c15, _), kind(c15, "type"), !pyi036_loose_exc_4(c15).

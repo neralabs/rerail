@@ -1,0 +1,493 @@
+.policy "ruff-perf403-manual-dict-comprehension" revision 1
+.guests off
+.description "Use a dictionary comprehension or update instead of filling a dict key by key inside a for loop."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PERF403(n): a finding at node n, from clause `manual-dict-comprehension`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on L, V are added to every rule.
+.violation PERF403(at: node, l: loc) "Build the dict with a comprehension (`{{k: v for ...}}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
+    suppress noqa "PERF403"
+PERF403(n, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, field(n, "left", c2),
+    kind(c2, "subscript"), field(c2, "value", c3), perf403_plain_name(c3, L),
+    (match(".*,\\s*\\]", c2), node(_, c2, _, _, _), TC = c2 ; !match(".*,\\s*\\]", c2), unset(TC)),
+    child(p4, n, _), kind(p4, "expression_statement"), perf403_only_stmt(p4),
+    ( child(p1, p4, _), kind(p1, "block"), child(p2, p1, _), perf403_loop(p2, K, TC, V)
+    ; child(p3, p4, _), kind(p3, "block"), child(p5, p3, _), kind(p5, "if_statement"), perf403_only_stmt(p5), count : { field(p5, "alternative", c1_3), (kind(c1_3, "elif_clause") ; kind(c1_3, "else_clause")) } = 0, count : { field(p5, "condition", c2_4), perf403_has_ref(c2_4, L) } = 0, child(p6, p5, _), kind(p6, "block"), child(p7, p6, _), perf403_loop(p7, K, TC, V)
+    ),
+    perf403_dict_bound(L), !kind(V, "assignment").
+
+// dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
+.decl perf403_dict_expr(n: node)
+perf403_dict_expr(n) :- perf403_dict_expr_u7(n).
+
+// dict_callee(n): the JSON util `dict-callee`, used where the JSON says `matches: "dict-callee"`
+.decl perf403_dict_callee(n: node)
+perf403_dict_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+perf403_dict_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_callee(c1).
+
+// dict_init(n): the JSON util `dict-init`, used where the JSON says `matches: "dict-init"`
+.decl perf403_dict_init(n: node)
+perf403_dict_init(n) :- perf403_dict_expr(n).
+perf403_dict_init(n) :- kind(n, "call"), child(n, c1, _), perf403_dict_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// dict_ann(n): the JSON util `dict-ann`, used where the JSON says `matches: "dict-ann"`
+.decl perf403_dict_ann(n: node)
+perf403_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "dict"),
+    sym_of(n, "builtins.dict").
+perf403_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Dict")
+    ; sym_of(n, "_typeshed.Dict")
+    ; sym_of(n, "typing_extensions.Dict")
+    ).
+
+perf403_dict_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !perf403_tok_follows_4(c1), perf403_dict_ann(c1).
+perf403_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), perf403_dict_ann(c9).
+
+// dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
+.decl perf403_dict_bound(n: node)
+perf403_dict_bound(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), site_only(b1), perf403_alt_2(b1)
+    ; ref_site(n, b2), site_only(b2), binding_value(b2, x1), perf403_dict_init(x1), count : { child(b2, c1, _), kind(c1, "type") } = 0
+    ; ref_site(n, b3), site_only(b3), site_annotation(b3, o1), perf403_dict_ann(o1), count : { child(b3, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0
+    ; ref_site(n, b4), site_only(b4), perf403_alt_3(b4)
+    ).
+
+
+// plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
+//   L: metavariable this relation binds for the calling rule
+.decl perf403_plain_name(n: node, l: loc)
+perf403_plain_name(n, L) :- kind(n, "identifier"), node(_, n, _, _, _), L = n.
+perf403_plain_name(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_plain_name(c1, L).
+
+// only_stmt(n): the JSON util `only-stmt`, used where the JSON says `matches: "only-stmt"`
+.decl perf403_only_stmt(n: node)
+perf403_only_stmt(n) :- node(_, n, _, _, _), !perf403_alt_9(n).
+
+// ref(n): the JSON util `ref`, used where the JSON says `matches: "ref"`
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_ref(n: node, l: loc)
+perf403_ref(n, L) :- perf403_demand_ref(n, L), kind(n, "identifier"), text(n, t_l1), text(L, t_l1),
+    !perf403_alt_12(n), @doc(n) = @doc(L).
+
+// has_ref(n): the JSON util `has-ref`, used where the JSON says `matches: "has-ref"`
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_has_ref(n: node, l: loc)
+perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), perf403_ref(n, L).
+perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), within(c1, n), perf403_ref(c1, L).
+
+// post_ref(n): the JSON util `post-ref`, used where the JSON says `matches: "post-ref"`
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_post_ref(n: node, for: loc)
+perf403_post_ref(n, FOR) :- perf403_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
+    node(_, b1, _, _, _), SITE = b1, text(SITE, t2), text(FOR, t2), @doc(SITE) = @doc(FOR).
+
+// has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_has_post_ref(n: node, for: loc)
+perf403_has_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR), perf403_post_ref(n, FOR).
+perf403_has_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR), within(c1, n), perf403_post_ref(c1, FOR).
+
+// key_element(n): the JSON util `key-element`, used where the JSON says `matches: "key-element"`
+//   K, TC: metavariables of the calling rule, passed in (bound by the caller)
+.decl perf403_key_element(n: node, k: loc, tc: loc)
+perf403_key_element(n, K, TC) :- node(_, K, _, _, _), node(_, n, _, _, _), E1 = n, value(E1, t1), value(K, t1),
+    unset(TC).
+perf403_key_element(n, K, TC) :- node(_, K, _, _, _), node(_, TC, _, _, _),
+    kind(n, "tuple_pattern"), text(TC, t5), text(TC, t5), perf403_tok_has_7(n),
+    k16 = count : { child(n, c15, _), !perf403_alt_13(c15) }, k16 >= 1, k16 <= 1,
+    child(n, c17, _), node(_, c17, _, _, _), E3 = c17, !perf403_alt_13(c17), value(E3, t18), value(K, t18).
+perf403_key_element(n, K, TC) :- kind(n, "tuple_pattern"), !perf403_tok_has_8(n), child(n, c28, _),
+    perf403_key_element(c28, K, TC).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   K, TC, V: metavariables of the calling rule, passed in (bound by the caller)
+.decl perf403_target(n: node, k: loc, tc: loc, v: loc)
+perf403_target(n, K, TC, V) :- perf403_demand_target(n), kind(n, "tuple_pattern"), !perf403_tok_has_9(n),
+    child(n, c9, _), perf403_target(c9, K, TC, V).
+perf403_target(n, K, TC, V) :- node(_, K, _, _, _), node(_, V, _, _, _), perf403_demand_target(n),
+    kind(n, "identifier"), node(_, n, _, _, _), E = n, value(E, t10), value(K, t10),
+    value(E, t12), value(V, t12), unset(TC).
+perf403_target(n, K, TC, V) :- perf403_demand_target(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
+    count : { within(c16, n), (kind(c16, "attribute") ; kind(c16, "subscript")) } = 0,
+    child(n, c17, _), perf403_key_element(c17, K, TC), child(n, c18, _), perf403_value_element(c18, V).
+
+// loop(n): the JSON util `loop`, used where the JSON says `matches: "loop"`
+//   K, TC, V: metavariables of the calling rule, passed in (bound by the caller)
+.decl perf403_loop(n: node, k: loc, tc: loc, v: loc)
+perf403_loop(n, K, TC, V) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1),
+    perf403_target(c1, K, TC, V), !perf403_alt_15(n, FOR),
+    count : { inside(n, p5, "function_definition"), node(_, p5, _, _, _), field(n, "left", c6), perf403_alt_16(c6) } = 0.
+
+// has_nonlocal(n): the JSON util `has-nonlocal`, used where the JSON says `matches: "has-nonlocal"`
+//   TN: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_has_nonlocal(n: node, tn: loc)
+perf403_has_nonlocal(n, TN) :- perf403_demand_has_nonlocal(n, TN), kind(n, "nonlocal_statement"),
+    child(n, c1, _), kind(c1, "identifier"), text(c1, t_tn2), text(TN, t_tn2), @doc(c1) = @doc(TN).
+perf403_has_nonlocal(n, TN) :- perf403_demand_has_nonlocal(n, TN), has(n, c2, "nonlocal_statement"),
+    child(c2, c3, _), kind(c3, "identifier"), text(c3, t_tn3), text(TN, t_tn3), @doc(c3) = @doc(TN).
+
+// nonlocal_target(n): the JSON util `nonlocal-target`, used where the JSON says `matches: "nonlocal-target"`
+.decl perf403_nonlocal_target(n: node)
+perf403_nonlocal_target(n) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n, inside(n, p1, "for_statement"),
+    ( precedes(p1, s1), perf403_has_nonlocal(s1, TN)
+    ; within_stop(p1, p2, perf403_stop_17), precedes(p2, s2), perf403_has_nonlocal(s2, TN)
+    ).
+
+
+// value_element(n): the JSON util `value-element`, used where the JSON says `matches: "value-element"`
+//   V: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_value_element(n: node, v: loc)
+perf403_value_element(n, V) :- node(_, V, _, _, _), node(_, n, _, _, _), E2 = n, value(E2, t1), value(V, t1).
+perf403_value_element(n, V) :- kind(n, "tuple_pattern"), !perf403_tok_has_10(n), child(n, c11, _),
+    perf403_value_element(c11, V).
+
+.decl perf403_alt_1_u0(n: node)
+perf403_alt_1_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u0(n) :- kind(n, "comment").
+
+.decl perf403_alt_1_u1(n: node)
+perf403_alt_1_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u1(n) :- kind(n, "comment").
+perf403_alt_1_u1(n) :- perf403_dict_expr_u0(n).
+
+.decl perf403_alt_1_u2(n: node)
+perf403_alt_1_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u2(n) :- kind(n, "comment").
+perf403_alt_1_u2(n) :- perf403_dict_expr_u1(n).
+
+.decl perf403_alt_1_u3(n: node)
+perf403_alt_1_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u3(n) :- kind(n, "comment").
+perf403_alt_1_u3(n) :- perf403_dict_expr_u2(n).
+
+.decl perf403_alt_1_u4(n: node)
+perf403_alt_1_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u4(n) :- kind(n, "comment").
+perf403_alt_1_u4(n) :- perf403_dict_expr_u3(n).
+
+.decl perf403_alt_1_u5(n: node)
+perf403_alt_1_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u5(n) :- kind(n, "comment").
+perf403_alt_1_u5(n) :- perf403_dict_expr_u4(n).
+
+.decl perf403_alt_1_u6(n: node)
+perf403_alt_1_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u6(n) :- kind(n, "comment").
+perf403_alt_1_u6(n) :- perf403_dict_expr_u5(n).
+
+.decl perf403_alt_1_u7(n: node)
+perf403_alt_1_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf403_alt_1_u7(n) :- kind(n, "comment").
+perf403_alt_1_u7(n) :- perf403_dict_expr_u6(n).
+
+.decl perf403_dict_expr_u0(n: node)
+perf403_dict_expr_u0(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+
+.decl perf403_dict_expr_u1(n: node)
+perf403_dict_expr_u1(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u0(c1).
+perf403_dict_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u0(c2).
+perf403_dict_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u0(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u0(c18).
+perf403_dict_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u0(c26) } = 0.
+
+.decl perf403_dict_expr_u2(n: node)
+perf403_dict_expr_u2(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u1(c1).
+perf403_dict_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u1(c2).
+perf403_dict_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u1(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u1(c18).
+perf403_dict_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u1(c26) } = 0.
+
+.decl perf403_dict_expr_u3(n: node)
+perf403_dict_expr_u3(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u2(c1).
+perf403_dict_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u2(c2).
+perf403_dict_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u2(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u2(c18).
+perf403_dict_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u2(c26) } = 0.
+
+.decl perf403_dict_expr_u4(n: node)
+perf403_dict_expr_u4(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u3(c1).
+perf403_dict_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u3(c2).
+perf403_dict_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u3(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u3(c18).
+perf403_dict_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u3(c26) } = 0.
+
+.decl perf403_dict_expr_u5(n: node)
+perf403_dict_expr_u5(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u4(c1).
+perf403_dict_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u4(c2).
+perf403_dict_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u4(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u4(c18).
+perf403_dict_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u4(c26) } = 0.
+
+.decl perf403_dict_expr_u6(n: node)
+perf403_dict_expr_u6(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u5(c1).
+perf403_dict_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u5(c2).
+perf403_dict_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u5(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u5(c18).
+perf403_dict_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u5(c26) } = 0.
+
+.decl perf403_dict_expr_u7(n: node)
+perf403_dict_expr_u7(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+perf403_dict_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf403_dict_expr_u6(c1).
+perf403_dict_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), perf403_tok_follows_1(c2),
+    perf403_dict_expr_u6(c2).
+perf403_dict_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf403_tok_precedes_2(c10), perf403_dict_expr_u6(c10), child(n, c18, _), perf403_tok_follows_3(c18),
+    perf403_dict_expr_u6(c18).
+perf403_dict_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf403_alt_1_u6(c26) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_follows_1(n: node)
+.stored perf403_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_follows_1(n) :- next_sibling(s3, n), glob(":=", s3).
+perf403_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+perf403_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_precedes_2(n: node)
+.stored perf403_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_precedes_2(n) :- next_sibling(n, s11), glob("if", s11).
+perf403_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+perf403_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_follows_3(n: node)
+.stored perf403_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_follows_3(n) :- next_sibling(s19, n), glob("else", s19).
+perf403_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+perf403_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_follows_4(n: node)
+.stored perf403_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_follows_4(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+perf403_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+perf403_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_precedes_5(n: node)
+.stored perf403_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_precedes_5(n) :- next_sibling(n, s13), glob("as", s13).
+perf403_tok_precedes_5(n) :- structural_after(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, _, en19), o17 = en19 + strlen(g15), token(p16, _, t14, o17, _),
+    match("as", t14).
+perf403_tok_precedes_5(n) :- structural_after(n, g15),
+    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g15).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_precedes_6(n: node)
+.stored perf403_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_precedes_6(n) :- next_sibling(n, s2), glob("as", s2).
+perf403_tok_precedes_6(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("as", t3).
+perf403_tok_precedes_6(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g4).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_has_7(n: node)
+.stored perf403_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_has_7(n) :- child(n, c7, _), glob("\\,", c7).
+perf403_tok_has_7(n) :- op(n, t8), match(",", t8).
+perf403_tok_has_7(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:.*(?:,).*)$", g9).
+perf403_tok_has_7(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:.*(?:,).*)$", g9).
+perf403_tok_has_7(n) :- node_text(n, g9), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g9).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_has_8(n: node)
+.stored perf403_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_has_8(n) :- child(n, c20, _), glob("\\,", c20).
+perf403_tok_has_8(n) :- op(n, t21), match(",", t21).
+perf403_tok_has_8(n) :- child(n, c27, _), structural_before(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+perf403_tok_has_8(n) :- child(n, c27, _), structural_after(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+perf403_tok_has_8(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_has_9(n: node)
+.stored perf403_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_has_9(n) :- child(n, c1, _), glob("\\,", c1).
+perf403_tok_has_9(n) :- op(n, t2), match(",", t2).
+perf403_tok_has_9(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf403_tok_has_9(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf403_tok_has_9(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf403_tok_has_10(n: node)
+.stored perf403_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf403_tok_has_10(n) :- child(n, c3, _), glob("\\,", c3).
+perf403_tok_has_10(n) :- op(n, t4), match(",", t4).
+perf403_tok_has_10(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+perf403_tok_has_10(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+perf403_tok_has_10(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// demand_has_nonlocal: the rows of has_nonlocal its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_has_nonlocal(n: node, tn: loc)
+perf403_demand_has_nonlocal(s1, TN) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
+    inside(n, p1, "for_statement"), precedes(p1, s1).
+perf403_demand_has_nonlocal(s2, TN) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
+    inside(n, p1, "for_statement"), within_stop(p1, p2, perf403_stop_17), precedes(p2, s2).
+
+// demand_has_ref: the rows of has_ref its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_has_ref(n: node, l: loc)
+perf403_demand_has_ref(c2_4, L) :- kind(n, "assignment"), n ~ `$_[$K] = $V`,
+    field(n, "left", c2), kind(c2, "subscript"), field(c2, "value", c3),
+    perf403_plain_name(c3, L), child(p4, n, _), kind(p4, "expression_statement"),
+    perf403_only_stmt(p4), perf403_dict_bound(L), child(p3, p4, _), kind(p3, "block"),
+    child(p5, p3, _), kind(p5, "if_statement"), perf403_only_stmt(p5), child(p6, p5, _),
+    kind(p6, "block"), child(p7, p6, _), field(p5, "condition", c2_4).
+
+// demand_alt_15: the rows of alt_15 its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_alt_15(n: node, for: loc)
+perf403_demand_alt_15(n, FOR) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1).
+
+// demand_ref: the rows of ref its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_ref(n: node, l: loc)
+perf403_demand_ref(n, L) :- perf403_demand_has_ref(n, L).
+perf403_demand_ref(c1, L) :- perf403_demand_has_ref(n, L), within(c1, n).
+
+// demand_has_post_ref: the rows of has_post_ref its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_has_post_ref(n: node, for: loc)
+perf403_demand_has_post_ref(s1, FOR) :- perf403_demand_alt_15(n, FOR), precedes(n, s1).
+perf403_demand_has_post_ref(s3, FOR) :- perf403_demand_alt_15(n, FOR), within(n, p2), precedes(p2, s3).
+
+// demand_post_ref: the rows of post_ref its callers ask for (the metavariable columns they pass in)
+.decl perf403_demand_post_ref(n: node, for: loc)
+perf403_demand_post_ref(n, FOR) :- perf403_demand_has_post_ref(n, FOR).
+perf403_demand_post_ref(c1, FOR) :- perf403_demand_has_post_ref(n, FOR), within(c1, n).
+
+// demand_target: the nodes target is asked at (its recursion looks at every descendant)
+.decl perf403_demand_target(n: node)
+perf403_demand_target(c9) :- perf403_demand_target(n), kind(n, "tuple_pattern"), child(n, c9, _).
+perf403_demand_target(c1) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf403_alt_1_u0_empty(n: node)
+
+// dict_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf403_dict_expr_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_1(n: node)
+perf403_alt_1(n) :- perf403_alt_1_u7(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_2(n: node)
+perf403_alt_2(n) :- kind(n, "dictionary_splat_pattern"), child(p1, n, _),
+    kind(p1, "parameters").
+perf403_alt_2(n) :- kind(n, "typed_parameter"), child(p2, n, _), kind(p2, "parameters"),
+    child(n, c3, _), kind(c3, "dictionary_splat_pattern").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_3(n: node)
+perf403_alt_3(n) :- kind(n, "as_pattern"), child(n, c1, _), perf403_tok_precedes_6(c1), perf403_dict_init(c1).
+perf403_alt_3(n) :- kind(n, "function_definition"), field(n, "return_type", c9),
+    kind(c9, "type"), child(c9, c10, _), perf403_dict_ann(c10).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_10(n: node)
+perf403_alt_10(n) :- kind(n, "comment").
+perf403_alt_10(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_9(n: node)
+perf403_alt_9(n) :- precedes(s1, n), !perf403_alt_10(s1).
+perf403_alt_9(n) :- precedes(n, s2), !perf403_alt_10(s2).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_12(n: node)
+perf403_alt_12(n) :- field(p1, "attribute", n), kind(p1, "attribute").
+perf403_alt_12(n) :- field(p2, "name", n),
+    (kind(p2, "keyword_argument") ; kind(p2, "default_parameter")).
+perf403_alt_12(n) :- child(p3, n, _),
+    ( kind(p3, "lambda_parameters")
+    ; kind(p3, "list_splat_pattern")
+    ; kind(p3, "dictionary_splat_pattern")
+    ).
+
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_13(n: node)
+perf403_alt_13(n) :- kind(n, "comment").
+perf403_alt_13(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf403_alt_15(n: node, for: loc)
+perf403_alt_15(n, FOR) :- perf403_demand_alt_15(n, FOR), precedes(n, s1), perf403_has_post_ref(s1, FOR).
+perf403_alt_15(n, FOR) :- perf403_demand_alt_15(n, FOR), within(n, p2), !kind(p2, "module"),
+    precedes(p2, s3), perf403_has_post_ref(s3, FOR).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_16(n: node)
+perf403_alt_16(n) :- perf403_nonlocal_target(n).
+perf403_alt_16(n) :- within(c1, n), perf403_nonlocal_target(c1).
+
+// stop_17(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf403_stop_17(n: node)
+perf403_stop_17(n) :- kind(n, "block"), child(p1, n, _), kind(p1, "function_definition").

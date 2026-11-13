@@ -1,0 +1,33 @@
+.policy "ruff-f524-string-dot-format-missing-arguments" revision 1
+.guests off
+.description "Pass an argument for every placeholder in a str.format() string; a missing one raises IndexError or KeyError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// F524(n): a finding at node n, from clause `string-dot-format-missing-arguments`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F524(at: node) "`.format` call is missing argument(s) for placeholder(s)"
+    suppress noqa "F524"
+F524(n) :- n ~ `$S.format($$$A)`,
+    ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+F524(n) :- kind(n, "call"), field(n, "arguments", c1),
+    kind(c1, "generator_expression"), field(n, "function", c2), kind(c2, "attribute"),
+    field(c2, "attribute", c3), glob("format", c3), field(n, "function", c4),
+    field(c4, "object", c5), f524_reads_past_one(c5).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f524_plain_string(n: node)
+f524_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f524_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// reads_past_one(n): the JSON util `reads-past-one`, used where the JSON says `matches: "reads-past-one"`
+.decl f524_reads_past_one(n: node)
+f524_reads_past_one(n) :- f524_plain_string(n), parsed(n, "braceFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, has(r1, c3, "field_name"),
+    !value(c3, "0").
+f524_reads_past_one(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f524_reads_past_one(c4).

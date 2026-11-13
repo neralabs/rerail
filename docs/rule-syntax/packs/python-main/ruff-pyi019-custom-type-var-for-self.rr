@@ -1,0 +1,399 @@
+.policy "ruff-pyi019-custom-type-var-for-self" revision 1
+.guests off
+.description "Use Self instead of a custom type variable to annotate the instance or class a method works on; Self is shorter and needs no type variable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// static_ref(n): the JSON util `static-ref`, used where the JSON says `matches: "static-ref"`
+.decl pyi019_static_ref(n: node)
+pyi019_static_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "abc.abstractstaticmethod")),
+    global_ref(n, "staticmethod").
+pyi019_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi019_static_ref(c1).
+
+// class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
+.decl pyi019_class_ref(n: node)
+pyi019_class_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "builtins.classmethod") ; sym_of(n, "abc.abstractclassmethod")),
+    global_ref(n, "classmethod").
+pyi019_class_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi019_class_ref(c1).
+
+// abstract_ref(n): the JSON util `abstract-ref`, used where the JSON says `matches: "abstract-ref"`
+.decl pyi019_abstract_ref(n: node)
+pyi019_abstract_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "abc.abstractmethod")
+    ; sym_of(n, "abc.abstractclassmethod")
+    ; sym_of(n, "abc.abstractstaticmethod")
+    ; sym_of(n, "abc.abstractproperty")
+    ).
+
+pyi019_abstract_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi019_abstract_ref(c1).
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl pyi019_overload_ref(n: node)
+pyi019_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+pyi019_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi019_overload_ref(c1).
+
+// static_deco(n): the JSON util `static-deco`, used where the JSON says `matches: "static-deco"`
+.decl pyi019_static_deco(n: node)
+pyi019_static_deco(n) :- pyi019_static_ref(n).
+pyi019_static_deco(n) :- kind(n, "call"), field(n, "function", c1), pyi019_static_ref(c1).
+
+// class_deco(n): the JSON util `class-deco`, used where the JSON says `matches: "class-deco"`
+.decl pyi019_class_deco(n: node)
+pyi019_class_deco(n) :- pyi019_class_ref(n).
+pyi019_class_deco(n) :- kind(n, "call"), field(n, "function", c1), pyi019_class_ref(c1).
+
+// typevar_rhs(n): the JSON util `typevar-rhs`, used where the JSON says `matches: "typevar-rhs"`
+.decl pyi019_typevar_rhs(n: node)
+pyi019_typevar_rhs(n) :- pyi019_typevar_call(n).
+pyi019_typevar_rhs(n) :- kind(n, "assignment"), field(n, "right", c1), pyi019_typevar_rhs(c1).
+
+// typevar_call(n): the JSON util `typevar-call`, used where the JSON says `matches: "typevar-call"`
+.decl pyi019_typevar_call(n: node)
+pyi019_typevar_call(n) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    ( sym_of(c1, "typing.TypeVar")
+    ; sym_of(c1, "typing_extensions.TypeVar")
+    ; sym_of(c1, "_typeshed.TypeVar")
+    ).
+
+pyi019_typevar_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi019_typevar_call(c2).
+
+// metaclass_base(n): the JSON util `metaclass-base`, used where the JSON says `matches: "metaclass-base"`
+.decl pyi019_metaclass_base(n: node)
+pyi019_metaclass_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "type"),
+    ( sym_of(n, "builtins.type")
+    ; sym_of(n, "abc.ABCMeta")
+    ; sym_of(n, "enum.EnumMeta")
+    ; sym_of(n, "enum.EnumType")
+    ).
+
+pyi019_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c1),
+    kind(c1, "identifier"), global_ref(c1, "type").
+pyi019_metaclass_base(n) :- kind(n, "identifier"), ref_site(n, b2),
+    kind(b2, "class_definition"), field(b2, "superclasses", c3), child(c3, c4, _),
+    pyi019_metaclass_base(c4).
+pyi019_metaclass_base(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    pyi019_metaclass_base(c5).
+
+// declares_d(n): the JSON util `declares-D`, used where the JSON says `matches: "declares-D"`
+//   D: metavariable this relation binds for the calling rule
+.decl pyi019_declares_d(n: node, d: loc)
+pyi019_declares_d(n, D) :- child(n, c1, _), kind(c1, "identifier"), node(_, c1, _, _, _), D = c1.
+pyi019_declares_d(n, D) :- child(n, c2, _), kind(c2, "constrained_type"), child(c2, c3, _),
+    kind(c3, "type"), count : { precedes(s4, c3), kind(s4, "type") } = 0,
+    child(c3, c5, _), kind(c5, "identifier"), node(_, c5, _, _, _), D = c5.
+pyi019_declares_d(n, D) :- kind(n, "type_default"), field(n, "name", c6), pyi019_declares_d(c6, D).
+
+// own_type_param_n(n): the JSON util `own-type-param-N`, used where the JSON says `matches: "own-type-param-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_own_type_param_n(n: node, n_mv: loc)
+pyi019_own_type_param_n(n, N) :- pyi019_demand_own_type_param_n(n, N), inside(n, p1, "parameters"),
+    child(p2, p1, _), kind(p2, "function_definition"),
+    field(p2, "type_parameters", c3), kind(c3, "type_parameter"), child(c3, c4, _),
+    pyi019_declares_d(c4, D), text(D, t5), text(N, t5), @doc(D) = @doc(N).
+
+// typevar_assigned_n(n): the JSON util `typevar-assigned-N`, used where the JSON says `matches: "typevar-assigned-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_typevar_assigned_n(n: node, n_mv: loc)
+pyi019_typevar_assigned_n(n, N) :- pyi019_demand_typevar_assigned_n(n, N),
+    within_stop(n, p1, "class_definition"), kind(p1, "class_definition"),
+    ( pyi019_scope_typevar_n(p1, N)
+    ; within(p1, p2), count : { within(p1, m_s1), within(m_s1, p2), pyi019_stop_1(m_s1, N) } = 0, (kind(p2, "function_definition") ; kind(p2, "module")), pyi019_scope_typevar_n(p2, N)
+    ).
+
+
+// first_param(n): the JSON util `first-param`, used where the JSON says `matches: "first-param"`
+.decl pyi019_first_param(n: node)
+pyi019_first_param(n) :- (kind(n, "typed_parameter") ; kind(n, "typed_default_parameter")),
+    child(n, c1, _), kind(c1, "identifier"),
+    count : { precedes(s2, n), !pyi019_alt_4(s2) } = 0.
+
+// typevar_ident(n): the JSON util `typevar-ident`, used where the JSON says `matches: "typevar-ident"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_typevar_ident(n: node, n_mv: loc)
+pyi019_typevar_ident(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    ( ref_site(n, b1), kind(b1, "assignment"), count : { field(b1, "type", c1), kind(c1, "type") } = 0, field(b1, "right", c2), pyi019_typevar_rhs(c2), binding_value(b1, x1), pyi019_typevar_call(x1)
+    ; pyi019_own_type_param_n(n, N)
+    ).
+
+
+// typevar_ref(n): the JSON util `typevar-ref`, used where the JSON says `matches: "typevar-ref"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_typevar_ref(n: node, n_mv: loc)
+pyi019_typevar_ref(n, N) :- pyi019_typevar_ident(n, N).
+pyi019_typevar_ref(n, N) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi019_typevar_ref(c1, N).
+
+// typevar_named_n(n): the JSON util `typevar-named-N`, used where the JSON says `matches: "typevar-named-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_typevar_named_n(n: node, n_mv: loc)
+pyi019_typevar_named_n(n, N) :- pyi019_demand_typevar_named_n(n, N), pyi019_own_type_param_n(n, N).
+pyi019_typevar_named_n(n, N) :- pyi019_demand_typevar_named_n(n, N), pyi019_typevar_assigned_n(n, N).
+
+// self_annotation(n): the JSON util `self-annotation`, used where the JSON says `matches: "self-annotation"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_self_annotation(n: node, n_mv: loc)
+pyi019_self_annotation(n, N) :- pyi019_typevar_ref(n, N).
+pyi019_self_annotation(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), pyi019_alt_6(r1, N), pyi019_typevar_named_n(n, N).
+
+// cls_annotation(n): the JSON util `cls-annotation`, used where the JSON says `matches: "cls-annotation"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_cls_annotation(n: node, n_mv: loc)
+pyi019_cls_annotation(n, N) :- kind(n, "generic_type"), child(n, c1, _),
+    kind(c1, "identifier"), global_ref(c1, "type"), child(n, c2, _),
+    kind(c2, "type_parameter"), !pyi019_tok_has_1(c2), child(c2, c11, _), child(c11, c12, _),
+    pyi019_typevar_ref(c12, N).
+pyi019_cls_annotation(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r13), child(r13, c14, _), kind(c14, "subscript"),
+    !pyi019_tok_has_2(c14), child(c14, c23, _), kind(c23, "identifier"),
+    global_ref(c23, "type"),
+    count : { precedes(s24, c23), kind(s24, "identifier") } = 0, child(c14, c25, _),
+    kind(c25, "identifier"), N = c25, pyi019_tok_follows_3(c25), pyi019_typevar_named_n(n, N).
+
+// implicit_class_method(n): the JSON util `implicit-class-method`, used where the JSON says `matches: "implicit-class-method"`
+.decl pyi019_implicit_class_method(n: node)
+pyi019_implicit_class_method(n) :- field(n, "name", c1),
+    glob("{__new__,__init_subclass__,__class_getitem__}", c1).
+
+// static_fn(n): the JSON util `static-fn`, used where the JSON says `matches: "static-fn"`
+.decl pyi019_static_fn(n: node)
+pyi019_static_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi019_static_deco(c3).
+
+// class_fn(n): the JSON util `class-fn`, used where the JSON says `matches: "class-fn"`
+.decl pyi019_class_fn(n: node)
+pyi019_class_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi019_class_deco(c3).
+
+// abstract_fn(n): the JSON util `abstract-fn`, used where the JSON says `matches: "abstract-fn"`
+.decl pyi019_abstract_fn(n: node)
+pyi019_abstract_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi019_abstract_ref(c3).
+
+// overload_fn(n): the JSON util `overload-fn`, used where the JSON says `matches: "overload-fn"`
+.decl pyi019_overload_fn(n: node)
+pyi019_overload_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi019_overload_ref(c3).
+
+// class_method(n): the JSON util `class-method`, used where the JSON says `matches: "class-method"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_class_method(n: node, n_mv: loc)
+pyi019_class_method(n, N) :- (pyi019_class_fn(n) ; pyi019_implicit_class_method(n)),
+    field(n, "parameters", c1), kind(c1, "parameters"), child(c1, c2, _),
+    pyi019_first_param(c2), field(c2, "type", c3), child(c3, c4, _), pyi019_cls_annotation(c4, N).
+
+// instance_method(n): the JSON util `instance-method`, used where the JSON says `matches: "instance-method"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_instance_method(n: node, n_mv: loc)
+pyi019_instance_method(n, N) :- !pyi019_class_fn(n), !pyi019_implicit_class_method(n),
+    field(n, "parameters", c1), kind(c1, "parameters"), child(c1, c2, _),
+    pyi019_first_param(c2), field(c2, "type", c3), child(c3, c4, _), pyi019_self_annotation(c4, N).
+
+// binds_n(n): the JSON util `binds-N`, used where the JSON says `matches: "binds-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_binds_n(n: node, n_mv: loc)
+pyi019_binds_n(n, N) :- pyi019_demand_binds_n(n, N), kind(n, "expression_statement"),
+    has(n, c1, "assignment"), field(c1, "left", c2), kind(c2, "identifier"), node(_, c2, _, _, _), B = c2,
+    text(B, t3), text(N, t3), @doc(B) = @doc(N).
+pyi019_binds_n(n, N) :- pyi019_demand_binds_n(n, N),
+    (kind(n, "function_definition") ; kind(n, "class_definition")),
+    field(n, "name", c5), node(_, c5, _, _, _), B = c5, text(B, t6), text(N, t6), @doc(B) = @doc(N).
+pyi019_binds_n(n, N) :- pyi019_demand_binds_n(n, N), kind(n, "decorated_definition"),
+    field(n, "definition", c8), pyi019_binds_n(c8, N).
+
+// scope_binds_n(n): the JSON util `scope-binds-N`, used where the JSON says `matches: "scope-binds-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_scope_binds_n(n: node, n_mv: loc)
+pyi019_scope_binds_n(n, N) :- pyi019_demand_scope_binds_n(n, N), within_stop(c1, n, pyi019_stop_13),
+    pyi019_binds_n(c1, N).
+
+// scope_typevar_n(n): the JSON util `scope-typevar-N`, used where the JSON says `matches: "scope-typevar-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_scope_typevar_n(n: node, n_mv: loc)
+pyi019_scope_typevar_n(n, N) :- pyi019_demand_scope_typevar_n(n, N), within_stop(c1, n, pyi019_stop_13),
+    kind(c1, "expression_statement"), child(c1, c2, _), kind(c2, "assignment"),
+    count : { field(c2, "type", c3), kind(c3, "type") } = 0, field(c2, "left", c4),
+    kind(c4, "identifier"), node(_, c4, _, _, _), L = c4, field(c2, "right", c5), pyi019_typevar_rhs(c5),
+    text(L, t6), text(N, t6), !pyi019_alt_11(c1, N), @doc(L) = @doc(N).
+
+// later_binds_n(n): the JSON util `later-binds-N`, used where the JSON says `matches: "later-binds-N"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_later_binds_n(n: node, n_mv: loc)
+pyi019_later_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N), pyi019_binds_n(n, N).
+pyi019_later_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N), !kind(n, "function_definition"),
+    !kind(n, "class_definition"), !kind(n, "decorated_definition"),
+    within_stop(c1, n, pyi019_stop_13), pyi019_binds_n(c1, N).
+
+// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_method(n: node, n_mv: loc)
+pyi019_method(n, N) :- kind(n, "function_definition"), within_stop(n, p1, pyi019_stop_14),
+    kind(p1, "class_definition"),
+    count : { field(p1, "superclasses", c2), child(c2, c3, _), pyi019_metaclass_base(c3) } = 0,
+    !pyi019_alt_15(n), (pyi019_class_method(n, N) ; pyi019_instance_method(n, N)).
+
+// PYI019(n): findings from clauses `custom-type-var-for-self`, `custom-type-var-for-self-parenthesized-return`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI019(at: node, r: node, n: loc) "Replace the custom type variable `{n}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n}` here."
+    suppress noqa "PYI019"
+PYI019(R, n, N) :- kind(n, "function_definition"), pyi019_method(n, N),
+    match("(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->(?:[^:\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])*?|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[^:]*?)[ \\t]*:(?s:.*)", n),
+    count : { field(n, "return_type", c1), child(c1, c2, _), kind(c2, "parenthesized_expression") } = 0.
+PYI019(R, n, N) :- kind(n, "function_definition"), pyi019_method(n, N),
+    match("(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-\"\\x27]|-[^>\"\\x27])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[ \\t]*(?:\\(\\s*)+(?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*?)(?:(?:\\s|#[^\\n]*)*\\))+[ \\t]*:(?s:.*)", n),
+    field(n, "return_type", c1), child(c1, c2, _),
+    kind(c2, "parenthesized_expression").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi019_tok_has_1(n: node)
+.stored pyi019_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi019_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+pyi019_tok_has_1(n) :- op(n, t4), match(",", t4).
+pyi019_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi019_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi019_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi019_tok_has_2(n: node)
+.stored pyi019_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi019_tok_has_2(n) :- child(n, c15, _), glob("\\,", c15).
+pyi019_tok_has_2(n) :- op(n, t16), match(",", t16).
+pyi019_tok_has_2(n) :- child(n, c22, _), structural_before(c22, g17),
+    match("(?s)^(?:.*(?:,).*)$", g17).
+pyi019_tok_has_2(n) :- child(n, c22, _), structural_after(c22, g17),
+    match("(?s)^(?:.*(?:,).*)$", g17).
+pyi019_tok_has_2(n) :- node_text(n, g17), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g17).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi019_tok_follows_3(n: node)
+.stored pyi019_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi019_tok_follows_3(n) :- next_sibling(s26, n), glob("\\[", s26).
+pyi019_tok_follows_3(n) :- structural_before(n, g28), match("\\s*", g28), child(p29, n, _),
+    node(_, n, _, st31, _), o30 = st31 - strlen(g28), token(p29, _, t27, _, o30),
+    match("\\[", t27).
+pyi019_tok_follows_3(n) :- structural_before(n, g28), match("(?s)^(?:.*(?:\\[)\\s*)$", g28).
+
+// demand_typevar_named_n: the rows of typevar_named_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_typevar_named_n(n: node, n_mv: loc)
+pyi019_demand_typevar_named_n(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), pyi019_alt_6(r1, N).
+pyi019_demand_typevar_named_n(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r13), child(r13, c14, _), kind(c14, "subscript"),
+    child(c14, c23, _), kind(c23, "identifier"), global_ref(c23, "type"),
+    child(c14, c25, _), kind(c25, "identifier"), N = c25, pyi019_tok_follows_3(c25).
+
+// demand_own_type_param_n: the rows of own_type_param_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_own_type_param_n(n: node, n_mv: loc)
+pyi019_demand_own_type_param_n(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
+pyi019_demand_own_type_param_n(n, N) :- pyi019_demand_typevar_named_n(n, N).
+
+// demand_typevar_assigned_n: the rows of typevar_assigned_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_typevar_assigned_n(n: node, n_mv: loc)
+pyi019_demand_typevar_assigned_n(n, N) :- pyi019_demand_typevar_named_n(n, N).
+
+// demand_scope_typevar_n: the rows of scope_typevar_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_scope_typevar_n(n: node, n_mv: loc)
+pyi019_demand_scope_typevar_n(p1, N) :- pyi019_demand_typevar_assigned_n(n, N),
+    within_stop(n, p1, "class_definition"), kind(p1, "class_definition").
+pyi019_demand_scope_typevar_n(p2, N) :- pyi019_demand_typevar_assigned_n(n, N),
+    within_stop(n, p1, "class_definition"), kind(p1, "class_definition"),
+    within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "module")).
+
+// demand_stop_1: the rows of stop_1 its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_stop_1(n: node, n_mv: loc)
+pyi019_demand_stop_1(m_s1, N) :- pyi019_demand_typevar_assigned_n(n, N),
+    within_stop(n, p1, "class_definition"), kind(p1, "class_definition"),
+    within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "module")),
+    within(p1, m_s1), within(m_s1, p2).
+
+// demand_alt_11: the rows of alt_11 its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_alt_11(n: node, n_mv: loc)
+pyi019_demand_alt_11(c1, N) :- pyi019_demand_scope_typevar_n(n, N), within_stop(c1, n, pyi019_stop_13),
+    kind(c1, "expression_statement"), child(c1, c2, _), kind(c2, "assignment"),
+    field(c2, "left", c4), kind(c4, "identifier"), node(_, c4, _, _, _), L = c4, field(c2, "right", c5),
+    pyi019_typevar_rhs(c5), text(L, t6), text(N, t6), @doc(L) = @doc(N).
+
+// demand_scope_binds_n: the rows of scope_binds_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_scope_binds_n(n: node, n_mv: loc)
+pyi019_demand_scope_binds_n(n, N) :- pyi019_demand_stop_1(n, N),
+    (kind(n, "function_definition") ; kind(n, "module")).
+
+// demand_later_binds_n: the rows of later_binds_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_later_binds_n(n: node, n_mv: loc)
+pyi019_demand_later_binds_n(s1, N) :- pyi019_demand_alt_11(n, N), precedes(n, s1).
+pyi019_demand_later_binds_n(s3, N) :- pyi019_demand_alt_11(n, N), within_stop(n, p2, pyi019_stop_10),
+    precedes(p2, s3).
+
+// demand_binds_n: the rows of binds_n its callers ask for (the metavariable columns they pass in)
+.decl pyi019_demand_binds_n(n: node, n_mv: loc)
+pyi019_demand_binds_n(c8, N) :- pyi019_demand_binds_n(n, N), kind(n, "decorated_definition"),
+    field(n, "definition", c8).
+pyi019_demand_binds_n(c1, N) :- pyi019_demand_scope_binds_n(n, N), within_stop(c1, n, pyi019_stop_13).
+pyi019_demand_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N).
+pyi019_demand_binds_n(c1, N) :- pyi019_demand_later_binds_n(n, N), within_stop(c1, n, pyi019_stop_13).
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi019_stop_10(kind: symbol)
+pyi019_stop_10("function_definition"). pyi019_stop_10("class_definition").
+pyi019_stop_10("decorated_definition"). pyi019_stop_10("module").
+
+// stop_13: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi019_stop_13(kind: symbol)
+pyi019_stop_13("function_definition"). pyi019_stop_13("class_definition").
+pyi019_stop_13("decorated_definition").
+
+// stop_14: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi019_stop_14(kind: symbol)
+pyi019_stop_14("function_definition"). pyi019_stop_14("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_stop_1(n: node, n_mv: loc)
+pyi019_stop_1(n, N) :- pyi019_demand_stop_1(n, N),
+    (kind(n, "function_definition") ; kind(n, "module")), pyi019_scope_binds_n(n, N).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi019_alt_4(n: node)
+pyi019_alt_4(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi019_alt_4(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl pyi019_alt_6(n: node, n_mv: loc)
+pyi019_alt_6(n, N) :- child(n, c1, _), kind(c1, "identifier"), N = c1.
+pyi019_alt_6(n, N) :- child(n, c2, _), kind(c2, "parenthesized_expression"), child(c2, c3, _),
+    kind(c3, "identifier"), N = c3.
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi019_alt_11(n: node, n_mv: loc)
+pyi019_alt_11(n, N) :- pyi019_demand_alt_11(n, N), precedes(n, s1), pyi019_later_binds_n(s1, N).
+pyi019_alt_11(n, N) :- pyi019_demand_alt_11(n, N), within_stop(n, p2, pyi019_stop_10),
+    !kind(p2, "function_definition"), !kind(p2, "class_definition"),
+    !kind(p2, "decorated_definition"), !kind(p2, "module"), precedes(p2, s3),
+    pyi019_later_binds_n(s3, N).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi019_alt_15(n: node)
+pyi019_alt_15(n) :- pyi019_static_fn(n).
+pyi019_alt_15(n) :- pyi019_abstract_fn(n).
+pyi019_alt_15(n) :- pyi019_overload_fn(n).

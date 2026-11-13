@@ -1,0 +1,183 @@
+.policy "ruff-pyi041-redundant-numeric-union" revision 1
+.guests off
+.description "Don't combine int, float and complex in a parameter annotation union; a float parameter already accepts ints and a complex parameter accepts both."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// union_ref(n): the JSON util `union-ref`, used where the JSON says `matches: "union-ref"`
+.decl pyi041_union_ref(n: node)
+pyi041_union_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+
+// ref_of(n, key): 3 copies of one rule set (`complex-ref`, `float-ref`, `int-ref`), folded into one: row `key` of
+// ref_of_case gives the strings each copy had.
+.decl pyi041_ref_of(n: node, key: symbol)
+pyi041_ref_of(n, q1) :- pyi041_ref_of_case(q1, s1), (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, s1), global_ref(n, q1).
+
+// register_ref(n): the JSON util `register-ref`, used where the JSON says `matches: "register-ref"`
+.decl pyi041_register_ref(n: node)
+pyi041_register_ref(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("register", c1), field(n, "object", c2), kind(c2, "identifier"),
+    ref_site(c2, b3), kind(b3, "function_definition"), child(p4, b3, _),
+    kind(p4, "decorated_definition"), child(p4, c5, _), kind(c5, "decorator"),
+    child(c5, c6, _), (kind(c6, "identifier") ; kind(c6, "attribute")),
+    ( sym_of(c6, "functools.singledispatch")
+    ; sym_of(c6, "functools.singledispatchmethod")
+    ).
+
+
+// dispatch_first(n): the JSON util `dispatch-first`, used where the JSON says `matches: "dispatch-first"`
+.decl pyi041_dispatch_first(n: node)
+pyi041_dispatch_first(n) :- (kind(n, "typed_parameter") ; kind(n, "typed_default_parameter")),
+    count : { precedes(s1, n), (kind(s1, "typed_parameter") ; kind(s1, "typed_default_parameter")) } = 0,
+    child(p2, n, _), kind(p2, "parameters"), child(p3, p2, _),
+    kind(p3, "function_definition"), child(p4, p3, _),
+    kind(p4, "decorated_definition"), child(p4, c5, _), kind(c5, "decorator"),
+    child(c5, c6, _), pyi041_register_ref(c6).
+
+// top_union(n): the JSON util `top-union`, used where the JSON says `matches: "top-union"`
+.decl pyi041_top_union(n: node)
+pyi041_top_union(n) :-
+    ( kind(n, "binary_operator"), pyi041_tok_has_1(n)
+    ; kind(n, "union_type")
+    ; kind(n, "generic_type"), child(n, c1, _), pyi041_union_ref(c1)
+    ; kind(n, "subscript"), field(n, "value", c2), pyi041_union_ref(c2)
+    ),
+    within_stop(n, p11, pyi041_stop_2), kind(p11, "type"), child(p12, p11, _),
+    (kind(p12, "typed_parameter") ; kind(p12, "typed_default_parameter")),
+    !pyi041_dispatch_first(p12).
+
+// union_part(n): the JSON util `union-part`, used where the JSON says `matches: "union-part"`
+.decl pyi041_union_part(n: node)
+pyi041_union_part(n) :-
+    ( kind(n, "parenthesized_expression")
+    ; kind(n, "type")
+    ; kind(n, "type_parameter")
+    ; kind(n, "union_type")
+    ).
+
+pyi041_union_part(n) :- kind(n, "tuple"),
+    ( pyi041_sole_slice(n)
+    ; within_stop(n, p1, pyi041_stop_2), kind(p1, "parenthesized_expression"), pyi041_sole_slice(p1)
+    ).
+
+pyi041_union_part(n) :- kind(n, "binary_operator"), pyi041_tok_has_2(n).
+pyi041_union_part(n) :- kind(n, "generic_type"), child(n, c10, _), pyi041_union_ref(c10).
+pyi041_union_part(n) :- kind(n, "subscript"), field(n, "value", c11), pyi041_union_ref(c11).
+
+// member(n): the JSON util `member`, used where the JSON says `matches: "member"`
+.decl pyi041_member(n: node)
+pyi041_member(n) :- pyi041_demand_member(n), pyi041_up_1(n, p1).
+
+// sole_slice(n): the JSON util `sole-slice`, used where the JSON says `matches: "sole-slice"`
+.decl pyi041_sole_slice(n: node)
+pyi041_sole_slice(n) :- child(p1, n, _), pyi041_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(n, s2), pyi041_counted(s2) }, k3 = 0,
+    child(p4, n, _), pyi041_counted(n),
+    k6 = count : { child(p4, s5, _), precedes(s5, n), pyi041_counted(s5) }, k6 = 1,
+    !pyi041_tok_precedes_3(n), child(p14, n, _), kind(p14, "subscript").
+pyi041_sole_slice(n) :- child(p15, n, _), kind(p15, "type"), child(p16, p15, _), pyi041_counted(p15),
+    k18 = count : { child(p16, s17, _), precedes(p15, s17), pyi041_counted(s17) }, k18 = 0,
+    child(p19, p15, _), pyi041_counted(p15),
+    k21 = count : { child(p19, s20, _), precedes(s20, p15), pyi041_counted(s20) }, k21 = 0,
+    !pyi041_tok_precedes_4(p15), child(p29, p15, _), kind(p29, "type_parameter").
+
+// PYI041(n, detail): findings from clauses `redundant-beside-complex`, `int-beside-float`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation PYI041(at: node, detail: symbol) "{detail}."
+    suppress noqa "PYI041"
+PYI041(n, "Drop the `int` and `float` members from this parameter union and keep `complex`, which already accepts both") :- pyi041_top_union(n),
+    within(c1, n), pyi041_ref_of(c1, "complex"), pyi041_member(c1),
+    ( within(c2, n), pyi041_ref_of(c2, "int"), pyi041_member(c2)
+    ; within(c3, n), pyi041_ref_of(c3, "float"), pyi041_member(c3)
+    ).
+
+PYI041(n, "Remove `int` from this parameter union where `float` is also listed; `float` already accepts ints") :- pyi041_top_union(n),
+    within(c1, n), pyi041_ref_of(c1, "int"), pyi041_member(c1), within(c2, n), pyi041_ref_of(c2, "float"),
+    pyi041_member(c2), count : { within(c3, n), pyi041_ref_of(c3, "complex"), pyi041_member(c3) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi041_tok_has_1(n: node)
+.stored pyi041_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi041_tok_has_1(n) :- child(n, c1, _), glob("|", c1).
+pyi041_tok_has_1(n) :- op(n, t2), match("\\|", t2).
+pyi041_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi041_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pyi041_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi041_tok_has_2(n: node)
+.stored pyi041_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi041_tok_has_2(n) :- child(n, c2, _), glob("|", c2).
+pyi041_tok_has_2(n) :- op(n, t3), match("\\|", t3).
+pyi041_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+pyi041_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+pyi041_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi041_tok_precedes_3(n: node)
+.stored pyi041_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi041_tok_precedes_3(n) :- next_sibling(n, s7), glob("\\,", s7).
+pyi041_tok_precedes_3(n) :- structural_after(n, g9), match("\\s*", g9), child(p10, n, _),
+    node(_, n, _, _, en13), o11 = en13 + strlen(g9), token(p10, _, t8, o11, _),
+    match(",", t8).
+pyi041_tok_precedes_3(n) :- structural_after(n, g9), match("(?s)^(?:\\s*(?:,).*)$", g9).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi041_tok_precedes_4(n: node)
+.stored pyi041_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi041_tok_precedes_4(n) :- next_sibling(n, s22), glob("\\,", s22).
+pyi041_tok_precedes_4(n) :- structural_after(n, g24), match("\\s*", g24), child(p25, n, _),
+    node(_, n, _, _, en28), o26 = en28 + strlen(g24), token(p25, _, t23, o26, _),
+    match(",", t23).
+pyi041_tok_precedes_4(n) :- structural_after(n, g24), match("(?s)^(?:\\s*(?:,).*)$", g24).
+
+// demand_member: the nodes member is asked at (it looks at every ancestor of every node)
+.decl pyi041_demand_member(n: node)
+pyi041_demand_member(c1) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "complex").
+pyi041_demand_member(c2) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "complex"), within(c2, n),
+    pyi041_ref_of(c2, "int").
+pyi041_demand_member(c3) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "complex"), within(c3, n),
+    pyi041_ref_of(c3, "float").
+pyi041_demand_member(c1) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "int"), within(c2, n),
+    pyi041_ref_of(c2, "float").
+pyi041_demand_member(c2) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "int"), within(c2, n),
+    pyi041_ref_of(c2, "float").
+pyi041_demand_member(c3) :- pyi041_top_union(n), within(c1, n), pyi041_ref_of(c1, "int"), within(c2, n),
+    pyi041_ref_of(c2, "float"), within(c3, n), pyi041_ref_of(c3, "complex").
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi041_up_1(n: node, p: node)
+pyi041_up_1(n, p) :- pyi041_demand_member(n), within_stop(n, p, pyi041_stop_6), pyi041_top_union(p).
+
+// ref_of_case: one row per relation folded into ref_of: its key, then the strings that differed.
+.decl pyi041_ref_of_case(key: symbol, s1: symbol)
+pyi041_ref_of_case("complex", "builtins.complex"). pyi041_ref_of_case("float", "builtins.float").
+pyi041_ref_of_case("int", "builtins.int").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi041_stop_2(n: node)
+pyi041_stop_2(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_6(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi041_stop_6(n: node)
+pyi041_stop_6(n) :- node(_, n, _, _, _), !pyi041_union_part(n).
+
+// counted(n): 4 identical copies of one rule set (`counted_10`, `counted_7`, `counted_8` and 1 more), folded into one.
+.decl pyi041_counted(n: node)
+pyi041_counted(n) :- node(_, n, _, _, _), !kind(n, "comment").

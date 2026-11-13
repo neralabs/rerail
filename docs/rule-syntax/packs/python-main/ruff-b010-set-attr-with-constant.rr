@@ -1,0 +1,91 @@
+.policy "ruff-b010-set-attr-with-constant" revision 1
+.guests off
+.description "Use plain attribute assignment instead of setattr() with a constant attribute name; it is no safer and harder to read."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B010(n): a finding at node n, from clause `set-attr-with-constant`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on FUNC, OBJ, NAME, VALUE are added to every rule.
+.violation B010(at: node) "Replace this `setattr` call with a plain assignment, such as `obj.name = value`."
+    suppress noqa "B010"
+B010(n) :- kind(n, "call"), n ~ `$FUNC($OBJ, $NAME, $VALUE)`, b010_statement_expression(n),
+    child(n, c1, _), b010_no_keywords(c1), b010_callee(FUNC), b010_positional(OBJ),
+    b010_identifier_literal(NAME), b010_argument(VALUE).
+
+// ref_setattr(n): the JSON util `ref-setattr`, used where the JSON says `matches: "ref-setattr"`
+.decl b010_ref_setattr(n: node)
+b010_ref_setattr(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "setattr"), sym_of(n, "builtins.setattr").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl b010_callee(n: node)
+b010_callee(n) :- b010_ref_setattr(n).
+b010_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b010_callee(c1).
+
+// identifier_literal(n): the JSON util `identifier-literal`, used where the JSON says `matches: "identifier-literal"`
+.decl b010_identifier_literal(n: node)
+b010_identifier_literal(n) :-
+    ( kind(n, "string"), match("[rRuU]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), match("[\\p{XID_Start}_]\\p{XID_Continue}*", v2), !b010_alt_2(n).
+b010_identifier_literal(n) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    b010_identifier_literal(c6).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl b010_positional(n: node)
+b010_positional(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat"), !kind(n, "list_splat").
+
+// argument(n): the JSON util `argument`, used where the JSON says `matches: "argument"`
+.decl b010_argument(n: node)
+b010_argument(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").
+
+// no_keywords(n): the JSON util `no-keywords`, used where the JSON says `matches: "no-keywords"`
+.decl b010_no_keywords(n: node)
+b010_no_keywords(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), (kind(c1, "keyword_argument") ; kind(c1, "dictionary_splat")) } = 0.
+
+// statement_expression(n): the JSON util `statement-expression`, used where the JSON says `matches: "statement-expression"`
+.decl b010_statement_expression(n: node)
+b010_statement_expression(n) :- child(p1, n, _), b010_alt_3(p1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b010_tok_has_1(n: node)
+.stored b010_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b010_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+b010_tok_has_1(n) :- op(n, t3), match(",", t3).
+b010_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b010_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b010_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b010_tok_has_2(n: node)
+.stored b010_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b010_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+b010_tok_has_2(n) :- op(n, t2), match(",", t2).
+b010_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b010_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b010_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl b010_alt_2(n: node)
+b010_alt_2(n) :- value(n, v1), glob("{False,None,True,and,as,assert,async,await,break,class,continue,def,del,elif,else,except,finally,for,from,global,if,import,in,is,lambda,nonlocal,not,or,pass,raise,return,try,while,with,yield}", v1).
+b010_alt_2(n) :- value(n, v2), prefix("__", v2),
+    count : { value(n, v3), suffix("__", v3) } = 0.
+b010_alt_2(n) :- value(n, "__debug__").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl b010_alt_3(n: node)
+b010_alt_3(n) :- kind(n, "expression_statement"), !b010_tok_has_2(n).
+b010_alt_3(n) :- kind(n, "parenthesized_expression"), b010_statement_expression(n).

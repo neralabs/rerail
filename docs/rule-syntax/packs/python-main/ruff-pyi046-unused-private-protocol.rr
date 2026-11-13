@@ -1,0 +1,58 @@
+.policy "ruff-pyi046-unused-private-protocol" revision 1
+.guests off
+.description "Use, make public or remove a private Protocol class that nothing in its file references; an unused private protocol is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// protocol_ref(n): the JSON util `protocol-ref`, used where the JSON says `matches: "protocol-ref"`
+.decl pyi046_protocol_ref(n: node)
+pyi046_protocol_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Protocol")
+    ; sym_of(n, "typing_extensions.Protocol")
+    ; sym_of(n, "_typeshed.Protocol")
+    ).
+
+pyi046_protocol_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi046_protocol_ref(c1).
+
+// protocol_base(n): the JSON util `protocol-base`, used where the JSON says `matches: "protocol-base"`
+.decl pyi046_protocol_base(n: node)
+pyi046_protocol_base(n) :- pyi046_protocol_ref(n).
+pyi046_protocol_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi046_protocol_ref(c1).
+pyi046_protocol_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi046_protocol_base(c2).
+
+// PYI046(n): a finding at node n, from clause `unused-private-protocol`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI046(at: node, name: loc) "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+    suppress noqa "PYI046"
+PYI046_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
+    site_form(n, "definition"), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
+    pyi046_protocol_base(c2), site_latest(n), !site_used(n),
+    (site_scope(n, "module") ; site_scope(n, "function")).
+
+// PYI046_unused_private_protocol_stub(n): a finding at node n, from clause `unused-private-protocol-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI046_unused_private_protocol_stub(at: node, name: loc) code "PYI046" "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+    suppress noqa "PYI046"
+PYI046_unused_private_protocol_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    prefix("_", n), site_form(n, "definition"), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
+    pyi046_protocol_base(c2), site_latest(n), !site_used(n).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl PYI046_raw(at: node, name: loc)
+PYI046(v0, v1) :- PYI046_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI046_unused_private_protocol_stub_raw(at: node, name: loc)
+PYI046_unused_private_protocol_stub(v0, v1) :- PYI046_unused_private_protocol_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

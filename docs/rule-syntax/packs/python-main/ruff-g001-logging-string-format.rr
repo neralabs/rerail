@@ -1,0 +1,182 @@
+.policy "ruff-g001-logging-string-format" revision 1
+.guests off
+.description "Pass values to a logging call as arguments instead of formatting its message with str.format; the logger then formats only records it emits."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// G001(n): a finding at node n, from clause `logging-string-format`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on M are added to every rule.
+.violation G001(at: node, x: node) "Pass the values as logger arguments with `%s` placeholders, e.g. `logger.info(\"x=%s\", x)`, instead of `.format()`, doubling any literal `%`; leave it if the logger is not from `logging`."
+    suppress noqa "G001"
+G001(X, n) :- kind(n, "call"), g001_alt_3(n, M), g001_msg(M, X).
+
+// logging_ref(n): the JSON util `logging-ref`, used where the JSON says `matches: "logging-ref"`
+.decl g001_logging_ref(n: node)
+g001_logging_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+g001_logging_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    g001_logging_ref(c1).
+
+// factory(n): the JSON util `factory`, used where the JSON says `matches: "factory"`
+.decl g001_factory(n: node)
+g001_factory(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging.getLogger") ; sym_of(n, "logging.Logger")).
+g001_factory(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), g001_factory(c1).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl g001_name_chain(n: node)
+g001_name_chain(n) :- kind(n, "identifier").
+g001_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), g001_name_chain(c1).
+g001_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_name_chain(c2).
+
+// log_tail(n): the JSON util `log-tail`, used where the JSON says `matches: "log-tail"`
+.decl g001_log_tail(n: node)
+g001_log_tail(n) :- kind(n, "identifier"),
+    match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", n).
+g001_log_tail(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    match(".*(?:^(?:log|LOG)|(?:logger|logging|LOGGER|LOGGING)$).*", c1).
+g001_log_tail(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_log_tail(c2).
+
+// logger(n): the JSON util `logger`, used where the JSON says `matches: "logger"`
+.decl g001_logger(n: node)
+g001_logger(n) :- g001_logging_ref(n).
+g001_logger(n) :- kind(n, "call"), field(n, "function", c1), g001_factory(c1).
+g001_logger(n) :- g001_name_chain(n), g001_log_tail(n), !sym_of(n, _).
+g001_logger(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_logger(c2).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl g001_level_callee(n: node)
+g001_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("{debug,critical,error,exception,info,warn,warning}", c1),
+    field(n, "object", c2), g001_logger(c2).
+g001_level_callee(n) :- kind(n, "identifier"), sym_of(n, q3), g001_set_1(q3).
+g001_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    g001_level_callee(c4).
+
+// log_callee(n): the JSON util `log-callee`, used where the JSON says `matches: "log-callee"`
+.decl g001_log_callee(n: node)
+g001_log_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("log", c1),
+    field(n, "object", c2), g001_logger(c2).
+g001_log_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.log").
+g001_log_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), g001_log_callee(c3).
+
+// msg(n): the JSON util `msg`, used where the JSON says `matches: "msg"`
+//   X: metavariable this relation binds for the calling rule
+.decl g001_msg(n: node, x: loc)
+g001_msg(n, X) :- kind(n, "call"), field(n, "function", c1), g001_format_attr(c1), node(_, n, _, _, _), X = n.
+g001_msg(n, X) :- kind(n, "parenthesized_expression"), child(n, c2, _), g001_msg(c2, X).
+
+// format_attr(n): the JSON util `format-attr`, used where the JSON says `matches: "format-attr"`
+.decl g001_format_attr(n: node)
+g001_format_attr(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("format", c1),
+    field(n, "object", c2), g001_literal(c2).
+g001_format_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    g001_format_attr(c3).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl g001_literal(n: node)
+g001_literal(n) :- kind(n, k1), g001_set_2(k1).
+g001_literal(n) :- kind(n, "string"),
+    count : { child(n, c2, _), kind(c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
+g001_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), child(c3, c4, _), kind(c4, "string_start"), glob("**[fFtT]**", c4) } = 0.
+g001_literal(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), g001_literal(c5).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl g001_args_plain(l: node, a: node, i: number)
+g001_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl g001_args_splat(l: node, i: number)
+g001_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl g001_args_pos(l: node, a: node, j: number)
+g001_args_pos(l, a, j) :- g001_args_plain(l, a, i), count : { g001_args_splat(l, k), k < i } = 0,
+    j = count : { g001_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl g001_args_star(l: node, j: number)
+g001_args_star(l, j) :- g001_args_splat(l, i), count : { g001_args_splat(l, k), k < i } = 0,
+    j = count : { g001_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl g001_args_kwp(l: node, k: symbol, v: node)
+g001_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl g001_args_lit_dict(s: node, d: node)
+g001_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !g001_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl g001_args_str_pair(p: node)
+g001_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl g001_args_kw(l: node, k: symbol, v: node)
+g001_args_kw(l, k, v) :- g001_args_kwp(l, k, v).
+g001_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), g001_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl g001_args_kw_spread(l: node)
+g001_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !g001_args_lit_dict(s, _).
+
+// arg_msg_1: call n passes v for slot `msg` of (msg), syntactic: Ruff's find_argument
+.decl g001_arg_msg_1(n: node, v: node)
+g001_arg_msg_1(n, v) :- kind(n, "call"), field(n, "arguments", l), g001_args_kwp(l, "msg", v).
+g001_arg_msg_1(n, v) :- kind(n, "call"), field(n, "arguments", l), g001_args_pos(l, v, 0),
+    !g001_args_kwp(l, "msg", _).
+g001_arg_msg_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_msg_1: call n does not pass slot `msg` of (msg), syntactic: Ruff's find_argument
+.decl g001_arg_no_msg_1(n: node)
+g001_arg_no_msg_1(n) :- kind(n, "call"), field(n, "arguments", l), !g001_args_kwp(l, "msg", _),
+    !g001_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// arg_msg_2: call n passes v for slot `msg` of (level, msg), syntactic: Ruff's find_argument
+.decl g001_arg_msg_2(n: node, v: node)
+g001_arg_msg_2(n, v) :- kind(n, "call"), field(n, "arguments", l), g001_args_kwp(l, "msg", v).
+g001_arg_msg_2(n, v) :- kind(n, "call"), field(n, "arguments", l), g001_args_pos(l, v, 1),
+    !g001_args_kwp(l, "msg", _).
+
+// arg_no_msg_2: call n does not pass slot `msg` of (level, msg), syntactic: Ruff's find_argument
+.decl g001_arg_no_msg_2(n: node)
+g001_arg_no_msg_2(n) :- kind(n, "call"), field(n, "arguments", l), !g001_args_kwp(l, "msg", _),
+    !g001_args_pos(l, _, 1).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl g001_set_1(v: symbol)
+g001_set_1("logging.debug"). g001_set_1("logging.critical"). g001_set_1("logging.error").
+g001_set_1("logging.exception"). g001_set_1("logging.info"). g001_set_1("logging.warn").
+g001_set_1("logging.warning").
+
+// set_2: node kinds from a JSON `any`
+.decl g001_set_2(v: symbol)
+g001_set_2("integer"). g001_set_2("float"). g001_set_2("true"). g001_set_2("false"). g001_set_2("none").
+g001_set_2("ellipsis").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   M: metavariable this relation binds for the calling rule
+.decl g001_alt_3(n: node, m: loc)
+g001_alt_3(n, M) :- field(n, "function", c1), g001_level_callee(c1), kind(n, "call"),
+    g001_arg_msg_1(n, a2), M = a2.
+g001_alt_3(n, M) :- field(n, "function", c3), g001_log_callee(c3), kind(n, "call"),
+    g001_arg_msg_2(n, a4), M = a4.

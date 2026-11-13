@@ -1,0 +1,57 @@
+.policy "ruff-pd012-pandas-use-of-dot-read-table" revision 1
+.guests off
+.description "Use pandas read_csv instead of read_table for comma-separated data; read_csv already defaults to a comma separator."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PD012(n): a finding at node n, from clause `pandas-use-of-dot-read-table`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PD012(at: node, func: node) "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
+    suppress noqa "PD012"
+PD012(FUNC, n) :- pd012_read_table(n), node(_, n, _, _, _), FUNC = n.
+PD012(FUNC, n) :- pd012_in_string(n, FUNC).
+
+// comma_string(n): the JSON util `comma-string`, used where the JSON says `matches: "comma-string"`
+.decl pd012_comma_string(n: node)
+pd012_comma_string(n) :- pd012_alt_1(n), value(n, ",").
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   FUNC: metavariable this relation binds for the calling rule
+.decl pd012_in_string(n: node, func: loc)
+pd012_in_string(n, FUNC) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd012_alt_2(c2, FUNC).
+
+// sep_call(n): the JSON util `sep-call`, used where the JSON says `matches: "sep-call"`
+.decl pd012_sep_call(n: node)
+pd012_sep_call(n) :- kind(n, "call"), field(n, "arguments", c1), kind(c1, "argument_list"),
+    child(c1, c2, _), kind(c2, "keyword_argument"), field(c2, "name", c3),
+    glob("sep", c3), field(c2, "value", c4), pd012_comma_string(c4),
+    count : { precedes(s5, c2), kind(s5, "keyword_argument"), field(s5, "name", c6), glob("sep", c6) } = 0.
+
+// slot(n): the JSON util `slot`, used where the JSON says `matches: "slot"`
+.decl pd012_slot(n: node)
+pd012_slot(n) :- field(p1, "function", n), pd012_sep_call(p1).
+pd012_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pd012_slot(p2).
+
+// read_table(n): the JSON util `read-table`, used where the JSON says `matches: "read-table"`
+.decl pd012_read_table(n: node)
+pd012_read_table(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pandas.read_table"), pd012_slot(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pd012_alt_1(n: node)
+pd012_alt_1(n) :- kind(n, "string"), match("[uUrR]{0,2}['\"].*", n).
+pd012_alt_1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[uUrR]{0,2}['\"].*", c1) } = 0.
+pd012_alt_1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pd012_comma_string(c2).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   FUNC: metavariable this relation binds for the calling rule
+.decl pd012_alt_2(n: node, func: loc)
+pd012_alt_2(n, FUNC) :- pd012_read_table(n), FUNC = n.
+pd012_alt_2(n, FUNC) :- pd012_in_string(n, FUNC).

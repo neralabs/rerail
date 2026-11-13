@@ -1,0 +1,57 @@
+.policy "ruff-pyi024-collections-named-tuple" revision 1
+.guests off
+.description "Use typing.NamedTuple instead of collections.namedtuple; it lets each field carry a type annotation that type checkers can analyze."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI024(n): a finding at node n, from clause `collections-named-tuple`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI024(at: node, nt: node) "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
+    suppress noqa "PYI024"
+PYI024(NT, n) :- pyi024_nt_ref(n), node(_, n, _, _, _), NT = n.
+PYI024(NT, n) :- kind(n, "dotted_name"), inside(n, p1, "case_pattern"),
+    match("(?P<NT>\\w+\\s*\\.\\s*namedtuple)(?:\\s*\\.|$).*", n), child(n, c2, _),
+    kind(c2, "identifier"), child(_, c2, 0), sym_of(c2, "collections").
+PYI024(NT, n) :- kind(n, "attribute"),
+    match("\\*\\s*(?P<NT>\\w+\\s*\\.\\s*namedtuple)", n), field(n, "object", c3),
+    kind(c3, "list_splat"), child(c3, c4, _), kind(c4, "identifier"),
+    sym_of(c4, "collections").
+PYI024(NT, n) :- pyi024_in_string(n, NT).
+
+// nt_ref(n): the JSON util `nt-ref`, used where the JSON says `matches: "nt-ref"`
+.decl pyi024_nt_ref(n: node)
+pyi024_nt_ref(n) :- kind(n, "identifier"), sym_of(n, "collections.namedtuple"), !pyi024_alt_2(n).
+pyi024_nt_ref(n) :- kind(n, "attribute"), sym_of(n, "collections.namedtuple").
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   NT: metavariable this relation binds for the calling rule
+.decl pyi024_in_string(n: node, nt: loc)
+pyi024_in_string(n, NT) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi024_alt_4(c2, NT).
+
+// aug_target(n): the JSON util `aug-target`, used where the JSON says `matches: "aug-target"`
+.decl pyi024_aug_target(n: node)
+pyi024_aug_target(n) :- field(p1, "left", n), kind(p1, "augmented_assignment").
+pyi024_aug_target(n) :- child(p2, n, _),
+    (kind(p2, "parenthesized_expression") ; kind(p2, "tuple_pattern")), pyi024_aug_target(p2).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi024_stop_1(n: node)
+pyi024_stop_1(n) :- node(_, n, _, _, _), !kind(n, "expression_list"), !kind(n, "tuple"),
+    !kind(n, "list"), !kind(n, "parenthesized_expression").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi024_alt_2(n: node)
+pyi024_alt_2(n) :- within_stop(n, p1, pyi024_stop_1), kind(p1, "delete_statement").
+pyi024_alt_2(n) :- pyi024_aug_target(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   NT: metavariable this relation binds for the calling rule
+.decl pyi024_alt_4(n: node, nt: loc)
+pyi024_alt_4(n, NT) :- pyi024_nt_ref(n), NT = n.
+pyi024_alt_4(n, NT) :- pyi024_in_string(n, NT).

@@ -334,6 +334,72 @@ def _bounds(c, x):
     return [f"{x} {ops[k]} {int(n)}" for k, n in c.items() if k in ops]
 
 
+def code_line(prog, side, comments=False):
+    """`code_before_line(x, l)` / `code_after_line(x, l)`: the line the code just before (after) x ends (starts) on,
+    as main's token_before / token_after give it, comments passed over. A tape leaves out the tokens its grammar
+    implies (RER-131), so the source gap between x and its stored neighbour (structural_before / _after) is read:
+    where it holds code, the line is x's own less (plus) the breaks before that code; where it is blank and a stored
+    child ends (starts) at its edge, x's line less (plus) the gap's breaks; where it reaches the parent's edge, the
+    parent's answer; past a comment, the comment's. With `comments`, a comment is the neighbour (main's
+    `comments: true`): `code_before_line_c` / `code_after_line_c`."""
+    name = f"code_{side}_line" + ("_c" if comments else "")
+    if name in prog.lib:
+        return name
+    nl = lambda w: f"strlen({w}) - strlen(@replace_all({w}, \"\\n\", \"\"))"
+    if side == "before":
+        code, blank = '"(?s).*\\\\S\\\\s*"', '"\\\\s*"'
+        rules = [
+            ("code_before_line(x, l)", ["structural_before(x, g)", f"match({code}, g)",
+                                        'ws = @replace_all(g, "(?s)^.*\\\\S", "")', f"k = {nl('ws')}",
+                                        "line(x, lx)", "l = lx - k"]),
+            ("code_before_line(x, l)", ["structural_before(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                        "node(_, x, _, s, _)", "o = s - strlen(g)", "token(p, _, _, _, o)",
+                                        "!code_comment_end(p, o)", f"k = {nl('g')}", "line(x, lx)", "l = lx - k"]),
+            ("code_before_line(x, l)", ["structural_before(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                        "node(_, x, _, s, _)", "node(_, p, _, ps, _)", "ps = s - strlen(g)",
+                                        "code_before_line(p, l)"]),
+            ("code_before_line(x, l)", ["structural_before(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                        "node(_, x, _, s, _)", "o = s - strlen(g)", "child(p, c, _)",
+                                        "node(_, c, _, _, o)", "comment(c, _)", "code_before_line(c, l)"]),
+        ]
+        prog.lib["code_comment_end"] = (".decl code_comment_end(p: node, o: number)",
+                                        ["// code_comment_end(p, o): a comment child of p ends at offset o"],
+                                        [("code_comment_end(p, o)", ["child(p, c, _)", "comment(c, _)",
+                                                                     "node(_, c, _, _, o)"])])
+    else:
+        code, blank = '"(?s)\\\\s*\\\\S.*"', '"\\\\s*"'
+        rules = [
+            ("code_after_line(x, l)", ["structural_after(x, g)", f"match({code}, g)",
+                                       'ws = @replace_all(g, "(?s)\\\\S.*", "")', f"k = {nl('ws')}",
+                                       "end_line(x, lx)", "l = lx + k"]),
+            ("code_after_line(x, l)", ["structural_after(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                       "node(_, x, _, _, e)", "o = e + strlen(g)", "token(p, _, _, o, _)",
+                                       "!code_comment_start(p, o)", f"k = {nl('g')}", "end_line(x, lx)", "l = lx + k"]),
+            ("code_after_line(x, l)", ["structural_after(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                       "node(_, x, _, _, e)", "node(_, p, _, _, pe)", "pe = e + strlen(g)",
+                                       "code_after_line(p, l)"]),
+            ("code_after_line(x, l)", ["structural_after(x, g)", f"match({blank}, g)", "child(p, x, _)",
+                                       "node(_, x, _, _, e)", "o = e + strlen(g)", "child(p, c, _)",
+                                       "node(_, c, _, o, _)", "comment(c, _)", "code_after_line(c, l)"]),
+        ]
+        prog.lib["code_comment_start"] = (".decl code_comment_start(p: node, o: number)",
+                                          ["// code_comment_start(p, o): a comment child of p starts at offset o"],
+                                          [("code_comment_start(p, o)", ["child(p, c, _)", "comment(c, _)",
+                                                                         "node(_, c, _, o, _)"])])
+    if comments:
+        # a comment at the gap's edge is the neighbour: the stored-child rule takes it, and no rule passes over it
+        plain = f"code_{side}_line"
+        rules = [(h.replace(plain, name), [l.replace(plain + "(", name + "(") for l in b
+                                           if not l.startswith("!code_comment_")])
+                 for h, b in rules if "comment(c, _)" not in b]
+    prog.lib[name] = (f".decl {name}(x: node, l: number)",
+                      [f"// {name}(x, l): the line of the code {side} x (main's token_{side}"
+                       + (", comments counted as code" if comments else ", comments passed over")
+                       + "), read from the source gap: the tape leaves out the tokens its grammar implies"],
+                      rules)
+    return name
+
+
 def layout(prog, spec, v, vs):
     """Literals for a `layout` term, or None when it asks for something not lowered (blank lines, comments)."""
     if set(spec) - {"span", "start", "before", "after"}:
@@ -349,7 +415,7 @@ def layout(prog, spec, v, vs):
         gap = spec.get(side)
         if gap is None:
             continue
-        if set(gap) - {"to", "breaks", "edge"}:
+        if set(gap) - {"to", "breaks", "edge", "comments"} or (gap.get("comments") and gap.get("to", "token") not in ("token", "sibling")):
             return None
         to, x, nb = gap.get("to", "token"), vs.fresh("k"), vs.fresh("t")
         a, b = vs.fresh("l"), vs.fresh("l")
@@ -359,9 +425,19 @@ def layout(prog, spec, v, vs):
         else:
             here, there = f"end_line({v}, {a})", f"line({nb}, {b})"
         if to == "token":
-            find = [f"token_{side}({v}, {nb})"]
-        elif to == "sibling":
+            # the line of the code before (after) v: read from the source gap, not a token the tape may leave out
+            rel = code_line(prog, side, bool(gap.get("comments")))
+            find = [f"{rel}({v}, {a if side == 'before' else b})"]
+            there = None
+        elif to == "sibling" and gap.get("comments"):
+            # the nearest named sibling, a comment included
             find = [f"next_sibling({nb}, {v})" if side == "before" else f"next_sibling({v}, {nb})"]
+        elif to == "sibling":
+            # the nearest named sibling that is not a comment (main passes comments over)
+            m = vs.fresh("m")
+            a_, b_ = (nb, v) if side == "before" else (v, nb)
+            find = [f"precedes({a_}, {b_})", f"!comment({nb}, _)",
+                    f"count : {{ precedes({a_}, {m}), precedes({m}, {b_}), !comment({m}, _) }} = 0"]
         elif isinstance(to, str) and to.startswith("capture."):
             c = to.split(".", 1)[1]
             s1, e1, s2, e2 = vs.fresh("s"), vs.fresh("e"), vs.fresh("s"), vs.fresh("e")
@@ -370,7 +446,7 @@ def layout(prog, spec, v, vs):
         else:
             return None
         bounds = _bounds(gap.get("breaks") or {}, x)
-        found = find + [here, there, f"{x} = {b} - {a}"] + bounds
+        found = find + [here] + ([there] if there else []) + [f"{x} = {b} - {a}"] + bounds
         if gap.get("edge"):
             if side == "before":
                 edge = [f"count : {{ {', '.join(find)} }} = 0", f"line({v}, {b})", f"{x} = {b} - 1"] + bounds

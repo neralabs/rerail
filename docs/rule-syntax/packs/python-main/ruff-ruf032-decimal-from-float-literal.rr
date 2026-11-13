@@ -1,0 +1,114 @@
+.policy "ruff-ruf032-decimal-from-float-literal" revision 1
+.guests off
+.description "Pass Decimal a string instead of a float literal; a float is already rounded, so the decimal value is not the one written."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF032(n): a finding at node n, from clause `decimal-from-float-literal`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF032(at: node) "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
+    suppress noqa "RUF032"
+RUF032(n) :- ruf032_float_expr(n), ruf032_first_arg(n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl ruf032_callee(n: node)
+ruf032_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "decimal.Decimal").
+ruf032_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf032_callee(c1).
+
+// float_operand(n): the JSON util `float-operand`, used where the JSON says `matches: "float-operand"`
+.decl ruf032_float_operand(n: node)
+ruf032_float_operand(n) :- ruf032_float_expr(n).
+ruf032_float_operand(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf032_float_operand(c1).
+
+// float_expr(n): the JSON util `float-expr`, used where the JSON says `matches: "float-expr"`
+.decl ruf032_float_expr(n: node)
+ruf032_float_expr(n) :- kind(n, "float"), match("[^jJ]*", n).
+ruf032_float_expr(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("[+-]", c1),
+    field(n, "argument", c2), ruf032_float_operand(c2).
+
+// first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
+.decl ruf032_first_arg(n: node)
+ruf032_first_arg(n) :- child(p1, n, _), ruf032_counted_1(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ruf032_counted_1(s2) }, k3 = 0,
+    child(p4, n, _), kind(p4, "argument_list"), child(p5, p4, _), kind(p5, "call"),
+    field(p5, "function", c6), ruf032_callee(c6).
+ruf032_first_arg(n) :- child(p7, n, _), kind(p7, "parenthesized_expression"), ruf032_first_arg(p7).
+
+// RUF032_decimal_from_float_literal_in_string_annotation(n): a finding at node n, from clause `decimal-from-float-literal-in-string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF032_decimal_from_float_literal_in_string_annotation(at: node, arg: node) code "RUF032" "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
+    suppress noqa "RUF032"
+RUF032_decimal_from_float_literal_in_string_annotation(ARG, n) :- ruf032_in_string(n, ARG).
+
+// callee_decimal_from_float_literal_in_string_annotation(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl ruf032_callee_decimal_from_float_literal_in_string_annotation(n: node)
+ruf032_callee_decimal_from_float_literal_in_string_annotation(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "decimal.Decimal").
+ruf032_callee_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf032_callee_decimal_from_float_literal_in_string_annotation(c1).
+
+// float_operand_decimal_from_float_literal_in_string_annotation(n): the JSON util `float-operand`, used where the JSON says `matches: "float-operand"`
+.decl ruf032_float_operand_decimal_from_float_literal_in_string_annotation(n: node)
+ruf032_float_operand_decimal_from_float_literal_in_string_annotation(n) :- ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n).
+ruf032_float_operand_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf032_float_operand_decimal_from_float_literal_in_string_annotation(c1).
+
+// float_expr_decimal_from_float_literal_in_string_annotation(n): the JSON util `float-expr`, used where the JSON says `matches: "float-expr"`
+.decl ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n: node)
+ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "float"),
+    match("[^jJ]*", n).
+ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n) :- kind(n, "unary_operator"),
+    ruf032_tok_has_1(n), child(n, c9, _),
+    ruf032_float_operand_decimal_from_float_literal_in_string_annotation(c9).
+
+// first_arg_decimal_from_float_literal_in_string_annotation(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
+.decl ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n: node)
+ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n) :- child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"), child(p2, c3, _),
+    ruf032_callee_decimal_from_float_literal_in_string_annotation(c3),
+    count : { precedes(s4, n), !ruf032_alt_2(s4) } = 0.
+ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n) :- child(p5, n, _),
+    kind(p5, "parenthesized_expression"),
+    ruf032_first_arg_decimal_from_float_literal_in_string_annotation(p5).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   ARG: metavariable this relation binds for the calling rule
+.decl ruf032_in_string(n: node, arg: loc)
+ruf032_in_string(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf032_alt_3(c2, ARG).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^[+-]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf032_tok_has_1(n: node)
+.stored ruf032_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf032_tok_has_1(n) :- child(n, c1, _), glob("[+-]", c1).
+ruf032_tok_has_1(n) :- op(n, t2), match("[+-]", t2).
+ruf032_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf032_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf032_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[+-])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ruf032_counted_1(n: node)
+ruf032_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf032_alt_2(n: node)
+ruf032_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+ruf032_alt_2(n) :- node(_, n, _, _, _), glob("(", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   ARG: metavariable this relation binds for the calling rule
+.decl ruf032_alt_3(n: node, arg: loc)
+ruf032_alt_3(n, ARG) :- ruf032_float_expr_decimal_from_float_literal_in_string_annotation(n),
+    ruf032_first_arg_decimal_from_float_literal_in_string_annotation(n), ARG = n.
+ruf032_alt_3(n, ARG) :- ruf032_in_string(n, ARG).

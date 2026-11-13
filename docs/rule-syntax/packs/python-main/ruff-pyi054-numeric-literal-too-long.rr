@@ -1,0 +1,110 @@
+.policy "ruff-pyi054-numeric-literal-too-long" revision 1
+.guests off
+.description "Replace long numeric literals in stub files with an ellipsis; a value that long is an implementation detail or varies by system."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI054(n): a finding at node n, from clause `numeric-literal-too-long`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI054(at: node) "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin."
+    suppress noqa "PYI054"
+PYI054_raw(n) :- (kind(n, "integer") ; kind(n, "float")), match("[\\s\\S]{11,}", n).
+
+// PYI054_numeric_literal_too_long_in_string_annotation(n): a finding at node n, from clause `numeric-literal-too-long-in-string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI054_numeric_literal_too_long_in_string_annotation(at: node, long: node) code "PYI054" "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin."
+    suppress noqa "PYI054"
+PYI054_numeric_literal_too_long_in_string_annotation_raw(LONG, n) :- pyi054_long_in_annotation(n, LONG).
+
+// escaped_or_concatenated(n): the JSON util `escaped-or-concatenated`, used where the JSON says `matches: "escaped-or-concatenated"`
+.decl pyi054_escaped_or_concatenated(n: node)
+pyi054_escaped_or_concatenated(n) :- kind(n, "concatenated_string").
+pyi054_escaped_or_concatenated(n) :- kind(n, "string"),
+    match("[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)(?s:.*)", n).
+
+// plain_annotation(n): the JSON util `plain-annotation`, used where the JSON says `matches: "plain-annotation"`
+.decl pyi054_plain_annotation(n: node)
+pyi054_plain_annotation(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    !pyi054_escaped_or_concatenated(n).
+
+// long_in_annotation(n): the JSON util `long-in-annotation`, used where the JSON says `matches: "long-in-annotation"`
+//   LONG: metavariable this relation binds for the calling rule
+.decl pyi054_long_in_annotation(n: node, long: loc)
+pyi054_long_in_annotation(n, LONG) :- pyi054_plain_annotation(n), parsed(n, "annotation", r1),
+    within(c2, r1), pyi054_alt_1(c2, LONG).
+
+// PYI054_number_in_escaped_or_concatenated_string_annotation(n): a finding at node n, from clause `number-in-escaped-or-concatenated-string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI054_number_in_escaped_or_concatenated_string_annotation(at: node, num: node) code "PYI054" "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values."
+    suppress noqa "PYI054"
+PYI054_number_in_escaped_or_concatenated_string_annotation_raw(NUM, n) :- pyi054_long_escaped_or_concatenated(n, NUM).
+
+// escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n): the JSON util `escaped-or-concatenated`, used where the JSON says `matches: "escaped-or-concatenated"`
+.decl pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n: node)
+pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n) :- kind(n, "concatenated_string").
+pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n) :- kind(n, "string"),
+    match("[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)(?s:.*)", n).
+
+// plain_annotation_number_in_escaped_or_concatenated_string_annotation(n): the JSON util `plain-annotation`, used where the JSON says `matches: "plain-annotation"`
+.decl pyi054_plain_annotation_number_in_escaped_or_concatenated_string_annotation(n: node)
+pyi054_plain_annotation_number_in_escaped_or_concatenated_string_annotation(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    !pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n).
+
+// any_number_in_annotation(n): the JSON util `any-number-in-annotation`, used where the JSON says `matches: "any-number-in-annotation"`
+//   NUM: metavariable this relation binds for the calling rule
+.decl pyi054_any_number_in_annotation(n: node, num: loc)
+pyi054_any_number_in_annotation(n, NUM) :- pyi054_demand_any_number_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), pyi054_alt_2(c2, NUM).
+
+// long_escaped_or_concatenated(n): the JSON util `long-escaped-or-concatenated`, used where the JSON says `matches: "long-escaped-or-concatenated"`
+//   NUM: metavariable this relation binds for the calling rule
+.decl pyi054_long_escaped_or_concatenated(n: node, num: loc)
+pyi054_long_escaped_or_concatenated(n, NUM) :- pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n),
+    match("[\\s\\S]{11,}", n), pyi054_any_number_in_annotation(n, NUM).
+pyi054_long_escaped_or_concatenated(n, NUM) :- pyi054_plain_annotation_number_in_escaped_or_concatenated_string_annotation(n),
+    parsed(n, "annotation", r1), within(c2, r1), pyi054_long_escaped_or_concatenated(c2, NUM).
+
+// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
+.decl pyi054_demand_alt_2(n: node)
+pyi054_demand_alt_2(c2) :- pyi054_demand_any_number_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+
+// demand_any_number_in_annotation: the nodes any_number_in_annotation is asked at (its recursion looks at every descendant)
+.decl pyi054_demand_any_number_in_annotation(n: node)
+pyi054_demand_any_number_in_annotation(n) :- pyi054_escaped_or_concatenated_number_in_escaped_or_concatenated_string_annotation(n),
+    match("[\\s\\S]{11,}", n).
+pyi054_demand_any_number_in_annotation(n) :- pyi054_demand_alt_2(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   LONG: metavariable this relation binds for the calling rule
+.decl pyi054_alt_1(n: node, long: loc)
+pyi054_alt_1(n, LONG) :- (kind(n, "integer") ; kind(n, "float")), match("[\\s\\S]{11,}", n),
+    LONG = n.
+pyi054_alt_1(n, LONG) :- pyi054_long_in_annotation(n, LONG).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   NUM: metavariable this relation binds for the calling rule
+.decl pyi054_alt_2(n: node, num: loc)
+pyi054_alt_2(n, NUM) :- pyi054_demand_alt_2(n), (kind(n, "integer") ; kind(n, "float")), NUM = n.
+pyi054_alt_2(n, NUM) :- pyi054_demand_alt_2(n), pyi054_any_number_in_annotation(n, NUM).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI054_raw(at: node)
+PYI054(v0) :- PYI054_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI054_numeric_literal_too_long_in_string_annotation_raw(at: node, long: node)
+PYI054_numeric_literal_too_long_in_string_annotation(v0, v1) :- PYI054_numeric_literal_too_long_in_string_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI054_number_in_escaped_or_concatenated_string_annotation_raw(at: node, num: node)
+PYI054_number_in_escaped_or_concatenated_string_annotation(v0, v1) :- PYI054_number_in_escaped_or_concatenated_string_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

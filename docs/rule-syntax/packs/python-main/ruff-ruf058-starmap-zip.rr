@@ -1,0 +1,92 @@
+.policy "ruff-ruf058-starmap-zip" revision 1
+.guests off
+.description "Pass the iterables straight to map instead of calling starmap on zip; zipping only to unpack each tuple again is unnecessary."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// starmap_ref(n): the JSON util `starmap-ref`, used where the JSON says `matches: "starmap-ref"`
+.decl ruf058_starmap_ref(n: node)
+ruf058_starmap_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "itertools.starmap").
+ruf058_starmap_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf058_starmap_ref(c1).
+
+// zip_ref(n): the JSON util `zip-ref`, used where the JSON says `matches: "zip-ref"`
+.decl ruf058_zip_ref(n: node)
+ruf058_zip_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "zip"),
+    sym_of(n, "builtins.zip").
+ruf058_zip_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf058_zip_ref(c1).
+
+// argn(n): the JSON util `argn`, used where the JSON says `matches: "argn"`
+.decl ruf058_argn(n: node)
+ruf058_argn(n) :- node(_, n, _, _, _), !ruf058_alt_1(n).
+
+// pos_arg(n): the JSON util `pos-arg`, used where the JSON says `matches: "pos-arg"`
+.decl ruf058_pos_arg(n: node)
+ruf058_pos_arg(n) :- ruf058_argn(n), !kind(n, "keyword_argument").
+
+// arg2(n): the JSON util `arg2`, used where the JSON says `matches: "arg2"`
+.decl ruf058_arg2(n: node)
+ruf058_arg2(n) :- ruf058_argn(n), child(p1, n, _), ruf058_counted_2(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ruf058_counted_2(s2) }, k3 = 1.
+
+// args2(n): the JSON util `args2`, used where the JSON says `matches: "args2"`
+.decl ruf058_args2(n: node)
+ruf058_args2(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), (kind(c1, "keyword_argument") ; kind(c1, "dictionary_splat")) } = 0,
+    k3 = count : { child(n, c2, _), ruf058_argn(c2) }, k3 >= 2, k3 <= 2.
+
+// zip_positionals(n): the JSON util `zip-positionals`, used where the JSON says `matches: "zip-positionals"`
+.decl ruf058_zip_positionals(n: node)
+ruf058_zip_positionals(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), ruf058_pos_arg(c1), count : { child(n, c2, _), ruf058_pos_arg(c2), !kind(c2, "list_splat") } = 0 } = 0.
+
+// zip_plain(n): the JSON util `zip-plain`, used where the JSON says `matches: "zip-plain"`
+.decl ruf058_zip_plain(n: node)
+ruf058_zip_plain(n) :- kind(n, "call"), field(n, "function", c1), ruf058_zip_ref(c1),
+    ( field(n, "arguments", c2), kind(c2, "generator_expression")
+    ; field(n, "arguments", c3), ruf058_zip_positionals(c3), count : { child(c3, c4, _), (kind(c4, "keyword_argument") ; kind(c4, "dictionary_splat")) } = 0
+    ).
+
+ruf058_zip_plain(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf058_zip_plain(c5).
+
+// zip_strict(n): the JSON util `zip-strict`, used where the JSON says `matches: "zip-strict"`
+.decl ruf058_zip_strict(n: node)
+ruf058_zip_strict(n) :- kind(n, "call"), field(n, "function", c1), ruf058_zip_ref(c1),
+    field(n, "arguments", c2), ruf058_zip_positionals(c2),
+    k4 = count : { child(c2, c3, _), (kind(c3, "keyword_argument") ; kind(c3, "dictionary_splat")) },
+    k4 >= 1, k4 <= 1, child(c2, c5, _), kind(c5, "keyword_argument"),
+    field(c5, "name", c6), glob("strict", c6).
+ruf058_zip_strict(n) :- kind(n, "parenthesized_expression"), child(n, c7, _), ruf058_zip_strict(c7).
+
+// RUF058(n): a finding at node n, from clause `starmap-of-zip`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF058(at: node) "Replace `starmap(f, zip(a, b))` with `map(f, a, b)` (`map(f, [])` for an empty `zip()`). Keep it if `map` is shadowed in this scope."
+    suppress noqa "RUF058"
+RUF058(n) :- kind(n, "call"), field(n, "function", c1), ruf058_starmap_ref(c1),
+    field(n, "arguments", c2), ruf058_args2(c2), child(c2, c3, _), ruf058_arg2(c3), ruf058_zip_plain(c3).
+
+// RUF058_starmap_of_zip_strict(n): a finding at node n, from clause `starmap-of-zip-strict`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation RUF058_starmap_of_zip_strict(at: node) code "RUF058" "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict=...)`; `map` accepts `strict=` on Python 3.14+. Keep it if `map` is shadowed in this scope."
+    suppress noqa "RUF058"
+RUF058_starmap_of_zip_strict_raw(n) :- kind(n, "call"), field(n, "function", c1),
+    ruf058_starmap_ref(c1), field(n, "arguments", c2), ruf058_args2(c2), child(c2, c3, _), ruf058_arg2(c3),
+    ruf058_zip_strict(c3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf058_alt_1(n: node)
+ruf058_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+ruf058_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ruf058_counted_2(n: node)
+ruf058_counted_2(n) :- ruf058_argn(n).
+
+// pythonVersion {"min": "3.14"} excludes Python 3.10, main's default: no findings.
+.decl RUF058_starmap_of_zip_strict_raw(at: node)

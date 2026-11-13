@@ -1,0 +1,146 @@
+.policy "ruff-ruf049-dataclass-enum" revision 1
+.guests off
+.description "Avoid decorating an enum class with the dataclass decorator; the generated methods can make distinct members compare equal."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF049(n): a finding at node n, from clause `dataclass-enum`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF049(at: node, deco: node) "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."
+    suppress noqa "RUF049"
+RUF049(DECO, n) :- kind(n, "decorator"),
+    match("(?s)(?P<DECO>@(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|#[^\\n]*|[^#'\"])*?[\\w)])[ \\t]*(?:#[^\\n]*)?", n),
+    child(n, c1, _), ruf049_dataclass_decorator(c1),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), ruf049_alt_4(c3) } = 0,
+    child(p4, n, _), kind(p4, "decorated_definition"), child(p4, c5, _),
+    kind(c5, "class_definition"), field(c5, "name", c6), node(_, c6, _, _, _), CN = c6,
+    field(c5, "superclasses", c7), child(c7, c8, _),
+    (ruf049_enum_base(c8, _, _), !ruf049_alt_10(c8, CN) ; ruf049_enum_base_q(c8)).
+
+// dataclass_ref(n): the JSON util `dataclass-ref`, used where the JSON says `matches: "dataclass-ref"`
+.decl ruf049_dataclass_ref(n: node)
+ruf049_dataclass_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "dataclasses.dataclass").
+ruf049_dataclass_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf049_dataclass_ref(c1).
+
+// attrs_ref(n): the JSON util `attrs-ref`, used where the JSON says `matches: "attrs-ref"`
+.decl ruf049_attrs_ref(n: node)
+ruf049_attrs_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf049_set_1(q1).
+ruf049_attrs_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf049_attrs_ref(c2).
+
+// dataclass_decorator(n): the JSON util `dataclass-decorator`, used where the JSON says `matches: "dataclass-decorator"`
+.decl ruf049_dataclass_decorator(n: node)
+ruf049_dataclass_decorator(n) :- ruf049_dataclass_ref(n).
+ruf049_dataclass_decorator(n) :- kind(n, "call"), field(n, "function", c1), ruf049_dataclass_ref(c1).
+ruf049_dataclass_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf049_dataclass_decorator(c2).
+
+// attrs_decorator(n): the JSON util `attrs-decorator`, used where the JSON says `matches: "attrs-decorator"`
+.decl ruf049_attrs_decorator(n: node)
+ruf049_attrs_decorator(n) :- ruf049_attrs_ref(n).
+ruf049_attrs_decorator(n) :- kind(n, "call"), field(n, "function", c1), ruf049_attrs_ref(c1).
+ruf049_attrs_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf049_attrs_decorator(c2).
+
+// enum_ref_q(n): the JSON util `enum-ref-q`, used where the JSON says `matches: "enum-ref-q"`
+.decl ruf049_enum_ref_q(n: node)
+ruf049_enum_ref_q(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf049_set_2(q1).
+
+// enum_base_q(n): the JSON util `enum-base-q`, used where the JSON says `matches: "enum-base-q"`
+.decl ruf049_enum_base_q(n: node)
+ruf049_enum_base_q(n) :- ruf049_enum_ref_q(n).
+ruf049_enum_base_q(n) :- kind(n, "subscript"), field(n, "value", c1), ruf049_enum_ref_q(c1).
+ruf049_enum_base_q(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf049_enum_base_q(c2).
+
+// enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
+//   AN, MN: metavariables this relation binds for the calling rule
+.decl ruf049_enum_ref(n: node, an: loc, mn: loc)
+// AN, MN: not bound by this rule, so empty (unset) here, as in ast-grep.
+ruf049_enum_ref(n, AN, MN) :- ruf049_enum_ref_q(n), unset(AN), unset(MN).
+ruf049_enum_ref(n, AN, MN) :- kind(n, "identifier"), ref_site(n, b1), site_stop_at_global(b1),
+    ruf049_enum_class(b1, AN, MN).
+ruf049_enum_ref(n, AN, MN) :- kind(n, "attribute"), field(n, "attribute", c2), node(_, c2, _, _, _), AN = c2,
+    field(n, "object", c3), kind(c3, "identifier"), ref_site(c3, b4),
+    site_stop_at_global(b4), kind(b4, "class_definition"), field(b4, "body", c5),
+    child(c5, c6, _), ruf049_alt_3(c6, AN, MN).
+
+// enum_base(n): the JSON util `enum-base`, used where the JSON says `matches: "enum-base"`
+//   AN, MN: metavariables this relation binds for the calling rule
+.decl ruf049_enum_base(n: node, an: loc, mn: loc)
+ruf049_enum_base(n, AN, MN) :- ruf049_enum_ref(n, AN, MN).
+ruf049_enum_base(n, AN, MN) :- kind(n, "subscript"), field(n, "value", c1),
+    ruf049_enum_ref(c1, AN, MN).
+ruf049_enum_base(n, AN, MN) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf049_enum_base(c2, AN, MN).
+
+// enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
+//   AN, MN: metavariables this relation binds for the calling rule
+.decl ruf049_enum_class(n: node, an: loc, mn: loc)
+ruf049_enum_class(n, AN, MN) :- kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), ruf049_enum_base(c2, AN, MN).
+
+// demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
+.decl ruf049_demand_alt_10(n: node, cn: loc)
+ruf049_demand_alt_10(c8, CN) :- kind(n, "decorator"),
+    match("(?s)(?P<DECO>@(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|#[^\\n]*|[^#'\"])*?[\\w)])[ \\t]*(?:#[^\\n]*)?", n),
+    child(n, c1, _), ruf049_dataclass_decorator(c1), child(p4, n, _),
+    kind(p4, "decorated_definition"), child(p4, c5, _), kind(c5, "class_definition"),
+    field(c5, "name", c6), node(_, c6, _, _, _), CN = c6, field(c5, "superclasses", c7), child(c7, c8, _).
+
+// demand_alt_11: the rows of alt_11 its callers ask for (the metavariable columns they pass in)
+.decl ruf049_demand_alt_11(n: node, cn: loc)
+ruf049_demand_alt_11(c6, CN) :- ruf049_demand_alt_10(n, CN), kind(n, "parenthesized_expression"),
+    child(n, c6, _).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl ruf049_set_1(v: symbol)
+ruf049_set_1("attrs.define"). ruf049_set_1("attrs.frozen"). ruf049_set_1("attrs.mutable").
+ruf049_set_1("attr.define"). ruf049_set_1("attr.frozen"). ruf049_set_1("attr.mutable"). ruf049_set_1("attr.s").
+ruf049_set_1("attr.attributes"). ruf049_set_1("attr.attrs").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl ruf049_set_2(v: symbol)
+ruf049_set_2("enum.Enum"). ruf049_set_2("enum.Flag"). ruf049_set_2("enum.IntEnum"). ruf049_set_2("enum.IntFlag").
+ruf049_set_2("enum.StrEnum"). ruf049_set_2("enum.ReprEnum"). ruf049_set_2("enum.CheckEnum").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   AN: metavariable of the calling rule, passed in (bound by the caller)
+//   MN: metavariable this relation binds for the calling rule
+.decl ruf049_alt_3(n: node, an: loc, mn: loc)
+ruf049_alt_3(n, AN, MN) :- kind(n, "class_definition"), field(n, "name", c1), node(_, c1, _, _, _), MN = c1,
+    text(MN, t2), text(AN, t2), site_latest(c1), ruf049_enum_class(n, AN, MN), @doc(MN) = @doc(AN).
+ruf049_alt_3(n, AN, MN) :- kind(n, "decorated_definition"), field(n, "definition", c4),
+    kind(c4, "class_definition"), field(c4, "name", c5), node(_, c5, _, _, _), MN = c5,
+    text(MN, t6), text(AN, t6), site_latest(c5), ruf049_enum_class(c4, AN, MN), @doc(MN) = @doc(AN).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf049_alt_4(n: node)
+ruf049_alt_4(n) :- ruf049_dataclass_decorator(n).
+ruf049_alt_4(n) :- ruf049_attrs_decorator(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   CN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ruf049_alt_11(n: node, cn: loc)
+ruf049_alt_11(n, CN) :- ruf049_demand_alt_11(n, CN), kind(n, "identifier"), node(_, n, _, _, _), BN = n,
+    text(BN, t1), text(CN, t1), @doc(BN) = @doc(CN).
+ruf049_alt_11(n, CN) :- ruf049_demand_alt_11(n, CN), kind(n, "subscript"), field(n, "value", c3),
+    kind(c3, "identifier"), node(_, c3, _, _, _), BN = c3, text(BN, t4), text(CN, t4), @doc(BN) = @doc(CN).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   CN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ruf049_alt_10(n: node, cn: loc)
+ruf049_alt_10(n, CN) :- ruf049_demand_alt_10(n, CN), kind(n, "identifier"), node(_, n, _, _, _), BN = n,
+    text(BN, t1), text(CN, t1), @doc(BN) = @doc(CN).
+ruf049_alt_10(n, CN) :- ruf049_demand_alt_10(n, CN), kind(n, "subscript"), field(n, "value", c3),
+    kind(c3, "identifier"), node(_, c3, _, _, _), BN = c3, text(BN, t4), text(CN, t4), @doc(BN) = @doc(CN).
+ruf049_alt_10(n, CN) :- ruf049_demand_alt_10(n, CN), kind(n, "parenthesized_expression"),
+    child(n, c6, _), ruf049_alt_11(c6, CN).

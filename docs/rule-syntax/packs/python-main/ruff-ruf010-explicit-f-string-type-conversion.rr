@@ -1,0 +1,171 @@
+.policy "ruff-ruf010-explicit-f-string-type-conversion" revision 1
+.guests off
+.description "Use the f-string conversion flag instead of calling str, repr or ascii on an interpolated value; the flag is shorter and idiomatic."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// builtin_of(n, key): 3 copies of one rule set (`builtin-ascii`, `builtin-repr`, `builtin-str`), folded into one: row `key` of
+// builtin_of_case gives the strings each copy had.
+.decl ruf010_builtin_of(n: node, key: symbol)
+ruf010_builtin_of(n, q1) :- ruf010_builtin_of_case(q1, s1),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, q1), sym_of(n, s1).
+ruf010_builtin_of(n, q1) :- ruf010_builtin_of_case(q1, s1), kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf010_builtin_of(c1, q1).
+
+// one_argument(n): the JSON util `one-argument`, used where the JSON says `matches: "one-argument"`
+.decl ruf010_one_argument(n: node)
+ruf010_one_argument(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), !ruf010_alt_1(c1) }, k2 >= 1, k2 <= 1.
+
+// positional_argument(n): the JSON util `positional-argument`, used where the JSON says `matches: "positional-argument"`
+.decl ruf010_positional_argument(n: node)
+ruf010_positional_argument(n) :- ruf010_one_argument(n), child(n, c1, _), !ruf010_alt_2(c1).
+
+// object_argument(n): the JSON util `object-argument`, used where the JSON says `matches: "object-argument"`
+.decl ruf010_object_argument(n: node)
+ruf010_object_argument(n) :- ruf010_one_argument(n), child(n, c1, _), !ruf010_alt_3(c1),
+    ( !kind(c1, "keyword_argument")
+    ; kind(c1, "keyword_argument"), field(c1, "name", c2), glob("object", c2)
+    ).
+
+
+// str_call(n): the JSON util `str-call`, used where the JSON says `matches: "str-call"`
+.decl ruf010_str_call(n: node)
+ruf010_str_call(n) :- kind(n, "call"), field(n, "function", c1), ruf010_builtin_of(c1, "str"),
+    field(n, "arguments", c2),
+    (kind(c2, "generator_expression") ; ruf010_object_argument(c2)).
+
+// repr_call(n): the JSON util `repr-call`, used where the JSON says `matches: "repr-call"`
+.decl ruf010_repr_call(n: node)
+ruf010_repr_call(n) :- kind(n, "call"), field(n, "function", c1), ruf010_builtin_of(c1, "repr"),
+    field(n, "arguments", c2), ruf010_alt_6(c2).
+
+// ascii_call(n): the JSON util `ascii-call`, used where the JSON says `matches: "ascii-call"`
+.decl ruf010_ascii_call(n: node)
+ruf010_ascii_call(n) :- kind(n, "call"), field(n, "function", c1), ruf010_builtin_of(c1, "ascii"),
+    field(n, "arguments", c2), ruf010_alt_6(c2).
+
+// starred_call(n): the JSON util `starred-call`, used where the JSON says `matches: "starred-call"`
+.decl ruf010_starred_call(n: node)
+ruf010_starred_call(n) :- kind(n, "call"), field(n, "function", c1),
+    (ruf010_builtin_of(c1, "repr") ; ruf010_builtin_of(c1, "ascii")), field(n, "arguments", c2),
+    ruf010_one_argument(c2), child(c2, c3, _), kind(c3, "list_splat").
+
+// any_conversion_call(n): the JSON util `any-conversion-call`, used where the JSON says `matches: "any-conversion-call"`
+.decl ruf010_any_conversion_call(n: node)
+ruf010_any_conversion_call(n) :- ruf010_str_call(n).
+ruf010_any_conversion_call(n) :- ruf010_repr_call(n).
+ruf010_any_conversion_call(n) :- ruf010_ascii_call(n).
+
+// stops_the_string(n): the JSON util `stops-the-string`, used where the JSON says `matches: "stops-the-string"`
+.decl ruf010_stops_the_string(n: node)
+ruf010_stops_the_string(n) :- kind(n, "interpolation"),
+    count : { child(n, c1, _), kind(c1, "type_conversion") } = 0,
+    ( within_stop(c2, n, ruf010_stop_10), ruf010_starred_call(c2)
+    ; ruf010_tok_has_2(n), within_stop(c3, n, ruf010_stop_10), ruf010_any_conversion_call(c3)
+    ).
+
+
+// bare_interpolation_slot(n): the JSON util `bare-interpolation-slot`, used where the JSON says `matches: "bare-interpolation-slot"`
+.decl ruf010_bare_interpolation_slot(n: node)
+ruf010_bare_interpolation_slot(n) :- ruf010_demand_bare_interpolation_slot(n), ruf010_up_1(n, p1),
+    count : { child(p1, c2, _), ruf010_alt_15(c2) } = 0, child(p3, p1, _), kind(p3, "string"),
+    count : { child(p3, c4, _), kind(c4, "string_start"), glob("**[tT]**", c4) } = 0,
+    count : { precedes(s5, p1), ruf010_stops_the_string(s5) } = 0.
+
+// RUF010(n): a finding at node n, from clause `explicit-str`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF010(at: node) "Replace the `str(...)` call with the `!s` flag on the interpolation, as in `{{value!s}}`; with no custom `__format__` and no format spec, the call can be dropped."
+    suppress noqa "RUF010"
+RUF010(n) :- ruf010_str_call(n), ruf010_bare_interpolation_slot(n).
+
+// RUF010_explicit_repr(n): a finding at node n, from clause `explicit-repr`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF010_explicit_repr(at: node) code "RUF010" "Replace the `repr(...)` call with the `!r` flag on the interpolation, as in `{{value!r}}`."
+    suppress noqa "RUF010"
+RUF010_explicit_repr(n) :- ruf010_repr_call(n), ruf010_bare_interpolation_slot(n).
+
+// RUF010_explicit_ascii(n): a finding at node n, from clause `explicit-ascii`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF010_explicit_ascii(at: node) code "RUF010" "Replace the `ascii(...)` call with the `!a` flag on the interpolation, as in `{{value!a}}`."
+    suppress noqa "RUF010"
+RUF010_explicit_ascii(n) :- ruf010_ascii_call(n), ruf010_bare_interpolation_slot(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf010_tok_has_1(n: node)
+.stored ruf010_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf010_tok_has_1(n) :- child(n, c3, _), glob("=", c3).
+ruf010_tok_has_1(n) :- op(n, t4), match("=", t4).
+ruf010_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+ruf010_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+ruf010_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf010_tok_has_2(n: node)
+.stored ruf010_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf010_tok_has_2(n) :- child(n, c2, _), glob("=", c2).
+ruf010_tok_has_2(n) :- op(n, t3), match("=", t3).
+ruf010_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf010_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf010_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// demand_bare_interpolation_slot: the nodes bare_interpolation_slot is asked at (it looks at every ancestor of every node)
+.decl ruf010_demand_bare_interpolation_slot(n: node)
+ruf010_demand_bare_interpolation_slot(n) :- ruf010_str_call(n).
+ruf010_demand_bare_interpolation_slot(n) :- ruf010_repr_call(n).
+ruf010_demand_bare_interpolation_slot(n) :- ruf010_ascii_call(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf010_up_1(n: node, p: node)
+ruf010_up_1(n, p) :- ruf010_demand_bare_interpolation_slot(n), within_stop(n, p, ruf010_stop_10),
+    kind(p, "interpolation").
+
+// builtin_of_case: one row per relation folded into builtin_of: its key, then the strings that differed.
+.decl ruf010_builtin_of_case(key: symbol, s1: symbol)
+ruf010_builtin_of_case("ascii", "builtins.ascii"). ruf010_builtin_of_case("repr", "builtins.repr").
+ruf010_builtin_of_case("str", "builtins.str").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf010_alt_1(n: node)
+ruf010_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+ruf010_alt_1(n) :- kind(n, "comment").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf010_alt_2(n: node)
+ruf010_alt_2(n) :-
+    ( kind(n, "comment")
+    ; kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "list_splat")
+    ).
+
+ruf010_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf010_alt_3(n: node)
+ruf010_alt_3(n) :- (kind(n, "comment") ; kind(n, "dictionary_splat") ; kind(n, "list_splat")).
+ruf010_alt_3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf010_alt_6(n: node)
+ruf010_alt_6(n) :- kind(n, "generator_expression").
+ruf010_alt_6(n) :- ruf010_positional_argument(n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf010_stop_10(n: node)
+ruf010_stop_10(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf010_alt_15(n: node)
+ruf010_alt_15(n) :- kind(n, "type_conversion").
+ruf010_alt_15(n) :- node(_, n, _, _, _), glob("=", n).

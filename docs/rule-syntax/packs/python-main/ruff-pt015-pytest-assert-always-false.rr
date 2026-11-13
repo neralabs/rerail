@@ -1,0 +1,418 @@
+.policy "ruff-pt015-pytest-assert-always-false" revision 1
+.guests off
+.description "Use pytest.fail instead of an assert on a value that is always false; it states the intent to fail the test more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT015(n): a finding at node n, from clause `pytest-assert-always-false`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT015(at: node) "Replace this always-failing `assert` with `pytest.fail(...)`, passing any assertion message to it; leave it alone outside pytest tests."
+    suppress noqa "PT015"
+PT015(n) :- kind(n, "assert_statement"), child(n, c1, _), pt015_test(c1),
+    (pt015_scalar_falsey_p(c1) ; pt015_falsey_container_p(c1)).
+
+// scalar_falsey(n): the JSON util `scalar-falsey`, used where the JSON says `matches: "scalar-falsey"`
+.decl pt015_scalar_falsey(n: node)
+pt015_scalar_falsey(n) :- (kind(n, "false") ; kind(n, "none")).
+pt015_scalar_falsey(n) :- (kind(n, "integer") ; kind(n, "float")), value(n, v1),
+    pt015_truthy_value(n, "false").
+
+// scalar_falsey_p(n): the JSON util `scalar-falsey-p`, used where the JSON says `matches: "scalar-falsey-p"`
+.decl pt015_scalar_falsey_p(n: node)
+pt015_scalar_falsey_p(n) :- pt015_scalar_falsey(n).
+pt015_scalar_falsey_p(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt015_scalar_falsey_p(c1).
+
+// plain_empty(n): the JSON util `plain-empty`, used where the JSON says `matches: "plain-empty"`
+.decl pt015_plain_empty(n: node)
+pt015_plain_empty(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[fFtT]**", c1) } = 0,
+    value(n, v2), pt015_truthy_value(n, "false").
+
+// plain_empty_str(n): the JSON util `plain-empty-str`, used where the JSON says `matches: "plain-empty-str"`
+.decl pt015_plain_empty_str(n: node)
+pt015_plain_empty_str(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    value(n, v2), pt015_truthy_value(n, "false").
+
+// f_empty(n): the JSON util `f-empty`, used where the JSON says `matches: "f-empty"`
+.decl pt015_f_empty(n: node)
+pt015_f_empty(n) :- pt015_f_empty_u7(n).
+
+// empty_interpolation(n): the JSON util `empty-interpolation`, used where the JSON says `matches: "empty-interpolation"`
+.decl pt015_empty_interpolation(n: node)
+pt015_empty_interpolation(n) :- pt015_empty_interpolation_u7(n).
+
+// empty_str_expr(n): the JSON util `empty-str-expr`, used where the JSON says `matches: "empty-str-expr"`
+.decl pt015_empty_str_expr(n: node)
+pt015_empty_str_expr(n) :- pt015_empty_str_expr_u7(n).
+
+// empty_literal(n): the JSON util `empty-literal`, used where the JSON says `matches: "empty-literal"`
+.decl pt015_empty_literal(n: node)
+pt015_empty_literal(n) :- (pt015_plain_empty(n) ; pt015_f_empty(n)).
+pt015_empty_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_6(c1) } = 0.
+pt015_empty_literal(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !pt015_alt(c2, "7") } = 0.
+
+// argument(n): the JSON util `argument`, used where the JSON says `matches: "argument"`
+.decl pt015_argument(n: node)
+pt015_argument(n) :- node(_, n, _, _, _), !pt015_alt(n, "8").
+
+// builtin_name(n): the JSON util `builtin-name`, used where the JSON says `matches: "builtin-name"`
+.decl pt015_builtin_name(n: node)
+pt015_builtin_name(n) :- kind(n, "identifier"), global_ref(n, g1), pt015_set_9(g1).
+pt015_builtin_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_builtin_name(c2).
+
+// empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
+.decl pt015_empty_call(n: node)
+pt015_empty_call(n) :- kind(n, "call"), field(n, "function", c1), pt015_builtin_name(c1),
+    pt015_alt_10(n).
+
+// falsey_container(n): the JSON util `falsey-container`, used where the JSON says `matches: "falsey-container"`
+.decl pt015_falsey_container(n: node)
+pt015_falsey_container(n) :- pt015_empty_literal(n).
+pt015_falsey_container(n) :- pt015_empty_call(n).
+
+// falsey_container_p(n): the JSON util `falsey-container-p`, used where the JSON says `matches: "falsey-container-p"`
+.decl pt015_falsey_container_p(n: node)
+pt015_falsey_container_p(n) :- pt015_falsey_container(n).
+pt015_falsey_container_p(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt015_falsey_container_p(c1).
+
+// test(n): the JSON util `test`, used where the JSON says `matches: "test"`
+.decl pt015_test(n: node)
+pt015_test(n) :- precedes_stop(s1, n, pt015_stop_11), glob("assert", s1).
+
+.decl pt015_alt_1_u0(n: node)
+pt015_alt_1_u0(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u0(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u0(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u0(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u0(n) :- kind(n, "interpolation").
+
+.decl pt015_alt_1_u1(n: node)
+pt015_alt_1_u1(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u1(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u1(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u1(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u1(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u0(n).
+
+.decl pt015_alt_1_u2(n: node)
+pt015_alt_1_u2(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u2(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u2(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u2(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u2(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u1(n).
+
+.decl pt015_alt_1_u3(n: node)
+pt015_alt_1_u3(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u3(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u3(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u3(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u3(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u2(n).
+
+.decl pt015_alt_1_u4(n: node)
+pt015_alt_1_u4(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u4(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u4(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u4(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u4(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u3(n).
+
+.decl pt015_alt_1_u5(n: node)
+pt015_alt_1_u5(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u5(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u5(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u5(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u5(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u4(n).
+
+.decl pt015_alt_1_u6(n: node)
+pt015_alt_1_u6(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u6(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u6(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u6(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u6(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u5(n).
+
+.decl pt015_alt_1_u7(n: node)
+pt015_alt_1_u7(n) :- kind(n, "string_content"), !match("(\\\\\\r?\\n)+", n).
+pt015_alt_1_u7(n) :- kind(n, "string_content"), child(p1, n, _), kind(p1, "string"),
+    child(p1, c2, _), kind(c2, "string_start"), glob("**[rR]**", c2).
+pt015_alt_1_u7(n) :- kind(n, "escape_interpolation").
+pt015_alt_1_u7(n) :- kind(n, "string_end"), match("[^'\"].*", n).
+pt015_alt_1_u7(n) :- kind(n, "interpolation"), !pt015_empty_interpolation_u6(n).
+
+.decl pt015_alt_3_u0(n: node)
+pt015_alt_3_u0(n) :- pt015_plain_empty_str(n).
+
+.decl pt015_alt_3_u1(n: node)
+pt015_alt_3_u1(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u1(n) :- pt015_f_empty_u0(n).
+
+.decl pt015_alt_3_u2(n: node)
+pt015_alt_3_u2(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u2(n) :- pt015_f_empty_u1(n).
+
+.decl pt015_alt_3_u3(n: node)
+pt015_alt_3_u3(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u3(n) :- pt015_f_empty_u2(n).
+
+.decl pt015_alt_3_u4(n: node)
+pt015_alt_3_u4(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u4(n) :- pt015_f_empty_u3(n).
+
+.decl pt015_alt_3_u5(n: node)
+pt015_alt_3_u5(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u5(n) :- pt015_f_empty_u4(n).
+
+.decl pt015_alt_3_u6(n: node)
+pt015_alt_3_u6(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u6(n) :- pt015_f_empty_u5(n).
+
+.decl pt015_alt_3_u7(n: node)
+pt015_alt_3_u7(n) :- pt015_plain_empty_str(n).
+pt015_alt_3_u7(n) :- pt015_f_empty_u6(n).
+
+.decl pt015_alt_4_u0(n: node)
+pt015_alt_4_u0(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u0(n) :- pt015_plain_empty_str(n).
+
+.decl pt015_alt_4_u1(n: node)
+pt015_alt_4_u1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u1(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u1(n) :- pt015_f_empty_u0(n).
+
+.decl pt015_alt_4_u2(n: node)
+pt015_alt_4_u2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u2(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u2(n) :- pt015_f_empty_u1(n).
+
+.decl pt015_alt_4_u3(n: node)
+pt015_alt_4_u3(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u3(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u3(n) :- pt015_f_empty_u2(n).
+
+.decl pt015_alt_4_u4(n: node)
+pt015_alt_4_u4(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u4(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u4(n) :- pt015_f_empty_u3(n).
+
+.decl pt015_alt_4_u5(n: node)
+pt015_alt_4_u5(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u5(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u5(n) :- pt015_f_empty_u4(n).
+
+.decl pt015_alt_4_u6(n: node)
+pt015_alt_4_u6(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u6(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u6(n) :- pt015_f_empty_u5(n).
+
+.decl pt015_alt_4_u7(n: node)
+pt015_alt_4_u7(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_4_u7(n) :- pt015_plain_empty_str(n).
+pt015_alt_4_u7(n) :- pt015_f_empty_u6(n).
+
+.decl pt015_empty_interpolation_u1(n: node)
+pt015_empty_interpolation_u1(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u0(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u2(n: node)
+pt015_empty_interpolation_u2(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u1(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u3(n: node)
+pt015_empty_interpolation_u3(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u2(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u4(n: node)
+pt015_empty_interpolation_u4(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u3(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u5(n: node)
+pt015_empty_interpolation_u5(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u4(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u6(n: node)
+pt015_empty_interpolation_u6(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u5(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_interpolation_u7(n: node)
+pt015_empty_interpolation_u7(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    pt015_empty_str_expr_u6(c1), count : { child(n, c2, _), pt015_alt(c2, "2") } = 0.
+
+.decl pt015_empty_str_expr_u0(n: node)
+pt015_empty_str_expr_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _) } = 0.
+
+.decl pt015_empty_str_expr_u1(n: node)
+pt015_empty_str_expr_u1(n) :- pt015_alt_3_u0(n).
+pt015_empty_str_expr_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u0(c1) } = 0.
+pt015_empty_str_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u0(c2).
+
+.decl pt015_empty_str_expr_u2(n: node)
+pt015_empty_str_expr_u2(n) :- pt015_alt_3_u1(n).
+pt015_empty_str_expr_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u1(c1) } = 0.
+pt015_empty_str_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u1(c2).
+
+.decl pt015_empty_str_expr_u3(n: node)
+pt015_empty_str_expr_u3(n) :- pt015_alt_3_u2(n).
+pt015_empty_str_expr_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u2(c1) } = 0.
+pt015_empty_str_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u2(c2).
+
+.decl pt015_empty_str_expr_u4(n: node)
+pt015_empty_str_expr_u4(n) :- pt015_alt_3_u3(n).
+pt015_empty_str_expr_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u3(c1) } = 0.
+pt015_empty_str_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u3(c2).
+
+.decl pt015_empty_str_expr_u5(n: node)
+pt015_empty_str_expr_u5(n) :- pt015_alt_3_u4(n).
+pt015_empty_str_expr_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u4(c1) } = 0.
+pt015_empty_str_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u4(c2).
+
+.decl pt015_empty_str_expr_u6(n: node)
+pt015_empty_str_expr_u6(n) :- pt015_alt_3_u5(n).
+pt015_empty_str_expr_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u5(c1) } = 0.
+pt015_empty_str_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u5(c2).
+
+.decl pt015_empty_str_expr_u7(n: node)
+pt015_empty_str_expr_u7(n) :- pt015_alt_3_u6(n).
+pt015_empty_str_expr_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !pt015_alt_4_u6(c1) } = 0.
+pt015_empty_str_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt015_empty_str_expr_u6(c2).
+
+.decl pt015_f_empty_u0(n: node)
+pt015_f_empty_u0(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u0_empty(c2) } = 0.
+
+.decl pt015_f_empty_u1(n: node)
+pt015_f_empty_u1(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u0(c2) } = 0.
+
+.decl pt015_f_empty_u2(n: node)
+pt015_f_empty_u2(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u1(c2) } = 0.
+
+.decl pt015_f_empty_u3(n: node)
+pt015_f_empty_u3(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u2(c2) } = 0.
+
+.decl pt015_f_empty_u4(n: node)
+pt015_f_empty_u4(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u3(c2) } = 0.
+
+.decl pt015_f_empty_u5(n: node)
+pt015_f_empty_u5(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u4(c2) } = 0.
+
+.decl pt015_f_empty_u6(n: node)
+pt015_f_empty_u6(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u5(c2) } = 0.
+
+.decl pt015_f_empty_u7(n: node)
+pt015_f_empty_u7(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1), count : { child(n, c2, _), pt015_alt_1_u6(c2) } = 0.
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl pt015_truthy_value(n: node, b: symbol)
+pt015_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+pt015_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+pt015_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+pt015_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+pt015_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+pt015_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_alt_1_u0_empty(n: node)
+
+// alt_3_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_alt_3_u0_empty(n: node)
+
+// alt_4_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_alt_4_u0_empty(n: node)
+
+// empty_interpolation_u0: level -1 of an unrolled recursion, empty
+.decl pt015_empty_interpolation_u0(n: node)
+
+// empty_interpolation_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_empty_interpolation_u0_empty(n: node)
+
+// empty_str_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_empty_str_expr_u0_empty(n: node)
+
+// f_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl pt015_f_empty_u0_empty(n: node)
+
+// set_9: names from the JSON `resolves.global`
+.decl pt015_set_9(v: symbol)
+pt015_set_9("list"). pt015_set_9("tuple"). pt015_set_9("set"). pt015_set_9("dict"). pt015_set_9("frozenset").
+
+// alt_case: one row per relation folded into alt: its key, then the strings that differed.
+.decl pt015_alt_case(key: symbol, s1: symbol, s2: symbol, s3: symbol)
+pt015_alt_case("2", "type_conversion", "format_specifier", "=").
+pt015_alt_case("7", "comment", "line_continuation", "[\\[\\](){}]").
+pt015_alt_case("8", "comment", "line_continuation", "[(),]").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt015_alt_1(n: node)
+pt015_alt_1(n) :- pt015_alt_1_u7(n).
+
+// alt(n, key): 3 copies of one rule set (`alt_2`, `alt_7`, `alt_8`), folded into one: row `key` of
+// alt_case gives the strings each copy had.
+.decl pt015_alt(n: node, key: symbol)
+pt015_alt(n, q1) :- pt015_alt_case(q1, s1, s2, s3), (kind(n, s1) ; kind(n, s2)).
+pt015_alt(n, q1) :- node(_, n, _, _, _), pt015_alt_case(q1, s1, s2, s3), glob(s3, n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pt015_alt_3(n: node)
+pt015_alt_3(n) :- pt015_alt_3_u7(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pt015_alt_4(n: node)
+pt015_alt_4(n) :- pt015_alt_4_u7(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pt015_alt_6(n: node)
+pt015_alt_6(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt015_alt_6(n) :- pt015_plain_empty(n).
+pt015_alt_6(n) :- pt015_f_empty(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pt015_alt_10(n: node)
+pt015_alt_10(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
+    count : { child(c1, c2, _), pt015_argument(c2) } = 0.
+pt015_alt_10(n) :- field(n, "arguments", c3), kind(c3, "argument_list"),
+    k5 = count : { child(c3, c4, _), pt015_argument(c4) }, k5 >= 1, k5 <= 1,
+    child(c3, c6, _), pt015_falsey_container_p(c6).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt015_stop_11(n: node)
+pt015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").

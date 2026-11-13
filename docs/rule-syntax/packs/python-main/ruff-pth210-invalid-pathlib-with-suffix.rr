@@ -1,0 +1,176 @@
+.policy "ruff-pth210-invalid-pathlib-with-suffix" revision 1
+.guests off
+.description "Pass a suffix that starts with a dot to Path.with_suffix(); a suffix without one raises an error at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// path_class(n): the JSON util `path-class`, used where the JSON says `matches: "path-class"`
+.decl pth210_path_class(n: node)
+pth210_path_class(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pth210_set_1(q1).
+pth210_path_class(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth210_path_class(c2).
+
+// path_ann(n): the JSON util `path-ann`, used where the JSON says `matches: "path-ann"`
+.decl pth210_path_ann(n: node)
+pth210_path_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pth210_set_1(q1).
+pth210_path_ann(n) :- kind(n, "type"), child(n, c2, _), pth210_path_ann(c2).
+pth210_path_ann(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pth210_path_ann(c3).
+
+// path_init(n): the JSON util `path-init`, used where the JSON says `matches: "path-init"`
+.decl pth210_path_init(n: node)
+pth210_path_init(n) :- kind(n, "call"), field(n, "function", c1), pth210_path_class(c1).
+pth210_path_init(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth210_path_init(c2).
+
+// path_name(n): the JSON util `path-name`, used where the JSON says `matches: "path-name"`
+.decl pth210_path_name(n: node)
+pth210_path_name(n) :- kind(n, "identifier"), pth210_alt_3(n).
+
+// path_object(n): the JSON util `path-object`, used where the JSON says `matches: "path-object"`
+.decl pth210_path_object(n: node)
+pth210_path_object(n) :- pth210_path_name(n).
+pth210_path_object(n) :- pth210_path_init(n).
+pth210_path_object(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth210_path_object(c1).
+
+// with_suffix(n): the JSON util `with-suffix`, used where the JSON says `matches: "with-suffix"`
+.decl pth210_with_suffix(n: node)
+pth210_with_suffix(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), glob("with_suffix", c1), field(n, "object", c2),
+    pth210_path_object(c2).
+pth210_with_suffix(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pth210_with_suffix(c3).
+
+// plain_part(n): the JSON util `plain-part`, used where the JSON says `matches: "plain-part"`
+.decl pth210_plain_part(n: node)
+pth210_plain_part(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[fFtT]**", c1) } = 0.
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl pth210_plain_string(n: node)
+pth210_plain_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[fFtT]**", c1) } = 0.
+pth210_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), !pth210_alt_4(c2) } = 0.
+pth210_plain_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pth210_plain_string(c3).
+
+// PTH210(n): a finding at node n, from clause `dotless-suffix`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on S are added to every rule.
+.violation PTH210(at: node, s: loc) "Add a leading dot to the suffix {s}, such as `\".py\"`; `with_suffix` raises ValueError for a non-empty suffix that does not start with a dot."
+    suppress noqa "PTH210"
+PTH210(n, S) :- kind(n, "call"), field(n, "function", c1), pth210_with_suffix(c1),
+    pth210_arg_suffix_1(n, a2), S = a2, field(n, "arguments", c3), kind(c3, "argument_list"),
+    k5 = count : { child(c3, c4, _), !pth210_alt_5(c4) }, k5 >= 1, k5 <= 1, pth210_plain_string(S),
+    value(S, v6), value_type(v6, "str"), match("[^.].*", v6).
+
+// PTH210_single_dot_suffix(n): a finding at node n, from clause `single-dot-suffix`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S are added to every rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PTH210_single_dot_suffix(at: node) code "PTH210" "Pass a suffix such as `\".py\"`, or `\"\"` to drop it: before Python 3.14, `with_suffix(\".\")` raises ValueError."
+    suppress noqa "PTH210"
+PTH210_single_dot_suffix(n) :- kind(n, "call"), field(n, "function", c1),
+    pth210_with_suffix(c1), pth210_arg_suffix_1(n, a2), S = a2, field(n, "arguments", c3),
+    kind(c3, "argument_list"), k5 = count : { child(c3, c4, _), !pth210_alt_5(c4) }, k5 >= 1,
+    k5 <= 1, pth210_plain_string(S), value(S, v6), value_type(v6, "str"), v6 = ".".
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth210_args_plain(l: node, a: node, i: number)
+pth210_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth210_args_splat(l: node, i: number)
+pth210_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth210_args_pos(l: node, a: node, j: number)
+pth210_args_pos(l, a, j) :- pth210_args_plain(l, a, i), count : { pth210_args_splat(l, k), k < i } = 0,
+    j = count : { pth210_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth210_args_star(l: node, j: number)
+pth210_args_star(l, j) :- pth210_args_splat(l, i), count : { pth210_args_splat(l, k), k < i } = 0,
+    j = count : { pth210_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth210_args_kwp(l: node, k: symbol, v: node)
+pth210_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth210_args_lit_dict(s: node, d: node)
+pth210_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth210_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth210_args_str_pair(p: node)
+pth210_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth210_args_kw(l: node, k: symbol, v: node)
+pth210_args_kw(l, k, v) :- pth210_args_kwp(l, k, v).
+pth210_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth210_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth210_args_kw_spread(l: node)
+pth210_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth210_args_lit_dict(s, _).
+
+// arg_suffix_1: call n passes v for slot `suffix` of (suffix), syntactic: Ruff's find_argument
+.decl pth210_arg_suffix_1(n: node, v: node)
+pth210_arg_suffix_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pth210_args_kwp(l, "suffix", v).
+pth210_arg_suffix_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth210_args_pos(l, v, 0),
+    !pth210_args_kwp(l, "suffix", _).
+pth210_arg_suffix_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_suffix_1: call n does not pass slot `suffix` of (suffix), syntactic: Ruff's find_argument
+.decl pth210_arg_no_suffix_1(n: node)
+pth210_arg_no_suffix_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pth210_args_kwp(l, "suffix", _), !pth210_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pth210_set_1(v: symbol)
+pth210_set_1("pathlib.Path"). pth210_set_1("pathlib.PosixPath"). pth210_set_1("pathlib.PurePath").
+pth210_set_1("pathlib.PurePosixPath"). pth210_set_1("pathlib.PureWindowsPath").
+pth210_set_1("pathlib.WindowsPath").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pth210_alt_3(n: node)
+pth210_alt_3(n) :- ref_site(n, b1), site_only(b1),
+    count : { kind(b1, "assignment"), field(b1, "type", c2), kind(c2, "type") } = 0,
+    binding_value(b1, x3), pth210_path_init(x3).
+pth210_alt_3(n) :- ref_site(n, b4), site_only(b4), kind(b4, "as_pattern"), child(b4, c5, _),
+    pth210_path_init(c5), child(b4, c6, _), kind(c6, "as_pattern_target"), child(c6, c7, _),
+    kind(c7, "identifier").
+pth210_alt_3(n) :- ref_site(n, b8), site_only(b8),
+    count : { child(b8, c9, _), (kind(c9, "list_splat_pattern") ; kind(c9, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b8, o10), pth210_path_ann(o10).
+pth210_alt_3(n) :- ref_site(n, b11), site_only(b11), kind(b11, "function_definition"),
+    field(b11, "return_type", c12), pth210_path_ann(c12).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pth210_alt_4(n: node)
+pth210_alt_4(n) :- kind(n, "comment").
+pth210_alt_4(n) :- pth210_plain_part(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pth210_alt_5(n: node)
+pth210_alt_5(n) :- node(_, n, _, _, _), glob("[(),\\[\\]{}]", n).
+pth210_alt_5(n) :- kind(n, "comment").

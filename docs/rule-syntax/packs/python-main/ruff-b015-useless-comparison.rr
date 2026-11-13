@@ -1,0 +1,63 @@
+.policy "ruff-b015-useless-comparison" revision 1
+.guests off
+.description "Remove comparisons whose result is discarded; assign, return or assert the result if it was meant to be used."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// end_of_function(n): the JSON util `end-of-function`, used where the JSON says `matches: "end-of-function"`
+.decl b015_end_of_function(n: node)
+b015_end_of_function(n) :- b015_demand_end_of_function(n), kind(n, "expression_statement"),
+    child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
+    kind(p2, "function_definition"),
+    count : { precedes(n, s3), !kind(s3, "comment") } = 0.
+b015_end_of_function(n) :- b015_demand_end_of_function(n), kind(n, "parenthesized_expression"),
+    child(p4, n, _), b015_end_of_function(p4).
+
+// statement_value(n): the JSON util `statement-value`, used where the JSON says `matches: "statement-value"`
+.decl b015_statement_value(n: node)
+b015_statement_value(n) :- child(p1, n, _), b015_alt_1(p1).
+
+// B015(n, detail): findings from clauses `useless-comparison-end-of-function`, `useless-comparison`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation B015(at: node, detail: symbol) "Pointless {detail}"
+    suppress noqa "B015"
+B015(n, "comparison at end of function scope. Did you mean to return the expression result?") :- kind(n, "comparison_operator"),
+    b015_statement_value(n), child(p1, n, _), b015_end_of_function(p1).
+B015(n, "comparison. Did you mean to assign a value? Otherwise, prepend `assert` or remove it.") :- kind(n, "comparison_operator"),
+    b015_statement_value(n), count : { child(p1, n, _), b015_end_of_function(p1) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b015_tok_has_1(n: node)
+.stored b015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b015_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+b015_tok_has_1(n) :- op(n, t3), match(",", t3).
+b015_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b015_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b015_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b015_tok_has_2(n: node)
+.stored b015_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b015_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+b015_tok_has_2(n) :- op(n, t2), match(",", t2).
+b015_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b015_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b015_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_end_of_function: the nodes end_of_function is asked at (its recursion looks at every descendant)
+.decl b015_demand_end_of_function(n: node)
+b015_demand_end_of_function(p4) :- b015_demand_end_of_function(n),
+    kind(n, "parenthesized_expression"), child(p4, n, _).
+b015_demand_end_of_function(p1) :- kind(n, "comparison_operator"), b015_statement_value(n),
+    child(p1, n, _).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b015_alt_1(n: node)
+b015_alt_1(n) :- kind(n, "expression_statement"), !b015_tok_has_2(n).
+b015_alt_1(n) :- kind(n, "parenthesized_expression"), b015_statement_value(n).

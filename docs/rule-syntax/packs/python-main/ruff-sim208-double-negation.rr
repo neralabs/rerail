@@ -1,0 +1,18 @@
+.policy "ruff-sim208-double-negation" revision 1
+.guests off
+.description "Remove double negation with not not; use the value itself, or bool() if you need a real boolean."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM208(n): a finding at node n, from clause `double-negation`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM208(at: node) "Use the operand instead of `not (not ...)`"
+    suppress noqa "SIM208"
+SIM208(n) :- kind(n, "not_operator"), child(n, c1, _), sim208_negation(c1).
+
+// negation(n): the JSON util `negation`, used where the JSON says `matches: "negation"`
+.decl sim208_negation(n: node)
+sim208_negation(n) :- kind(n, "not_operator").
+sim208_negation(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim208_negation(c1).

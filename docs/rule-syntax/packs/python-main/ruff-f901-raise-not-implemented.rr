@@ -1,0 +1,45 @@
+.policy "ruff-f901-raise-not-implemented" revision 1
+.guests off
+.description "Raise NotImplementedError, not NotImplemented; NotImplemented is a comparison sentinel and raising it is a TypeError."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F901(n): a finding at node n, from clause `raise-not-implemented`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F901(at: node) "`raise NotImplemented` should be `raise NotImplementedError`"
+    suppress noqa "F901"
+F901(n) :- kind(n, "identifier"), glob("NotImplemented", n), f901_raised(n).
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl f901_raised(n: node)
+f901_raised(n) :- f901_tok_follows_1(n), child(p8, n, _), kind(p8, "raise_statement").
+f901_raised(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"), f901_raised(p9).
+f901_raised(n) :- !f901_tok_follows_2(n), child(p17, n, _), kind(p17, "call"),
+    f901_raised_direct(p17).
+
+// raised_direct(n): the JSON util `raised-direct`, used where the JSON says `matches: "raised-direct"`
+.decl f901_raised_direct(n: node)
+f901_raised_direct(n) :- f901_tok_follows_1(n), child(p8, n, _), kind(p8, "raise_statement").
+f901_raised_direct(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"),
+    f901_raised_direct(p9).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f901_tok_follows_1(n: node)
+.stored f901_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f901_tok_follows_1(n) :- next_sibling(s1, n), glob("raise", s1).
+f901_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("raise", t2).
+f901_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f901_tok_follows_2(n: node)
+.stored f901_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f901_tok_follows_2(n) :- next_sibling(s10, n), match("(?s).*..*", s10).
+f901_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("(?s).*..*", t11).
+f901_tok_follows_2(n) :- structural_before(n, g12), match("(?s)^.*\\S\\s*$", g12).

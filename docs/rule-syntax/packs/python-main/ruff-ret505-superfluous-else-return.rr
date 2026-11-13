@@ -1,0 +1,65 @@
+// OVERRIDE (hand-written, not generated): main's rule matches the `else` / `elif` keyword token itself
+// (`regex: ^(elif|else)$` inside an else_clause or elif_clause) and captures it as BRANCH. The tape leaves
+// that keyword out (the clause implies it), and the reader matches a capture regex only over a node of a
+// named kind. So the finding is at the clause, which starts with the keyword (same line), and BRANCH is
+// read from the source before the clause's first stored child. The rest is the generated translation.
+.policy "ruff-ret505-superfluous-else-return" revision 1
+.guests off
+.description "Remove the else or elif after an if branch that returns, and dedent its code; the branch already leaves the function."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RET505(n): a finding at node n, from clause `superfluous-else-return`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RET505(at: node, branch: symbol) "Unnecessary `{branch}` after `return` statement"
+    suppress noqa "RET505"
+RET505(n, BRANCH) :- (kind(n, "elif_clause") ; kind(n, "else_clause")),
+    child(n, c0, 0), structural_before(c0, g0), match("(?s)\\s*(?<BRANCH>elif|else)(?:\\W.*)?", g0),
+    count : { precedes(s2, n), (kind(s2, "elif_clause") ; kind(s2, "else_clause")) } = 0,
+    child(p3, n, _), kind(p3, "if_statement"), child(p3, c4, _), kind(c4, "block"),
+    child(c4, c5, _), kind(c5, "return_statement"),
+    count : { precedes(s6, c5), (kind(s6, "raise_statement") ; kind(s6, "continue_statement") ; kind(s6, "break_statement")) } = 0,
+    within_stop(p3, p7, ret505_stop_1), kind(p7, "function_definition"),
+    ret505_analysed_function(p7).
+
+// analysed_function(n): the JSON util `analysed-function`, used where the JSON says `matches: "analysed-function"`
+.decl ret505_analysed_function(n: node)
+ret505_analysed_function(n) :- kind(n, "function_definition"),
+    count : { ret505_stop_1_within(c1, n), kind(c1, "yield") } = 0,
+    count : { child(n, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "return_statement"), count : { child(c2, c4, _), !kind(c4, "return_statement"), !kind(c4, "comment") } = 0 } = 0.
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl ret505_none_literal(n: node)
+ret505_none_literal(n) :- kind(n, "none").
+ret505_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ret505_none_literal(c1).
+
+// value_return(n): the JSON util `value-return`, used where the JSON says `matches: "value-return"`
+.decl ret505_value_return(n: node)
+ret505_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
+    match("(?s).*..*", c1), !ret505_alt_2(c1).
+
+// own_return(n): the JSON util `own-return`, used where the JSON says `matches: "own-return"`
+.decl ret505_own_return(n: node)
+ret505_own_return(n) :- kind(n, "return_statement").
+
+// has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
+.decl ret505_has_result(n: node)
+ret505_has_result(n) :- within_stop(c1, n, ret505_stop_1), ret505_value_return(c1).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ret505_stop_1(kind: symbol)
+ret505_stop_1("function_definition"). ret505_stop_1("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ret505_alt_2(n: node)
+ret505_alt_2(n) :- node(_, n, _, _, _), glob("return", n).
+ret505_alt_2(n) :- kind(n, "comment").
+ret505_alt_2(n) :- ret505_none_literal(n).
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl ret505_stop_1_within(n: node, a: node)
+ret505_stop_1_within(x, y) :- within_stop(x, y, ret505_stop_1).

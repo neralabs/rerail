@@ -1,0 +1,116 @@
+.policy "ruff-c408-unnecessary-collection-call" revision 1
+.guests off
+.description "Use a literal instead of calling dict(), list() or tuple() with no arguments, or dict() with only named keyword arguments; the literal is clearer and skips a call."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C408(n): a finding at node n, from clause `unnecessary-collection-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C408(at: node, call: node) "Replace the call with a literal: `{{}}` for `dict()`, `{{\"a\": 1}}` for `dict(a=1)`, `[]` for `list()`, `()` for `tuple()`."
+    suppress noqa "C408"
+C408(CALL, n) :- c408_target(n), node(_, n, _, _, _), CALL = n.
+C408(CALL, n) :- c408_in_annotation(n, CALL).
+
+// callee_dict(n): the JSON util `callee-dict`, used where the JSON says `matches: "callee-dict"`
+.decl c408_callee_dict(n: node)
+c408_callee_dict(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+c408_callee_dict(n) :- glob("dict", n), c408_global_declared_builtin(n).
+c408_callee_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c408_callee_dict(c1).
+
+// callee_sequence(n): the JSON util `callee-sequence`, used where the JSON says `matches: "callee-sequence"`
+.decl c408_callee_sequence(n: node)
+c408_callee_sequence(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "list") ; global_ref(n, "tuple")),
+    (sym_of(n, "builtins.list") ; sym_of(n, "builtins.tuple")).
+c408_callee_sequence(n) :- glob("{list,tuple}", n), c408_global_declared_builtin(n).
+c408_callee_sequence(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c408_callee_sequence(c1).
+
+// global_declared_builtin(n): the JSON util `global-declared-builtin`, used where the JSON says `matches: "global-declared-builtin"`
+.decl c408_global_declared_builtin(n: node)
+c408_global_declared_builtin(n) :- kind(n, "identifier"), node(d1, n, _, st2, _),
+    c408_seen_import(s3, h5, ks6), (h5 = "builtins"), node(d1, s3, _, so4, _),
+    kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") },
+    ( ks6 < kn7
+    ; ks6 = kn7, so4 < st2
+    ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0
+    ),
+    !c408_alt_1(n).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl c408_element(n: node)
+c408_element(n) :- node(_, n, _, _, _), !c408_alt_2(n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c408_target(n: node)
+c408_target(n) :- kind(n, "call"),
+    ( field(n, "function", c1), c408_callee_dict(c1), field(n, "arguments", c2), kind(c2, "argument_list"), count : { child(c2, c3, _), c408_element(c3), !kind(c3, "keyword_argument") } = 0
+    ; field(n, "function", c4), c408_callee_sequence(c4), field(n, "arguments", c5), kind(c5, "argument_list"), count : { child(c5, c6, _), c408_element(c6) } = 0
+    ).
+
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c408_in_annotation(n: node, call: loc)
+c408_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c408_alt_4(c2, CALL).
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl c408_seen_import(s: node, h: symbol, k: number)
+c408_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+c408_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl c408_all_expr(x: node)
+c408_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+c408_all_expr(y) :- c408_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+c408_all_expr(y) :- c408_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+c408_all_expr(y) :- c408_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+c408_all_expr(y) :- c408_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+c408_all_expr(y) :- c408_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl c408_all_entry(e: node, x: symbol)
+c408_all_entry(e, x) :- c408_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl c408_alt_1(n: node)
+c408_alt_1(n) :- ref_site(n, b1), !kind(b1, "global_statement").
+c408_alt_1(n) :- docof(n, d3), modnode(d3, m4),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x2)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), c408_all_entry(n, x2), !bound_in(m4, x2)
+    ),
+    !builtin(x2), !star(m4).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl c408_alt_2(n: node)
+c408_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c408_alt_2(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c408_alt_4(n: node, call: loc)
+c408_alt_4(n, CALL) :- c408_target(n), CALL = n.
+c408_alt_4(n, CALL) :- c408_in_annotation(n, CALL).

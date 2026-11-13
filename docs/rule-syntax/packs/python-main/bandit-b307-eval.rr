@@ -1,0 +1,42 @@
+.policy "bandit-b307-eval" revision 2
+.guests off
+.description "Avoid eval() calls in Python, including through import aliases; use ast.literal_eval() when you only need to parse literal values."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B307(n): a finding at node n, from clause `eval-call`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B307(at: node) "This eval call executes supplied text as Python code and may be unsafe. Use ast.literal_eval when only Python literals need to be parsed."
+    suppress nosec "B307"
+B307(n) :- kind(n, "call"), field(n, "function", c1), b307_eval_callee(c1).
+
+// eval_callee(n): the JSON util `eval-callee`, used where the JSON says `matches: "eval-callee"`
+.decl b307_eval_callee(n: node)
+b307_eval_callee(n) :- kind(n, "identifier"), glob("eval", n),
+    count : { ref_site(n, b1), site_form(b1, "import"), b307_alias_to_other(b1) } = 0.
+b307_eval_callee(n) :- kind(n, "identifier"), ref_site(n, b2), site_form(b2, "import"),
+    b307_alias_to_eval(b2).
+b307_eval_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    b307_eval_callee(c3).
+
+// from_with_module(n): the JSON util `from-with-module`, used where the JSON says `matches: "from-with-module"`
+.decl b307_from_with_module(n: node)
+b307_from_with_module(n) :- kind(n, "import_from_statement"), field(n, "module_name", c1),
+    ( kind(c1, "dotted_name")
+    ; kind(c1, "relative_import"), child(c1, c2, _), kind(c2, "dotted_name")
+    ).
+
+
+// alias_to_eval(n): the JSON util `alias-to-eval`, used where the JSON says `matches: "alias-to-eval"`
+.decl b307_alias_to_eval(n: node)
+b307_alias_to_eval(n) :- kind(n, "aliased_import"), field(n, "name", c1), glob("eval", c1),
+    count : { child(p2, n, _), b307_from_with_module(p2) } = 0.
+
+// alias_to_other(n): the JSON util `alias-to-other`, used where the JSON says `matches: "alias-to-other"`
+.decl b307_alias_to_other(n: node)
+b307_alias_to_other(n) :- kind(n, "aliased_import"), !b307_alias_to_eval(n).
+b307_alias_to_other(n) :- kind(n, "dotted_name"), child(p1, n, _), b307_from_with_module(p1).

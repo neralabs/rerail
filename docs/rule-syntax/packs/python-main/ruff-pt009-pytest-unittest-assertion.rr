@@ -1,0 +1,22 @@
+.policy "ruff-pt009-pytest-unittest-assertion" revision 1
+.guests off
+.description "Use plain assert statements instead of unittest-style assertion methods; pytest rewrites them to show detailed failure output."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT009(n): a finding at node n, from clause `unittest-assertion`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT009(at: node, name: loc) "Use a plain `assert` (for example `assert a == b`) instead of `{name}`; leave it if this is not a unittest assertion or the tests run under unittest only."
+    suppress noqa "PT009"
+PT009(n, NAME) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"),
+    glob("{assertAlmostEqual,assertAlmostEquals,assertCountEqual,assertDictContainsSubset,assertDictEqual,assertEqual,assertEquals,failIf,failIfAlmostEqual,failIfEqual,failUnless,failUnlessAlmostEqual,failUnlessEqual,assertFalse,assertGreater,assertGreaterEqual,assertIn,assertIs,assertIsInstance,assertIsNone,assertIsNot,assertIsNotNone,assertLess,assertLessEqual,assertListEqual,assertMultiLineEqual,assertNotAlmostEqual,assertNotAlmostEquals,assertNotEqual,assertNotEquals,assertNotIn,assertNotIsInstance,assertNotRegex,assertNotRegexpMatches,assertRegex,assertRegexpMatches,assertSequenceEqual,assertSetEqual,assertTrue,assertTupleEqual,assert_}", c1),
+    node(_, c1, _, _, _), NAME = c1, pt009_callee(n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl pt009_callee(n: node)
+pt009_callee(n) :- field(p1, "function", n), kind(p1, "call").
+pt009_callee(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pt009_callee(p2).

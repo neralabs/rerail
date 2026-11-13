@@ -1,0 +1,116 @@
+.policy "ruff-t201-print" revision 1
+.guests off
+.description "Use a logger instead of print; printed output can leak sensitive data and cannot be configured by clients."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// T201(n): a finding at node n, from clause `print-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation T201(at: node, f: node) "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
+    suppress noqa "T201"
+T201(F, n) :- kind(n, "call"),
+    ( field(n, "function", c1), t201_callee(c1, F)
+    ; field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _), t201_callee(c3, F)
+    ),
+    t201_default_output(n), t201_python3_file(n).
+T201(F, n) :- kind(n, "attribute"), match("(?s)\\*\\s*(?<F>.+)", n),
+    field(n, "attribute", c4), glob("print", c4), field(n, "object", c5),
+    kind(c5, "list_splat"), child(c5, c6, _), kind(c6, "identifier"),
+    sym_of(c6, "builtins"), child(p7, n, _), kind(p7, "call"), t201_default_output(p7),
+    t201_python3_file(n).
+T201(F, n) :- t201_call_in_annotation(n, F), t201_python3_file(n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl t201_callee(n: node, f: loc)
+t201_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "print"),
+    sym_of(n, "builtins.print"), node(_, n, _, _, _), F = n.
+t201_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), t201_callee(c1, F).
+
+// default_target(n): the JSON util `default-target`, used where the JSON says `matches: "default-target"`
+.decl t201_default_target(n: node)
+t201_default_target(n) :- kind(n, "none").
+t201_default_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "sys.stdout") ; sym_of(n, "sys.stderr")).
+t201_default_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    t201_default_target(c1).
+
+// custom_target_keyword(n): the JSON util `custom-target-keyword`, used where the JSON says `matches: "custom-target-keyword"`
+.decl t201_custom_target_keyword(n: node)
+t201_custom_target_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("file", c1), field(n, "value", c2), !t201_default_target(c2).
+
+// python3_file(n): the JSON util `python3-file`, used where the JSON says `matches: "python3-file"`
+.decl t201_python3_file(n: node)
+t201_python3_file(n) :- inside(n, p1, "module"), count : { within(c2, p1), t201_alt_1(c2) } = 0.
+
+// default_output(n): the JSON util `default-output`, used where the JSON says `matches: "default-output"`
+.decl t201_default_output(n: node)
+t201_default_output(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _), t201_custom_target_keyword(c2) } = 0.
+
+// call_in_annotation(n): the JSON util `call-in-annotation`, used where the JSON says `matches: "call-in-annotation"`
+//   F: metavariable this relation binds for the calling rule
+.decl t201_call_in_annotation(n: node, f: loc)
+t201_call_in_annotation(n, F) :- t201_demand_call_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), t201_alt_2(c2, F).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^<>$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl t201_tok_has_1(n: node)
+.stored t201_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+t201_tok_has_1(n) :- child(n, c4, _), glob("<>", c4).
+t201_tok_has_1(n) :- op(n, t5), match("<>", t5).
+t201_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+t201_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+t201_tok_has_1(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^<>$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl t201_tok_has_2(n: node)
+.stored t201_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+t201_tok_has_2(n) :- child(n, c2, _), glob("<>", c2).
+t201_tok_has_2(n) :- op(n, t3), match("<>", t3).
+t201_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+t201_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+t201_tok_has_2(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
+.decl t201_demand_alt_2(n: node)
+t201_demand_alt_2(c2) :- t201_demand_call_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+
+// demand_call_in_annotation: the nodes call_in_annotation is asked at (its recursion looks at every descendant)
+.decl t201_demand_call_in_annotation(n: node)
+t201_demand_call_in_annotation(n) :- t201_python3_file(n).
+t201_demand_call_in_annotation(n) :- t201_demand_alt_2(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl t201_alt_1(n: node)
+t201_alt_1(n) :- kind(n, "print_statement"),
+    count : { child(n, c1, _), kind(c1, "chevron") } = 0.
+t201_alt_1(n) :- kind(n, "exec_statement").
+t201_alt_1(n) :- kind(n, "integer"), match("(?:0[0-9_]*[1-9][0-9_]*|.*[lL])", n).
+t201_alt_1(n) :- kind(n, "string"), glob("{`,[uU][rR]}**", n).
+t201_alt_1(n) :- kind(n, "comparison_operator"), t201_tok_has_2(n).
+t201_alt_1(n) :- kind(n, "raise_statement"), child(n, c10, _), kind(c10, "expression_list").
+t201_alt_1(n) :- (kind(n, "parameters") ; kind(n, "lambda_parameters")), child(n, c11, _),
+    kind(c11, "tuple_pattern").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl t201_alt_2(n: node, f: loc)
+t201_alt_2(n, F) :- t201_demand_alt_2(n), kind(n, "call"), child(n, c1, _), t201_callee(c1, F),
+    count : { child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), match("file\\s*=.*", c3), count : { child(c3, c4, _), t201_default_target(c4) } = 0 } = 0.
+t201_alt_2(n, F) :- t201_demand_alt_2(n), t201_call_in_annotation(n, F).

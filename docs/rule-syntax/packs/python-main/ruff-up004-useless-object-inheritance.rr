@@ -1,0 +1,26 @@
+.policy "ruff-up004-useless-object-inheritance" revision 1
+.guests off
+.description "Omit object from a class's base list; every Python 3 class already inherits from it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP004(n): a finding at node n, from clause `useless-object-inheritance`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP004(at: node, name: loc) "Remove `object` from the bases of `{name}`; Python 3 classes inherit from it already. Keep it only if the code must still run on Python 2."
+    suppress noqa "UP004"
+UP004(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "object"), sym_of(n, "builtins.object"), up004_in_bases(n, NAME).
+
+// in_bases(n): the JSON util `in-bases`, used where the JSON says `matches: "in-bases"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl up004_in_bases(n: node, name: loc)
+up004_in_bases(n, NAME) :- child(p1, n, _), kind(p1, "argument_list"), child(p2, p1, _),
+    kind(p2, "class_definition"), field(p2, "name", c3), kind(c3, "identifier"),
+    node(_, c3, _, _, _), NAME = c3.
+up004_in_bases(n, NAME) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    up004_in_bases(p4, NAME).

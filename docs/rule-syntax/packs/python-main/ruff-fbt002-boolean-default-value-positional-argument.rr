@@ -1,0 +1,83 @@
+.policy "ruff-fbt002-boolean-default-value-positional-argument" revision 1
+.guests off
+.description "Make Python function parameters that default to True or False keyword-only; a positional boolean flag makes calls hard to read."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// FBT002(n): a finding at node n, from clause `boolean-default-value-positional-argument`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation FBT002(at: node, name: loc) "Make `{name}` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
+    suppress noqa "FBT002"
+FBT002_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !fbt002_tok_follows_1(n),
+    child(p8, n, _),
+    (kind(p8, "default_parameter") ; kind(p8, "typed_default_parameter")),
+    field(p8, "value", c9), fbt002_bool_literal(c9),
+    count : { precedes(s10, p8), fbt002_alt_2(s10) } = 0, child(p12, p8, _),
+    kind(p12, "parameters"), child(p13, p12, _), fbt002_checked_function(p13).
+
+// bool_literal(n): the JSON util `bool-literal`, used where the JSON says `matches: "bool-literal"`
+.decl fbt002_bool_literal(n: node)
+fbt002_bool_literal(n) :- (kind(n, "true") ; kind(n, "false")).
+fbt002_bool_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    fbt002_bool_literal(c1).
+
+// override(n): the JSON util `override`, used where the JSON says `matches: "override"`
+.decl fbt002_override(n: node)
+fbt002_override(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "attribute")
+    ; kind(n, "parenthesized_expression")
+    ),
+
+    ( sym_of(n, "typing.override")
+    ; sym_of(n, "typing_extensions.override")
+    ; sym_of(n, "_typeshed.override")
+    ).
+
+
+// fn_ref(n): the JSON util `fn-ref`, used where the JSON says `matches: "fn-ref"`
+//   FN: metavariable this relation binds for the calling rule
+.decl fbt002_fn_ref(n: node, fn: loc)
+fbt002_fn_ref(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
+fbt002_fn_ref(n, FN) :- kind(n, "parenthesized_expression"), child(n, c1, _), fbt002_fn_ref(c1, FN).
+
+// setter(n): the JSON util `setter`, used where the JSON says `matches: "setter"`
+//   FN: metavariable this relation binds for the calling rule
+.decl fbt002_setter(n: node, fn: loc)
+fbt002_setter(n, FN) :- kind(n, "attribute"), field(n, "attribute", c1), glob("setter", c1),
+    field(n, "object", c2), fbt002_fn_ref(c2, FN).
+fbt002_setter(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _), fbt002_setter(c3, FN).
+
+// checked_function(n): the JSON util `checked-function`, used where the JSON says `matches: "checked-function"`
+.decl fbt002_checked_function(n: node)
+fbt002_checked_function(n) :- kind(n, "function_definition"), field(n, "name", c1),
+    node(_, c1, _, _, _), FN = c1,
+    !glob("{__post_init__,__contains__,__getitem__,__setitem__,__delitem__,__add__,__radd__,__iadd__,__sub__,__rsub__,__isub__,__mul__,__rmul__,__imul__,__truediv__,__rtruediv__,__itruediv__,__floordiv__,__rfloordiv__,__ifloordiv__,__mod__,__rmod__,__imod__,__pow__,__rpow__,__ipow__,__lshift__,__rlshift__,__ilshift__,__rshift__,__rrshift__,__irshift__,__matmul__,__rmatmul__,__imatmul__,__and__,__rand__,__iand__,__or__,__ror__,__ior__,__xor__,__rxor__,__ixor__,__gt__,__lt__,__ge__,__le__,__eq__,__ne__,__pos__,__neg__,__invert__}", c1),
+    count : { child(p2, n, _), kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"), child(c3, c4, _), (fbt002_override(c4) ; fbt002_setter(c4, FN)) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^[=:]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt002_tok_follows_1(n: node)
+.stored fbt002_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt002_tok_follows_1(n) :- precedes(s1, n), glob("[=:]", s1).
+fbt002_tok_follows_1(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("[=:]", t2).
+fbt002_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[=:])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+fbt002_tok_follows_1(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:[=:])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl fbt002_alt_2(n: node)
+fbt002_alt_2(n) :- (kind(n, "keyword_separator") ; kind(n, "list_splat_pattern")).
+fbt002_alt_2(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl FBT002_raw(at: node, name: loc)
+FBT002(v0, v1) :- FBT002_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

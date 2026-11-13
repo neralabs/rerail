@@ -1,0 +1,132 @@
+.policy "ruff-pt031-pytest-warns-with-multiple-statements" revision 1
+.guests off
+.description "Keep a pytest.warns block to a single simple statement; extra statements can raise the expected warning themselves and hide a failure in the call under test."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// warns_ref(n): the JSON util `warns-ref`, used where the JSON says `matches: "warns-ref"`
+.decl pt031_warns_ref(n: node)
+pt031_warns_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.warns").
+
+// warns_callee(n): the JSON util `warns-callee`, used where the JSON says `matches: "warns-callee"`
+.decl pt031_warns_callee(n: node)
+pt031_warns_callee(n) :- pt031_warns_ref(n).
+pt031_warns_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt031_warns_callee(c1).
+
+// warns_value(n): the JSON util `warns-value`, used where the JSON says `matches: "warns-value"`
+.decl pt031_warns_value(n: node)
+pt031_warns_value(n) :- kind(n, "call"), field(n, "function", c1), pt031_warns_callee(c1).
+pt031_warns_value(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt031_warns_value(c2).
+
+// warns_item(n): the JSON util `warns-item`, used where the JSON says `matches: "warns-item"`
+.decl pt031_warns_item(n: node)
+pt031_warns_item(n) :- kind(n, "with_item"), child(n, c1, _),
+    ( pt031_item_expr(c1)
+    ; kind(c1, "tuple"), pt031_unparenthesized_clause_tuple(c1), child(c1, c2, _), pt031_warns_value(c2)
+    ).
+
+
+// meaningful(n): the JSON util `meaningful`, used where the JSON says `matches: "meaningful"`
+.decl pt031_meaningful(n: node)
+pt031_meaningful(n) :- node(_, n, _, _, _), !pt031_alt_2(n).
+
+// compound(n): the JSON util `compound`, used where the JSON says `matches: "compound"`
+.decl pt031_compound(n: node)
+pt031_compound(n) :- kind(n, k1), pt031_set_3(k1).
+
+// single_stmt_block(n): the JSON util `single-stmt-block`, used where the JSON says `matches: "single-stmt-block"`
+.decl pt031_single_stmt_block(n: node)
+pt031_single_stmt_block(n) :- kind(n, "block"),
+    k2 = count : { child(n, c1, _), pt031_meaningful(c1) }, k2 >= 1, k2 <= 1.
+
+// empty_loop_stmt(n): the JSON util `empty-loop-stmt`, used where the JSON says `matches: "empty-loop-stmt"`
+.decl pt031_empty_loop_stmt(n: node)
+pt031_empty_loop_stmt(n) :- kind(n, "pass_statement").
+pt031_empty_loop_stmt(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    pt031_ellipsis_expr(c1).
+
+// ellipsis_expr(n): the JSON util `ellipsis-expr`, used where the JSON says `matches: "ellipsis-expr"`
+.decl pt031_ellipsis_expr(n: node)
+pt031_ellipsis_expr(n) :- kind(n, "ellipsis").
+pt031_ellipsis_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt031_ellipsis_expr(c1).
+
+// allowed_stmt(n): the JSON util `allowed-stmt`, used where the JSON says `matches: "allowed-stmt"`
+.decl pt031_allowed_stmt(n: node)
+pt031_allowed_stmt(n) :- pt031_meaningful(n),
+    ( kind(n, "with_statement"), field(n, "body", c1), pt031_single_stmt_block(c1), child(c1, c2, _), pt031_meaningful(c2), !pt031_compound(c2)
+    ; (kind(n, "function_definition") ; kind(n, "class_definition") ; kind(n, "decorated_definition"))
+    ; kind(n, "for_statement"), field(n, "body", c3), pt031_single_stmt_block(c3), child(c3, c4, _), pt031_empty_loop_stmt(c4)
+    ; !pt031_compound(n)
+    ).
+
+
+// item_expr(n): the JSON util `item-expr`, used where the JSON says `matches: "item-expr"`
+.decl pt031_item_expr(n: node)
+pt031_item_expr(n) :- pt031_warns_value(n).
+pt031_item_expr(n) :- kind(n, "as_pattern"), child(n, c1, _), pt031_warns_value(c1),
+    pt031_tok_precedes_1(c1).
+pt031_item_expr(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), pt031_item_expr(c9).
+
+// unparenthesized_clause_tuple(n): the JSON util `unparenthesized-clause-tuple`, used where the JSON says `matches: "unparenthesized-clause-tuple"`
+.decl pt031_unparenthesized_clause_tuple(n: node)
+pt031_unparenthesized_clause_tuple(n) :- child(p1, n, _), kind(p1, "with_item"),
+    child(p2, p1, _), kind(p2, "with_clause"), !pt031_tok_has_2(p2).
+
+// warns_with(n): the JSON util `warns-with`, used where the JSON says `matches: "warns-with"`
+//   S: metavariable this relation binds for the calling rule
+.decl pt031_warns_with(n: node, s: loc)
+pt031_warns_with(n, S) :- kind(n, "with_statement"),
+    match("(?P<S>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#;]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|;|#[^\\n]*)*", n),
+    child(n, c1, _), kind(c1, "with_clause"), child(c1, c2, _), pt031_warns_item(c2).
+
+// PT031(n, detail): findings from clauses `several-statements`, `compound-statement`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT031(at: node, s: node, detail: symbol) "{detail} needed to trigger the warning."
+    suppress noqa "PT031"
+PT031(S, n, "Keep only the statement expected to warn inside this `pytest.warns` block and move the other statements before or after it, unless they are") :- pt031_warns_with(n, S),
+    field(n, "body", c1), kind(c1, "block"), !pt031_single_stmt_block(c1).
+PT031(S, n, "Put only the call expected to warn inside `pytest.warns`; move the surrounding `if`, loop, `try`, `match` or nested `with` logic out of the block, unless it is") :- pt031_warns_with(n, S),
+    field(n, "body", c1), kind(c1, "block"), pt031_single_stmt_block(c1),
+    count : { child(c1, c2, _), pt031_allowed_stmt(c2) } = 0.
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt031_tok_precedes_1(n: node)
+.stored pt031_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt031_tok_precedes_1(n) :- precedes(n, s2), glob("as", s2).
+pt031_tok_precedes_1(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("as", t3).
+pt031_tok_precedes_1(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+pt031_tok_precedes_1(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt031_tok_has_2(n: node)
+.stored pt031_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt031_tok_has_2(n) :- child(n, c3, _), glob("(", c3).
+pt031_tok_has_2(n) :- op(n, t4), match("\\(", t4).
+pt031_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:\\().*)$", g5).
+pt031_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:\\().*)$", g5).
+pt031_tok_has_2(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:\\().*)$", g5).
+
+// set_3: node kinds from a JSON `any`
+.decl pt031_set_3(v: symbol)
+pt031_set_3("function_definition"). pt031_set_3("class_definition"). pt031_set_3("decorated_definition").
+pt031_set_3("while_statement"). pt031_set_3("for_statement"). pt031_set_3("match_statement").
+pt031_set_3("with_statement"). pt031_set_3("if_statement"). pt031_set_3("try_statement").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt031_alt_2(n: node)
+pt031_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt031_alt_2(n) :- node(_, n, _, _, _), glob(";", n).

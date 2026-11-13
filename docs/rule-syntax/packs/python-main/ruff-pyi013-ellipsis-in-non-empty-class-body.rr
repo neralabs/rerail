@@ -1,0 +1,38 @@
+.policy "ruff-pyi013-ellipsis-in-non-empty-class-body" revision 1
+.guests off
+.description "Remove an ellipsis statement from a class body that has other statements; it is only needed when the body would otherwise be empty."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI013(n): a finding at node n, from clause `ellipsis-in-non-empty-class-body`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PYI013(at: node) "Remove this `...` from the class body; it is redundant because the body has other statements."
+    suppress noqa "PYI013"
+PYI013(n) :- kind(n, "expression_statement"), child(n, c1, _), pyi013_ellipsis_expr(c1),
+    child(p2, n, _), kind(p2, "block"), field(p3, "body", p2),
+    kind(p3, "class_definition"),
+    (precedes(s1, n), !pyi013_filler(s1) ; precedes(n, s2), !pyi013_filler(s2)), !pyi013_tok_has_1(n).
+
+// filler(n): the JSON util `filler`, used where the JSON says `matches: "filler"`
+.decl pyi013_filler(n: node)
+pyi013_filler(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi013_filler(n) :- node(_, n, _, _, _), glob(";", n).
+
+// ellipsis_expr(n): the JSON util `ellipsis-expr`, used where the JSON says `matches: "ellipsis-expr"`
+.decl pyi013_ellipsis_expr(n: node)
+pyi013_ellipsis_expr(n) :- kind(n, "ellipsis").
+pyi013_ellipsis_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi013_ellipsis_expr(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi013_tok_has_1(n: node)
+.stored pyi013_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi013_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+pyi013_tok_has_1(n) :- op(n, t7), match(",", t7).
+pyi013_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+pyi013_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+pyi013_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).

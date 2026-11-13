@@ -1,0 +1,57 @@
+.policy "ruff-dtz901-datetime-min-max" revision 1
+.guests off
+.description "Attach a timezone to the minimum and maximum datetime constants; the bare values are naive and fail when ordered against aware datetimes."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// DTZ901(n): a finding at node n, from clause `datetime-min-max`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation DTZ901(at: node, m: loc) "Use `datetime.datetime.{m}.replace(tzinfo=...)` so the value is aware; the bare naive value raises TypeError when ordered against aware datetimes. Keep it only when the other values are naive."
+    suppress noqa "DTZ901"
+DTZ901(n, M) :- kind(n, "attribute"),
+    (sym_of(n, "datetime.datetime.min") ; sym_of(n, "datetime.datetime.max")),
+    field(n, "attribute", c1), node(_, c1, _, _, _), M = c1, !dtz901_safe(n).
+
+// none_lit(n): the JSON util `none-lit`, used where the JSON says `matches: "none-lit"`
+.decl dtz901_none_lit(n: node)
+dtz901_none_lit(n) :- kind(n, "none").
+dtz901_none_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz901_none_lit(c1).
+
+// dtz901_safe(n): the JSON util `safe`, used where the JSON says `matches: "safe"`
+.decl dtz901_safe(n: node)
+dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_1(n, p1), field(p1, "attribute", c2), glob("time", c2),
+    within_stop(p1, p3, dtz901_stop_2), kind(p3, "call").
+dtz901_safe(n) :- dtz901_demand_safe(n), dtz901_up_2(n, p4), field(p4, "attribute", c5),
+    glob("replace", c5), within_stop(p4, p6, dtz901_stop_2), kind(p6, "call"),
+    child(p6, c7, _), kind(c7, "argument_list"), child(c7, c8, _),
+    kind(c8, "keyword_argument"), field(c8, "name", c9), glob("tzinfo", c9),
+    field(c8, "value", c10), !dtz901_none_lit(c10).
+
+// demand_safe: the nodes safe is asked at (it looks at every ancestor of every node)
+.decl dtz901_demand_safe(n: node)
+dtz901_demand_safe(n) :- kind(n, "attribute"),
+    (sym_of(n, "datetime.datetime.min") ; sym_of(n, "datetime.datetime.max")),
+    field(n, "attribute", c1), node(_, c1, _, _, _), M = c1.
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz901_up_1(n: node, p: node)
+dtz901_up_1(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz901_up_2(n: node, p: node)
+dtz901_up_2(n, p) :- dtz901_demand_safe(n), within_stop(n, p, dtz901_stop_1), kind(p, "attribute").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz901_stop_1(n: node)
+dtz901_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz901_stop_2(n: node)
+dtz901_stop_2(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "argument_list"), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").

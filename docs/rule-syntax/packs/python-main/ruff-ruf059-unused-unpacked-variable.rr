@@ -1,0 +1,106 @@
+.policy "ruff-ruf059-unused-unpacked-variable" revision 1
+.guests off
+.description "Prefix unused variables from tuple or list unpacking with an underscore; unused names suggest a mistake or confuse readers."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"dummy-variable-rgx": {"type": "string", "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$", "description": "Names of variables that may be unused."}}
+
+// RUF059(n): a finding at node n, from clause `unused-unpacked-variable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF059(at: node, n: loc) "Unpacked variable `{n}` is never used; rename it to `_{n}` or `_` to mark it unused, or use it."
+    suppress noqa "RUF059"
+RUF059(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, f1), ruf059_set_7(f1),
+    (site_scope(n, "function") ; site_scope(n, "lambda")), site_latest(n),
+    !site_outer(n), !site_used(n),
+    !glob("{__tracebackhide__,__traceback_info__,__traceback_supplement__,__debuggerskip__}", n),
+    ruf059_unpacked(n), count : { option("dummy-variable-rgx", o2), match(o2, n) } = 0.
+
+// display(n): the JSON util `display`, used where the JSON says `matches: "display"`
+.decl ruf059_display(n: node)
+ruf059_display(n) :- (kind(n, "tuple") ; kind(n, "expression_list") ; kind(n, "list") ; kind(n, "set")).
+ruf059_display(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf059_display(c1).
+
+// chain_all_tuple(n): the JSON util `chain-all-tuple`, used where the JSON says `matches: "chain-all-tuple"`
+.decl ruf059_chain_all_tuple(n: node)
+ruf059_chain_all_tuple(n) :- kind(n, "assignment"), child(n, c1, _),
+    ( (kind(c1, "pattern_list") ; kind(c1, "list_pattern"))
+    ; kind(c1, "tuple_pattern"), ruf059_tok_has_2(c1)
+    ; (kind(c1, "tuple_pattern") ; kind(c1, "tuple")), match("\\(\\s*\\)", c1)
+    ),
+    ruf059_alt_2(n).
+
+// chain_display_value(n): the JSON util `chain-display-value`, used where the JSON says `matches: "chain-display-value"`
+.decl ruf059_chain_display_value(n: node)
+ruf059_chain_display_value(n) :- kind(n, "assignment"), ruf059_alt_3(n).
+
+// chain_top(n): the JSON util `chain-top`, used where the JSON says `matches: "chain-top"`
+.decl ruf059_chain_top(n: node)
+ruf059_chain_top(n) :- kind(n, "assignment"),
+    count : { child(p1, n, _), kind(p1, "assignment") } = 0.
+
+// unpacked(n): the JSON util `unpacked`, used where the JSON says `matches: "unpacked"`
+.decl ruf059_unpacked(n: node)
+ruf059_unpacked(n) :- within_stop(n, p1, "assignment"),
+    ( (kind(p1, "pattern_list") ; kind(p1, "list_pattern"))
+    ; kind(p1, "tuple_pattern"), ruf059_tok_has_2(p1)
+    ),
+    within(n, p10), ruf059_chain_top(p10),
+    (!ruf059_chain_display_value(p10) ; !ruf059_chain_all_tuple(p10)).
+ruf059_unpacked(n) :- site_form(n, "named"), within(n, p11), ruf059_chain_top(p11),
+    ruf059_chain_all_tuple(p11), !ruf059_chain_display_value(p11).
+ruf059_unpacked(n) :- (site_form(n, "with") ; site_form(n, "named")), inside(n, p12, "tuple"),
+    ruf059_with_target_top(p12).
+
+// with_target_top(n): the JSON util `with-target-top`, used where the JSON says `matches: "with-target-top"`
+.decl ruf059_with_target_top(n: node)
+ruf059_with_target_top(n) :- child(p1, n, _), ruf059_alt_6(p1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf059_tok_has_1(n: node)
+.stored ruf059_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf059_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf059_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf059_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf059_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf059_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf059_tok_has_2(n: node)
+.stored ruf059_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf059_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+ruf059_tok_has_2(n) :- op(n, t2), match(",", t2).
+ruf059_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf059_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf059_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// set_7: binding forms the JSON accepts
+.decl ruf059_set_7(v: symbol)
+ruf059_set_7("assignment"). ruf059_set_7("annotated"). ruf059_set_7("augmented"). ruf059_set_7("named").
+ruf059_set_7("with"). ruf059_set_7("match"). ruf059_set_7("typeAlias").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf059_alt_2(n: node)
+ruf059_alt_2(n) :- child(n, c1, _), kind(c1, "assignment"), ruf059_chain_all_tuple(c1).
+ruf059_alt_2(n) :- node(_, n, _, _, _),
+    count : { child(n, c2, _), kind(c2, "assignment") } = 0.
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf059_alt_3(n: node)
+ruf059_alt_3(n) :- child(n, c1, _), kind(c1, "assignment"), ruf059_chain_display_value(c1).
+ruf059_alt_3(n) :- count : { child(n, c2, _), kind(c2, "assignment") } = 0, child(n, c3, _),
+    ruf059_display(c3).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf059_alt_6(n: node)
+ruf059_alt_6(n) :- kind(n, "as_pattern_target").
+ruf059_alt_6(n) :- kind(n, "parenthesized_expression"), ruf059_with_target_top(n).

@@ -1,0 +1,27 @@
+.policy "ruff-f521-string-dot-format-invalid-format" revision 1
+.guests off
+.description "Keep str.format() strings well-formed, with balanced braces and valid fields and format specs; a malformed one raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F521(n): a finding at node n, from clause `string-dot-format-invalid-format`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S are added to every rule.
+.violation F521(at: node) "`.format` call has invalid format string"
+    suppress noqa "F521"
+F521(n) :- n ~ `$S.format($$$A)`, f521_format_string(S).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f521_plain_string(n: node)
+f521_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f521_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// format_string(n): the JSON util `format-string`, used where the JSON says `matches: "format-string"`
+.decl f521_format_string(n: node)
+f521_format_string(n) :- f521_plain_string(n), parsed(n, "braceFormat", r1), child(r1, c2, _),
+    kind(c2, "error").
+f521_format_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    f521_format_string(c3).

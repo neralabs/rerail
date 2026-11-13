@@ -1,0 +1,94 @@
+.policy "ruff-pth211-os-symlink" revision 1
+.guests off
+.description "Use Path.symlink_to() instead of os.symlink(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH211(n): a finding at node n, from clause `os-symlink`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on D are added to every rule.
+.violation PTH211(at: node, f: node) "Use `Path(dst).symlink_to(src)` instead of `os.symlink(src, dst)`, passing `target_is_directory` through; leave it where the paths are bytes."
+    suppress noqa "PTH211"
+PTH211(F, n) :- kind(n, "call"), field(n, "function", c1), pth211_callee(c1, F),
+    ( kind(n, "call"), pth211_arg_no_dir_fd_1(n), unset(D)
+    ; kind(n, "call"), pth211_arg_dir_fd_1(n, a1_2), D = a1_2
+    ),
+    pth211_none_literal(D).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth211_callee(n: node, f: loc)
+pth211_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.symlink"), node(_, n, _, _, _), F = n.
+pth211_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth211_callee(c1, F).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl pth211_none_literal(n: node)
+pth211_none_literal(n) :- kind(n, "none").
+pth211_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth211_none_literal(c1).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth211_args_plain(l: node, a: node, i: number)
+pth211_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth211_args_splat(l: node, i: number)
+pth211_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth211_args_pos(l: node, a: node, j: number)
+pth211_args_pos(l, a, j) :- pth211_args_plain(l, a, i), count : { pth211_args_splat(l, k), k < i } = 0,
+    j = count : { pth211_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth211_args_star(l: node, j: number)
+pth211_args_star(l, j) :- pth211_args_splat(l, i), count : { pth211_args_splat(l, k), k < i } = 0,
+    j = count : { pth211_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth211_args_kwp(l: node, k: symbol, v: node)
+pth211_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth211_args_lit_dict(s: node, d: node)
+pth211_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth211_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth211_args_str_pair(p: node)
+pth211_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth211_args_kw(l: node, k: symbol, v: node)
+pth211_args_kw(l, k, v) :- pth211_args_kwp(l, k, v).
+pth211_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth211_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth211_args_kw_spread(l: node)
+pth211_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth211_args_lit_dict(s, _).
+
+// arg_dir_fd_1: call n passes v for slot `dir_fd` of (*, dir_fd), syntactic: Ruff's find_argument
+.decl pth211_arg_dir_fd_1(n: node, v: node)
+pth211_arg_dir_fd_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pth211_args_kwp(l, "dir_fd", v).
+
+// arg_no_dir_fd_1: call n does not pass slot `dir_fd` of (*, dir_fd), syntactic: Ruff's find_argument
+.decl pth211_arg_no_dir_fd_1(n: node)
+pth211_arg_no_dir_fd_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pth211_args_kwp(l, "dir_fd", _).
