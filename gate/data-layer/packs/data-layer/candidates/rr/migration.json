@@ -6454,17 +6454,17 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
+    "upstreamCommit": "473167aa5e50ca9adde546f12c820b6be5a7ceaa",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
     "status": "Hub with batched directory metadata and lossless internal constant/dependency boundaries",
     "nativeExtensions": [
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "00bdb0d5e2138e60e8e975c27593a82ad2856aefacb119083aadb6f0f6226d76"
+        "sha256": "d17093efa0a22f6b8d25bb6276e2132b09f1917fa002c62f490c6f84ba57c62a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
-        "sha256": "eb61f1b5b068574090cdb11ccefb316021f92e67914c3826d4dffe9ec61a46ee"
+        "sha256": "7a9d8d92484e72d7ada6b7ebaa79b4c6815269fc2ff0b0dcf8393963881883a1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -6472,11 +6472,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/reuse.rs",
-        "sha256": "32e4ee7e37c3b34eb92fe3765b63ac14247180a6b40a4cb786adb16a317acfda"
+        "sha256": "33c9747dc8828532dc83d123dcf394d383fa61c7075ed6725226eeb6d3ebcc2e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/reuse/tests.rs",
-        "sha256": "489cec5b5875da5d11b8d0c1879abfae158a81aef2c6a862f808eda508040480"
+        "sha256": "1606b7b9ac24823dae1e63c100092a0c8fcd8de4e0218304f5fc5e5ed0a6690c"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
@@ -6484,11 +6484,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "91df6d973cd6dd4eae6fe952ffd3f6c5b9c6cb2d52d398ea536271d99342c74c"
+        "sha256": "0b4a95748eff7183ed9a48cfd63832564c89fef049c9d5fd91926a8848d98b07"
       },
       {
         "path": "native/src/content_store/observe.rs",
-        "sha256": "f4a837c3e91a0cdeb7e2c0555e17fe0929b84ab7d2f5ecf7cb38dd27f14c2de7"
+        "sha256": "223ebd05f0778bd329d56871093d4bd440c8bdaa37bbd7a336f6715a95c7ab7c"
       }
     ],
     "previousUpstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
@@ -6585,7 +6585,77 @@
         "systemCpuSeconds": 9.54,
         "maxRssBytes": 4150231040
       }
-    ]
+    ],
+    "adoptionAudit": {
+      "format": "rerail.engine-cohort-adoption/v1",
+      "upstreamCommit": "473167aa5e50ca9adde546f12c820b6be5a7ceaa",
+      "engineCommit": "36923f99d3b084a99ed03482413d1d28aaf19676",
+      "sourceTrees": {
+        "native": "3fe00c1ee70193700c3e6ce00430d42bfe47ff88",
+        "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
+        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+        "Cargo.toml": "a84082b574506053dd3ea5650863eac269cbb230",
+        "Cargo.lock": "d69fdf759312def494dec18a0cfd285c80f894d4"
+      }
+    },
+    "cliArtifact": {
+      "format": "rerail.root-engine-build/v1",
+      "engineCommit": "36923f99d3b084a99ed03482413d1d28aaf19676",
+      "upstreamCommit": "473167aa5e50ca9adde546f12c820b6be5a7ceaa",
+      "sourceTrees": {
+        "native": "3fe00c1ee70193700c3e6ce00430d42bfe47ff88",
+        "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
+        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+        "Cargo.toml": "a84082b574506053dd3ea5650863eac269cbb230",
+        "Cargo.lock": "d69fdf759312def494dec18a0cfd285c80f894d4"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-d98d1d4b258960df",
+      "sha256": "d98d1d4b258960df3fd0359e7b8ac2bbdec9d7ca89cf8f115d0c21a3dcbe3fdc",
+      "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+      "buildAttempts": [
+        {
+          "log": "build-hub473.log",
+          "status": "deadline",
+          "wallSeconds": 110.01,
+          "userCpuSeconds": 615.85,
+          "systemCpuSeconds": 27.94
+        },
+        {
+          "log": "build-hub473-2.log",
+          "status": "link-error",
+          "wallSeconds": 69.66,
+          "userCpuSeconds": 401.94,
+          "systemCpuSeconds": 11.97
+        },
+        {
+          "log": "build-hub473-3.log",
+          "status": "link-error",
+          "wallSeconds": 3.1,
+          "userCpuSeconds": 1.88,
+          "systemCpuSeconds": 1.81
+        },
+        {
+          "log": "build-hub473-4.log",
+          "status": "link-error",
+          "wallSeconds": 6.35,
+          "userCpuSeconds": 1.84,
+          "systemCpuSeconds": 1.94
+        },
+        {
+          "log": "build-hub473-5.log",
+          "status": "passed",
+          "wallSeconds": 68.52,
+          "userCpuSeconds": 316.1,
+          "systemCpuSeconds": 10.27
+        }
+      ],
+      "wallSeconds": 257.64,
+      "userCpuSeconds": 1337.61,
+      "systemCpuSeconds": 53.93,
+      "buildRepair": "Rebuilt only rerail-logic after both linkers reported missing symbols in its cached archive. The normal Apple linker then succeeded. No compiler or linker override is used by the accepted artifact."
+    }
   },
   "engineSourceSnapshots": [
     {
