@@ -65,6 +65,8 @@ use std::time::Instant;
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub mod lab;
 pub mod spec;
+#[cfg(test)]
+mod survivor_tests;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;

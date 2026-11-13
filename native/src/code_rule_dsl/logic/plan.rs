@@ -1972,6 +1972,12 @@ impl Model {
         plans_update(&key, |k| k.5 = Some(work));
     }
 
+    /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ran_as_planned(&self, head: &Atom, body: &[Literal], first: Option<usize>, work: f64) {
+        Self::ran(self.plan_key("", head, body, first), work);
+    }
+
     /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
     pub(in crate::code_rule_dsl) fn reused_key(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         self.plan_key("", head, body, first)
@@ -9953,5 +9959,27 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod ambient_tests {
+    use super::super::lanes::wave;
+
+    /// Smoking gun 7 (t34, 2026-11-13): a level's strata run as a job off the run's thread (decision 0113 §4) and flush
+    /// their wave there. The job works in the run's ambient, and its waves are the run's: `closures_of_one_level_…`
+    /// read none about one run in three.
+    #[test]
+    fn a_strata_jobs_waves_are_the_runs() {
+        let before = wave::flushed();
+        let ambient = super::Ambient::here();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _in = ambient.enter();
+                wave::defer(Box::new(|| Ok(())));
+                wave::flush(1).unwrap();
+            });
+        });
+        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave counts as the run's");
     }
 }

@@ -382,7 +382,8 @@ pub(in crate::code_rule_dsl) fn budget() -> usize {
 
 /// What the next run keeps: the clean relations as they were, and those this run derived (each the engine's
 /// relation, with its width), in stratum order while they fit the budget, with the decoded `outputs`; and every
-/// input's source (held anyway while the session's inputs are: nothing is copied).
+/// input's source (held anyway while the session's inputs are: nothing is copied). `budget`: the bytes held in
+/// memory (`budget()`); what is past it is still written to the frames (`past`).
 pub(in crate::code_rule_dsl) fn after(
     old: Option<Retained>,
     key: [u8; 32],
@@ -396,6 +397,7 @@ pub(in crate::code_rule_dsl) fn after(
     mut input_docs: HashMap<String, Arc<DocDigests>>,
     docs: (super::input_delta::Docs, [u8; 32]),
     mut patched: HashMap<String, Patched>,
+    budget: usize,
 ) -> Retained {
     // An input bound as the last run's source keeps that source's hashes.
     if let Some(old) = &old {
@@ -421,7 +423,6 @@ pub(in crate::code_rule_dsl) fn after(
         }
     }
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
-    let budget = budget();
     let mut past: HashMap<String, Kept> = HashMap::new();
     for (rel, width, held) in derived {
         // An index's relation (the reach index, decision 0119) is made again in less than reading it back costs:
