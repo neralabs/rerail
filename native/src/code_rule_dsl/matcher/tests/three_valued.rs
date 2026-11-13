@@ -366,16 +366,21 @@ fn a_later_any_branch_does_not_stand_in_for_an_unknown_binding_branch() {
 /// strict, ending the search unknown at the unknown occurrence.
 #[test]
 fn an_occurrence_search_decides_past_unknown_occurrences_unless_its_rule_binds() {
-    let source = "let v = 0;\ng(v);\nh(v);\n";
-    let declared = |rule: Value| json!({ "kind": "identifier", "inside": { "kind": "variable_declarator" }, "all": [rule] });
-    let binds = |mut occurrence: Value| {
+    // Functions, not closures: rustc 1.95.0 at opt-level 2 and up (the `profiling` profile) passes two
+    // calls of a closure taking a `Value` by value one shared copy of equal arguments, which the first
+    // call mutates in place: a double free (rust-lang/rust#155241, fixed in 1.97).
+    fn declared(rule: Value) -> Value {
+        json!({ "kind": "identifier", "inside": { "kind": "variable_declarator" }, "all": [rule] })
+    }
+    fn binds(mut occurrence: Value) -> Value {
         occurrence["inside"] = json!({ "stopBy": "end", "kind": "call_expression", "regex": "^(g|h)\\(", "testUnknown": "^g\\(" });
         json!({ "binds": { "occurrence": occurrence } })
-    };
-    assert_eq!(texts(declared(binds(json!({}))), source), ["v"]);
-    let false_beside = |occurrence: Value| {
+    }
+    fn false_beside(occurrence: Value) -> Value {
         declared(json!({ "not": { "all": [binds(occurrence), { "regex": "^never$" }] } }))
-    };
+    }
+    let source = "let v = 0;\ng(v);\nh(v);\n";
+    assert_eq!(texts(declared(binds(json!({}))), source), ["v"]);
     assert_eq!(texts(false_beside(json!({})), source), ["v"]);
     let binding = json!({ "pattern": "$A" });
     assert_eq!(
