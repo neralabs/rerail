@@ -49,10 +49,11 @@ function hasStartTables(database: Pick<RerailDatabase, "$client">): boolean {
 }
 
 /**
- * `workspace`'s start state without side effects: no identity file, database, or schema is created and nothing
- * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped. On Windows,
- * keys an earlier build stored that wait for `workspace`'s drive are looked up first (`openRerailDatabaseIn`), so a
- * checkout on another disk, a mapped drive or a share keeps its start state and settings.
+ * `workspace`'s start state. It creates no identity file, database, or schema and records nothing, with one exception
+ * on Windows: where keys an earlier build stored wait for `workspace`'s drive, a writable open looks them up and copies
+ * their rows first (`openRerailDatabaseIn`), so a checkout on another disk, a mapped drive or a share keeps its start
+ * state and settings; it waits on no other writer, and when it cannot run the state is read as the file holds it. A
+ * database another process is still creating has recorded nothing yet, so it reads stopped.
  */
 export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
@@ -66,9 +67,9 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
 }
 
 /**
- * Whether `workspace`'s repository is set up, read apart from its start state and without side effects: a repository
- * Rerail never recorded is not set up. Keys that wait for `workspace`'s drive are looked up first, as for its start
- * state (`openRerailDatabaseIn`): `rerail start` reads this before anything else in a repository set up already.
+ * Whether `workspace`'s repository is set up, read apart from its start state and with the same one exception: a
+ * repository Rerail never recorded is not set up. Keys that wait for `workspace`'s drive are looked up first, as for
+ * its start state (`openRerailDatabaseIn`): `rerail start` reads this before anything else in a repository set up already.
  */
 export function workspaceSetUp(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   if (!existsSync(databasePath)) return false;
