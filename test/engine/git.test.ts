@@ -330,10 +330,11 @@ describe("Git reads and their time limit", () => {
     expect(endProcessTree).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async () => {
+  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async ({ skip }) => {
+    skip(process.platform === "win32", "On Windows Git prints the whole listing and exits before the read's first look after the stall, so the read answers it whole");
     const root = await repository({ "a.py": "print(1)\n" });
-    // About 300 KB of paths, more than the output pipe holds on Linux and Windows: Git waits for the event loop to read
-    // before it prints the rest, so it is still printing after the stall.
+    // About 300 KB of paths, more than the output pipe holds on Linux: Git waits for the event loop to read before it
+    // prints the rest, so it is still printing after the stall.
     const names = Array.from({ length: 3_000 }, (_, index) => `${"x".repeat(96)}${String(index).padStart(4, "0")}.py`);
     await Promise.all(names.map(name => writeFile(join(root, name), "")));
     const read = gitModifiedOrUntrackedPaths(root);
