@@ -36,7 +36,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
-function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string) {
+function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string, confirmed = false) {
   const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
   const sent: string[] = [];
   registerHostCommands({
@@ -50,15 +50,16 @@ function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: stri
   });
   const notices: Array<{ message: string; level: string }> = [];
   const selections: string[][] = [];
+  const confirmations: Array<{ title: string; message: string }> = [];
   const ctx: HostCommandContext = {
     ui: {
       notify(message, level) { notices.push({ message, level }); },
       select: async (_title, labels) => { selections.push(labels); return choice; },
       input: async () => undefined,
-      confirm: async () => false,
+      confirm: async (title, message) => { confirmations.push({ title, message }); return confirmed; },
     },
   };
-  return { commands, run: (name: string, args = "") => commands.get(name)!.handler(args, ctx), notices, sent, selections };
+  return { commands, run: (name: string, args = "") => commands.get(name)!.handler(args, ctx), notices, sent, selections, confirmations };
 }
 
 /** A package root whose launcher, `dist/cli/cli.js <args>`, runs `script` as `sh` with those arguments. */
@@ -286,7 +287,7 @@ describe("/rerail-uninstall", () => {
     const detach = vi.fn();
     const { run, notices, selections } = commandHarness({ detach }, "Cancel");
     await run("rerail-uninstall");
-    expect(selections).toEqual([["Yes, remove Rerail", "Only stop it in this repo", "Cancel"]]);
+    expect(selections).toEqual([["Remove, keep a backup", "Remove and delete everything", "Only stop it in this repo", "Cancel"]]);
     expect(detach).not.toHaveBeenCalled();
     expect(notices).toEqual([]);
   });
@@ -295,18 +296,47 @@ describe("/rerail-uninstall", () => {
     const root = await launcherPackage("[ \"$*\" = 'install --remove' ]\nprintf 'Backup: /home/me/.rerail-clean-20261005\\n'");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(detach).toHaveBeenCalledOnce();
     expect(reattach).not.toHaveBeenCalled();
     expect(notices).toEqual([{ message: "Backup: /home/me/.rerail-clean-20261005", level: "info" }]);
   });
 
+  /** A launcher that answers the dry run of `--delete-data` with a plan, and its run with what it deleted. */
+  const deletingLauncher = () => launcherPackage([
+    "case \"$*\" in",
+    "  'install --remove --delete-data --dry-run') printf 'Would delete /home/me/.rerail (the Rerail home).\\n' ;;",
+    "  'install --remove --delete-data') printf 'Deleted /home/me/.rerail (the Rerail home).\\n' ;;",
+    "  *) printf 'unexpected %s\\n' \"$*\"; exit 1 ;;",
+    "esac",
+  ].join("\n"));
+
+  it("deletes everything only once the person has seen the dry run and confirmed it", async () => {
+    const root = await deletingLauncher();
+    const detach = vi.fn();
+    const { run, notices, confirmations } = commandHarness({ packageRoot: root, cwd: () => root, detach }, "Remove and delete everything", true);
+    await run("rerail-uninstall");
+    expect(confirmations).toEqual([{ title: "Delete Rerail and everything it kept? This cannot be undone.", message: "Would delete /home/me/.rerail (the Rerail home)." }]);
+    expect(detach).toHaveBeenCalledOnce();
+    expect(notices).toEqual([{ message: "Deleted /home/me/.rerail (the Rerail home).", level: "info" }]);
+  });
+
+  it("changes nothing when the person declines deleting everything after its dry run", async () => {
+    const root = await deletingLauncher();
+    const detach = vi.fn();
+    const { run, notices, confirmations } = commandHarness({ packageRoot: root, cwd: () => root, detach }, "Remove and delete everything", false);
+    await run("rerail-uninstall");
+    expect(confirmations).toHaveLength(1);
+    expect(detach).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
   it("gives the session its runtime back when the removal fails, as Rerail is still installed", async () => {
     const root = await launcherPackage("printf 'could not write ~/.claude/settings.json\\n' >&2\nexit 1");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(reattach).toHaveBeenCalledOnce();
     expect(reattach.mock.invocationCallOrder[0]).toBeGreaterThan(detach.mock.invocationCallOrder[0]!);
@@ -318,7 +348,7 @@ describe("/rerail-uninstall", () => {
     const unlaunchable = join(tmpdir(), "rerail\0checkout");
     const detach = vi.fn();
     const reattach = vi.fn();
-    const { run, notices } = commandHarness({ cwd: () => unlaunchable, detach, reattach }, "Yes, remove Rerail");
+    const { run, notices } = commandHarness({ cwd: () => unlaunchable, detach, reattach }, "Remove, keep a backup");
     await run("rerail-uninstall");
     expect(notices).toEqual([expect.objectContaining({ message: expect.stringMatching(/^\/rerail-uninstall: /u), level: "error" })]);
     expect(detach).toHaveBeenCalledOnce();

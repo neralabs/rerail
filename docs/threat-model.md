@@ -557,7 +557,8 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
-  backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up.
+  backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up, then
+  everything else Rerail wrote in its home (device secrets included) and the home itself.
 
 </details>
 
