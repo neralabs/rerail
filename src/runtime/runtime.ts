@@ -1058,8 +1058,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#ingestLanes.run(sessionId, async () => {
       // Checked again in the lane: an event accepted while started can run after a stop committed elsewhere.
       if (this.#stopped()) {
-        // A session that attached while started still ends, releasing its code-rule bridge and polling; nothing is recorded.
-        if (event.kind === "session-end" && this.#sessions.has(sessionId)) await this.closeSession(sessionId);
+        if (event.kind === "session-end") await this.#endWhileStopped(sessionId);
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
@@ -1068,6 +1067,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
       return deliveries;
     });
+  }
+
+  /**
+   * A session's end in a stopped repository records nothing, but ends what the session holds and drops what it owed its
+   * agent, as any end does. A session that attached while started closes, releasing its code-rule bridge and polling. A
+   * suspended one is not opened again for it (its service ends its record), so the `owed` entry its ledger keeps is
+   * emptied here: the session's next start under the same id would take it back. An empty entry records nothing.
+   */
+  async #endWhileStopped(sessionId: string): Promise<void> {
+    if (this.#sessions.has(sessionId)) await this.closeSession(sessionId);
+    else if (this.#suspendedSessions?.get(sessionId) !== undefined) await this.#dropLedgerOwed(sessionId);
+  }
+
+  /** Writes an emptied `owed` entry to the ledger of a session not open here, when its last one owes something. */
+  async #dropLedgerOwed(sessionId: string): Promise<void> {
+    const path = join(sessionDirectory(this.#storageRoot, sessionId), "events.jsonl");
+    try {
+      const { values, appendState } = await readLines(path);
+      if (restoredOwed(validatedLedger(values)).recorded === 0) return;
+      await appendJsonLine(path, { type: "owed", steers: [], findings: [] } satisfies OwedEntry, appendState);
+    } catch (error) {
+      process.stderr.write(`rerail: could not drop what session ${sessionId} owed its agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /** Branch navigation restores repeat/turn state without retiring the live stream or code-rule owner. */
@@ -1458,10 +1480,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Writes `entry` to the session's ledger, whose last `owed` entry says what the session owes while it is closed. A
-   * stopped repository records nothing. A failure is reported, never raised: it must not fail the close or the answer.
+   * stopped repository records nothing, but an empty entry, which drops what the ledger kept, is still written: a
+   * session that ends there owes nothing after. A failure is reported, never raised: it must not fail the close or the
+   * answer.
    */
   async #recordOwed(state: RuntimeSessionState, entry: OwedEntry): Promise<void> {
-    if (this.#stopped()) return;
+    if (this.#stopped() && entry.steers.length + entry.findings.length > 0) return;
     try {
       await this.#append(state, entry);
       state.owed.recorded = entry.steers.length + entry.findings.length;

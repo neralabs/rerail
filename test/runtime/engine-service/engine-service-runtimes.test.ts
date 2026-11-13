@@ -746,6 +746,27 @@ describe("the engine service's idle close", () => {
     expect((await prompt("a", "next morning")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
   });
 
+  // An end drops what the session owed. One from a repository stopped since dropped nothing: the ledger kept the steer,
+  // and the session's next start under the same id took it back.
+  it.each([
+    ["still suspended", false],
+    ["opened again by a scan", true],
+  ])("drops the steer a session quiet for a day owed when its end comes from a repository stopped since, %s", async (_case, resumed) => {
+    const { first, clock, service, session, send, start, prompt, steer, databasePath } = await steeringService();
+    await start("a");
+    await send({ kind: "call", eventId: "a:call", sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash", input: { command: "rm -rf build" } });
+    await steer("a", "Fix a.py.");
+    clock.now += 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+    // A scan opens the session with no event that takes the steer, so it stays owed in memory.
+    if (resumed) await service.resumeSession("a");
+    stopTestRepository(first, databasePath);
+    await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+    startTestRepository(first, databasePath);
+    // Claude Code resumes a session under its id.
+    expect(await prompt("a", "resumed")).toEqual([]);
+  });
+
   // Suspended and opened again by its next event, the session would check the agent's next edit only at the turn end.
   it("keeps a quiet session that owes its agent a steer in memory at the idle limit, and its next event carries the steer", async () => {
     const { clock, service, start, prompt, ended, steer } = await steeringService();
