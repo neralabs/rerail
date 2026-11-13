@@ -66,6 +66,8 @@ pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
 pub(in crate::code_rule_dsl) struct Kept<'s> {
     store: &'s ContentStore,
     space: [u8; 32],
+    /// The program whose run this is (`frames::Used`): what it used is kept for its own next runs.
+    program: [u8; 32],
     /// Each relation of the program, as its frame names it (`program`).
     rels: HashMap<String, FrameRel>,
     /// What is stored of those relations.
@@ -85,10 +87,11 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
         Kept {
             store,
             space,
+            program,
             rels: HashMap::new(),
             was: HashMap::new(),
             admitted: HashMap::new(),
@@ -108,7 +111,7 @@ impl<'s> Kept<'s> {
         self.values = 0;
         if !puts.is_empty() || !gone.is_empty() || used.is_some() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
-            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token())));
+            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
     }
 
@@ -215,6 +218,8 @@ pub mod tests;
 /// them when its stratum is clean (`plan::decode_kept`); but `finding`, which SQL decodes, runs again.
 pub(in crate::code_rule_dsl) struct Part {
     space: [u8; 32],
+    /// The program it is of (`retain::key`): its runs keep what it used (`frames::Used`).
+    key: [u8; 32],
     /// Each relation and input of the program, as its frame names it, and what the store holds of it.
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
@@ -292,7 +297,7 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, frames, cones })
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
 }
 
 fn load_from_snapshot(
@@ -394,5 +399,5 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
-    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token())));
+    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

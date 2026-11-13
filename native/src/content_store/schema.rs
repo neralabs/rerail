@@ -419,6 +419,12 @@ CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     PRIMARY KEY (manifest_id, plan_digest)
 ) STRICT, WITHOUT ROWID;
+-- What a manifest's run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. Additive: an older
+-- binary ignores it, and protects by root alone.
+CREATE TABLE IF NOT EXISTS corpus_manifest_lanes (
+    manifest_id INTEGER PRIMARY KEY,
+    lane BLOB NOT NULL CHECK(length(lane) = 32)
+) STRICT;
 -- The sweep of the corpus memo's retired schemas (`RETIRED_CORPUS_MEMO_SCHEMAS`): done once a pass finds no more.
 CREATE TABLE IF NOT EXISTS corpus_swept (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

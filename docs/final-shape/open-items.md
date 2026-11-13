@@ -4018,10 +4018,45 @@ without (206 G against 187 G instructions on dl1).
 **Measured** (dl1, 44 policies, strict, CPU): five batches over one store give the 48 findings of a run without a
 store each time; a warm batch is 112 G instructions, 36 G cycles (no store: 188 G; before: 206 G). dl10: 141 G
 warm against 280 G. Keeping a single program's combined form in the store adds nothing on top (113.5 G warm, and a
-cold batch 291 G against 265 G): not kept. Still open: policies run one process each over one root share its
-kept-strata space, and age each other's kept inputs after 4 runs (`frames::RUNS`); a manifest per run token would
-make that per run too. `a_policy_refused_its_kept_inputs_runs_again_over_its_store` runs the one policy three times
+cold batch 291 G against 265 G): not kept. Policies run one process each: O-policies-one-process-each.
+`a_policy_refused_its_kept_inputs_runs_again_over_its_store` runs the one policy three times
 over a store (in one process, so it passed before the fix too).
+
+## O-policies-one-process-each (closed 2026-11-12)
+
+The 44 data-layer policies run one process each over one root and one store (not a batch), round after round. Two
+things aged by the root, not by the program, so a policy run once a round lost what it kept to the 43 run between:
+
+1. *Frames.* The kept-strata space is the root's, shared by its programs (decision 0103), and a relation was kept
+   while the space's last `frames::RUNS` (4) runs used it: 17 policies found no kept inputs in every round. A run's
+   use is now kept by program (`frames::Used`'s third part, the prepared or `retain` key; table
+   `frame_program_used`, the old `frame_used` no longer read): a relation is kept while one of its programs' last
+   `RUNS` runs used it, and a program not run for `frames::ABANDON` (256) runs of the space counts no more.
+2. *Manifests.* Collection protected a root's last `protected_runs` (2) manifests, and their plans alone were live:
+   the other 42 policies' memo spaces were collected, and their files missed the memo in every round (dl10: 64 a
+   round). A manifest now has a lane (`record_corpus_run_lane`, table `corpus_manifest_lanes`): the digest of the
+   run's program texts, which does not name the build. A root's last `protected_runs` manifests *of each lane* are
+   protected, for its newest `protected_lanes` (64) lanes; a replaced build's plan is its lane's, and dies as before.
+   A manifest without a lane (an older binary's, the store's own tests) is the root's one lane, as before.
+
+**Measured** (strict, CPU, 44 processes a round; instructions summed; 48 findings in every round):
+
+| | before | frames by program | and lanes |
+|---|---|---|---|
+| dl1, round 2 | 320.8 G; 17 without kept inputs; 11 misses | 335.8 G; 0; 11 | 273.8 G; 0; 0 |
+| dl1, round 3 | 293.0 G; 17; 9 | 324.6 G; 0; 9 | 258.9 G; 0; 0 |
+| dl10, round 2 | 438.5 G; 17; 64 | 448.8 G; 0; 64 | 300.5 G; 0; 1 |
+
+Kept inputs alone cost a little (the kept route maintains what the missed memo then recomputed); with the memo kept
+too, round 2 is 15% (dl1) and 31% (dl10) cheaper. Tests: `each_program_keeps_what_it_used_however_many_run_between`
+(frames), `each_lane_keeps_its_last_runs_plans` (manifests). The one dl10 miss left: O-inner-run-memo-miss.
+
+## O-inner-run-memo-miss. One one-file run inside `matching-architecture.rr` misses the memo every round
+
+Over dl10, policies one process each, round 3: `matching-architecture.rr`'s process makes a second run of one file
+(`statkeep before the first wave: 1 files, 1 known by stat, 0 found`; 21 relations, 11,936 rows written; 0.78 s for
+the process). It misses in every round, so its entry is not stored, or is stored under a plan no manifest names.
+Small; not yet traced.
 
 ## O-dl10-demand-computed-head (closed 2026-11-12, 6ec67d811)
 

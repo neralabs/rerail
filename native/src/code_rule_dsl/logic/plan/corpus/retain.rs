@@ -1850,7 +1850,7 @@ impl Retained {
         if kept_stats::on() {
             self.stats_puts(was, &now, &mut puts);
         }
-        store.queue_frames_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
+        store.queue_frames_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)));
         Ok(written)
     }
 }
