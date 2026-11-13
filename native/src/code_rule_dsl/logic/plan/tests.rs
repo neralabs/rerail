@@ -2043,7 +2043,6 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
 /// grew 9 times, under the budget, so the order was kept with 2,455 fragments (7.1 M rows, none kept). A constant's
 /// count that moved from none to many is growth, and the line is searched again.
 #[test]
-#[ignore = "smoking gun 10 open (t34): budget_takes measures growth by rows alone, not by a constant's count"]
 fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     let p = parse(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };

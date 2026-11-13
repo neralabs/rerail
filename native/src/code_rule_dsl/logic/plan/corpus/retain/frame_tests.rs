@@ -245,7 +245,6 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
 /// decision 0117 step 4) took the rows and their levels, not the statistics, so every `__old` the edit planned with
 /// was counted from its rows ("count run_scope__old from its rows", dozens an edit).
 #[test]
-#[ignore = "smoking gun 9 open (t34): admit reads a reached relation's rows and levels, not its statistics part"]
 fn rows_read_where_reached_come_with_their_kept_statistics() {
     let dir = tempfile::tempdir().unwrap();
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
@@ -259,5 +258,8 @@ fn rows_read_where_reached_come_with_their_kept_statistics() {
     let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
     assert!(kept.admit(&store, &prog, &["result0".to_owned()]).unwrap(), "its rows are read where reached");
     let at = Arc::as_ptr(&kept.late.borrow()["result0"].rel) as *const u8 as usize;
-    assert!(kept.measured.keys().any(|(name, a)| name == "result0" && *a == at) || kept.patched.values().any(|p| p.at == at), "its statistics come with its rows: not counted from them");
+    let held = Arc::clone(&kept.late.borrow()["result0"].rel);
+    assert_eq!(Arc::as_ptr(&held) as *const u8 as usize, at);
+    assert!(kept.measured("result0", &held).is_some(), "its statistics come with its rows: not counted from them");
+    assert!(kept.measured_all().contains_key(&("result0".to_owned(), at)), "and are carried to the next run");
 }

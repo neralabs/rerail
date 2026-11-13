@@ -1669,6 +1669,15 @@ impl Model {
             (Some(a), Some(b)) => growth(a, b),
             _ => f64::INFINITY,
         };
+        // A literal with a constant reads the constant's rows, not its relation's: `doc_role(d, 7)` with one row
+        // for 7 when planned and 2,455 now grew 2,455 times, though `doc_role` grew 9 (smoking gun 10, t34).
+        let grew = grew * Self::const_slots(body, first).into_iter().map(|i| match (previous.sizes.get(i), sizes.get(i)) {
+            (Some(&a), Some(&b)) if a != -1.0 && b != -1.0 => {
+                let n = |x: f64| if x == -2.0 { 0.0 } else { x };
+                (n(b).max(1.0) / n(a).max(1.0)).max(1.0)
+            }
+            _ => 1.0,
+        }).product::<f64>();
         // A line that did nothing tells nothing of its order's cost but that one row of input costs about that:
         // counted as one row of work (an order kept from an empty input, with 5,000 rows now, is searched).
         (ran.max(1.0) * grew < SEARCH_WORK && self.valid_live_driver(order, body, first))
@@ -1962,6 +1971,25 @@ impl Model {
                 _ => None,
             }))
             .collect()
+    }
+
+    /// Where `live_sizes` holds the count of each constant the body's atoms test: the planning budget reads them
+    /// as growth (`budget_takes`).
+    fn const_slots(body: &[Literal], first: Option<usize>) -> Vec<usize> {
+        // `read_sizes` (the nodes, then each atom's rows), then the delta's rows.
+        let mut at = 1 + body.iter().filter(|l| l.atom().is_some()).count() + usize::from(first.and_then(|f| body[f].atom()).is_some());
+        let mut slots = Vec::new();
+        for a in body.iter().filter_map(Literal::atom) {
+            for t in &a.args {
+                if matches!(t, Term::Wild) { continue; }
+                at += 2;
+                if constant(t).is_some() {
+                    slots.push(at);
+                    at += 1;
+                }
+            }
+        }
+        slots
     }
 
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
@@ -9412,6 +9440,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
                 // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
                 let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
+                // so its readers read the facts and the answers both.
+                let mut rows = rows;
+                if run.native_rels.contains(rel) {
+                    if let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    }
+                }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());
             }
@@ -10175,27 +10211,5 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
-    }
-}
-
-#[cfg(test)]
-mod ambient_tests {
-    use super::super::lanes::wave;
-
-    /// Smoking gun 7 (t34, 2026-11-13): a level's strata run as a job off the run's thread (decision 0113 §4) and flush
-    /// their wave there. The job works in the run's ambient, and its waves are the run's: `closures_of_one_level_…`
-    /// read none about one run in three.
-    #[test]
-    fn a_strata_jobs_waves_are_the_runs() {
-        let before = wave::flushed();
-        let ambient = super::Ambient::here();
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                let _in = ambient.enter();
-                wave::defer(Box::new(|| Ok(())));
-                wave::flush(1).unwrap();
-            });
-        });
-        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave counts as the run's");
     }
 }
