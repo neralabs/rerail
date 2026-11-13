@@ -17,7 +17,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit } from "../git.js";
+import { GitUnavailableError, gitText, runGit, type GitResult } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -47,7 +47,7 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
   try {
-    return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
+    return runGit(requested, LOCATE_ARGUMENTS);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
@@ -242,22 +242,72 @@ export interface RemoteAddress {
 
 /** The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
-  const origin = originUrl(root);
-  return origin === undefined ? soleRemote(root) : { name: "origin", url: origin };
+  return remoteAddress(root, gitText);
+}
+
+/** {@link readRemoteAddress} from Git's own answers only: throws GitDidNotAnswerError where a read gave none. */
+export function readAnsweredRemoteAddress(root: string): RemoteAddress | undefined {
+  return remoteAddress(root, answeredGitText);
+}
+
+/** A Git read's trimmed output, or undefined where Git refused it. */
+type GitTextRead = (cwd: string, args: readonly string[]) => string | undefined;
+
+function remoteAddress(root: string, read: GitTextRead): RemoteAddress | undefined {
+  const origin = originUrl(root, read);
+  return origin === undefined ? soleRemote(root, read) : { name: "origin", url: origin };
 }
 
 /** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
-function originUrl(root: string): string | undefined {
-  const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
+function originUrl(root: string, read: GitTextRead): string | undefined {
+  const origin = read(root, ["ls-remote", "--get-url", "origin"]);
   return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
 }
 
-function soleRemote(root: string): RemoteAddress | undefined {
-  const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
+function soleRemote(root: string, read: GitTextRead): RemoteAddress | undefined {
+  const names = (read(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
   if (names.length !== 1) return undefined;
   const [name] = names as [string];
-  const url = gitText(root, ["remote", "get-url", "--", name]);
+  const url = read(root, ["remote", "get-url", "--", name]);
   return url === undefined || url === "" ? undefined : { name, url };
+}
+
+/**
+ * Git started and gave no answer: it could not start, ran past its time limit or was killed, or ended with a status
+ * Git never exits with, as a process Windows could not initialise does. Git's own refusal, such as exit 128 for a
+ * folder outside Git, is an answer.
+ */
+export class GitDidNotAnswerError extends Error {
+  constructor(folder: string, result: GitResult) {
+    super(`Git gave no answer in ${folder}: ${result.error?.message ?? `exit status ${String(result.status)}`}`);
+    this.name = "GitDidNotAnswerError";
+  }
+}
+
+/** Whether Git ended on its own: an exit status of its own (0 to 255), and no error starting or stopping it. */
+function gitAnswered(result: GitResult): boolean {
+  return result.error === undefined && result.status !== null && result.status >= 0 && result.status <= 255;
+}
+
+/** `gitText` that throws GitDidNotAnswerError where Git gave no answer, where `gitText` gives undefined. */
+function answeredGitText(cwd: string, args: readonly string[]): string | undefined {
+  const result = runGit(cwd, args);
+  if (!gitAnswered(result)) throw new GitDidNotAnswerError(cwd, result);
+  return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+const LOCATE_ARGUMENTS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
+
+/**
+ * {@link repositoryIdentityLocation} for a reader with another answer to turn to: Git's own answers only. It throws
+ * GitUnavailableError where Git is not installed and GitDidNotAnswerError where Git gave no answer, both of which
+ * `repositoryIdentityLocation` reads as a folder outside Git.
+ */
+export function answeredIdentityLocation(workspace: string): RepositoryIdentityLocation {
+  const requested = resolve(workspace);
+  const result = runGit(requested, LOCATE_ARGUMENTS);
+  if (!gitAnswered(result)) throw new GitDidNotAnswerError(requested, result);
+  return result.status === 0 ? gitLocation(requested, result.stdout) : nonGitLocation(requested);
 }
 
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;

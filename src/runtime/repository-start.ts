@@ -7,6 +7,7 @@ import { repositoryFolderName, repositoryIdentityLocation } from "../engine/cata
 import {
   checkoutStatus,
   createCheckoutResolver,
+  lookupAnsweredCheckout,
   lookupCheckout,
   nestedCheckouts,
   parentCheckouts,
@@ -82,9 +83,22 @@ export function workspaceSetUp(workspace: string, databasePath = defaultRerailDa
  * (the status line, `/rerail`): undefined where the database cannot be opened or has no schema yet.
  */
 export function readOnlyStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
+  return startStateFoundBy(lookupCheckout, workspace, databasePath);
+}
+
+/**
+ * {@link readOnlyStartState} for a one-shot hook, which has a live daemon to ask where this process cannot find the
+ * checkout: it throws where Git is not installed here or gave no answer, both of which `readOnlyStartState` reads as a
+ * folder Rerail never recorded, so stopped.
+ */
+export function answeredStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState | undefined {
+  return startStateFoundBy(lookupAnsweredCheckout, workspace, databasePath);
+}
+
+function startStateFoundBy(lookup: typeof lookupCheckout, workspace: string, databasePath: string): RepositoryStartState | undefined {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
   return readOnly(databasePath, database =>
-    hasStartTables(database) ? stateOf(checkoutStatus(database, lookupCheckout(database, workspace))) : undefined);
+    hasStartTables(database) ? stateOf(checkoutStatus(database, lookup(database, workspace))) : undefined);
 }
 
 /** `read` over a read-only connection; undefined when the database cannot be opened or read. */

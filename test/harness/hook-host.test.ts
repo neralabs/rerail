@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -508,10 +510,14 @@ const hooksWhereRerailIsOff: Array<{ host: string; event: string; run: (cwd: str
   },
 ];
 
+/** What coding agents and editors set for the commands they run, Git's included; none of it moves where Git looks. */
+const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" };
+
 describe("hooks where Rerail does not run", () => {
   beforeEach(() => {
     // The hook takes CLAUDE_PROJECT_DIR over the event's folder; a test run from inside a Claude Code session has one.
     vi.stubEnv("CLAUDE_PROJECT_DIR", undefined);
+    for (const [name, value] of Object.entries(AGENT_GIT_ENVIRONMENT)) vi.stubEnv(name, value);
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -556,6 +562,57 @@ describe("hooks where Rerail does not run", () => {
   });
 });
 
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd, stdio: "ignore" });
+}
+
+/** A Git repository at `path` with one commit. */
+function gitRepository(path: string): string {
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "README.md"), "app\n");
+  git(path, "init", "-q", "-b", "main");
+  git(path, "add", ".");
+  git(path, "commit", "-q", "-m", "base");
+  return path;
+}
+
+const REMOTE = "https://example.invalid/team/app.git";
+
+/**
+ * Folders of a started repository at `<root>/app` that Rerail finds without a row of their own, each through a Git read:
+ * the top level `rev-parse` gives, the clone id in the common Git folder it names, or the remote `ls-remote` gives.
+ */
+const foldersFoundThroughGit = [
+  { shape: "a folder inside the checkout", silent: ["rev-parse"], make: (app: string) => { mkdirSync(join(app, "src")); return join(app, "src"); } },
+  {
+    shape: "a linked worktree Rerail never recorded", silent: ["rev-parse"],
+    make: (app: string, root: string) => { git(app, "worktree", "add", "-q", join(root, "worktree")); return join(root, "worktree"); },
+  },
+  {
+    shape: "a new clone of the repository", silent: ["ls-remote", "remote"],
+    make: (_app: string, root: string) => { git(gitRepository(join(root, "clone")), "remote", "add", "origin", REMOTE); return join(root, "clone"); },
+  },
+];
+
+/**
+ * The hook host over a Git that starts and gives no answer to each command named in `silent`, as spawnSync reports a Git
+ * it ended past runGit's 10 s: `runGit` gives no status and an error, `gitText` gives nothing.
+ */
+async function hookHostWithSilentGit(silent: readonly string[]): Promise<typeof import("../../src/harness/hook-host.js")> {
+  vi.resetModules();
+  vi.doMock("../../src/engine/git.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
+    const timedOut = { status: null, stdout: "", stderr: "", error: Object.assign(new Error("spawnSync git ETIMEDOUT"), { code: "ETIMEDOUT" }) };
+    const answers = (args: readonly string[]): boolean => !silent.includes(args[0] ?? "");
+    return {
+      ...actual,
+      runGit: (cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => answers(args) ? actual.runGit(cwd, args, options) : timedOut,
+      gitText: (cwd: string, args: readonly string[]) => answers(args) ? actual.gitText(cwd, args) : undefined,
+    };
+  });
+  return await import("../../src/harness/hook-host.js");
+}
+
 describe("the hook start check", () => {
   it("reads the database, and asks a live daemon only where this process cannot read it", async () => {
     const root = await temporaryDirectory({ started: false });
@@ -588,7 +645,9 @@ describe("the hook start check", () => {
     vi.resetModules();
     vi.doMock("../../src/engine/git.js", async () => {
       const git = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
-      return { ...git, gitExecutable: () => { throw new git.GitUnavailableError([]); } };
+      // As where no Git is installed: every way of reaching it fails.
+      const missing = (): never => { throw new git.GitUnavailableError([]); };
+      return { ...git, gitExecutable: missing, runGit: missing, gitText: missing };
     });
     try {
       const { hookRerailStarted } = await import("../../src/harness/hook-host.js");
@@ -597,6 +656,46 @@ describe("the hook start check", () => {
     } finally {
       vi.doUnmock("../../src/engine/git.js");
       vi.resetModules();
+      await daemon.close();
+    }
+  });
+
+  it.each(foldersFoundThroughGit)("asks a live daemon where this process's Git gives no answer, in $shape", async ({ silent, make }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = gitRepository(join(root, "app"));
+    git(app, "remote", "add", "origin", REMOTE);
+    startTestRepository(app);
+    const workspace = make(app, root);
+    // The daemon keeps each folder's Git location for its life, and reads the folder as started.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    try {
+      // Git answering, the hook finds the folder started itself.
+      expect(await hookRerailStarted("claude-code", workspace)).toBe(true);
+      expect(daemon.requests).toEqual([]);
+      const silenced = await hookHostWithSilentGit(silent);
+      expect({ started: await silenced.hookRerailStarted("claude-code", workspace), requests: daemon.requests })
+        .toEqual({ started: true, requests: ["/api/presentation"] });
+    } finally {
+      vi.doUnmock("../../src/engine/git.js");
+      vi.resetModules();
+      await daemon.close();
+    }
+  });
+
+  it("asks a live daemon where the coding agent's environment sends Git to another repository", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = gitRepository(join(root, "app"));
+    const other = gitRepository(join(root, "other"));
+    startTestRepository(app);
+    await mkdir(join(app, "src"));
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    // The agent's Git, and this process's, would read `other` for every folder.
+    vi.stubEnv("GIT_DIR", join(other, ".git"));
+    try {
+      expect({ started: await hookRerailStarted("claude-code", join(app, "src")), requests: daemon.requests })
+        .toEqual({ started: true, requests: ["/api/presentation"] });
+    } finally {
+      vi.unstubAllEnvs();
       await daemon.close();
     }
   });

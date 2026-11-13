@@ -1,7 +1,7 @@
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
-import { isRerailStarted, readOnlyStartState } from "../runtime/repository-start.js";
+import { answeredStartState, isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
@@ -27,7 +27,6 @@ import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
-import { gitExecutable } from "../engine/git.js";
 
 export * from "./hook-adapter.js";
 
@@ -58,14 +57,39 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 }
 
 /**
+ * The `GIT_*` variables that cannot change where Git finds a checkout or which remote it names: the two every Git
+ * process Rerail starts sets itself, and those that only choose how Git deals with a person (prompts, editors, pagers,
+ * SSH) or who a commit names. Coding agents and editors set several of them for the commands they run.
+ */
+const LOOKUP_NEUTRAL_GIT_VARIABLES = new Set([
+  "GIT_OPTIONAL_LOCKS", "GIT_NO_LAZY_FETCH", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+  "GIT_PAGER", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+  "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
+]);
+
+/**
+ * Whether the coding agent's environment, which Git started here inherits, holds a `GIT_*` variable that can move Git's
+ * answer away from the daemon's: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CEILING_DIRECTORIES`, a config file of its own (which
+ * holds `safe.directory` and `url.*.insteadOf`), or one a later Git adds. Names are compared in upper case, as Windows
+ * reads them.
+ */
+function gitEnvironmentMovesLookup(environment: NodeJS.ProcessEnv): boolean {
+  return Object.keys(environment).some(name => {
+    const upper = name.toUpperCase();
+    return upper.startsWith("GIT_") && !LOOKUP_NEUTRAL_GIT_VARIABLES.has(upper);
+  });
+}
+
+/**
  * The start state of the checkout `workspace` is in, as this process reads it from the database; undefined where it
- * cannot: no Git here to find the checkout with (the daemon may have one), a SQLite binding this Node does not load, a
+ * cannot be sure to read what the daemon reads: the agent's environment can move Git's lookup, Git is not installed
+ * here or gave no answer (the daemon keeps the locations its Git found), a SQLite binding this Node does not load, a
  * database it cannot open or read, or one whose creator has not committed the schema yet.
  */
 function localStartState(workspace: string): RepositoryStartState | undefined {
+  if (gitEnvironmentMovesLookup(process.env)) return undefined;
   try {
-    gitExecutable();
-    return readOnlyStartState(workspace);
+    return answeredStartState(workspace);
   } catch {
     return undefined;
   }
@@ -74,9 +98,10 @@ function localStartState(workspace: string): RepositoryStartState | undefined {
 /**
  * The check one-shot hooks make before anything else. The hook reads the start state from the database itself, so in
  * a checkout where Rerail is stopped or was never started it answers without a request to the daemon, however busy the
- * daemon is, and never starts one. Only where this process cannot read the state does a live daemon answer, from its
- * own environment and open database; without one, the database is read again and its failure is the hook's. An
- * explicit database path (tests, embedded hosts) is always read directly.
+ * daemon is, and never starts one. Only where this process cannot read the state as the daemon would does a live daemon
+ * answer, from its own environment, the Git locations it keeps and its open database; without one, the database is read
+ * again (`isRerailStarted`), and its failure is the hook's. An explicit database path (tests, embedded hosts) is always
+ * read directly.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath !== undefined) return isRerailStarted(workspace, databasePath);
