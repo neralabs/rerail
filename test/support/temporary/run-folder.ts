@@ -18,9 +18,10 @@
  * another process. A run folder with no owner file goes once it is a day old. A removal that leaves part of a run
  * folder puts its owner file back as it was. A `rerail-vitest-*` folder goes once it is a day old: test runs made each
  * test file's home and store (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the temp folder before there
- * was a run folder, and a checkout on an older commit may still be running its tests in one. A run picks those folders
- * at its start and removes them while its tests run, so its first test file waits for none of them; its end waits for
- * that removal.
+ * was a run folder, and a checkout on an older commit may still be running its tests in one. A run looks for these
+ * folders where its own folder goes and, when that is not the temp folder (`runFolderParent`), in the temp folder too,
+ * where those older runs made theirs. A run picks the folders at its start and removes them while its tests run, so its
+ * first test file waits for none of them; its end waits for that removal.
  *
  * vitest makes one folder of its own outside the run folder: when its module cache is off or cannot be made (a
  * read-only node_modules), it copies each transformed module into a folder it names in the temp folder as it starts,
@@ -121,7 +122,7 @@ export default async function setUpRunFolder(project: TestProject): Promise<() =
   const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now(), copies: moduleCopies(project) };
   await writeOwner(folder, owner);
   const stopHeartbeat = startHeartbeat(join(folder, OWNER_FILE), HEARTBEAT_MS);
-  const ended = removeEndedRuns(await endedFolders(parent, basename(folder), place));
+  const ended = removeEndedRuns(await endedFolders([parent, tmpdir()], folder, place));
   const restoreVariables = pointVariablesAt(folder);
   return async () => {
     restoreVariables();
@@ -245,14 +246,22 @@ function pointVariablesAt(folder: string): () => void {
   };
 }
 
-/** The folders in `parent` that no running test run uses, this run's own (named `own`) aside. */
-async function endedFolders(parent: string, own: string, place: string | undefined): Promise<Folder[]> {
-  const names = await readdir(parent).catch((): string[] => []);
-  const ours = names.filter(name => RUN_FOLDER.test(name) || name.startsWith(OLDER_RUNS));
-  const paths = ours.filter(name => name !== own).map(name => join(parent, name));
+/**
+ * The test runs' folders in `parents` (the run folder's parent and the temp folder, once when they are one) that no
+ * running test run uses, this run's own folder (`own`) aside.
+ */
+async function endedFolders(parents: readonly string[], own: string, place: string | undefined): Promise<Folder[]> {
+  const listed = await Promise.all([...new Set(parents)].map(async parent => await testRunFolders(parent)));
+  const paths = listed.flat().filter(path => path !== own);
   const now = Date.now();
   const folders = await Promise.all(paths.map(async path => await endedFolder(path, place, now)));
   return folders.filter(folder => folder !== undefined);
+}
+
+/** The run folders and `rerail-vitest-*` folders in `parent`; none when it cannot be read. */
+async function testRunFolders(parent: string): Promise<string[]> {
+  const names = await readdir(parent).catch((): string[] => []);
+  return names.filter(name => RUN_FOLDER.test(name) || name.startsWith(OLDER_RUNS)).map(name => join(parent, name));
 }
 
 /**

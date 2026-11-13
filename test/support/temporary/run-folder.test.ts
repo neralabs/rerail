@@ -394,6 +394,23 @@ describe("a test run's temporary folders", () => {
     expect((await readdir("/tmp")).filter(name => name.startsWith(`rv-${run.child.pid}-`))).toEqual([]);
   }, 120_000);
 
+  it.skipIf(process.platform === "win32")("of ended runs in a temp folder too long for the sockets go, though the run's own folder went to /tmp", async () => {
+    const { tests } = await scratch();
+    const temp = await tempOfLength(CRAMPED_TEMP_BYTES);
+    // Folders older runs made straight in the temp folder, and a run folder a run with room for the sockets made there.
+    const olderRunsDayOld = "rerail-vitest-home-e1f2g3";
+    const olderRunsRecent = "rerail-vitest-store-h4i5j6";
+    const endedRun = `rv-${NO_PROCESS}-k7l8m9`;
+    for (const name of [olderRunsDayOld, olderRunsRecent]) await mkdir(join(temp, name, "inside"), { recursive: true });
+    await backdate(join(temp, olderRunsDayOld), 2 * DAY_MS);
+    await ownedFolder(join(temp, endedRun), { place: HERE, agoMs: 0 });
+
+    const run = await startRun(join(tests, "leaves"), temp).ended;
+
+    expect(run.code, run.output).toBe(0);
+    expect(await readdir(temp)).toEqual([olderRunsRecent]);
+  }, 120_000);
+
   // A read-only folder stops only a user other than root.
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("are made as before there was a run folder when the short folder refuses one", async () => {
     const { tests } = await scratch();

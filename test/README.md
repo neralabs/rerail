@@ -32,6 +32,7 @@ folder adds up to 18 bytes with its separator, and a socket path holds at most 1
 macOS's per-user temp folder never leaves the room. On Linux a `TMPDIR` of 35 bytes or fewer always does, since a
 pid has at most 7 digits; a longer one does while its bytes and the pid's digits come to 42 or fewer. `/tmp` can be
 another filesystem than the temp folder (tmpfs on many Linux hosts), and a test that depends on the order a folder
-lists its files in can pass in one and fail in the other. When that folder refuses the run folder (a read-only `/tmp`
+lists its files in can pass in one and fail in the other. Such a run still removes, by the same rules, the folders of
+ended runs it finds in the temp folder. When that folder refuses the run folder (a read-only `/tmp`
 in a sandbox), the run says so on stderr and goes on without one: its tests make their folders in the temp folder, as
 before there was a run folder.
