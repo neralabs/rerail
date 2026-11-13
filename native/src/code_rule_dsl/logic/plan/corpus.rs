@@ -2694,6 +2694,25 @@ fn run_observed(
             // An input no rule reads is never bound or measured: it is not an input of what runs.
             let outputs = lowered.program.outputs.clone();
             lowered.program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+            // A measurement aid (decision 0173, open question 4): `RERAIL_RULE_ORDER=reverse|shuffle|head` reorders the
+            // prepared program's rules, to find what depends on their order.
+            if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
+                let rules = &mut lowered.program.rules;
+                match order.as_str() {
+                    "reverse" => rules.reverse(),
+                    "head" => rules.sort_by(|a, b| a.head.rel.as_str().cmp(b.head.rel.as_str())),
+                    "shuffle" => {
+                        let mut x: u64 = 0x0173;
+                        for i in (1..rules.len()).rev() {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            rules.swap(i, (x % (i as u64 + 1)) as usize);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             drop(_step);
@@ -3012,6 +3031,8 @@ fn run_observed(
             (part(p), once.into_iter().collect())
         })
     };
+    crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.local, &local.program);
+    crate::code_rule_dsl::logic::version_trace::note("run.cross", &shared_split.cross, &cross.program);
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
@@ -9192,12 +9213,14 @@ fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, u
             stored.program.qualifiers.entry(rel.to_string()).or_default().insert("no_inline".to_owned());
         }
     }
-    if supports::counting() {
+    let out = if supports::counting() {
         let (counted, through, kept) = supports::supports(&stored);
         (counted, Some((through, kept)))
     } else {
         (stored, None)
-    }
+    };
+    crate::code_rule_dsl::logic::version_trace::note("session.maintained", &cross.program, &out.0.program);
+    out
 }
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the

@@ -103,6 +103,7 @@ pub mod profile {
 }
 pub mod program_facts;
 pub mod program_text;
+pub mod version_trace;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;

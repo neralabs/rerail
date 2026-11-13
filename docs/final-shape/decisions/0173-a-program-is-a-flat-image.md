@@ -305,11 +305,11 @@ variants still read them. It cannot copy the base, because that costs the base. 
 
 **A view** is a subset of a base: ranges of its rules, and the relations they need. A view has no rules of its own.
 
-- The base is laid out by (part, stratum), so the views the engine makes are a few ranges each:
-  - the file-local and cross parts (E1);
-  - one stratum's form (E5);
-  - the cut that keeps only the dirty strata (E3).
-- A view costs its range list, where `clone` then `retain` costs the program today.
+- The views the engine makes are the file-local and cross parts (E1), one stratum's form (E5), and the cut that
+  keeps only the dirty strata (E3), wherever they add nothing.
+- A view costs its range list, where `clone` then `retain` costs the program today. A base needs no particular
+  layout for that: the simulation found the same cost in source order, by head relation, and in an oracle's order
+  (question 4).
 
 **An overlay** is a base (or a view) and a small delta. The delta has its own regions, in the same format:
 
@@ -453,24 +453,136 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
    0170's atoms, which other worktrees are changing, so it is planned with them.
 5. **The tree goes.** `front::Program` remains only as a debug printer's view, or not at all.
 
-## Open questions
+## The open questions, simulated
 
-1. **Extents or reserved space.** §3 grows a region by doubling extents, at most 32 of them, so a region is not
-   always one array. The other way is to reserve each region's whole virtual range in a sparse file at creation.
-   Then a region is always one array, but its capacity is fixed when the image is made. Extents are proposed. Is a
-   bounded extent table on the device acceptable?
-2. **Where an image's bytes live.** §6 keeps the bytes in a file beside the database and commits the header through
-   SQLite. A blob inside SQLite is not mappable (it spans overflow pages). Is a file beside the database, under the
-   store's reclamation, acceptable?
-3. **Tombstones as generations.** §6 spends a `u32` a row, so that old readers need no copy. A bitmap is 32 times
-   smaller, but readers would have to stop at each commit. Since §7, in-place tombstones are only for images with one
-   line of history; shared images are removed from by overlays. Is a word a row still worth it there?
-4. **Rule order.** §7's views need the base laid out by (part, stratum), not in source order. Does anything depend
-   on a program's rule order (plan determinism, the printer, `plan_key`)? The survey did not look for that; it
-   should be checked before stage 2.
-5. **How deep overlays stack, and when they fold.** §7 proposes a few deep, folded at half the base. The real
-   depths are a prepared program, a run's edits, a session's cut, and a retry's candidate, so four. Is folding at
-   half right, or should a run's overlay never fold, since it is dropped with the run?
+Every making of one program from another in a dl1 run was traced, with both programs (`RERAIL_VERSION_TRACE=<dir>`,
+`logic/version_trace.rs`, hooked at the survey's sites E1 to E6). The trace was then replayed through each form a
+program could take, by `crates/logic/examples/versions.rs`. Each form is given the same delta for each making (which
+of `from`'s items are kept, and which of `to`'s are new), and the replay measures three things:
+
+- **make:** making `to` from `from`;
+- **read:** every node, then each head relation's rules by its index;
+- **digest:** the program's digest.
+
+The forms:
+
+| form | what it is |
+|---|---|
+| tree | today's `front::Program`: `clone`, then `retain` and `push`, as each traced site does |
+| flat | one flat image a program: copy it, tombstone, append, rebuild its index |
+| pool | a run's rule pool, each program a list of rule ids: copy the list, edit it, rebuild its index |
+| v | this record (§7): views, overlays and derivations over the pool, with layouts (source order, by head relation, an oracle that knows every later view), fold policies, and three kinds of removed set |
+
+The trace has 4,593 makings on a cold run (4,458 distinct programs) and 426 on a warm run. Items are rules and rows
+of a program's other parts (declarations, facts, inputs, outputs). Averages per making:
+
+| site | cold makings | `from` items | removed | added |
+|---|---|---|---|---|
+| `plan.form` (E5) | 1,996 | 1,102 | 1,095 | 0 |
+| `session.cut` (E3) | 2,049 | 21 | 0 | 0 |
+| `split.cross`, `split.local` (E1) | 99 each | 672 | 181, 53 | 21 |
+| `run.cross`, `run.local` (E2) | 50 each | 511, 598 | 5, 0 | 2, 0 |
+| `plan.normalize` (E6) | 124 | 517 | 1 | 1 |
+| `session.maintained` (E3) | 73 | 525 | 29 | 89 |
+| `plan.demand`, `plan.inline` (E6) | 43, 10 | 676, 1,068 | 33, 9 | 92, 7 |
+
+In 2,537 of the 4,593 cold makings, and 304 of the 426 warm ones, `from` is made from again later. So changing
+`from` in place would be wrong for most makings, which the survey said and the trace confirms. Another 2,211 cold
+makings change nothing at all.
+
+Release-equivalent build (`--profile profiling`), whole replay, in millions of instructions:
+
+| form | cold: make | read | warm: make | read | one-rule edit of the prepared program |
+|---|---|---|---|---|---|
+| tree (today) | 953.7 (279 MB allocated, 2.26 M allocations) | 142.7 | 77.5 | 67.0 | 0.24 |
+| flat, copy then edit | 201.4 (404 MB) | 53.1 | 49.4 | 20.5 | 0.41 (1.0 MB) |
+| pool, copy then edit | 95.6 (26 MB) | 38.0 | 40.1 | 20.2 | 0.65 (5.2 MB) |
+| v: fold at ½, sorted removed set | 75.5 (13 MB, 33 k allocations) | 18.3 | 26.9 | 9.9 | 0.014 |
+| v: never fold | 59.5 | 331.3 | 14.5 | 42.6 | |
+| v: fold at ¼ | 77.3 | 17.6 | 28.0 | 9.3 | |
+| v: fold at ½, at most 2 deep | 77.9 | 16.7 | 28.0 | 9.1 | |
+
+For scale, dl1's process is 50.7 G instructions cold and 23.3 G warm. Today's tree is about 2.2% of a cold run and
+0.6% of a warm one; the proposal is 0.2% of either. Of the tree's cold making, 791 M is `plan.form`: it clones a
+1,102-item program 1,996 times to keep 6 items each. A view or overlay makes the same thing in 19 M.
+
+Digests: today's `Debug`-text digest, taken once per making, costs 1,589 M cold. That overstates today's real cost,
+because the real digests are taken fewer times (`memo::program_digest` once a run, `retain::key` up to three times,
+`choices::key` once per `plan::run`, so 124 times cold). Each one is still a walk of the whole program. The composed
+digest (§7) costs 0.1 to 0.4 M for the whole replay.
+
+So:
+
+1. **Copy then edit loses, even in a flat form.** A flat image copied per making costs less than the tree
+   (201 M against 954 M), but it allocates more (404 MB, against 279 MB), because a copy of flat columns copies
+   everything. The tree, after decision 0172, shares its lists, so its copy is mostly counts. The flat form's gain
+   comes from views and overlays, not from flatness alone.
+
+2. **Folding (question 5): fold at half, at any depth.**
+   - Never folding makes the cheapest versions (59.5 M) and the dearest reads (331 M). `plan.form`'s stacks reach
+     reads of 265 M alone.
+   - Folding at a quarter, at a half, or by a cap of two deep all land within 5% of each other.
+   - At half: 75.5 M to make, 18.3 M to read.
+   - A depth cap adds folds (the session cut doubles, 2.0 M to 6.0 M warm) and buys no reads.
+
+   So: fold when the delta reaches half its parent, with no depth cap. A run's overlays are folded the same way.
+   Whether to fold is a question of reads, not of lifetime.
+
+3. **Removed sets (question 3).** For an overlay's removed set:
+   - sorted `u32`s: 75.5 M to make;
+   - a hash set: 94.0 M;
+   - a bitmap over the pool's ids: 57.4 M.
+
+   The bitmap is the cheapest at dl1's size, but its size is the pool's, not the edit's: about 4 KB a making here,
+   zeroed each time, and 64 KB at sixteen times the pool. The sorted set's cost is its edit's, so the sorted set is
+   decided.
+
+   In-place tombstones (a `u32` generation a row) remain only for images with one line of history. The trace has
+   2,056 such makings, and each costs below the measurement's resolution.
+
+4. **Rule order (question 4): nothing depends on it.**
+   - **Findings.** `RERAIL_RULE_ORDER=reverse|shuffle|head` reorders the prepared program's rules before the split. dl1
+     gave the same findings under all three, cold, on fresh stores. Instructions were 50.7, 51.7 and 51.5 G, against
+     50.7 G as written (load 70 to 97).
+   - **Code.** The positional uses of rules in the code number them as ids (`numbers`, `rule_no`, `plan_key`'s
+     inputs). None chooses by position.
+   - **Cost.** Layout makes no difference: source order, by head and the oracle are within 2% on every site. Views
+     are chosen for 124 of 426 warm makings; the rest add rows (exports, inputs), so they are overlays whatever the
+     order.
+
+   So §7's requirement that the base be laid out by (part, stratum) is dropped. A base keeps its rules in any order.
+
+5. **Extents (question 1): extents.** The pool's growth over a cold run is 266 k nodes in 259 appends:
+
+   | | append | allocated | scan | 1 M random reads |
+   |---|---|---|---|---|
+   | one array, grown by realloc | 2.35 M | 12.6 MB (it moves) | 0.37 M | 8.0 M |
+   | doubling extents | 0.69 M | 6.2 MB (7 extents, never moved) | 0.37 M | 22.0 M |
+   | reserved in advance | 2.02 M | 3.2 MB | | |
+
+   Extents append for less than either, never move, and scan the same. Random access costs 2.75 times as much:
+   about 14 instructions a read, to find the extent. So:
+   - a reader walks by extent;
+   - a built, compacted or folded image is one extent a region, so its index lookups are plain array reads;
+   - reserving in advance would need the final size, which no append knows.
+
+6. **Where the bytes live (question 2): a file beside the database.** Opening an image and reading 64 nodes:
+
+   | image | SQLite blob (read by copying) | mapped file |
+   |---|---|---|
+   | the largest program, 0.3 MB | 0.47–0.52 M, 0.3 MB copied | 0.27–0.29 M |
+   | the run's pool, 3.2 MB | 4.8 M, 3.2 MB copied | 0.6 M |
+   | sixteen pools, 51 MB | 75.5–76.4 M, 51 MB copied | 0.9 M |
+
+   A blob costs its whole size at every open. A mapping costs the pages read. The header stays in SQLite (§6).
+
+### Left open
+
+- The replay reads each version once. A real run reads some versions many times (the planner reads a form for each
+  plan it prices), which favours the forms with cheaper reads (v, folded) further. The simulation does not count
+  that.
+- The tree's added rules are rebuilt with new lists, as a pass makes them. The cost of a pass's own work (deciding
+  what to keep, computing new rules) is the same for every form and is not measured.
 
 ## Prior work consulted
 

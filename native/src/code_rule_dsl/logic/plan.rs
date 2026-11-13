@@ -8262,6 +8262,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // A relation of rules and stated facts: its facts are a relation of facts alone, read by one rule, so the engine
     // holds them as it holds every relation, and no table is loaded with them in the run's waves (decision 0104).
     let stated = if inputs.atoms.is_some() && !inputs.native.is_empty() { stated_apart(&mut normalized) } else { Vec::new() };
+    super::version_trace::note("plan.normalize", prog, &normalized);
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
         let mut domains=l.domains.clone();
@@ -8378,6 +8379,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             drop(chose);
             let inlined = match choice {
                 Some((p, done)) => {
+                    super::version_trace::note("plan.inline", prog, &p);
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
                     if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
@@ -8403,6 +8405,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             drop(splitting);
             let split = match split_neg {
                 Some((p, demanded)) => {
+                    super::version_trace::note("plan.demand", inlined.as_ref().unwrap_or(prog), &p);
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
                     });
@@ -9013,6 +9016,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     reached += 1;
                     let _span = super::profile::span(|| format!("stratum {} placed", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
                     let (form, adopted) = m.form(prog, scc, &rules, &moved, &mut run.model)?;
+                    super::version_trace::note("plan.form", prog, &form);
                     let form: &Program = forms.add(form);
                     run.native_rels.extend(adopted);
                     Arc::make_mut(&mut run.inputs).extend(form.inputs.iter().map(String::as_str));
