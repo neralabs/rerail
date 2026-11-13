@@ -412,15 +412,18 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   void disposal.then(() => state.pending.delete(disposal));
 }
 
-/** How long a request that has not all arrived may send nothing while the service closes before it is cut off. */
+/**
+ * How far apart the close's looks for stalled requests are: a request that has not all arrived is cut off once it has
+ * sent nothing from one look to the next, so after one to two of these with nothing sent.
+ */
 const STALLED_REQUEST_MS = 1_000;
 
 /**
  * While the service closes, cuts off each connection whose request has not all arrived (or carries no request yet) once
- * it has sent nothing for `STALLED_REQUEST_MS`. A hook writes its whole request at once, so one still arriving has
- * stalled, and waiting for it would hold the close with no limit: `server.close()` stops the check that enforces the
- * server's request and headers timeouts. A request whose body has arrived is never cut: its event runs and its hook
- * gets the whole answer. Idle connections are left to `server.close()`, which
+ * two looks `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
+ * so one still arriving has stalled, and waiting for it would hold the close with no limit: `server.close()` stops the
+ * check that enforces the server's request and headers timeouts. A request whose body has arrived is never cut: its
+ * event runs and its hook gets the whole answer. Idle connections are left to `server.close()`, which
  * ends them once as the close begins: Node counts a connection whose answer is ended but still being written as idle,
  * so ending idle ones at each look would cut an answer larger than the socket's buffer. Each look runs after the event
  * loop has read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came
