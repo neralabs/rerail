@@ -42,7 +42,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import { type ReportedPreimage, reportedText } from "./reported-preimage.js";
+import { type ReportedPreimage, reportedText, textBeforeWrite } from "./reported-preimage.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -357,14 +357,31 @@ const UNREBUILT_PREIMAGE = "The tool's result no longer fits the file, so what i
 /**
  * The preimage a tool edit of `source` is read against: the call's own capture, or, where that capture already holds
  * what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file held.
- * Where the result says something of it that no longer fits the file and gives no text (`reportedText`), what the file
- * held is unknown: the edit is then read as one whose earlier text could not be read, so it is checked over its whole
- * file and says why, rather than read as no change.
+ * That capture is the file as it is now, or one the file changed from since (`changedSinceWrite`).
  */
 function editPreimage(source: Source, captured: Preimage | undefined, reported: ReportedPreimage | undefined): Preimage | undefined {
-  if (reported === undefined || captured === undefined || !unchangedSince(source, captured)) return captured;
+  if (reported === undefined || captured === undefined) return captured;
+  return unchangedSince(source, captured) ? unchangedSinceWrite(source, reported) : changedSinceWrite(source, captured, reported);
+}
+/**
+ * What the file held before a tool whose late call captured the file as it is now, as the tool's result says. Where
+ * the result says something of it that no longer fits the file and gives no text (`reportedText`), what the file held
+ * is unknown: the edit is then read as one whose earlier text could not be read, so it is checked over its whole file
+ * and says why, rather than read as no change.
+ */
+function unchangedSinceWrite(source: Source, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
   return preimage === undefined ? { readError: UNREBUILT_PREIMAGE } : keptPreimage(source.path, preimage);
+}
+/**
+ * The preimage of an edit whose file changed since its call's capture: that capture, as for every call that came on
+ * time, unless the result's line diff fits it, which only a capture taken after the tool wrote does (`textBeforeWrite`).
+ * The edit is then read against the text the diff rebuilds from it, with whatever changed the file since (a formatter,
+ * the next edit), as an edit whose call came on time is.
+ */
+function changedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
+  const before = captured.text === undefined ? undefined : textBeforeWrite(reported, captured.text, source.text);
+  return before === undefined ? captured : keptPreimage(source.path, before);
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;

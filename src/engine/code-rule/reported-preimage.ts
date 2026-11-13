@@ -95,6 +95,20 @@ export function reportedText(reported: ReportedPreimage, after: string | undefin
   return text === undefined ? undefined : { text };
 }
 
+/**
+ * What the file held before the tool as `reported` says, where the call's own capture, `captured`, already holds what
+ * the tool wrote (its call reached Rerail only after the tool ran) and the file changed again since, now `after` (a
+ * formatter, the next edit): the text the line diff rebuilds from `captured`. Undefined without a line diff, where
+ * `captured` does not hold the diff's lines where the diff places them, as no capture taken before the tool ran does,
+ * and where the diff also rebuilds `captured` from `after`, as an edit whose call came on time leaves it, whatever lines
+ * it removed.
+ */
+export function textBeforeWrite(reported: ReportedPreimage, captured: string, after: string | undefined): { readonly text: string } | undefined {
+  if (reported.kind !== "diff") return undefined;
+  const text = unpatched(captured, reported.hunks);
+  return text === undefined || rebuiltText(reported, after) === captured ? undefined : { text };
+}
+
 /** The text a line diff rebuilds from `after`; undefined without a line diff, or where `after` does not fit it. */
 function rebuiltText(reported: ReportedEdit, after: string | undefined): string | undefined {
   return reported.kind === "diff" && after !== undefined ? unpatched(after, reported.hunks) : undefined;
