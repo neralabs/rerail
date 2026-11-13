@@ -1,6 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, win32 } from "node:path";
 import Database from "better-sqlite3";
@@ -908,4 +910,56 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(() => actual.currentPathKey(join(root, "a"), "win32")).toThrow(expect.objectContaining({ code: "ELOOP" }));
     expect(actual.currentPathKey(join(root, "gone"), "win32")).toBe(join(root, "gone"));
   });
+
+  // An open that found the file new before its write lock read nothing for the step. When an earlier build created and
+  // wrote the file before that lock, the step ran with nothing looked up and was recorded as run, its keys never read.
+  it("leave every key waiting where an earlier build created the file between the open's first read and its lock", async () => {
+    const { folder, databasePath: template } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, template, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    const databasePath = join(dirname(template), "created.sqlite");
+    const created = new Database(databasePath);
+    created.pragma("journal_mode = WAL");
+    created.close();
+    const script = join(dirname(template), "earlier-build.cjs");
+    writeFileSync(script, EARLIER_BUILD_CREATES);
+    const earlier = spawn(process.execPath, [script, createRequire(import.meta.url).resolve("better-sqlite3"), databasePath, template], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const exited = once(earlier, "exit");
+    let said = "";
+    for await (const chunk of earlier.stdout) {
+      said += String(chunk);
+      if (said.includes("locked")) break;
+    }
+    openRerailDatabase(databasePath).$client.close();
+    expect((await exited)[0]).toBe(0);
+
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+    expect(workspaceStartState(folder, databasePath)).toBe("started");
+    expect(heldFor(databasePath, folder)).toEqual(HELD);
+  }, 60_000);
 });
+
+/**
+ * An earlier build creating the database: under the write lock it writes the tables and rows of a template and its
+ * stamp, says "locked", and commits two seconds later.
+ */
+const EARLIER_BUILD_CREATES = `
+const [sqlite, target, template] = process.argv.slice(2);
+const Database = require(sqlite);
+const database = new Database(target);
+database.pragma("journal_mode = WAL");
+database.prepare("ATTACH DATABASE ? AS earlier").run(template);
+const tables = database.prepare("SELECT name, sql FROM earlier.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+const version = database.pragma("earlier.user_version", { simple: true });
+database.exec("BEGIN IMMEDIATE");
+for (const table of tables) database.exec(table.sql);
+for (const table of tables) database.exec('INSERT INTO main."' + table.name + '" SELECT * FROM earlier."' + table.name + '"');
+database.pragma("user_version = " + version);
+process.stdout.write("locked\\n");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+database.exec("COMMIT");
+database.close();
+`;

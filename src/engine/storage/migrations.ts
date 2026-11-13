@@ -96,6 +96,9 @@ function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string 
   return withDriveBudget(stored => currentPathKey(stored), process.platform, readableRoots(open?.workspace));
 }
 
+/** No key looked up before the lock: under it every key the file holds then waits (`respellPathKeys`). */
+const NOTHING_LOOKED_UP: PathKeyLookups = { keys: new Map(), historyThrough: new Map() };
+
 /**
  * On Windows this build keys a checkout, its settings, its audit settings and audit, and its presentation
  * preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
@@ -112,13 +115,14 @@ function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string 
  * the lock by a later writable open that reads its drive (`later`): one made from a folder there, which every reader of
  * a folder's records makes before it reads them (`openRerailDatabaseIn`). A folder that is gone keeps
  * its spelling. On macOS and Linux keys keep their spelling and the step reads nothing. No floor: an older build
- * ignores the new table.
+ * ignores the new table. An open that read nothing before the lock (the file was new then, and an older build created
+ * and wrote it before the lock) records every key as waiting, for a later open to look up.
  */
 const PATH_KEYS_AS_STORED: Migration<PathKeyLookups | undefined> = {
   id: "path-keys-as-stored",
   read: (database, open) => (pathKeysCanMove() ? lookUpPathKeys(database, pathKeyOf(open)) : undefined),
   up(database, lookups) {
-    if (lookups !== undefined) respellPathKeys(database, lookups);
+    if (pathKeysCanMove()) respellPathKeys(database, lookups ?? NOTHING_LOOKED_UP);
   },
   readLater: (database, open) => (pathKeysCanMove() ? lookUpWaitingKeys(database, pathKeyOf(open)) : undefined),
   later(database, lookups) {
