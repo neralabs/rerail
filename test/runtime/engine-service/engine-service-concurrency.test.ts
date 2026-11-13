@@ -4,7 +4,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { decodeRerailEventResult } from "../../../src/runtime/event-protocol.js";
@@ -170,6 +170,58 @@ describe("engine service session concurrency", () => {
       await removeFolder(root);
     }
   }, 20_000);
+
+  it("cuts off a connection that has sent no request when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      // A hook that connected and then wrote nothing.
+      const silent = connect(held.engine.socketPath);
+      silent.on("error", () => undefined);
+      const cutOff = new Promise<string>(done => silent.once("close", () => done("cut off")));
+      await once(silent, "connect");
+      // The server takes the connection in before the close begins.
+      await sleep(250);
+      const closing = held.service.close();
+      try {
+        expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
+      } finally {
+        silent.destroy();
+        held.release();
+        await closing;
+      }
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
+  it("lets an answer larger than a socket holds finish arriving when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      // A hook waiting behind the end whose answer repeats its event's id, and so is 600 KB: more than a Windows named
+      // pipe (64 KB) or a Unix socket holds, so it is still being written while the hook reads none of it.
+      const eventId = `restart-${"x".repeat(600_000)}`;
+      const big = await handHook(held.engine.socketPath, JSON.stringify({ event: { kind: "session-start", eventId, session: busySession(root) } }));
+      // The server takes the request in before the close begins.
+      await sleep(250);
+      const closing = held.service.close();
+      held.release();
+      // Once the answer begins to arrive the server has ended it; the close looks for stalled requests at least once
+      // more before the hook reads the rest.
+      await vi.waitFor(() => expect(big.waiting()).toBeGreaterThan(0), { timeout: 10_000, interval: 20 });
+      await sleep(1_200);
+      const answer = wholeAnswer(await big.answer(), eventId);
+      await closing;
+      expect({ end: await end, big: answer }).toEqual({ end: "answered", big: "whole" });
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 30_000);
 
   it("keeps a request whose rest came in time while its event loop was busy past a look for stalled requests", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
