@@ -193,6 +193,11 @@ pub fn decode(blocks: &[Vec<u8>], dict: &[u8], refs: Refs) -> Result<GpuRun, Str
     Ok(GpuRun { threads: tasks.len(), bytes_out: out_len, gpu_seconds: secs, correct: got == &expected[..] })
 }
 
+/// A completed command buffer's GPU time, in seconds.
+pub fn command_seconds(command: &metal::CommandBufferRef) -> f64 {
+    gpu_seconds(command)
+}
+
 fn gpu_seconds(command: &metal::CommandBufferRef) -> f64 {
     unsafe extern "C" {
         fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;

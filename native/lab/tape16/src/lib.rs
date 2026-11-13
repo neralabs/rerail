@@ -31,4 +31,6 @@ pub mod tree;
 pub mod v15;
 #[cfg(target_os = "macos")]
 pub mod gpu;
+#[cfg(target_os = "macos")]
+pub mod scan;
 

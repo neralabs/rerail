@@ -6,6 +6,7 @@
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
+//! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
@@ -371,6 +372,70 @@ fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut) {
     }
 }
 
+/// T5 on the GPU: positions, depth, parents and ends derived from events and placements, checked against the
+/// CPU's decode, per block size.
+#[cfg(target_os = "macos")]
+fn cmd_scan(path: &str) {
+    use rerail_tape_lab::scan;
+    let corpus = load(path);
+    let test: Vec<&solution::Prepared> = corpus.files.iter().filter(|p| p.test).collect();
+    // Trees are decoded one at a time (all at once would not fit the lab's 1 GB).
+    let nodes: usize = test.iter().map(|p| p.nodes).sum();
+    let max_depth = test.iter().map(|p| p.tree(&corpus).depth().into_iter().max().unwrap_or(0)).max().unwrap_or(0) as usize + 1;
+    // The CPU's form: one stack pass per file (`events::decode`).
+    let (_, cpu) = rerail_tape_lab::measure::cost(|| {
+        for p in &test {
+            std::hint::black_box(p.tree(&corpus));
+        }
+    });
+    println!("{path}: {} test files, {nodes} nodes, depth up to {max_depth}; the CPU's decode (one thread) {:.1} ms\n", test.len(), cpu.nanos as f64 / 1e6);
+    println!("| blocks | count | unresolved closes | pass A µs | pass B µs | pass C µs | closes µs | total µs | ns/node | correct |");
+    println!("|---|---|---|---|---|---|---|---|---|---|");
+    for cut in [Cut::Whole, Cut::Target(4096), Cut::Target(1024), Cut::Target(256), Cut::Target(64)] {
+        let files: Vec<scan::FileBlocks> = test
+            .iter()
+            .map(|p| {
+                let (bs, places) = blocks::split(&p.events, cut);
+                scan::FileBlocks { events: &p.events, places, counts: bs.iter().map(|b| (b.opens.len() as u32, b.trails.len() as u32)).collect() }
+            })
+            .collect();
+        let r = metal::objc::rc::autoreleasepool(|| scan::derive(&files, max_depth));
+        match r {
+            Ok(d) => {
+                let mut ok = true;
+                let mut base = 0usize;
+                for p in &test {
+                    let t = &p.tree(&corpus);
+                    let depth = t.depth();
+                    for i in 0..t.len() {
+                        let g = base + i;
+                        let parent = if t.parent[i] == u32::MAX { u32::MAX } else { t.parent[i] + base as u32 };
+                        if d.start[g] != t.nodes[i].start || d.end[g] != t.nodes[i].end || d.depth[g] != depth[i] || d.parent[g] != parent {
+                            ok = false;
+                        }
+                    }
+                    base += t.len();
+                }
+                let total: f64 = d.seconds.iter().sum();
+                println!(
+                    "| {} | {} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.2} | {} |",
+                    cut.name(),
+                    d.blocks,
+                    d.unresolved_closes,
+                    d.seconds[0] * 1e6,
+                    d.seconds[1] * 1e6,
+                    d.seconds[2] * 1e6,
+                    d.seconds[3] * 1e6,
+                    total * 1e6,
+                    total * 1e9 / nodes as f64,
+                    ok
+                );
+            }
+            Err(e) => println!("| {} | error: {e} |", cut.name()),
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -387,6 +452,8 @@ fn main() {
         "edits" => cmd_edits(path),
         "keys" => cmd_keys(path),
         "dicts" => cmd_dicts(path),
+        #[cfg(target_os = "macos")]
+        "scan" => cmd_scan(path),
         #[cfg(target_os = "macos")]
         "gpu" => cmd_gpu(path, opt("--dict", 64), opt("--k", 64), match opt("--cut", 0) {
             0 => Cut::Whole,
