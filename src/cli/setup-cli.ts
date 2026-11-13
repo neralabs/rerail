@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { removeWithRetry, renameWithRetry } from "../engine/file-replace.js";
 import { homedir } from "node:os";
@@ -44,7 +44,8 @@ import {
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
-import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
+import { DEVICE_SECRETS_DIR, deviceSecretStore } from "../activation/device-keystore.js";
+import { isDefaultStorageRoot, resolveSessionPaths } from "../runtime/session-paths.js";
 import { CLAUDE_STATUS_DATABASE_FILE } from "../setup/claude-status-store.js";
 import {
   detectHarnesses,
@@ -276,73 +277,121 @@ function sessionLedger(checkout: string): string | undefined {
  * databases, every `~/.rerail-clean-*` backup, and the content store `RERAIL_CONTENT_STORE_PATH` names. The machine-wide
  * cache folder goes with the installation (`removeInstallation`), unless another daemon holds it.
  */
-function planDataDeletion(
-  home: string,
-  machine: DaemonMachine | undefined,
-): { remove: Array<{ path: string; what: string; ledger?: true }>; notes: string[] } {
-  const remove: Array<{ path: string; what: string; ledger?: true }> = [];
-  const notes: string[] = [];
-  const database = join(home, RERAIL_DATABASE_FILE);
+function planDataDeletion(home: string, machine: DaemonMachine | undefined): DataDeletion {
+  const ledgers = recordedLedgers(join(home, RERAIL_DATABASE_FILE));
+  const store = contentStoreDeletion(machine);
+  const backups = earlierBackups().map(path => ({ path, what: "a backup of rules and history" }));
+  const databases = (existsSync(home) ? readdirSync(home).filter(name => HOME_DATABASE.test(name)).sort() : []).map(name => ({
+    path: join(home, name),
+    what: name.startsWith("harness.") ? "the coding agents' recovery records" : "rules and every repository's history",
+  }));
+  return { remove: [...ledgers.remove, ...store.remove, ...backups, ...databases], notes: [...ledgers.notes, ...store.notes] };
+}
+
+/** What `--delete-data` deletes, each with what it is, and what it found but leaves, each said as a sentence. */
+interface DataDeletion {
+  remove: Array<{ path: string; what: string; ledger?: true }>;
+  notes: string[];
+}
+
+/** The session ledgers of every checkout the database at `database` records. */
+function recordedLedgers(database: string): DataDeletion {
   const { checkouts, problem } = recordedCheckouts(database);
-  if (problem !== undefined) notes.push(`Could not read the checkouts recorded in ${database} (${problem}); their .rerail/sessions folders stay.`);
-  for (const checkout of checkouts) {
+  const notes = problem === undefined ? [] : [`Could not read the checkouts recorded in ${database} (${problem}); their .rerail/sessions folders stay.`];
+  const remove = checkouts.flatMap(checkout => {
     const ledger = sessionLedger(checkout);
-    if (ledger !== undefined) remove.push({ path: ledger, what: `the session ledgers of ${checkout}`, ledger: true });
-  }
-  const store = contentStoreOverride();
-  const fromMainCache = store === undefined ? "" : relative(mainContentStoreDirectory(), store);
-  // A store inside the machine-wide cache folder goes with that folder in `removeInstallation`, under its guard.
-  if (store !== undefined && (fromMainCache === ".." || fromMainCache.startsWith(`..${sep}`) || isAbsolute(fromMainCache))) {
-    const holder = cacheHolder(dirname(store), machine);
-    const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
-    if (holder !== undefined && files.length > 0) notes.push(`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it.`);
-    else for (const path of files) remove.push({ path, what: "the content cache" });
-  }
-  let userFiles: string[];
-  try {
-    userFiles = readdirSync(codingAgentHome());
-  } catch {
-    userFiles = [];
-  }
-  for (const name of userFiles.filter(entry => entry.startsWith(".rerail-clean-")).sort()) {
-    remove.push({ path: join(codingAgentHome(), name), what: "a backup of rules and history" });
-  }
-  const databases = existsSync(home) ? readdirSync(home).filter(name => HOME_DATABASE.test(name)).sort() : [];
-  for (const name of databases) {
-    remove.push({ path: join(home, name), what: name.startsWith("harness.") ? "the coding agents' recovery records" : "rules and every repository's history" });
-  }
+    return ledger === undefined ? [] : [{ path: ledger, what: `the session ledgers of ${checkout}`, ledger: true as const }];
+  });
   return { remove, notes };
+}
+
+/** Whether `path` is the machine-wide cache folder or inside it. */
+function inMainCache(path: string): boolean {
+  const fromMainCache = relative(mainContentStoreDirectory(), path);
+  return fromMainCache !== ".." && !fromMainCache.startsWith(`..${sep}`) && !isAbsolute(fromMainCache);
+}
+
+/**
+ * The content store `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, unless another daemon holds it. A store inside
+ * the machine-wide cache folder goes with that folder in `removeInstallation`, under its guard.
+ */
+function contentStoreDeletion(machine: DaemonMachine | undefined): DataDeletion {
+  const store = contentStoreOverride();
+  if (store === undefined || inMainCache(store)) return { remove: [], notes: [] };
+  const holder = cacheHolder(dirname(store), machine);
+  const files = ["", "-wal", "-shm", "-journal"].map(suffix => `${store}${suffix}`).filter(pathExists);
+  if (holder !== undefined && files.length > 0) {
+    return { remove: [], notes: [`Kept ${store} (the content cache): another Rerail daemon, pid ${holder}, still uses it. ${heldCacheCleanup(store)}`] };
+  }
+  return { remove: files.map(path => ({ path, what: "the content cache" })), notes: [] };
+}
+
+/** Every `~/.rerail-clean-*` backup an uninstall made. */
+function earlierBackups(): string[] {
+  try {
+    return readdirSync(codingAgentHome()).filter(entry => entry.startsWith(".rerail-clean-")).sort().map(name => join(codingAgentHome(), name));
+  } catch {
+    return [];
+  }
+}
+
+/** The sentence after a cache another Rerail home's daemon holds is kept: the command that deletes it. */
+function heldCacheCleanup(path: string): string {
+  return `Delete it once no Rerail uses it: ${cleanupCommand(path, false)}`;
 }
 
 /**
  * `install --remove --delete-data`: stop the daemon, then delete for good what the uninstall otherwise backs up, with
  * the session ledgers in recorded checkouts and every earlier backup (`planDataDeletion`). The checkouts are read
  * after the stop and before the database goes. A checkout's `.rerail` goes too once the ledgers were all it held.
- * Links are removed, never followed (`fs.rm` does not follow them inside a folder either).
+ * Links are removed, never followed (`fs.rm` does not follow them inside a folder either). Returns every path it set
+ * out to delete, so the steps after it neither name nor keep one again.
  */
-async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<void> {
+async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
   else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
-  const { remove, notes } = planDataDeletion(home, machine);
+  const deletion = planDataDeletion(home, machine);
   if (dryRun) {
-    for (const { path, what } of remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
-    for (const note of notes) process.stdout.write(`${note}\n`);
-    return;
+    for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
+    for (const note of deletion.notes) process.stdout.write(`${note}\n`);
+  } else {
+    await applyDataDeletion(deletion);
   }
-  const failed: Array<{ path: string; reason: string }> = [];
+  return new Set(deletion.remove.map(({ path }) => path));
+}
+
+async function applyDataDeletion({ remove, notes }: DataDeletion): Promise<void> {
+  const failed: FailedRemoval[] = [];
   for (const { path, what, ledger } of remove) {
-    try {
-      await removeWithRetry(path);
-      process.stdout.write(`Deleted ${path} (${what}).\n`);
-    } catch (error) {
-      failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
-      continue;
-    }
+    if (!await deleteNaming(path, what, failed)) continue;
     // Only an empty `.rerail` goes: anything else in it is not the ledgers.
     if (ledger) await rmdir(dirname(path)).catch(() => undefined);
   }
   if (remove.length === 0) process.stdout.write("No rules, history or backups to delete.\n");
   for (const note of notes) process.stdout.write(`${note}\n`);
+  printFailedRemovals(failed);
+}
+
+/** A path the uninstall could not remove or delete, with why. */
+interface FailedRemoval {
+  path: string;
+  reason: string;
+}
+
+/** Deletes `path`, saying so, and whether it went; one that did not is added to `failed`. */
+async function deleteNaming(path: string, what: string, failed: FailedRemoval[]): Promise<boolean> {
+  try {
+    await removeWithRetry(path);
+    process.stdout.write(`Deleted ${path} (${what}).\n`);
+    return true;
+  } catch (error) {
+    failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
+}
+
+/** Each path `--delete-data` could not delete, with the command that finishes the job. */
+function printFailedRemovals(failed: readonly FailedRemoval[]): void {
   for (const { path, reason } of failed) {
     process.stdout.write(`Could not delete ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${cleanupCommand(path, false)}\n`);
   }
@@ -473,15 +522,23 @@ export function cacheHolder(cache: string, machine?: DaemonMachine): number | un
   }
 }
 
-/** What the uninstall removes and keeps, decided before anything goes so `--dry-run` says the same as the real run. */
-function planRemoval(context: SetupContext): { remove: Array<{ path: string; what: string }>; keep: Array<{ path: string; what: string; why: string }> } {
-  const remove: Array<{ path: string; what: string }> = [];
-  const keep: Array<{ path: string; what: string; why: string }> = [];
+/**
+ * What the uninstall removes and keeps, decided before anything goes so `--dry-run` says the same as the real run. A
+ * kept path with `cleanup` is Rerail's, kept only while something else uses it; the run says how to delete it after.
+ */
+interface InstallationRemoval {
+  remove: Array<{ path: string; what: string }>;
+  keep: Array<{ path: string; what: string; why: string; cleanup?: string }>;
+}
+
+function planRemoval(context: SetupContext): InstallationRemoval {
+  const remove: InstallationRemoval["remove"] = [];
+  const keep: InstallationRemoval["keep"] = [];
   for (const { path, what, ours } of installedFiles(context)) {
     if (!pathExists(path)) continue;
     const holder = isContentCache(path) ? cacheHolder(path, context.machine) : undefined;
     if (holder !== undefined) {
-      keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it` });
+      keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it`, cleanup: heldCacheCleanup(path) });
       continue;
     }
     if (ours === undefined) {
@@ -511,16 +568,28 @@ function planRemoval(context: SetupContext): { remove: Array<{ path: string; wha
  * the backup: delete the installation itself (the versions, the launcher, `current`, the rule packs and the cache), so
  * "removed from this computer" holds. `current` is unlinked, never followed: `install --root` points it at a checkout.
  * A file Windows keeps locked (a session still running Rerail, an antivirus scan) is named with the command that
- * finishes the job; the uninstall itself has happened, so it still exits 0. What stays in the Rerail home is named too.
+ * finishes the job; the uninstall itself has happened, so it still exits 0. Returns what it set out to remove and keep.
  */
-async function removeInstallation(context: SetupContext, dryRun: boolean): Promise<void> {
-  const { remove, keep } = planRemoval(context);
+async function removeInstallation(context: SetupContext, dryRun: boolean): Promise<InstallationRemoval> {
+  const removal = planRemoval(context);
+  const { remove, keep } = removal;
   if (dryRun) {
     for (const { path, what } of remove) process.stdout.write(`Would remove ${path} (${what}).\n`);
     for (const { path, what, why } of keep) process.stdout.write(`Would keep ${path} (${what}): ${why}.\n`);
-    return;
+    return removal;
   }
-  const failed: Array<{ path: string; reason: string }> = [];
+  const failed = await removeEach(context, remove);
+  for (const { path, what, why, cleanup } of keep) process.stdout.write(`Kept ${path} (${what}): ${[`${why}.`, cleanup].filter(Boolean).join(" ")}\n`);
+  for (const { path, reason } of failed) {
+    const command = cleanupCommand(path, path === context.updater.currentLink);
+    process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
+  }
+  return removal;
+}
+
+/** Removes each path of the installation, saying so; returns those it could not remove, with why. */
+async function removeEach(context: SetupContext, remove: InstallationRemoval["remove"]): Promise<FailedRemoval[]> {
+  const failed: FailedRemoval[] = [];
   for (const { path, what } of remove) {
     try {
       if (path === context.updater.currentLink) await unlink(path);
@@ -531,11 +600,11 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
       failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
     }
   }
-  for (const { path, what, why } of keep) process.stdout.write(`Kept ${path} (${what}): ${why}.\n`);
-  for (const { path, reason } of failed) {
-    const command = cleanupCommand(path, path === context.updater.currentLink);
-    process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
-  }
+  return failed;
+}
+
+/** After a plain uninstall: what stays in the Rerail home, and whether the person may delete it whole. */
+async function describeKeptHome(context: SetupContext, { keep }: InstallationRemoval): Promise<void> {
   const kept = (await readdir(context.home).catch(() => [])).sort();
   // A folder kept for the files in it that are not Rerail's (`bin`, `versions`, `packs`) is not Rerail's to delete.
   const keptForOthers = new Set(keep.map(({ path }) => path));
@@ -546,6 +615,152 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
   } else if (kept.length > 0) {
     process.stdout.write(`Kept ${context.home}: ${kept.join(", ")} (Rerail's settings, logs and records; delete it if you will not install Rerail again).\n`);
   }
+}
+
+/** What the steps of `--delete-data` before its last one dealt with, and the agent configs the removal went through. */
+interface HomeDeletionInput {
+  installation: InstallationRemoval;
+  /** Every path the data step set out to delete. */
+  deleted: ReadonlySet<string>;
+  /** Each agent config file the removal changed or checked. */
+  configs: readonly string[];
+}
+
+const HOME_ENTRY = "Rerail's settings, logs and records";
+
+/**
+ * `--delete-data`'s last step, after the data and the installation: delete everything else Rerail wrote in its home
+ * (`isRerailHomeEntry`), then the home itself once that leaves it empty, so nothing Rerail wrote stays there. What the
+ * steps before set out to delete is theirs, failures included, and a folder `planRemoval` kept for the files in it that
+ * are not Rerail's stays; a home shared with other files (`RERAIL_HOME=$HOME`) keeps those files. The device secret of
+ * each `rerail activate` profile goes from the system credential store too, its name read before `profiles/` goes.
+ * Last, it names what it cannot reach, each with the command that deletes it.
+ */
+async function deleteRerailHome(context: SetupContext, input: HomeDeletionInput, dryRun: boolean): Promise<void> {
+  const { home } = context;
+  const { keep, remove } = input.installation;
+  const handled = new Set([...input.deleted, ...remove.map(({ path }) => path), ...keep.map(({ path }) => path)]);
+  const entries = existsSync(home) ? readdirSync(home).sort() : [];
+  const sweep = entries.map(name => join(home, name)).filter(path => isRerailHomeEntry(basename(path)) && !handled.has(path));
+  const profiles = systemStoreProfiles(home);
+  if (dryRun) listHomeDeletion(home, entries, sweep, profiles, keep);
+  else await applyHomeDeletion(home, sweep, profiles, keep);
+  const notes = [storageRootNote(input.deleted, dryRun), unrecordedLedgersNote(), ...await configCopyNotes(input.configs, dryRun)];
+  for (const note of notes) if (note !== undefined) process.stdout.write(`${note}\n`);
+}
+
+function listHomeDeletion(home: string, entries: readonly string[], sweep: readonly string[], profiles: readonly string[], keep: InstallationRemoval["keep"]): void {
+  for (const profile of profiles) process.stdout.write(`Would delete the device secret of profile ${profile} from the system credential store.\n`);
+  for (const path of sweep) process.stdout.write(`Would delete ${path} (${HOME_ENTRY}).\n`);
+  if (entries.length === 0) return;
+  process.stdout.write(entries.some(name => holdsOthers(home, name, keep)) ? `Would keep ${home}, which also holds files that are not Rerail's.\n` : `Would delete ${home} (the Rerail home).\n`);
+}
+
+async function applyHomeDeletion(home: string, sweep: readonly string[], profiles: readonly string[], keep: InstallationRemoval["keep"]): Promise<void> {
+  for (const profile of profiles) await deleteDeviceSecret(profile);
+  const failed: FailedRemoval[] = [];
+  for (const path of sweep) await deleteNaming(path, HOME_ENTRY, failed);
+  await deleteHomeFolder(home, keep, failed);
+  printFailedRemovals(failed);
+}
+
+/** Whether `name` in the Rerail home is, or holds, something that is not Rerail's. */
+function holdsOthers(home: string, name: string, keep: InstallationRemoval["keep"]): boolean {
+  return !isRerailHomeEntry(name) || keep.some(({ path }) => path === join(home, name));
+}
+
+/** The home itself, once nothing is left in it: never deleted recursively, so whatever is still in it stays. */
+async function deleteHomeFolder(home: string, keep: InstallationRemoval["keep"], failed: FailedRemoval[]): Promise<void> {
+  const left = await readdir(home).catch(() => undefined);
+  if (left === undefined) return;
+  // What Rerail could not delete is named with its own command already.
+  if (left.some(name => holdsOthers(home, name, keep))) process.stdout.write(`Kept ${home}, which also holds files that are not Rerail's.\n`);
+  if (left.length > 0) return;
+  try {
+    await rmdir(home);
+    process.stdout.write(`Deleted ${home} (the Rerail home).\n`);
+  } catch (error) {
+    failed.push({ path: home, reason: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/** The `rerail activate` profiles whose device secret the system credential store holds: none with the file store. */
+function systemStoreProfiles(home: string): string[] {
+  if (process.env.RERAIL_DEVICE_SECRET_STORE === "file") return [];
+  try {
+    return readdirSync(join(home, PROFILES_DIR), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+  } catch {
+    return [];
+  }
+}
+
+async function deleteDeviceSecret(profile: string): Promise<void> {
+  try {
+    await deviceSecretStore().remove(profile);
+    process.stdout.write(`Deleted the device secret of profile ${profile} from the system credential store.\n`);
+  } catch (error) {
+    process.stdout.write(`Could not delete the device secret of profile ${profile} from the system credential store (${error instanceof Error ? error.message : String(error)}).\n`);
+  }
+}
+
+/*
+ * What `--delete-data` cannot reach, each named with the command that deletes it: the ledgers under the
+ * `RERAIL_STORAGE_ROOT` set now, ledgers in checkouts the database never recorded, and the `<file>.<timestamp>.bak`
+ * copies of agent configs, which hold the person's own settings.
+ */
+
+/** A custom storage root may hold the person's own files (`isDefaultStorageRoot`), so it is named, never deleted. */
+function storageRootNote(deleted: ReadonlySet<string>, dryRun: boolean): string | undefined {
+  const { storageRoot } = resolveSessionPaths(process.cwd());
+  if (isDefaultStorageRoot(storageRoot, process.cwd()) || !pathExists(storageRoot)) return undefined;
+  // A recorded checkout's ledgers, which the data step deletes, by the path the database gives it.
+  const real = realPath(storageRoot);
+  if ([...deleted].some(path => realPath(path) === real)) return undefined;
+  return `${dryRun ? "Would keep" : "Kept"} ${storageRoot} (the session ledgers RERAIL_STORAGE_ROOT names): it may hold files that are not Rerail's. If it holds only Rerail's, delete it with: ${cleanupCommand(storageRoot, false)}`;
+}
+
+/** `path` with every link resolved, or as given when it does not exist. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function unrecordedLedgersNote(): string {
+  // A placeholder, not a checkout: `defaultStorageRoot` would resolve it against this folder.
+  const ledgers = join("<checkout>", ".rerail", "sessions");
+  return `Session ledgers in a checkout Rerail never recorded are not found. Delete each checkout's with: ${cleanupCommand(ledgers, false)}`;
+}
+
+async function configCopyNotes(configs: readonly string[], dryRun: boolean): Promise<string[]> {
+  if (dryRun) {
+    return configs.length === 0 ? [] : ["Would keep the <file>.<timestamp>.bak copy it writes beside each agent config file it changes, and earlier ones; the removal names each with the command that deletes it."];
+  }
+  return (await configCopies(configs)).map(({ copy, config }) =>
+    `Kept ${copy} (a copy of ${config} from before Rerail changed it). Delete it with: ${cleanupCommand(copy, false)}`);
+}
+
+/** The `.<timestamp>[.<uuid>].bak` a registration write leaves beside the file it replaces (`writeTextFile`). */
+const CONFIG_COPY = /^\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(?:\.[0-9a-f-]+)?\.bak$/u;
+
+/**
+ * Every copy registration left beside each of `configs`: beside the file a config that is a link leads to, and named
+ * by the path the person knows otherwise.
+ */
+async function configCopies(configs: readonly string[]): Promise<Array<{ copy: string; config: string }>> {
+  const copies: Array<{ copy: string; config: string }> = [];
+  for (const config of new Set(configs)) {
+    const link = lstatSync(config, { throwIfNoEntry: false })?.isSymbolicLink() === true;
+    const target = link ? await realpath(config).catch(() => config) : config;
+    const name = basename(target);
+    const siblings = await readdir(dirname(target)).catch(() => [] as string[]);
+    for (const sibling of siblings.sort()) {
+      if (sibling.startsWith(name) && CONFIG_COPY.test(sibling.slice(name.length))) copies.push({ copy: join(dirname(target), sibling), config });
+    }
+  }
+  return copies;
 }
 
 /**
@@ -642,8 +857,8 @@ async function planInstall(flags: ReadonlySet<string>, options: ReadonlyMap<stri
 /** The whole uninstall: the managed install removed from every coding agent, with no `--agents` list narrowing it. */
 const isUninstall = (remove: boolean, hosts: readonly Harness[] | undefined, managed: boolean): boolean => remove && hosts === undefined && managed;
 
-/** Registers with or unregisters from the coding agents, and records the agents it saw. */
-async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, context: SetupContext): Promise<void> {
+/** Registers with or unregisters from the coding agents, records the agents it saw, and returns what it changed. */
+async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, context: SetupContext): Promise<RegistrationReport> {
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
   // Pi's gallery entry goes with the managed install, so its removal takes that entry out too.
   const report = remove
@@ -652,17 +867,21 @@ async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, 
   printReport(report, parsed.dryRun);
   // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
   if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
+  return report;
 }
 
 /** What only the uninstall takes out: the data (or a backup of it), the launcher on PATH and the installation. */
-async function finishUninstall({ parsed, deleteData }: InstallPlan, context: SetupContext): Promise<void> {
-  if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun, context.machine);
-  else await backUpRulesAndHistory(context.home, parsed.dryRun);
+async function finishUninstall({ parsed, deleteData }: InstallPlan, report: RegistrationReport, context: SetupContext): Promise<void> {
+  const deleted = deleteData ? await deleteRulesAndHistory(context.home, parsed.dryRun, context.machine) : undefined;
+  if (!deleteData) await backUpRulesAndHistory(context.home, parsed.dryRun);
   const binDir = dirname(context.updater.launcherPath);
   const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
   if (removed !== undefined) process.stdout.write(`${removed}\n`);
   if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
-  await removeInstallation(context, parsed.dryRun);
+  const installation = await removeInstallation(context, parsed.dryRun);
+  const configs = report.changes.map(({ path }) => path);
+  if (deleted !== undefined) await deleteRerailHome(context, { installation, deleted, configs }, parsed.dryRun);
+  else if (!parsed.dryRun) await describeKeptHome(context, installation);
 }
 
 /** A checkout registered with `--root` gets the launcher on PATH too, and says what to do next. */
@@ -685,8 +904,8 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
   );
   if (flags.has("--refresh")) return await runRefreshAlone(flags, options, context);
   const plan = await planInstall(flags, options, context);
-  await applyInstallPlan(plan, context);
-  if (plan.uninstall) await finishUninstall(plan, context);
+  const report = await applyInstallPlan(plan, context);
+  if (plan.uninstall) await finishUninstall(plan, report, context);
   if (plan.explicitRoot !== undefined && !plan.remove) await finishExplicitRoot(plan, context);
   return 0;
 }

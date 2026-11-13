@@ -17,7 +17,6 @@ import {
   normalizeFolder,
   type ApiCaller,
   type CheckoutContext,
-  type CheckoutRecord,
   type EffectiveRule,
   type LibraryRule,
   type RepositoryStatus,
@@ -29,7 +28,15 @@ import {
 } from "../engine/catalog/repository-model.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
+import {
+  checkoutStatus,
+  linkAlias,
+  listedCheckoutStates,
+  listRepositories,
+  parentCheckouts,
+  repositoryHistoryIds,
+  type RepositoryListing,
+} from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
@@ -217,10 +224,6 @@ function guardAgent(stores: RerailApiStores, caller: ApiCaller, target: Target, 
   throw new ApiError(403, "agent-not-permitted",
     `${target.repository.displayName} is set up, so a coding agent can't change its rules for the whole repository. `
     + `Change them for this worktree instead, or ask the person to change them in the dashboard: ${url}`);
-}
-
-function contextOfRecord(record: CheckoutRecord): CheckoutContext {
-  return { checkoutPath: record.checkoutPath, repositoryKey: record.repositoryKey, cloneId: record.cloneId, git: true, main: true };
 }
 
 function effectiveStatus(db: RerailDatabase, checkout: CheckoutContext): RepositoryStatus {
@@ -476,16 +479,17 @@ export const repositoryOperations: readonly Operation[] = [
     output: repositoryContextSchema,
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
-      const db = stores.database();
+      // Every checkout's state from the listing the target was found in: no statement per checkout.
+      const stateAt = listedCheckoutStates(target.repository);
       const clones = new Map<string, z.infer<typeof repositoryContextSchema>["clones"][number]["checkouts"]>();
       for (const record of target.repository.checkouts) {
-        const status = effectiveStatus(db, contextOfRecord(record));
+        const { status, parentCheckoutPath } = stateAt(record.checkoutPath);
         clones.set(record.cloneId, [...(clones.get(record.cloneId) ?? []), {
           checkoutPath: record.checkoutPath,
           started: record.started,
           state: stateOf(status),
           startedBy: status.startedBy,
-          parentCheckoutPath: parentCheckouts(db, record)[0]?.checkoutPath ?? null,
+          parentCheckoutPath,
           onDisk: existsSync(record.checkoutPath),
         }]);
       }
@@ -495,7 +499,8 @@ export const repositoryOperations: readonly Operation[] = [
         checkout: target.checkout === undefined ? null : {
           checkoutPath: target.checkout.checkoutPath,
           folder: target.folder,
-          state: stateOf(effectiveStatus(db, target.checkout)),
+          // As the runtime reads it: the row at its path decides, even one another repository recorded there.
+          state: stateOf(effectiveStatus(stores.database(), target.checkout)),
         },
       };
     },

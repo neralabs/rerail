@@ -1,22 +1,29 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import type { AddressInfo, Server } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
-import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
+import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
+import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
+const daemons: Array<() => Promise<void>> = [];
 const fileRerailHome = process.env.RERAIL_HOME;
+const fileContentStore = process.env.RERAIL_CONTENT_STORE_PATH;
 
 afterEach(async () => {
   if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = fileRerailHome;
+  if (fileContentStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
+  else process.env.RERAIL_CONTENT_STORE_PATH = fileContentStore;
+  await Promise.all(daemons.splice(0).map(close => close()));
   await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
@@ -110,16 +117,149 @@ function writeLedger(world: Fixture, sessionId: string): void {
 
 /** Runs the command with its output kept, and reads back the file it wrote. */
 async function run(world: Fixture, ...args: string[]): Promise<{ exit: number; stdout: string; stderr: string; text: string; bundle: SupportBundle }> {
+  return await runFrom(world, undefined, ...args);
+}
+
+/** `run`, as the package at `packageRoot` runs it; undefined runs it as this checkout's build. */
+async function runFrom(world: Fixture, packageRoot: string | undefined, ...args: string[]): Promise<{ exit: number; stdout: string; stderr: string; text: string; bundle: SupportBundle }> {
   let stdout = "";
   let stderr = "";
   const exit = await runSupportBundleCommand(
     ["--repo", world.repo, "--output", world.output, ...args],
     () => "usage",
-    { packageVersion: "9.9.9", stdout: { write: text => { stdout += text; return true; } }, stderr: { write: text => { stderr += text; return true; } } },
+    {
+      packageVersion: "9.9.9",
+      ...(packageRoot === undefined ? {} : { packageRoot }),
+      stdout: { write: text => { stdout += text; return true; } },
+      stderr: { write: text => { stderr += text; return true; } },
+    },
   );
   if (exit !== 0) return { exit, stdout, stderr, text: "", bundle: {} as SupportBundle };
   const text = readFileSync(world.output, "utf8");
   return { exit, stdout, stderr, text, bundle: JSON.parse(text) as SupportBundle };
+}
+
+/** A Rerail package folder at `path`, with nothing in it: the bundle only asks where it is. */
+function packageAt(path: string): string {
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.9.9" }));
+  return path;
+}
+
+/** `world`'s Rerail home pointing `current` at `target`, as set-up activates a version or a checkout. */
+function activate(world: Fixture, target: string): string {
+  const current = join(world.home, "current");
+  // A junction needs no privilege on Windows; elsewhere the type is ignored.
+  symlinkSync(target, current, "junction");
+  return current;
+}
+
+/**
+ * `count` more checkouts recorded for `world`'s repository, and a session with a thousand events and fifty failed
+ * audits of twenty failures each: about what a few weeks of worktrees and one busy day leave in the database.
+ */
+function busyHistory(world: Fixture, count: number): void {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    database.$client.transaction(() => {
+      for (let index = 0; index < count; index += 1) {
+        const checkoutPath = join(world.root, "worktrees", `feature-${index}`);
+        database.insert(checkouts).values({ checkoutPath, repositoryKey: world.repositoryKey, cloneId: `clone-${index}`, started: null, createdAt: 1, lastSeenAt: 1 }).run();
+      }
+      database.insert(sessions).values({ sessionId: SESSION, host: "claude-code", cwd: world.repo, repositoryId: world.repositoryKey, startedAt: 1 }).run();
+      for (let index = 0; index < 1_000; index += 1) {
+        const kind = ["call", "result", "turn-end", "code-rules-pending"][index % 4]!;
+        database.insert(events).values({ sessionId: SESSION, eventId: `e${index}`, kind, observedAt: index, payloadJson: JSON.stringify({ kind, toolName: "Edit", boundary: "turn-end" }) }).run();
+      }
+    })();
+  } finally {
+    database.$client.close();
+  }
+  const store = new SqliteAuditStore(defaultRerailDatabasePath());
+  try {
+    for (let index = 0; index < 50; index += 1) {
+      const auditId = store.start({ sessionId: SESSION, workspaceRoot: world.repo, scope: "ai-output", mode: "steer", revision: 1, catalogRevision: "digest", ruleRevisions: [{ ruleId: "eslint-eqeqeq", revision: 1 }], paths: ["src/app.ts"] });
+      store.finish(auditId, {
+        status: "failed",
+        violations: [],
+        failures: Array.from({ length: 20 }, (_, failure) => ({
+          ruleId: `rule-${failure}`, clauseId: "clause", code: "adapter-error", stage: "evaluate", path: `src/file-${index}-${failure}.ts`,
+          message: `evaluate failed in ${world.repo} for src/file-${index}-${failure}.ts`,
+        })),
+      });
+    }
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * A daemon recorded in `home` that answers its health probe `delayMs` late, or never when `delayMs` is undefined.
+ * `onProbe` runs as each probe arrives.
+ */
+async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: () => void): Promise<{ close: () => Promise<void> }> {
+  const health = {
+    status: "ok", pid: process.pid, version: "9.9.9", ui: "bundled", uptimeMs: 60_000, database: { path: join(home, "rerail.sqlite"), exists: true },
+    native: { ok: true, kernelVersion: "1.0.0" }, model: { ok: true }, healthy: true, workspaceRoot: home, installedAt: null,
+  };
+  const http = createHttpServer((_request, response) => {
+    onProbe?.();
+    if (delayMs === undefined) return;
+    setTimeout(() => response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(health)), delayMs);
+  });
+  await new Promise<void>(resolve => http.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = http.address() as AddressInfo;
+  // A live daemon holds its engine socket; Rerail may check that it is there before it probes the daemon. One per
+  // port, so a second daemon can replace the first in one home; as short as `engine.sock`, for macOS's 103 bytes.
+  const kernelSocketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-bundle-test-${process.pid}-${port}` : join(home, `e${port}.sock`);
+  // On Windows a lookup sends a recorded daemon's engine a challenge, and only an engine that holds the daemon's
+  // capability answers it (src/runtime/engine-proof.ts, which tests outside the runtime cannot import): this one does,
+  // as a daemon busy in HTTP still does from its engine.
+  const accessToken = "fake-daemon-capability-0123456789";
+  const engine = createHttpServer((request, response) => {
+    const challenge = request.headers["x-rerail-challenge"];
+    if (request.url !== "/proof" || typeof challenge !== "string" || !/^[0-9a-f]{64}$/u.test(challenge)) return void response.writeHead(404).end();
+    const proof = createHmac("sha256", accessToken).update(`rerail-engine-proof\n${challenge}`).digest("hex");
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ proof }));
+  });
+  await new Promise<void>(resolve => engine.listen(kernelSocketPath, () => resolve()));
+  writeFileSync(join(home, "daemon.json"), JSON.stringify({
+    pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "9.9.9", databasePath: join(home, "rerail.sqlite"),
+    kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken,
+  }));
+  const closed = async (server: Server | HttpServer): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
+  return {
+    close: async () => {
+      http.closeAllConnections();
+      engine.closeAllConnections();
+      await Promise.all([closed(http), closed(engine)]);
+    },
+  };
+}
+
+/**
+ * Known values taken out of `text` one at a time, as Rerail's scrub did before one pattern found them: each form of each
+ * value in turn, longest first, over the whole text, a Windows path in any case. Then the secret patterns, which
+ * `scrubText` with no known values applies alone.
+ */
+function scrubValueByValue(text: string, knownValues: readonly KnownValue[]): string {
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pathForms = (value: string): string[] => {
+    if (!/[\\/]/u.test(value)) return [value];
+    const forward = value.replaceAll("\\", "/");
+    const backward = value.replaceAll("/", "\\");
+    return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
+  };
+  let scrubbed = text;
+  const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
+  for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
+    if (value.length < 2) continue;
+    const flags = /^[A-Za-z]:[\\/]/u.test(value) ? "giu" : "gu";
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escape(value)}(?![\\w-])`, flags), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escape(value)}(?![\\w-])`, flags), () => label);
+    else scrubbed = scrubbed.replace(new RegExp(escape(value), flags), () => label);
+  }
+  return scrubText(scrubbed, { knownValues: [] });
 }
 
 async function reportedWorld(): Promise<Fixture> {
@@ -250,6 +390,137 @@ describe("rerail support-bundle", () => {
     expect(bundle.daemon.status).toBe("absent");
     expect(bundle.session).toBeNull();
     expect(bundle.platform.os).toBe(process.platform);
+  });
+
+  it("takes about as long where the database records a thousand checkouts as where it records none", { timeout: 180_000 }, async () => {
+    const elapsed = async (checkoutCount: number): Promise<number> => {
+      const world = await fixture();
+      busyHistory(world, checkoutCount);
+      const started = performance.now();
+      const { exit, bundle } = await run(world);
+      expect(exit).toBe(0);
+      expect(bundle.session?.audits).toHaveLength(50);
+      return performance.now() - started;
+    };
+    const none = await elapsed(0);
+    const thousand = await elapsed(1_000);
+    expect(thousand, `${none.toFixed(0)} ms with none, ${thousand.toFixed(0)} ms with a thousand`).toBeLessThan(3 * none + 2_000);
+  });
+
+  it("says Rerail is not the managed install when it runs from a package outside the home's versions, and why it has no content store", async () => {
+    const world = await fixture();
+    // The test set-up names a content store for each test file; an install names none.
+    delete process.env.RERAIL_CONTENT_STORE_PATH;
+    const elsewhere = activate(world, packageAt(join(world.root, "install", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, elsewhere);
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([expect.stringMatching(/^install: Rerail at .+ is neither the managed installation .+ so it has no content store$/u)]);
+  });
+
+  it("names no content store problem for a package outside the home's versions when RERAIL_CONTENT_STORE_PATH names a store", async () => {
+    const world = await fixture();
+    process.env.RERAIL_CONTENT_STORE_PATH = join(world.root, "content.sqlite");
+    const elsewhere = activate(world, packageAt(join(world.root, "install", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, elsewhere);
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([]);
+  });
+
+  it("names the install problem of a package folder it cannot read, though RERAIL_CONTENT_STORE_PATH names a store", async () => {
+    const world = await fixture();
+    process.env.RERAIL_CONTENT_STORE_PATH = join(world.root, "content.sqlite");
+    // Gone since the command started, so its real path cannot be read, as a folder this user may not read cannot.
+    const { bundle } = await runFrom(world, join(world.root, "gone", "node_modules", "@neralabs", "rerail"));
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([expect.stringMatching(/^install: ENOENT: /u)]);
+  });
+
+  // Only the main daemon opens a store in the machine-wide folder; every other process's audits fail there.
+  it.each([
+    { build: "a package outside the home's versions", at: (world: Fixture) => join(world.root, "install", "node_modules", "@neralabs", "rerail"), managed: false },
+    { build: "a build in a Git checkout", at: (world: Fixture) => join(world.repo, "node_modules", "@neralabs", "rerail"), managed: false },
+    { build: "the managed install", at: (world: Fixture) => join(world.home, "versions", "9.9.9", "node_modules", "@neralabs", "rerail"), managed: true },
+  ])("counts a RERAIL_CONTENT_STORE_PATH in the machine-wide store folder as a store for the managed install alone: $build", async ({ at, managed }) => {
+    const world = await fixture();
+    // The machine-wide store folder, as the engine's mainContentStoreDirectory names it.
+    const store = process.platform === "win32" ? join(homedir(), "AppData", "Local", "rerail") : join(homedir(), ".cache", "rerail");
+    process.env.RERAIL_CONTENT_STORE_PATH = join(store, "content.sqlite");
+    const current = activate(world, packageAt(at(world)));
+    const { bundle } = await runFrom(world, current);
+    expect(bundle.rerail.managedInstall).toBe(managed);
+    expect(bundle.problems).toEqual(managed ? [] : [
+      expect.stringMatching(/^install: RERAIL_CONTENT_STORE_PATH names .+, in the machine-wide content store directory .+, which only the main Rerail daemon opens$/u),
+    ]);
+  });
+
+  it("says Rerail is the managed install when it runs from a version under the home", async () => {
+    const world = await fixture();
+    const current = activate(world, packageAt(join(world.home, "versions", "9.9.9", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, current);
+    expect(bundle.rerail.managedInstall).toBe(true);
+    expect(bundle.problems).toEqual([]);
+  });
+
+  it("waits out a busy daemon that misses the first health probe, and says how long it took to answer", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, 2_500);
+    daemons.push(daemon.close);
+    const { bundle } = await run(world);
+    expect(bundle.daemon).toMatchObject({ status: "running", version: "9.9.9", engine: { ok: true, version: "1.0.0" } });
+    expect(bundle.daemon.answeredInMs).toBeGreaterThanOrEqual(2_500);
+  });
+
+  it("writes the bundle before it waits for a busy daemon, says where, and writes it again once the daemon answers", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, 2_500);
+    daemons.push(daemon.close);
+    let stderr = "";
+    let written: SupportBundle["daemon"] | undefined;
+    const exit = await runSupportBundleCommand(["--repo", world.repo, "--output", world.output, "--json"], () => "usage", {
+      packageVersion: "9.9.9",
+      stdout: { write: () => true },
+      stderr: {
+        write: text => {
+          stderr += text;
+          // What a caller that gives up now finds.
+          written ??= (JSON.parse(readFileSync(world.output, "utf8")) as SupportBundle).daemon;
+          return true;
+        },
+      },
+    });
+    expect(exit).toBe(0);
+    expect(written).toEqual({ status: "unresponsive" });
+    expect(stderr).toContain(world.output);
+    expect((JSON.parse(readFileSync(world.output, "utf8")) as SupportBundle).daemon).toMatchObject({ status: "running", version: "9.9.9" });
+  });
+
+  it("still calls a daemon that never answers unresponsive once the wait is over", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, undefined);
+    daemons.push(daemon.close);
+    const { bundle } = await collectSupportBundle({
+      repo: world.repo, home: world.home, databasePath: defaultRerailDatabasePath(), sessionId: undefined, packageVersion: "9.9.9",
+      packageRoot: PACKAGE_ROOT, busyDaemonWaitMs: 500,
+    });
+    expect(bundle.daemon).toEqual({ status: "unresponsive" });
+  });
+
+  it("reports the daemon that took a busy one's place while the bundle waited, as a restart does", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    let replaced: Promise<void> | undefined;
+    // The first probe reaches a daemon that never answers; while the bundle waits, another records itself in daemon.json.
+    const stuck = await slowDaemon(world.home, undefined, () => {
+      replaced ??= slowDaemon(world.home, 0).then(daemon => {
+        daemons.push(daemon.close);
+      });
+    });
+    daemons.push(stuck.close);
+    const { bundle } = await collectSupportBundle({
+      repo: world.repo, home: world.home, databasePath: defaultRerailDatabasePath(), sessionId: undefined, packageVersion: "9.9.9",
+      packageRoot: PACKAGE_ROOT, busyDaemonWaitMs: 3_000,
+    });
+    await replaced;
+    expect(bundle.daemon).toMatchObject({ status: "running", version: "9.9.9" });
   });
 
   describe("where set-up never finished: a database, and this checkout not recorded in it", () => {
@@ -429,6 +700,57 @@ describe("scrubText", () => {
   it("replaces a longer literal before a shorter one inside it", () => {
     const knownValues = [{ value: "/work", label: "<short>" }, { value: "/work/app", label: "<checkout>" }];
     expect(scrubText("/work/app/src", { knownValues })).toBe("<checkout>/src");
+  });
+
+  // The user name is the repository's owner, as on a personal account, so the home and the repository's name overlap.
+  const overlapping: KnownValue[] = [
+    { value: "alice", label: "<user>", word: true },
+    { value: "/home/alice", label: "~" },
+    { value: String.raw`C:\Users\alice`, label: "~" },
+    { value: "github.com/alice/secret-proj", label: "<repository>" },
+    { value: "alice/secret-proj", label: "<repository>" },
+    { value: "/home/alice/src/secret-proj", label: "<checkout>" },
+    { value: String.raw`C:\Users\alice\src\secret-proj`, label: "<checkout>" },
+  ];
+
+  it.each([
+    ["open /home/alice/secret-proj-old/notes.md failed", "open ~/notes.md failed"],
+    [String.raw`{"cwd":"\/home\/alice\/secret-proj-wt2"}`, String.raw`{"cwd":"~"}`],
+    [String.raw`open C:\Users\alice\secret-proj-wt2\a.ts`, String.raw`open ~\a.ts`],
+    ["git -C C:/Users/alice/secret-proj-wt2 status", "git -C ~ status"],
+    [String.raw`open c:\users\ALICE\SRC\Secret-Proj\a.ts`, String.raw`open <checkout>\a.ts`],
+  ])("takes the repository's name out of a folder under the home that starts with it: %s", (text, expected) => {
+    expect(scrubText(text, { knownValues: overlapping })).toBe(expected);
+  });
+
+  it("takes out all that a scrub of one value at a time takes out, wherever known values overlap", () => {
+    const homes = ["/home/alice", String.raw`C:\Users\alice`, "C:/Users/alice", String.raw`C:\\Users\\alice`, String.raw`\/home\/alice`, "c:/users/alice", String.raw`C:\USERS\Alice`];
+    const folders = ["secret-proj", "secret-proj-old", "secret-proj-wt2", "src/secret-proj", "SRC/Secret-Proj", "src/secret-proj-2", "alice/secret-proj", "other"];
+    const texts = ["open ", "git -C ", '{"cwd":"', "at github.com/", ""].flatMap(before => homes.flatMap(home => ["/", "\\", "\\/"].flatMap(separator =>
+      folders.flatMap(folder => ["/notes.md failed", String.raw`\a.ts`, '"}', ""].map(after => `${before}${home}${separator}${folder}${after}`)))));
+    const differing = texts.filter(text => scrubText(text, { knownValues: overlapping }) !== scrubValueByValue(text, overlapping));
+    expect(differing).toEqual([]);
+  });
+
+  it("replaces a value that a label it put in completes, as a scrub of one value at a time does", () => {
+    const knownValues: KnownValue[] = [{ value: "alice/secret", label: "<repository>" }, { value: "repository", label: "<word>", word: true }];
+    expect(scrubText("x alice/secret y", { knownValues })).toBe(scrubValueByValue("x alice/secret y", knownValues));
+    expect(scrubText("x alice/secret y", { knownValues })).toBe("x <<word>> y");
+  });
+
+  it("replaces a value that a label of a Windows path completes, and the reverse, as a scrub of one value at a time does", () => {
+    // Windows paths are found in any letter case and every other value as spelled; a label either kind puts in can
+    // complete a value of the other kind.
+    const sets: KnownValue[][] = [
+      [{ value: String.raw`C:\Users\alice\src\secret-proj`, label: "<checkout>" }, { value: "checkout", label: "<host>", word: true }],
+      [{ value: String.raw`C:\Users\alice`, label: "~" }, { value: "~/notes", label: "<redacted>" }],
+      [{ value: "/home/alice/src/app", label: "C:" }, { value: String.raw`C:\Temp`, label: "<temp>" }],
+    ];
+    const texts = (knownValues: readonly KnownValue[]): string[] => knownValues.flatMap(({ value }) => ["cd ", "", "x/"].flatMap(before =>
+      [value, value.toLowerCase(), value.toUpperCase()].flatMap(spelled => ["", "/notes", String.raw`\Temp`, " y"].map(after => `${before}${spelled}${after}`))));
+    const differing = sets.flatMap(knownValues => texts(knownValues).filter(text => scrubText(text, { knownValues }) !== scrubValueByValue(text, knownValues)));
+    expect(differing).toEqual([]);
+    expect(scrubText(String.raw`cd C:\Users\alice\src\secret-proj`, { knownValues: sets[0]! })).toBe("cd <<host>>");
   });
 
   it("ignores a home or checkout of /, as a container can have, which would eat every path", () => {

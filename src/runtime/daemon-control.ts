@@ -423,26 +423,39 @@ export async function readDaemonState(stateFile: string, platform: NodeJS.Platfo
   }
 }
 
+/** How {@link probeDaemon} asks the daemon. */
+export interface DaemonProbeOptions {
+  /** Another transport than the daemon's own (`daemonFetch`), as the MCP bridge's tests pass. */
+  readonly fetchImpl?: DaemonFetch | undefined;
+  /** How long it waits for the answer; a caller that can wait out a busy daemon passes more. */
+  readonly timeoutMs?: number;
+}
+
 /**
  * What the daemon `state` records answers on `/healthz`, with the capability it records, over its own transport
- * (`daemonFetch`) unless `fetchImpl` names another, as the MCP bridge's tests do. A `401` is a refusal, kept apart from
- * silence: the daemon is up, and "not answering" would send the person after the wrong cause.
+ * unless `fetchImpl` names another. A `401` is a refusal, kept apart from silence: the daemon is up, and "not
+ * answering" would send the person after the wrong cause.
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
-  fetchImpl?: DaemonFetch,
-  timeoutMs: number = PROBE_TIMEOUT_MS,
+  { fetchImpl, timeoutMs = PROBE_TIMEOUT_MS }: DaemonProbeOptions = {},
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
     const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 401) return { status: "refused" };
-    if (!response.ok) return { status: "unreachable" };
-    const body = await response.json() as DaemonHealth;
-    return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
+    // Awaited here, so a body that cannot be read is caught below as no answer.
+    return await probeAnswer(response);
   } catch {
     return { status: "unreachable" };
   }
+}
+
+/** What a daemon's answer on `/healthz` makes of it ({@link probeDaemon}); a body that cannot be read throws. */
+async function probeAnswer(response: Response): Promise<DaemonProbe> {
+  if (response.status === 401) return { status: "refused" };
+  if (!response.ok) return { status: "unreachable" };
+  const body = await response.json() as DaemonHealth;
+  return body.status === "ok" ? { status: "ok", health: body } : { status: "unreachable" };
 }
 
 /** A process Node's spawn started, as daemon-control reads it: its pid, how it ended, and letting this process exit first. */
@@ -642,7 +655,7 @@ export async function lookupDaemon(
 
 /** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
 async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: number): Promise<DaemonLookup> {
-  const probe = await probeDaemon(state, undefined, timeoutMs);
+  const probe = await probeDaemon(state, { timeoutMs });
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {
