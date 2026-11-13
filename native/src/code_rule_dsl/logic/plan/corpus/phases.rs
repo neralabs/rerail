@@ -217,7 +217,7 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 /// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
 /// inputs, used once a batch, went unused for 43 of the space's runs and were collected (`frames::RUNS`) by another
 /// policy's write: the next batch found its kept inputs and its memo entries gone.
-pub struct Batch(#[allow(dead_code)] super::UnderWay);
+pub struct Batch(#[allow(dead_code)] super::UnderWay, #[allow(dead_code)] Reading);
 
 type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usize)>)>;
 
@@ -226,7 +226,7 @@ static BATCH: std::sync::Mutex<Option<BatchRuns>> = std::sync::Mutex::new(None);
 impl Batch {
     pub fn enter() -> Batch {
         *BATCH.lock().expect("the batch's phase runs") = Some(BatchRuns::new());
-        Batch(super::UnderWay::enter())
+        Batch(super::UnderWay::enter(), Reading::enter())
     }
 
     fn active() -> bool {
@@ -249,6 +249,53 @@ impl Drop for Batch {
         *BATCH.lock().expect("the batch's phase runs") = None;
         *BATCH_PLANS.lock().expect("the batch's plans") = None;
     }
+}
+
+/// While one is held, the reads made outside a run (a rule file's tape, `rr::stored_statements`; a combined program,
+/// `combine_stored`) share one handle on the tape cache (`reading_store`): each had opened the store and closed it,
+/// and the close of the store's last handle closes every thread's connection to it (`ContentStore`'s drop). A warm
+/// batch spent 514 of 7,850 samples so, a file at a time. A batch holds one; so does a program's reading.
+pub struct Reading(());
+
+/// The holders under way, and the handle they share: the tape cache's path, and the store there (`None`: none).
+static READING: std::sync::Mutex<(usize, Option<(std::path::PathBuf, Option<std::sync::Arc<crate::content_store::ContentStore>>)>)> = std::sync::Mutex::new((0, None));
+
+impl Reading {
+    pub fn enter() -> Reading {
+        READING.lock().expect("the reading store").0 += 1;
+        Reading(())
+    }
+}
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        let held = {
+            let mut r = READING.lock().expect("the reading store");
+            r.0 -= 1;
+            if r.0 == 0 { r.1.take() } else { None }
+        };
+        drop(held);
+    }
+}
+
+/// The tape cache, for a read outside a run: the handle the holders share (`Reading`), opened at the first read; with
+/// none under way, or another tape cache this thread's (a test's own), one opened for the read.
+pub(in crate::code_rule_dsl) fn reading_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    let path = super::tape_cache_path();
+    let mut r = READING.lock().expect("the reading store");
+    if r.0 > 0 {
+        match (&r.1, &path) {
+            (Some((held, store)), Some(path)) if held == path => return store.clone(),
+            (None, Some(path)) => {
+                let store = crate::content_store::ContentStore::open(path).ok().map(std::sync::Arc::new);
+                r.1 = Some((path.clone(), store.clone()));
+                return store;
+            }
+            _ => {}
+        }
+    }
+    drop(r);
+    path.and_then(|p| crate::content_store::ContentStore::open(&p).ok()).map(std::sync::Arc::new)
 }
 
 /// The memo plans of the batch's runs so far, by root (O-store-single-program).

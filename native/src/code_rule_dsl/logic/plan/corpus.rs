@@ -528,7 +528,7 @@ fn combine_keyed(programs: &[&str], extra: &str) -> Result<(front::Program, [u8;
 /// §6): keyed by the texts and checked against the library files the combine read.
 fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<front::Program> {
     let store = if cfg!(feature = "tape-cache") && programs.len() > 1 && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
-        tape_cache().ok().flatten()
+        phases::reading_store()
     } else {
         None
     };
