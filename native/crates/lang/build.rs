@@ -14,7 +14,9 @@ use std::path::PathBuf;
 
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let native = manifest.join("../..").canonicalize().expect("native/ is readable");
+    // `native/` is two levels up. Not `canonicalize()`: on Windows that gives a `\\?\` path, in which the grammar
+    // build's `/`-joined paths are invalid (os error 123).
+    let native = manifest.ancestors().nth(2).expect("native/ is the manifest's grandparent").to_path_buf();
     let omitted = languages::omitted_languages(&native.parent().expect("repository root").join("languages"));
     grammars::build_all(&native, &omitted);
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
