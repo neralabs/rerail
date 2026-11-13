@@ -351,6 +351,38 @@ describe("rerail rules evidence", () => {
     expect(putRight.corrections).toEqual([expect.objectContaining({ sessionId: "set-back", text: "Don't force push", before: [] })]);
   });
 
+  it("reads every event of a session that started in the window, whatever time the clock gave it", async () => {
+    /** A 1-day window over one session that started at `startedAt`: its task, a force push and a correction, stamped `at`. */
+    const evidenceStamped = async (startedAt: number, at: { task: number; push: number; correction: number }) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        store.openSession({ host: "claude-code", sessionId: "s1", cwd: repo }, startedAt);
+        store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: at.task });
+        store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at.push });
+        store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Don't force push, never do that" }, observedAt: at.correction });
+      } finally {
+        store.close();
+      }
+      return collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    };
+    const windowStart = NOW - DAY;
+    // After the session opened, the clock went back past the window's start (an NTP step of a fast clock, a manual
+    // change) for its task, for its call, or for all three: each gives the answer of the session stamped in the window.
+    const stamped = {
+      inWindow: await evidenceStamped(windowStart + MINUTE, { task: windowStart + 2 * MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR }),
+      taskBefore: await evidenceStamped(windowStart + MINUTE, { task: windowStart - MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR }),
+      callBefore: await evidenceStamped(windowStart + MINUTE, { task: windowStart + 2 * MINUTE, push: windowStart - MINUTE, correction: NOW - HOUR }),
+      allBefore: await evidenceStamped(NOW - HOUR, { task: NOW - 2 * DAY, push: NOW - 2 * DAY, correction: NOW - 2 * DAY }),
+    };
+    for (const [stamps, evidence] of Object.entries(stamped)) {
+      expect.soft(evidence.window, stamps).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 2 });
+      expect.soft(evidence.corrections.map(({ text, before }) => ({ text, before })), stamps)
+        .toEqual([{ text: "Don't force push, never do that", before: ["Bash git push --force origin main"] }]);
+      expect.soft(evidence.riskyCommands, stamps).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    }
+  });
+
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {
     const repo = await repository({ "AGENTS.md": "x" });
     const databasePath = join(await temporary("rerail-rule-evidence-none-"), "rerail.sqlite");

@@ -177,8 +177,9 @@ export interface RuleEvidence {
   repository: { name: string; known: boolean; checkouts: number };
   /**
    * The last `days` days: `sessions` (and `hosts`, by coding agent) counts those active in them, which started in them
-   * or whose last event came in them; `prompts` and everything below count only what was written in them. A
-   * correction's `before` still names the calls just before it, even ones from before them.
+   * or whose last event came in them; `prompts` and everything below count all that a session which started in them
+   * wrote, and what an earlier session wrote in them. A correction's `before` still names the calls just before it,
+   * even ones from before them.
    */
   window: { days: number; sessions: number; hosts: Record<string, number>; prompts: number };
   corrections: EvidenceCorrection[];
@@ -318,15 +319,20 @@ function activeSince(database: RerailDatabase, historyIds: readonly string[], si
 }
 
 /**
- * The events of `sessionIds` written at or after `since`, each session's in order. The ids go in as one JSON array, so
- * the read binds one value however many sessions there are, and counts the sessions the first read found.
+ * The tallied events of the sessions `found`, each session's in order: every event of a session that started at or
+ * after `since`, whatever time the clock gave it, and the events of an earlier session written at or after `since`. A
+ * session that started in the window is read whole, so a clock set back past the window's start while it ran drops
+ * none of its prompts or calls. The ids go in as JSON arrays, so the read binds two values however many sessions there
+ * are; the time is compared first, so a row written in the window needs no lookup in the second list.
  */
-function windowEvents(database: RerailDatabase, sessionIds: readonly string[], since: number): StoredEvent[] {
+function windowEvents(database: RerailDatabase, found: ReadonlyArray<{ sessionId: string; startedAt: number }>, since: number): StoredEvent[] {
+  const among = (ids: readonly string[]) => sql`${events.sessionId} in (select value from json_each(${JSON.stringify(ids)}))`;
+  const startedIn = found.filter(session => session.startedAt >= since).map(session => session.sessionId);
   return database.select(STORED_COLUMNS).from(events)
     .where(and(
-      sql`${events.sessionId} in (select value from json_each(${JSON.stringify(sessionIds)}))`,
+      among(found.map(session => session.sessionId)),
       inArray(events.kind, TALLIED_KINDS),
-      gte(events.observedAt, since),
+      or(gte(events.observedAt, since), among(startedIn)),
     ))
     .orderBy(asc(events.sessionId), asc(events.sequence)).all();
 }
@@ -334,9 +340,8 @@ function windowEvents(database: RerailDatabase, sessionIds: readonly string[], s
 /**
  * The context from before its first event in `stored` of each session in `earlier`: whether its task came before, and
  * its last calls. Two index reads per session, so a long session's history before the window is never loaded. Only a
- * session that started before the window can have done anything before it, since its events are stamped as they are
- * written, after it starts: a session that started in the window needs no lookup, so a window of thousands of short
- * sessions makes none.
+ * session that started before the window is read from the window on: one that started in it is read whole and needs
+ * no lookup, so a window of thousands of short sessions makes none.
  */
 function contextsBefore(database: RerailDatabase, stored: readonly StoredEvent[], earlier: ReadonlySet<string>): Map<string, SessionContext> {
   const before = (kind: string) => and(
@@ -384,7 +389,7 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
     const hosts: Record<string, number> = {};
     for (const { host } of repositorySessions) hosts[host] = (hosts[host] ?? 0) + 1;
     const earlier = new Set(repositorySessions.filter(session => session.startedAt < since).map(session => session.sessionId));
-    const stored = windowEvents(database, [...hostOf.keys()], since);
+    const stored = windowEvents(database, repositorySessions, since);
     const evidence = readEvents(stored, { hostOf, contexts: contextsBefore(database, stored, earlier) }, limit);
     return {
       repository: { name, known: true, checkouts: repository?.checkouts.length ?? 1 },
