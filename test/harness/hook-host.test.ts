@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { basename, join } from "node:path";
@@ -24,7 +24,7 @@ import {
   type HookInput,
   type HookOutput,
 } from "../../src/harness/hook-adapter.js";
-import type { HookOptions } from "../../src/harness/hook-host.js";
+import { hookRerailStarted, type HookOptions } from "../../src/harness/hook-host.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
@@ -556,7 +556,28 @@ describe("hooks where Rerail does not run", () => {
   });
 });
 
-describe("the hook start check without Git", () => {
+describe("the hook start check", () => {
+  it("reads the database, and asks a live daemon only where this process cannot read it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const home = process.env.RERAIL_HOME!;
+    startTestRepository(root);
+    // The database says started; the daemon, which would say stopped, is not asked.
+    const daemon = await countingDaemon(home, "stopped");
+    try {
+      expect(await hookRerailStarted("claude-code", root)).toBe(true);
+      expect(daemon.requests).toEqual([]);
+      // A database this process cannot read: the live daemon answers.
+      await writeFile(join(home, "rerail.sqlite"), "not a database");
+      expect(await hookRerailStarted("claude-code", root)).toBe(false);
+      expect(daemon.requests).toEqual(["/api/presentation"]);
+    } finally {
+      await daemon.close();
+    }
+    // Neither answers: the database is read again, and its failure is the hook's.
+    await rm(join(home, "daemon.json"));
+    await expect(hookRerailStarted("claude-code", root)).rejects.toThrow("not a database");
+  });
+
   it("asks a live daemon where this process finds no Git to resolve the checkout with", async () => {
     const root = await temporaryDirectory({ started: false });
     const elsewhere = join(root, "elsewhere");
