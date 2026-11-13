@@ -368,6 +368,33 @@ async function openSource(absolute: string): Promise<FileHandle | undefined> {
     throw error;
   }
 }
+/**
+ * The text of the file at `absolute` while its bytes have `digest`, else undefined: what a session held of a source
+ * before its runtime suspended it. Read as `openSource` opens a file, and only a regular file of a source's size; the
+ * digest proves the bytes are the ones a walk observed in place.
+ */
+async function textWithDigest(absolute: string, digest: string): Promise<string | undefined> {
+  const handle = await openedOrNone(absolute);
+  if (handle === undefined) return undefined;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_SOURCE_BYTES) return undefined;
+    const bytes = await handle.readFile();
+    return sha256(bytes) === digest ? bytes.toString("utf8") : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+/** `openSource`, undefined for a file it cannot open (gone, or no longer the session's to read). */
+async function openedOrNone(absolute: string): Promise<FileHandle | undefined> {
+  try {
+    return await openSource(absolute);
+  } catch {
+    return undefined;
+  }
+}
 /** The opened file as a source: none for an unlisted binary one, a read error for one too large or binary. */
 async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
   if (location.unlisted && await binaryPrefix(handle)) return undefined;
@@ -574,9 +601,12 @@ function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: strin
   if (!walk.inSession) return walked && current;
   return !walked && !current && path !== ".." && !path.startsWith("../");
 }
-/** The digest a changed source was observed with before, when the walk found it changed and could not read what it was. */
-function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined, baseline: boolean): string | undefined {
-  if (baseline || edit.previousReadError === undefined || edit.generatedText === undefined) return undefined;
+/**
+ * The digest a changed source was observed with before, when the walk found it changed and could not read what it was;
+ * none for a source the walk takes as a baseline (`baselinePath`), which has no earlier observation to trust.
+ */
+function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined, baselinePath: boolean): string | undefined {
+  if (baselinePath || edit.previousReadError === undefined || edit.generatedText === undefined) return undefined;
   return before?.digest;
 }
 /** A first observation made after the session started may hold its shell writes, and is not a trustworthy preimage. */
@@ -842,8 +872,9 @@ export class CodeRuleBridge {
   #textBytes = 0;
   /**
    * The sources the evaluator held as the session's before its runtime suspended it (`SessionWalkResume.held`), whose
-   * text the session's new evaluator never saw: a change another writer makes to one is recorded as it was before the
-   * suspension, until the source's text is next kept or dropped.
+   * text the session's new evaluator never saw: the first walk compares each with what was observed of it then, though
+   * that walk is a baseline, and a change another writer makes to one is recorded as it was before the suspension, until
+   * the source's text is next kept or dropped. Their text, where it is unchanged, is kept too (`#restoreHeldTexts`).
    */
   readonly #resumedHeld = new Set<string>();
   /** Where the first `openWorkspace` goes on from, for a session its runtime suspended; taken once. */
@@ -927,6 +958,8 @@ export class CodeRuleBridge {
       this.#discovery = undefined;
       await previous?.git.stop();
       const root = await realpath(this.#cwd);
+      // Before the evaluator opens, which takes seconds: a shell write the agent makes meanwhile finds the text it left.
+      const since = await this.#takeResume(root, startedAt);
       await this.#auditor.openWorkspace(sessionId);
       const git = new GitReads();
       // After the auditor opens, so it can name the checkouts whose ignore rules apply.
@@ -934,7 +967,6 @@ export class CodeRuleBridge {
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
-      const since = this.#takeResume(startedAt);
       const discovery: SourceDiscovery = {
         startedAt: since, walkedFrom: since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
@@ -950,9 +982,9 @@ export class CodeRuleBridge {
   /**
    * Where the session's walks start: `now`, or for a session its runtime suspended, where they stood then, with each
    * source the evaluator held kept as last observed, so the first walk compares it as the open session's next walk would
-   * have, and finds it changed or gone.
+   * have, and finds it changed or gone. The text of each such source still as observed is read back (`#restoreHeldTexts`).
    */
-  #takeResume(now: number): number {
+  async #takeResume(root: string, now: number): Promise<number> {
     const resume = this.#resume;
     this.#resume = undefined;
     if (resume === undefined) return now;
@@ -960,7 +992,34 @@ export class CodeRuleBridge {
       this.#resumedHeld.add(path);
       if (observed !== undefined) this.#observed.set(path, observed);
     }
+    await this.#restoreHeldTexts(root, resume.held);
     return Math.min(now, resume.since);
+  }
+
+  /**
+   * Keeps the text of each source the evaluator held before the suspension whose bytes still have the digest last
+   * observed: the text the open session kept, from which its next shell write to the source is measured. The suspension
+   * keeps no text, so a suspended session holds none in memory; one changed or gone meanwhile is left to the first walk,
+   * which records the change.
+   */
+  async #restoreHeldTexts(root: string, held: SessionWalkResume["held"]): Promise<void> {
+    const digests: [path: string, digest: string][] = [];
+    for (const [path, observed] of held) if (observed?.digest !== undefined) digests.push([path, observed.digest]);
+    while (digests.length > 0) {
+      const wave = digests.splice(0, OBSERVATION_CONCURRENCY);
+      const texts = await Promise.all(wave.map(([path, digest]) => textWithDigest(resolve(root, path), digest)));
+      wave.forEach(([path], index) => this.#keepHeldText(path, texts[index]));
+    }
+  }
+
+  /**
+   * Keeps `text` as the session's own text of `path`. The path stays among `#resumedHeld`, so the first walk compares the
+   * source with what was observed of it before the suspension, though that walk is a baseline.
+   */
+  #keepHeldText(path: string, text: string | undefined): void {
+    if (text === undefined) return;
+    this.#rememberText(path, text, "edit");
+    this.#resumedHeld.add(path);
   }
 
   /**
@@ -1727,10 +1786,12 @@ export class CodeRuleBridge {
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
       if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths)) continue;
-      const edit = this.#discoveredEdit(discovery, path, walk.previous.get(path), current.get(path), walk.baseline);
+      const previous = walk.previous.get(path);
+      const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
       if (edit === undefined) continue;
       edits.push(edit);
-      const before = uncapturedDigest(edit, walk.previous.get(path), walk.baseline);
+      // A source held before a suspension was observed before this walk, though the walk is a baseline (`#baselinePath`).
+      const before = uncapturedDigest(edit, previous, this.#baselinePath(discovery, path, previous, walk.baseline));
       if (before !== undefined) uncaptured.set(path, before);
     }
     return edits;

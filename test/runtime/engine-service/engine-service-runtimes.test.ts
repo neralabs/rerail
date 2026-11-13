@@ -145,13 +145,22 @@ describe("the engine service's runtimes", () => {
 /**
  * An evaluator that checks nothing and records every batch of edits it is given (`batches`) and the paths a walk asked
  * it about (`looked`); its scans (`scans`) complete with no finding, each recorded in the audit store as a real scan is.
+ * Every evaluator after the first opens once `reopening` settles, as one compiling its rules does, and `reopened`
+ * settles as the second begins to.
  */
-function recordingAuditor() {
+function recordingAuditor(options: { reopening?: Promise<void> } = {}) {
   const batches: CodeRuleEditBatch[] = [];
   const scans: string[] = [];
   const looked = new Set<string>();
-  const create = (options: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
-    openWorkspace: async () => undefined,
+  const reopened = Promise.withResolvers<void>();
+  let opened = 0;
+  const create = ({ workspaceRoot, audits }: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
+    openWorkspace: async () => {
+      opened += 1;
+      if (opened === 1) return;
+      reopened.resolve();
+      await options.reopening;
+    },
     acceptsPath: (path) => {
       looked.add(path);
       return true;
@@ -162,29 +171,37 @@ function recordingAuditor() {
     },
     audit: async (sessionId, input) => {
       scans.push(input.scope);
-      const auditId = options.audits.start({
-        sessionId, workspaceRoot: options.workspaceRoot, scope: input.scope, mode: input.mode, revision: 0,
-        catalogRevision: "test", ruleRevisions: [], paths: [],
+      const auditId = audits.start({
+        sessionId, workspaceRoot, scope: input.scope, mode: input.mode, revision: 0, catalogRevision: "test", ruleRevisions: [], paths: [],
       });
-      options.audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+      audits.finish(auditId, { status: "completed", violations: [], failures: [] });
       return [auditId];
     },
     close: async () => undefined,
   });
-  return { create, batches, scans, looked };
+  return { create, batches, scans, looked, reopened: reopened.promise };
+}
+
+/** Each audited edit of `path`: the text it left, and the text it was measured from, or why there was none. */
+function editsOf(batches: readonly CodeRuleEditBatch[], path: string) {
+  return batches.flatMap(batch => batch.edits)
+    .filter(edit => edit.path === path)
+    .map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }));
 }
 
 describe("the engine service's idle close", () => {
-  /** A service over two started checkouts whose sessions are suspended after a minute of `clock` without an event. */
-  async function idleService(options: Partial<Parameters<typeof startEngineService>[0]> = {}) {
+  /**
+   * A service over two started checkouts whose sessions are suspended after a minute of `clock` without an event;
+   * `gitFirst` makes `first` a Git repository before it starts, as a checkout's identity is taken then.
+   */
+  async function idleService(options: Partial<Parameters<typeof startEngineService>[0]> = {}, { gitFirst = false } = {}) {
     const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
     roots.push(root);
     const databasePath = join(root, "rerail.sqlite");
     const [first, second] = [join(root, "first"), join(root, "second")];
-    for (const checkout of [first, second]) {
-      await mkdir(checkout);
-      startTestRepository(checkout, databasePath);
-    }
+    for (const checkout of [first, second]) await mkdir(checkout);
+    if (gitFirst) execFileSync("git", ["init", "--quiet"], { cwd: first });
+    for (const checkout of [first, second]) startTestRepository(checkout, databasePath);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-${process.pid}-${Date.now()}` : join(root, "engine.sock");
     const clock = { now: 1_000_000 };
     const service = await startEngineService({
@@ -214,6 +231,20 @@ describe("the engine service's idle close", () => {
         send({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, cwd), text }),
       ended: (sessionId: string) => endedAt(databasePath, sessionId),
       live: (sessionId: string) => ownedLive(databasePath, sessionId),
+      /**
+       * The agent of `sessionId` writes `text` to `path` in tool call `toolCallId`: with its Write tool, or with a shell
+       * command whose input names no file.
+       */
+      writes: async (sessionId: string, toolCallId: string, toolName: "Write" | "Bash", path: string, text: string) => {
+        const tool = { sessionId, session: session(sessionId), toolCallId, toolName } as const;
+        const input = toolName === "Write" ? { file_path: path, content: text } : { command: "python generate.py" };
+        await send({ kind: "call", eventId: `${sessionId}:${toolCallId}:call`, ...tool, input });
+        await writeFile(path, text);
+        await send({ kind: "result", eventId: `${sessionId}:${toolCallId}:result`, ...tool, output: "ok" });
+      },
+      /** The end of a turn of `sessionId`, which waits for the session's walks and their checks. */
+      turnEnd: (sessionId: string, turn: string) =>
+        send({ kind: "turn-end", eventId: `${sessionId}:${turn}`, sessionId, session: session(sessionId), text: "done" }),
     };
   }
 
@@ -334,7 +365,7 @@ describe("the engine service's idle close", () => {
   // it in Log; after the idle close the reopened session's first walk took it as its baseline and recorded nothing.
   it("records another writer's change to a file the session edited, made while the session was quiet, as its open walk did", async () => {
     const { create, batches, looked } = recordingAuditor();
-    const { first, clock, service, session, send, start, prompt } = await idleService({ createAuditor: create });
+    const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create });
     const [changed, removed, untouched] = [join(first, "app.py"), join(first, "gone.py"), join(first, "other.py")];
     await writeFile(changed, "x = 1\n");
     await writeFile(removed, "y = 1\n");
@@ -343,15 +374,9 @@ describe("the engine service's idle close", () => {
     // The evaluator is open once the session's first walk has asked about the files, so the edits below are checked.
     await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
     // The agent edits two files with its own tools, and its turn ends.
-    const edit = async (id: string, path: string, text: string) => {
-      const tool = { sessionId: "a", session: session("a"), toolCallId: id, toolName: "Write" } as const;
-      await send({ kind: "call", eventId: `a:${id}:call`, ...tool, input: { file_path: path, content: text } });
-      await writeFile(path, text);
-      await send({ kind: "result", eventId: `a:${id}:result`, ...tool, output: "ok" });
-    };
-    await edit("t1", changed, "x = 2\n");
-    await edit("t2", removed, "y = 2\n");
-    await send({ kind: "turn-end", eventId: "a:turn", sessionId: "a", session: session("a"), text: "done" });
+    await writes("a", "t1", "Write", changed, "x = 2\n");
+    await writes("a", "t2", "Write", removed, "y = 2\n");
+    await turnEnd("a", "turn");
     expect(batches.flatMap(batch => batch.edits.map(item => item.path)).sort()).toEqual(["app.py", "gone.py"]);
     clock.now += 60_000;
     await service.closeIdleSessions();
@@ -369,9 +394,54 @@ describe("the engine service's idle close", () => {
         expect.objectContaining({ path: "gone.py", deleted: true }),
       ]));
     }, { timeout: 10_000, interval: 50 });
-    // The turn's end waits for the session's walks and their checks.
-    await send({ kind: "turn-end", eventId: "a:turn2", sessionId: "a", session: session("a"), text: "done" });
+    await turnEnd("a", "turn2");
     expect(batches.flatMap(batch => batch.edits.map(item => item.path))).not.toContain("other.py");
+  }, 20_000);
+
+  // At base the open session kept the text of each file it edited, so its next shell write to one was measured from
+  // that text and only the lines the write changed were the agent's. The reopened session had lost the text, so every
+  // line of the file read as the agent's (`previousReadError`), and a rule judging the agent's lines judged them all.
+  it("measures a shell write to a file the session edited before it went quiet from the text the session left there", async () => {
+    const { create, batches, looked } = recordingAuditor();
+    // A repository whose Git does not hold the session's text of the file, as with any edit not yet committed.
+    const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true });
+    const app = join(first, "app.py");
+    await writeFile(app, "x = 1\n");
+    await start("a");
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await writes("a", "t1", "Write", app, "x = 2\n");
+    await turnEnd("a", "turn1");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    await prompt("a", "back");
+    await turnEnd("a", "turn2");
+    await prompt("a", "next");
+    await writes("a", "t2", "Bash", app, "x = 2\ny = 3\n");
+    await turnEnd("a", "turn3");
+    expect(editsOf(batches, "app.py")).toContainEqual({ generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined });
+  }, 20_000);
+
+  // The agent's first command after the quiet can run while the session's rules compile again, before the reopened
+  // session's first walk has looked at the file it writes.
+  it("measures it so too when the write lands while the reopened session's rules compile", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create });
+    const app = join(first, "app.py");
+    await writeFile(app, "x = 1\n");
+    await start("a");
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await writes("a", "t1", "Write", app, "x = 2\n");
+    await turnEnd("a", "turn1");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    await prompt("a", "back");
+    await reopened;
+    await writes("a", "t2", "Bash", app, "x = 2\ny = 3\n");
+    reopening.resolve();
+    await turnEnd("a", "turn2");
+    expect(editsOf(batches, "app.py")).toContainEqual({ generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined });
   }, 20_000);
 
   it("keeps a quiet session in memory while it waits on a tool call, and suspends it once the call is done", async () => {
