@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,6 +22,44 @@ async function file(name: string, contents: string): Promise<string> {
 /** What `lend` gave `use`: the bytes as text, and the memory they were read into. */
 async function lent(buffers: WalkReadBuffers, path: string, size: number): Promise<{ text: string; memory: ArrayBufferLike }> {
   return await buffers.lend(path, size, async read => ({ text: read.text(), memory: read.bytes.buffer }));
+}
+
+/** mulberry32: the same numbers from the same seed on every run. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** File sizes at and around the edges a read meets: empty, the first buffer's 64 KiB, its doubling, the limits below. */
+const EDGE_SIZES = [0, 1, 4_095, 4_096, 65_535, 65_536, 65_537, 131_071, 131_072, 131_073, 100_000, 100_001, 100_002];
+
+/** A file of random bytes, UTF-8 or not, of a size at an edge or anywhere below 200 KB. */
+async function randomFile(name: string, next: () => number): Promise<{ path: string; size: number }> {
+  const size = next() < 0.5 ? EDGE_SIZES[Math.floor(next() * EDGE_SIZES.length)]! : Math.floor(next() * 200_000);
+  const bytes = Buffer.alloc(size);
+  for (let index = 0; index < size; index += 1) bytes[index] = Math.floor(next() * 256);
+  const path = join(folder, name);
+  await writeFile(path, bytes);
+  return { path, size };
+}
+
+/** The size a walk's stamp could give for a file of `size` bytes: its own, or one it had before it grew or shrank. */
+function stampedSize(size: number, next: () => number): number {
+  if (next() < 0.6) return size;
+  return Math.max(0, size + Math.floor((next() - 0.5) * 140_000));
+}
+
+/** Where `lend`'s read of the file at `path` differs from `readFile`'s bytes, cut at `limit` as a walk cuts them; else undefined. */
+async function differsFromReadFile(buffers: WalkReadBuffers, path: string, stamp: number, limit: number): Promise<string | undefined> {
+  const whole = await readFile(path);
+  const expected = whole.subarray(0, Math.min(whole.length, limit));
+  const [same, text] = await buffers.lend(path, stamp, async read => [read.bytes.equals(expected), read.text()] as const);
+  return same && text === expected.toString("utf8") ? undefined : `${path}: ${whole.length} bytes, stamp ${stamp}, limit ${limit}`;
 }
 
 describe("WalkReadBuffers", () => {
@@ -58,4 +96,21 @@ describe("WalkReadBuffers", () => {
     expect(await buffers.lend(path, 0, async read => read.bytes.length)).toBe(101);
     expect(await buffers.lend(path, 1_000, async read => read.bytes.length)).toBe(101);
   });
+
+  it("gives the bytes readFile gives, cut at the limit, whatever the file's size, stamp and the reads before it", async () => {
+    const differing: string[] = [];
+    for (const limit of [1_000_001, 100_001]) {
+      // One set of buffers for every read, so each read lands in a buffer an earlier, larger file may have filled.
+      const buffers = new WalkReadBuffers(limit);
+      const next = seeded(limit);
+      for (let round = 0; round < 40; round += 1) {
+        // Three reads at once, as a walk runs them, each with a buffer of its own.
+        const files = await Promise.all([0, 1, 2].map(async index => await randomFile(`${limit}-${round}-${index}.bin`, next)));
+        const stamps = files.map(({ size }) => stampedSize(size, next));
+        const found = await Promise.all(files.map(async ({ path }, index) => await differsFromReadFile(buffers, path, stamps[index]!, limit)));
+        differing.push(...found.filter(difference => difference !== undefined));
+      }
+    }
+    expect(differing).toEqual([]);
+  }, 30_000);
 });
