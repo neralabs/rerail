@@ -50,6 +50,9 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
+    // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
+    "frame_confirmed",
+    "frame_used",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -64,10 +67,6 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
-    // The device tests' inputs (`setfix/device.rs`, an inline test module the file filter cannot leave out).
-    "e",
-    "m",
-    "n",
     "x",
     "t",
     "input",
@@ -89,9 +88,8 @@ const SCRATCH: &[&str] = &[
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
-    // A test's in-memory input (`plan/acyclic/queries.rs`) and the device wave test's heads (`setfix/device.rs`).
+    // A test's in-memory input (`plan/acyclic/queries.rs`).
     "facts",
-    "{h} in code_rule_dsl/logic/native/setfix/device.rs",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
@@ -159,8 +157,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
-/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take.
-const NOT_YET_TABLES_PIN: usize = 62;
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
+/// merge took one out (2026-11-12).
+const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -311,6 +310,19 @@ const STATE: &[(&str, &str)] = &[
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
     ("content_store/observe.rs", "OBSERVERS"),
+    // The journal's open streams, one a root (decision 0105): open things.
+    ("content_store/journal.rs", "LIVE"),
+    // A job's own plans and observations (decisions 0113, 0116), taken into the run's as the job ends: the run's own
+    // state on the job's thread, gone with it.
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
+    // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
+    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
+    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
+    // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.
+    ("code_rule_dsl/logic/plan.rs", "PROBE"),
+    ("code_rule_dsl/logic/plan.rs", "SEEN"),
+    ("code_rule_dsl/logic/plan.rs", "SUMS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),

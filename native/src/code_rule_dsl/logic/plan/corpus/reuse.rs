@@ -81,7 +81,7 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
-pub(super) fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
+pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
     let read = given.names()?;
     let mut out = Vec::new();
     // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the

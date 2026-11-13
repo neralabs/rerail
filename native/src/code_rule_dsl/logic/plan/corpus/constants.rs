@@ -121,24 +121,25 @@ pub(super) fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<Vec<(String, String, String)>> {
+) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
     if options.get(OWN).is_some() {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let wanted = foldable(prog);
     if wanted.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, root, options, &wanted);
     let was_kept = kept(&key, root, prog)?;
     let reused = was_kept.is_some();
-    let (texts, consulted) = match was_kept {
-        Some(kept) => kept,
+    // The plans the constants' run used, for the outer run's record (`Report::plans`): none when they were kept.
+    let ((texts, consulted), plans) = match was_kept {
+        Some(kept) => (kept, Vec::new()),
         None => {
-            let derived = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            let (derived, plans) = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
             keep(&key, &derived.0, &derived.1)?;
-            derived
+            (derived, plans)
         }
     };
     for rel in &wanted {
@@ -158,7 +159,7 @@ pub(super) fn fold(
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok(consulted)
+    Ok((consulted, plans))
 }
 
 type Derived = (std::collections::BTreeMap<String, String>, Vec<(String, String, String)>);
@@ -176,7 +177,7 @@ fn derive(
     typing: &Typing,
     options: &serde_json::Value,
     wanted: &BTreeSet<String>,
-) -> Result<Derived> {
+) -> Result<(Derived, Vec<[u8; 32]>)> {
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
@@ -184,7 +185,7 @@ fn derive(
     let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
     let texts = wanted.iter().map(|rel| (rel.clone(), std::fs::read_to_string(out.join(format!("{}.csv", copy(rel)))).unwrap_or_default())).collect();
     let _ = std::fs::remove_dir_all(&out);
-    Ok((texts, report.consulted))
+    Ok(((texts, report.consulted), report.plans))
 }
 
 /// What the constants are keyed by, beside what their run consulted.

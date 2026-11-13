@@ -53,24 +53,23 @@ store's collection 0.2 s.
 - Phase 1 no longer waits for the writer to reach its manifest (0.23 s). (197b8abfc)
 - The engine's waits wake when a job ends, not after a nap of up to 1 ms (0.53 s on the critical path). (197b8abfc)
 - The store's connections read through a map of the file (`RERAIL_STORE_MMAP_MB`, default 4096; 0 is off): about
-  6 G and 0.6 s CPU an edit. (uncommitted)
+  6 G and 0.6 s CPU an edit. (5a4f1a1cf)
+- The program texts read once (item 1 below): `rr::read_seed` parses each once; `corpus::Texts` holds the run's
+  reads and hands their seeds, graph digests, library files, names and phases on to the cutoff, its record,
+  `phase_files` and `texts_digest`. An edit: 118–121 G (was 122–131 G). (59c8204e9)
+- Caches refused by construction (item 2): `facts_only` green, in every targeted test run; a commit adding a
+  static map or table it does not list, or a new entry in its lists of state, is refused before it is made
+  (`scripts/check/check-no-new-caches.py`, run by a hook before each of my commits). (this commit)
+- My statics by flow (item 3): the frames' four tables are the store's schema (no lookups, no lazy creation);
+  the confirmations and the admitted memo spaces live in the frames' snapshot; each run's report carries the plans
+  it and its nested runs used (`Report::plans`, phase 0's on its graph), so the outermost run's record names them
+  without `NESTED_PLANS`; the journal's volume per root is the observer's (`Observer::volumes`), not a process-wide
+  table. (this commit)
 
 ## To do, in order
 
-1. **The program texts, read once.** `settings::program_texts` loads each text; the whole-run cutoff
-   (`texts_digest` → `graph_digest` → `text_seed`), phase 0's graphs, the rule files' record
-   (`reuse::rule_files` → `phase_files` → `declared_names`, `included_files`) and `combine` (`read_text`) each
-   parse it again. One read gives the statements, the include seed, the declared names and the included files;
-   they are handed on, not looked up. No memo behind the callers.
-2. **Caches, refused by construction.** `logic::facts_only` (decision 0104) lists every store table and every
-   process-wide or thread-local map; it has been red since several merges and no run checked it. Make it green
-   (each unlisted entry moved to facts, removed by a change of flow, or listed as state with its reason), run it
-   with every targeted test, and check each commit's added lines for a new static map or table.
-3. **My statics of 2026-11-12, by flow.** `frames::known_tables`/`lazy_table` (the frames' tables made with the
-   store's schema, so nothing checks for them), `frames::CONFIRMS` (the confirmations held in the frames'
-   snapshot that `preload_frames_for` builds, not a map beside it), `corpus::NESTED_PLANS` (the nested runs' plans
-   carried by the run, not a static), the tables `frame_confirmed` and `frame_used` (rows of `frames` or listed as
-   fact store, with their reason).
+Items 1–3 (texts read once, caches refused by construction, my statics by flow) are done: see above.
+
 4. **SQLite's I/O.** The checkpoint at the cost model's close (0.14 s), the commit `fsync`s on the writer (0.12 s),
    the vacuum every process (0.11 s), the main thread's page reads (`frames::newest_by_path`, `facts_memo`).
 5. **The cost model**: train when there are new samples worth a model, not every process (0.3 s CPU).

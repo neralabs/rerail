@@ -47,6 +47,9 @@ pub struct Graph {
     pub(in crate::code_rule_dsl) absent: Vec<PathBuf>,
     /// Each module's digest, as phase 0's observer gives it.
     pub(in crate::code_rule_dsl) digests: BTreeMap<PathBuf, [u8; 32]>,
+    /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
+    /// names them in its record, so they stay live. Not part of the graph's digest.
+    pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
 }
 
 impl Graph {
@@ -197,7 +200,7 @@ impl Graph {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let mut g = Graph { absent: self.absent.clone(), ..Graph::default() };
+        let mut g = Graph { absent: self.absent.clone(), plans: self.plans.clone(), ..Graph::default() };
         let mut pending = vec![start.clone(), "engine".to_owned()];
         let mut seen = std::collections::BTreeSet::new();
         while let Some(from) = pending.pop() {
@@ -277,8 +280,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let read = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
-    let result = run.map(|_| {
-        let mut g = Graph::default();
+    let result = run.map(|report| {
+        let mut g = Graph { plans: report.plans, ..Graph::default() };
         for r in read("p0_include") {
             if let [from, at, name, path] = r.as_slice() {
                 g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), PathBuf::from(path)));

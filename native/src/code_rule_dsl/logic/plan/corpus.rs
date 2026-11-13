@@ -227,6 +227,11 @@ pub struct Report {
     pub typing_runs: bridge::Runs,
     /// The earlier phases this run read (decision 0083 §1), each its own run.
     pub phase_runs: Vec<phases::PhaseRun>,
+    /// The plans this run and the runs nested in it used (its memo plan, its prepared programs, its phases', its
+    /// constants' and phase 0's runs'): the outermost run's record names them all, so they stay live while a root's
+    /// last runs name it (`keep_corpus_runs`). One process records a run per nested run, so recorded alone the
+    /// phases' plans fell out of a root's last two runs after every process and were prepared again by the next.
+    pub plans: Vec<[u8; 32]>,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub memo: (usize, usize),
     /// The cross-file memo (decision 0076): import components found and components derived.
@@ -505,7 +510,7 @@ pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
 /// and their library files and names, resolved when the whole-run cutoff first asks (`reuse::rule_files`). Held by
 /// the run, and gone with it.
-pub(super) struct Texts<'a> {
+pub struct Texts<'a> {
     pub programs: &'a [&'a str],
     /// Each text's include graph's digest (`phase0::Graph::digest`), `None` for a text that includes nothing.
     pub graphs: Vec<Option<[u8; 32]>>,
@@ -1495,19 +1500,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer;
-    // The outer run's manifest names its nested runs' plans too (their memo plans and prepared programs): a plan is
-    // live while a root's last runs name it (`keep_corpus_runs`), and one process records a manifest per nested run,
-    // so the phases' plans fell out of the last two after every process and were prepared again by the next.
-    let also: Vec<[u8; 32]> = {
-        let mut nested = NESTED_PLANS.lock().expect("the nested runs' plans");
-        let token = run_token();
-        if outer {
-            also.into_iter().chain(nested.remove(&token).into_iter().flatten()).collect()
-        } else {
-            nested.entry(token).or_default().extend(std::iter::once(plan).chain(also.iter().copied()));
-            also
-        }
-    };
+    // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
     let mut policy = crate::content_store::CorpusPolicy::default();
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
         (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
@@ -1831,8 +1824,6 @@ pub fn run_with_options(
         r
     })
 }
-/// The plans of the nested runs of each outer run under way, by its token (`run_token`), for its manifest (`record_run`).
-static NESTED_PLANS: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<[u8; 32]>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 thread_local! {
     /// Runs under way on this thread: a run started inside another (a phase, the constants, phase 0) is nested.
@@ -2031,17 +2022,17 @@ fn run_observed(
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
-    let fold_constants = |prog: &mut front::Program| -> Result<Vec<(String, String, String)>> {
+    let fold_constants = |prog: &mut front::Program| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
                 constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
-                Ok(Vec::new())
+                Ok(Default::default())
             }
             None => constants::fold(prog, programs, root, out, modes, binding, chunk_nodes, typing, options),
         }
     };
     phase("combine", 0);
-    let mut folded = fold_constants(&mut prog)?;
+    let (mut folded, mut constants_plans) = fold_constants(&mut prog)?;
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
@@ -2139,11 +2130,21 @@ fn run_observed(
             prog = combine_with(programs, &given.graphs, &facts)?;
             texts = texts_digest(programs, &given.graphs, &facts);
             add_bridged(&mut prog);
-            folded = fold_constants(&mut prog)?;
+            (folded, constants_plans) = fold_constants(&mut prog)?;
         }
         declared = d;
     }
     consulted.extend(folded);
+    // The plans of the runs nested in this one (`Report::plans`): its phases', its constants' and phase 0's.
+    let nested_plans: Vec<[u8; 32]> = {
+        let mut p: Vec<[u8; 32]> = phase_runs.iter().flat_map(|r| r.report.plans.iter().copied())
+            .chain(constants_plans)
+            .chain(given.derived.iter().flat_map(|g| g.plans.iter().copied()))
+            .collect();
+        p.sort();
+        p.dedup();
+        p
+    };
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
     // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
@@ -5317,7 +5318,7 @@ fn run_observed(
     // after the cross-file part: published then, the lease held until.
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() {
-        record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
+        record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).copied().collect::<Vec<_>>(), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
         None
@@ -6916,7 +6917,7 @@ fn run_observed(
     }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
-        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
+        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).copied().collect::<Vec<_>>(), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     statements.enter("write");
     let writing = crate::code_rule_dsl::logic::profile::span(|| "write the outputs".into());
@@ -7085,7 +7086,7 @@ fn run_observed(
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the Git index consulted".into());
         consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
-    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default() };
+    let report = Report { phases, phase_instructions, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

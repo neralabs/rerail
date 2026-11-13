@@ -690,6 +690,19 @@ CREATE TABLE IF NOT EXISTS text_pending (
 CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
 END;
+-- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
+CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
+    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- How many runs each space has counted.
+CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
+-- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
+CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
+-- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
+-- run, the last `frames::RUNS` runs'. A frame is collected once the run that put it is that old and no run since
+-- used its relation.
+CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
+    PRIMARY KEY (space, run)) WITHOUT ROWID;
 "#;
 
 impl ContentStore {
