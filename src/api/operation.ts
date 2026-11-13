@@ -14,6 +14,7 @@ import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
+import { rootOf } from "../engine/storage/path-key-spelling.js";
 
 export interface RerailApiStores {
   /** Read-only view; tolerates a database that does not exist yet. */
@@ -110,7 +111,7 @@ export class ApiError extends Error {
 /** Run one operation for one caller; a write that returns counts toward the stores' change token. */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   try {
-    if (operation.workspace !== undefined) stores.copyWaitingKeys(operation.workspace(input as never));
+    copyWaitingKeysFor(operation, stores, input, caller);
     return await operation.handler(stores, input as never, caller);
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
@@ -119,4 +120,21 @@ export async function invokeOperation(operation: Operation, stores: RerailApiSto
     // A write that failed half way may still have committed; counting it costs one extra miss.
     if (operation.method !== "GET") stores.markChanged();
   }
+}
+
+/**
+ * Before the handler reads: copies the keys an earlier build stored that wait on the drive of the folder `operation`
+ * reads (`copyWaitingKeys`). A person's request names the folder its hook or status line works in. A coding agent may
+ * name any folder, and the handler checks only after this whether it may read there, so its request copies only on
+ * its own checkout's drive: a lookup on a share whose host is gone holds the daemon's thread about 21 s.
+ */
+function copyWaitingKeysFor(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): void {
+  if (operation.workspace === undefined) return;
+  const folder = operation.workspace(input as never);
+  if (worksOnDriveOf(caller, folder)) stores.copyWaitingKeys(folder);
+}
+
+/** Whether `caller` works on the drive or share of `folder`: a person always, a coding agent through its checkout. */
+function worksOnDriveOf(caller: ApiCaller, folder: string): boolean {
+  return caller.kind === "person" || (caller.checkout !== undefined && rootOf(caller.checkout) === rootOf(folder));
 }

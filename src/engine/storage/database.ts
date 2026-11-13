@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
@@ -31,12 +31,15 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
   return join(defaultRerailHome(environment), RERAIL_DATABASE_FILE);
 }
 
+/** How long a connection waits for another connection's lock before SQLite gives up with SQLITE_BUSY. */
+const LOCK_WAIT_MS = 5000;
+
 /**
  * A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. A
  * writable open of a file this process cannot write throws before anything else touches it: SQLite would quietly open
  * it read-only, and the writer would then change its mode before failing.
  */
-function connectSqlite(path: string, readonly: boolean): RerailDatabase {
+function connectSqlite(path: string, readonly: boolean, lockWaitMs = LOCK_WAIT_MS): RerailDatabase {
   if (!readonly) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     // The folder too: SQLite writes its journal and WAL beside the file.
@@ -45,7 +48,7 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   const client = new Database(path, { readonly });
   try {
     const database = drizzle(client, { schema });
-    database.run(sql`PRAGMA busy_timeout = 5000`);
+    database.run(sql.raw(`PRAGMA busy_timeout = ${lockWaitMs}`));
     return database;
   } catch (error) {
     client.close();
@@ -216,20 +219,35 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
  * (`keysWaitOn`: an open reads only this computer's system drive and the drive of the folder its caller works in) are
  * looked up and their rows copied before the caller reads, by a writable open whose steps read that drive too
  * (`openedIn`): it answered as the caller came to it. A writable open (`readonly: false`) is that open itself. A
- * read-only one makes it only where keys wait there; elsewhere, and once none waits there, it is the read-only open
- * alone, with one read of an empty table. A reader that may not write the file reads it as it is, the keys still waiting.
+ * read-only one makes it only where keys wait there ({@link copyKeysWaitingIn}); elsewhere, and once none waits there,
+ * it is the read-only open alone, with one read of an empty table. When the copy cannot run now (another writer holds
+ * the lock, the file is not this process's to write), the reader reads the file as it is, the keys still waiting.
  */
 export function openRerailDatabaseIn(path: string, workspace: string, { readonly = true } = {}): RerailDatabase {
   const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
   if (!readonly) return openRerailDatabase(path, { migrations });
   const database = openRerailDatabase(path, { readonly: true, migrations });
   if (!keysWaitHere(database, workspace)) return database;
-  try {
-    openRerailDatabase(path, { migrations }).$client.close();
-  } catch (error) {
-    if (!cannotWrite(error)) throw error;
-  }
+  copyKeysWaitingIn(path, workspace);
   return openRerailDatabase(path, { readonly: true, migrations });
+}
+
+/**
+ * Copies the rows of the keys an earlier build stored that wait on `workspace`'s drive or share (`openRerailDatabaseIn`)
+ * through a writable open that takes the write lock only when no other writer holds it: its caller, a reader, never
+ * waits on a writer, as a read-only open does not. Gives why the copy could not run (the lock held, a file this
+ * process may not write), or undefined once it ran; the keys then wait for a later open from that drive.
+ */
+export function copyKeysWaitingIn(path: string, workspace: string): string | undefined {
+  const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
+  try {
+    openChecked(path, false, migrations, schemaVersionOf(migrations), 0).$client.close();
+    return undefined;
+  } catch (error) {
+    // Drizzle wraps SQLite's error ("Failed to run the query ..."); its cause says why ("database is locked").
+    const why = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    return `the keys an earlier build stored on ${win32.parse(workspace).root} wait: ${why instanceof Error ? why.message : String(why)}`;
+  }
 }
 
 /**
@@ -304,10 +322,10 @@ function missingSchemaObjects(database: RerailDatabase): string[] {
   return SCHEMA_OBJECTS.filter(name => !present.has(name));
 }
 
-function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {
+function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number, lockWaitMs = LOCK_WAIT_MS): RerailDatabase {
   let database: RerailDatabase;
   try {
-    database = connectSqlite(path, readonly);
+    database = connectSqlite(path, readonly, lockWaitMs);
   } catch (error) {
     throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database", supported)) : error;
   }

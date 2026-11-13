@@ -253,8 +253,12 @@ a folder (`copyWaitingKeys`); a hook or a runtime that reads the database itself
 there (`workspaceStartState`); and `rerail start`, `rerail stop`, `rerail status` and `rerail state`. So a folder on
 another disk or a mapped drive keeps its start state and settings from the first coding agent event or the first of
 these commands there. A reader that never writes the database (the status line and `/rerail` while no daemon runs)
-reads the folder as it is until one of them has run there. The daemon reads where keys wait once, so a request from a
-folder on any other drive reads nothing for them, and once a drive's keys are copied no request from it does. A hook or
+reads the folder as it is until one of them has run there. The copy a hook, a runtime's check or the daemon makes takes
+the write lock only when no other writer holds it, so none of them waits on a writer for it: while one does, or when
+the copy fails, the folder reads as the database holds it and the next of them copies (the daemon says why in its
+log). A coding agent's request through Rerail's MCP tools copies only on the drive of the agent's own checkout. The
+daemon reads where keys wait once, so a request from a folder on any other drive reads nothing for them, and once a
+drive's keys are copied no request from it does. A hook or
 a status line names its folder to the daemon as the session spells it, not by its realpath: through a drive mapped to a
 share, or made with `subst`, the realpath names what the letter stands for, and the daemon would not see the letter the
 keys wait on. A key on a drive mapped to a share is looked up through the mapping, which gives the share's spelling,

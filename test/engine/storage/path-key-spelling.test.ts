@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, win32 } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
+import { createRerailApi, DatabaseApiStores, invokeOperation, operations } from "../../../src/api/index.js";
 import { startRerail } from "../../../src/cli/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
@@ -15,7 +15,7 @@ import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/sto
 import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
 import { hookRerailStarted } from "../../../src/harness/index.js";
 import {
-  setCheckoutStarted, SqlitePresentationPreferenceStore, stopRerail, workspaceStartState, type RepositorySetupIo,
+  setCheckoutStarted, SqlitePresentationPreferenceStore, startStateReader, stopRerail, workspaceStartState, type RepositorySetupIo,
 } from "../../../src/runtime/index.js";
 import { fakeSetupEnvironment } from "../../support/fake-setup-environment.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -122,6 +122,19 @@ async function checkoutFolder({ git = true } = {}): Promise<{ folder: string; da
  */
 function onTheSystemDrive(folder: string): void {
   vi.stubEnv("SystemDrive", win32.parse(folder).root.slice(0, 2));
+}
+
+/** Holds the file's write lock on a connection of its own, as another writer does, until the returned end runs. */
+function holdWriteLock(databasePath: string): () => void {
+  const writer = new Database(databasePath);
+  writer.exec("BEGIN IMMEDIATE");
+  const end = (): void => {
+    if (!writer.open) return;
+    writer.exec("ROLLBACK");
+    writer.close();
+  };
+  ends.push(end);
+  return end;
 }
 
 /** `folder` spelt another way that names the same folder on Windows: its last name in capitals. */
@@ -288,6 +301,8 @@ async function daemonRunning(databasePath: string): Promise<void> {
     health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
     origin: () => "http://127.0.0.1:4737",
   });
+  // A running daemon has opened its database by the time a hook asks it anything.
+  stores.database();
   const api = createRerailApi(stores, operations, { version: "0.0.0-test" });
   // On Windows a hook counts a recorded daemon alive only while its engine pipe exists.
   const kernelSocketPath = testEngineEndpoint(home);
@@ -780,4 +795,83 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(actual.currentPathKey("/no/such/Folder", "linux")).toBe("/no/such/Folder");
     expect(actual.currentPathKey("/no/such/Folder", "darwin")).toBe("/no/such/Folder");
   });
+
+  // The start-state check copied through a writable open that waited up to 5 s for another writer's lock, then threw
+  // SQLITE_BUSY into the hook, where the read-only open the check made before never waits on a writer.
+  it("check the start state while another writer holds the lock as a read-only open does, and copy at the next check", async () => {
+    await onWindows();
+    const { folder, databasePath } = await checkoutFolder();
+    vi.stubEnv("SystemDrive", "Q:");
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    const release = holdWriteLock(databasePath);
+    const reader = openRerailDatabase(databasePath, { readonly: true });
+    const asTheFileHoldsIt = startStateReader(reader)(folder);
+    reader.$client.close();
+
+    const started = performance.now();
+    expect(workspaceStartState(folder, databasePath)).toBe(asTheFileHoldsIt);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+    release();
+    expect(workspaceStartState(folder, databasePath)).toBe("started");
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  }, 60_000);
+
+  // The daemon copied before it answered, through a writable open that held its thread up to 5 s for another writer's
+  // lock and then failed the request: the hook lost the daemon's answer, and every later request from the drive retried.
+  it("answer a hook while another writer holds the lock, say why in the daemon's log, and copy at the next request", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    await daemonRunning(databasePath);
+    const release = holdWriteLock(databasePath);
+    const log = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    ends.push(() => { log.mockRestore(); });
+    const ask = (): Promise<Response> => fetch(`http://127.0.0.1:4737/api/presentation?${new URLSearchParams({ repository: folder, host: "claude-code" })}`);
+
+    const started = performance.now();
+    const answer = await ask();
+    expect({ status: answer.status, quick: performance.now() - started < 1_000 }).toEqual({ status: 200, quick: true });
+    expect(log.mock.calls.map(([line]) => String(line)).filter(line => line.includes("earlier build")))
+      .toEqual([`rerail: the keys an earlier build stored on ${win32.parse(folder).root} wait: database is locked\n`]);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+    release();
+    expect((await ask()).status).toBe(200);
+    expect(heldFor(databasePath, folder)).toEqual(HELD);
+  }, 60_000);
+
+  // The daemon copied for the folder a request named before the handler checked that a coding agent may read there, so
+  // an agent's request looked keys up on a drive none of its folders is on, and was refused only after.
+  it("copy for a coding agent's request only on the drive of its own checkout, and refuse one elsewhere as before", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    const stores = new DatabaseApiStores(databasePath, {
+      health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+    });
+    ends.push(() => { stores.close(); });
+    // The daemon's start: a writable open that names no folder, which reads no drive but `Q:`.
+    stores.database();
+    const presentation = operations.find(operation => operation.id === "presentation_get")!;
+    const input = { repository: folder, host: "claude-code" };
+
+    // An agent whose checkout is on another drive, which Rerail has not seen: the handler refuses it.
+    await expect(invokeOperation(presentation, stores, input, { kind: "agent", checkout: "R:\\elsewhere", folder: "" }))
+      .rejects.toMatchObject({ code: "checkout-not-found" });
+    expect({ looked: vi.mocked(currentPathKey).mock.calls.length, spellings: spellings(databasePath) })
+      .toEqual({ looked: 0, spellings: [{ stored, current: null }] });
+    await expect(invokeOperation(presentation, stores, input, { kind: "agent", checkout: folder, folder: "" }))
+      .resolves.toMatchObject({ presence: "silent", repositoryState: "started" });
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  }, 60_000);
 });
