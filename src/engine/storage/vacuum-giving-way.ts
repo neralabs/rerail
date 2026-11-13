@@ -329,12 +329,13 @@ function attemptEnd(
 /**
  * `vacuum-process.ts` on `path`: its JavaScript as the package ships it, or, where this module runs from its TypeScript
  * source as the tests run it, that source through `tsx`. Its stdout says when it holds the write lock (`committedBy`),
- * its stderr why it failed. No console window opens for it on Windows (`child-process.ts`).
+ * its stderr why it failed. Its stdin is a pipe this process never writes to: when this process ends, however it ends,
+ * the pipe closes and the `VACUUM` process ends itself. No console window opens for it on Windows (`child-process.ts`).
  */
 function startVacuumProcess(path: string): ChildProcess {
   const fromSource = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = fileURLToPath(new URL(`./vacuum-process.${fromSource ? "ts" : "js"}`, import.meta.url));
-  return spawn(process.execPath, [...(fromSource ? ["--import", "tsx"] : []), entry, path], { stdio: ["ignore", "pipe", "pipe"] });
+  return spawn(process.execPath, [...(fromSource ? ["--import", "tsx"] : []), entry, path], { stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /** Calls `run` once `signal` aborts, at once when it already has; returns what stops listening. */

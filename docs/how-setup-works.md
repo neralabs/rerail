@@ -600,7 +600,8 @@ daemon of another Rerail version sharing the database) waits for the write lock 
 `database is locked` after 5 s. So the daemon also ends a try whose `VACUUM` has held the lock 4 s without committing,
 and that write goes through. After three such tries the daemon stops, leaves the free space in the file, and says in
 `daemon.log` to run `rerail scrub`, which runs `VACUUM` once without that bound; the next daemon start tries again.
-Stopping the daemon ends a running `VACUUM` at once.
+Stopping the daemon ends a running `VACUUM` at once, and so does a daemon that ends any other way (killed, crashed): the
+`VACUUM` process reads a pipe from the daemon, and ends itself when the daemon's end of it closes.
 
 The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
 another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a

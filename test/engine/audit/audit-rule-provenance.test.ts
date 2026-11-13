@@ -225,6 +225,19 @@ const ALWAYS_ANSWERS = {
   watch: (() => () => undefined) satisfies ThreadWatch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
 };
 
+/**
+ * A process that runs `vacuumGivingWay` on the database at its first argument, from this checkout's source, its watched
+ * thread always answering: the daemon's thread that runs the move, standing alone so a test can kill it.
+ */
+const VACUUM_PARENT = `
+import Database from "better-sqlite3";
+import { vacuumGivingWay } from ${JSON.stringify(new URL("../../../src/engine/storage/vacuum-giving-way.ts", import.meta.url).href)};
+const path = process.argv[1];
+const client = new Database(path);
+client.pragma("busy_timeout = 0");
+await vacuumGivingWay(client, path, { watch: () => () => undefined, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600000 });
+`;
+
 /** An audit an older Rerail sharing the file records now, its provenance in its row; when it began. */
 function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[]): number {
   const older = new Database(path);
@@ -984,6 +997,39 @@ describe("audit rule provenance", () => {
     expect(inlineAudits(path)).toBe(0);
     expect(pageBytes(path).free).toBeGreaterThan(0);
   }, 90_000);
+
+  it("ends its VACUUM's process when the process that started it is killed, so the next write does not wait for it", async () => {
+    // The VACUUM would hold the write lock 30 s.
+    const { path, held, close } = await fileToVacuum(30_000);
+    const parent = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", VACUUM_PARENT, path], {
+      cwd: process.cwd(), stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+    });
+    let said = "";
+    parent.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      said += chunk;
+    });
+    let wrote: { failure: string | undefined; waitedMs: number };
+    try {
+      await untilExists(held, 60_000);
+      // Killed outright, as a crash or the system's out-of-memory killer ends a daemon: nothing of it runs after this.
+      const exited = once(parent, "exit");
+      parent.kill("SIGKILL");
+      await exited;
+      const writer = new Database(path, { timeout: 5_000 });
+      try {
+        wrote = timedWrite(writer);
+      } finally {
+        writer.close();
+      }
+    } finally {
+      close();
+    }
+
+    // The VACUUM process ended with its parent, and SQLite dropped its VACUUM. Before, on Linux, it ran on to its end,
+    // holding the lock, and the write failed with SQLITE_BUSY after 5 s.
+    expect({ failure: wrote.failure, quick: wrote.waitedMs < 2_000 }, `the write waited ${Math.round(wrote.waitedMs)} ms; ${said}`)
+      .toEqual({ failure: undefined, quick: true });
+  }, 60_000);
 
   it("says once, naming rerail scrub, when writes keep its VACUUM from starting past its bound, and VACUUMs once they stop", async () => {
     const path = await fileOfTheBuildBefore();
