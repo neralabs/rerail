@@ -76,3 +76,19 @@ fn pack_programs_read_back_from_their_text() {
     }
     assert!(read_back > 50, "{read_back}");
 }
+
+/// What the text has no form for is refused.
+#[test]
+fn the_tape_reader_refuses_what_print_never_writes() {
+    for text in [
+        ".decl a(x: int)\nb(x) :- a(x).\n",
+        ".rules\nb(x) :- a(x) ; c(x).\n",
+        ".rules\nb(x) :- a(x), x ~ `y`.\n",
+        ".rules\nb(x) :- a(x), x = 1.5.\n",
+        ".rules\nb(x) :- a(x), x = mean y : { c(y) }.\n",
+        ".mode strict\n",
+        ".rules\nb(x :- .\n",
+    ] {
+        assert!(read(text).is_err(), "{text:?}");
+    }
+}

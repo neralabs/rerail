@@ -1,6 +1,6 @@
 # 0155: A stored program is its `.rr` text, read straight back into a program
 
-Status: built (2026-11-13). Supersedes decision 0074 §1–3 and §4's facts entry.
+Status: built (2026-11-13). Supersedes decision 0074 §1–3 and §4's facts entry. §1's reading is amended by 0162.
 
 ## Intro
 
@@ -142,7 +142,7 @@ program text a warm dl1 run reads, the lean parser makes its tape image in 458 M
 image to nodes takes about 630 M more, and `from_tape` then indexes the nodes again and walks them to the same
 owned statements. The statement parser, after the lexer was fixed (below), does all of it in 1,174 M. The lean
 image is the cheap part; a reader that walks the image straight into a `front::Program`, with no nodes and no
-statements between, would be the fast route, and is not built.
+statements between, is the fast route. Decision 0162 builds it, and `read` now takes that route.
 
 The lexer was the larger cost: in release, 1,591 M instructions of the parser's 2,577 M. Most of it was finding
 punctuation by trying each of `PUNCT`'s 31 entries with a byte compare (`memcmp` was 65% of its samples). It now
