@@ -500,6 +500,46 @@ pub mod tests {
         }
     }
 
+    /// Tier 1's one pass on the CPU, split by what it makes: compiled as it is, without the
+    /// record pass, and without the extracts too, each run over the corpus as one batch; the
+    /// instructions retired, the least of five. A probe: run alone, one thread.
+    #[test]
+    #[ignore = "a probe: run by hand, --test-threads=1"]
+    fn rr_tier1_split() {
+        use rerail_compiler::{native_cpu_block, native_cpu_codegen::retired};
+        let c = crate::compiled().expect("compiles");
+        let corpus = corpus();
+        let files: Vec<&[u8]> = corpus.iter().map(|f| f.as_bytes()).collect();
+        let full = c.native.clone();
+        let mut no_records = full.clone();
+        no_records.records = None;
+        let mut no_extracts = no_records.clone();
+        no_extracts.extracts.clear();
+        if let Some(r) = &full.records {
+            let alone = r.marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
+            eprintln!("records: {} marks ({alone} of a word alone), {} words; the marks' outputs {:?}", r.marks.len(), r.words.len(), r.marks);
+            let labels: Vec<&str> = r.marks.iter().filter(|m| m.0 != rerail_compiler::records::WORD_ALONE).map(|m| c.labels.iter().find(|l| l.1 == m.0).map_or("?", |l| l.0.as_str())).collect();
+            eprintln!("  masked marks: {labels:?}");
+        }
+        let tokens: usize = files.iter().map(|f| c.parser.tier1.extract(f).codes.len()).sum();
+        eprintln!("{tokens} tokens");
+        let mut last = 0u64;
+        for (name, form) in [("as it is", &full), ("no record pass", &no_records), ("no extracts either", &no_extracts)] {
+            let compiled = native_cpu_block::compile(form).expect("compiles");
+            let mut batch = native_cpu_block::Batch::new(&compiled, &files);
+            let best = (0..5)
+                .map(|_| {
+                    let a = retired().0;
+                    batch.call(&compiled);
+                    retired().0 - a
+                })
+                .min()
+                .expect("rounds");
+            eprintln!("{name:>20}: {:7.1}M instructions{}", best as f64 / 1e6, if last > 0 { format!(" ({:+.1}M)", (best as f64 - last as f64) / 1e6) } else { String::new() });
+            last = best;
+        }
+    }
+
     /// The grammar's regions walked (the CPU's form, decision 0139) are its rounds' fixed point
     /// (Metal's): every value of tier 1 the same, on a sample of the corpus and on regions whose
     /// closers cross a block's end, and empty literals with and without a `` `` `` later.

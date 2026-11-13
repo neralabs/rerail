@@ -1658,8 +1658,15 @@ impl RecordTables {
         let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
         let keys = 8 * words.len();
         words.extend(&table.keys);
+        // Each slot's length, then the code bits its word gives (`len | bits << 8`): the word at
+        // `KIND_BITS`, and the marks of that word alone at `MARK_SHIFT` (`Records::marks`), so
+        // that a token takes them with the slot's one load.
         let meta = 8 * words.len();
-        words.extend(table.meta.iter().map(|&m| u64::from(m)));
+        words.extend(table.meta.iter().map(|&m| {
+            let word = u64::from(m >> 8);
+            let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
+            u64::from(m & 0xff) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8
+        }));
         let tails = 8 * words.len();
         for t in &table.tails {
             words.extend(t);
@@ -1818,10 +1825,16 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let mlen = f.ins().band_imm(meta, 0xff);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
     let hit = f.ins().band(same_key, same_len);
+    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
     let w = f.ins().ushr_imm(meta, 8);
-    let word = f.ins().select(hit, w, zero);
-    let shifted = f.ins().ishl_imm(word, i64::from(crate::records::KIND_BITS));
-    let mut code = f.ins().bor(kind, shifted);
+    let bits = f.ins().select(hit, w, zero);
+    let mut code = f.ins().bor(kind, bits);
+    // The word itself, where a mark or a long word's tail needs it.
+    let word_of = |f: &mut FunctionBuilder<'_>| {
+        let x = f.ins().ushr_imm(bits, i64::from(crate::records::KIND_BITS));
+        f.ins().band_imm(x, 0xff)
+    };
+    let word = if r.marks.iter().any(|m| m.0 != crate::records::WORD_ALONE && m.1 != 0) { Some(word_of(&mut *f)) } else { None };
     // The kind and the marks that need no word: the code where a long word's tail differs.
     let mut no_word = kind;
     // The marks at its first byte (`Records::marks`): each its mask's word at the start, the
@@ -1832,19 +1845,15 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
         let row_at = f.ins().iadd(c.out, row_off);
         let sh = f.ins().band_imm(s, 63);
         for (k, &(o, wc)) in r.marks.iter().enumerate() {
-            // A mark of its word alone: one compare, no load.
+            // A mark of its word alone: in the word's code bits already.
             if o == crate::records::WORD_ALONE {
-                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
-                let bit = f.ins().uextend(types::I64, same);
-                let placed = f.ins().ishl_imm(bit, i64::from(crate::records::MARK_SHIFT) + k as i64);
-                code = f.ins().bor(code, placed);
                 continue;
             }
             let x = f.ins().load(types::I64, fl, row_at, 8 * i32::from(o));
             let bit = f.ins().ushr(x, sh);
             let mut bit = f.ins().band_imm(bit, 1);
             if wc != 0 {
-                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
+                let same = f.ins().icmp_imm(IntCC::Equal, word.expect("made for a mark of a word"), i64::from(wc));
                 let same = f.ins().uextend(types::I64, same);
                 bit = f.ins().band(bit, same);
             }
@@ -1862,6 +1871,7 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     // A word past eight bytes: its other words, compared (seven at most, unrolled).
     f.switch_to_block(long);
     f.set_cold_block(long);
+    let word = word.unwrap_or_else(|| word_of(&mut *f));
     let wi = f.ins().iadd_imm(word, -1);
     let toff = f.ins().imul_imm(wi, 56);
     let tail = f.ins().iadd(tables, toff);
