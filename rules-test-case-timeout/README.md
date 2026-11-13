@@ -1,16 +1,16 @@
 # Tests: rule-draft compiles the installed packs once, before its cases
 
-For [pull request #636](https://github.com/neralabs/rerail/pull/636), head b53486de3. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #636](https://github.com/neralabs/rerail/pull/636), head 01a2115b3. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Does the rule-draft case still check everything it checked, now that the packs' one-time compile runs before it?**
 
-**We recommend:** approve it once #634 is on main and CI is green: one test file, no product code, and every case keeps its commands, assertions and time limit.
+**We recommend:** approve it: one test file, no product code, and every case keeps its commands, assertions and time limit.
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 6 lines in 1 file: 0 ship, 6 run in every test run, 0 are tests and text | Fast. The automated reviewer can approve. | #634. `Dependency audit` fails in CI until it merges. | 3 |
+| 6 lines in 1 file: 0 ship, 6 run in every test run, 0 are tests and text | Fast. The automated reviewer can approve. | Nothing. The dependency fix merged as #639. CI is green. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -36,16 +36,15 @@ Found on 12 November 2026 (UTC), in the "Unit tests (2/2)" jobs of the repositor
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Compile first, low risk: fails without the fix holds with a limit. CI at this head holds with a limit for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Compile first, low risk: fails without the fix holds with a limit. CI at this head holds for every change.">
 
-Two half marks. Under three busy loops the case still timed out in 5 of 201 runs. CI waits on #634.
+One half mark. Under three busy loops the case still timed out in 5 of 201 runs. CI is green at 01a2115b3.
 
 <details><summary>Each half mark's limit</summary>
 
 | Change | Check | It holds with this limit |
 |---|---|---|
 | Compile first | fails without the fix | At main the case timed out in 50 of 67 runs, here in 0 of 201: the case alone, main and this change taking turns, eight runs at a time on four CPUs of a 32-core Linux machine. With three busy loops added it timed out in 67 of 67 runs at main and in 5 of 201 here. |
-| Compile first | CI at this head | 9 of 19 jobs pass, both unit test jobs among them, and 8 are skipped. `Dependency audit` fails until #634 merges, so `CI result`, the job that reports the others, fails too. This pull request changes no dependency. |
 
 </details>
 
@@ -71,17 +70,16 @@ Two half marks. Under three busy loops the case still timed out in 5 of 201 runs
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge before you review. A green CI needs #634 on main. #503 edits the same test file in other lines. A trial merge with its head is clean.
+Nothing has to merge before you review. The dependency fix is on main (it merged as #639), and this branch took main at 01a2115b3. #503 and #640 edit the same test file in other lines. A merge with each is clean.
 
-**Related pull requests.** #635 fixes the other test that fails main's CI at random. It shares no file with this one, and either lands alone, in either order. No waiting change listed on [tracking issue #632](https://github.com/neralabs/rerail/issues/632) edits this file. The description, under "How it fits", has one row per related pull request.
+**Related pull requests.** #635 fixes the other test that fails main's CI at random. It shares no file with this one, and either lands alone, in either order. The team's #640 edits the same test file as this one: at 5ca7f9194 it splits this case in two and gives each part a 15 s limit. A three-way merge of the file with that head is clean. No pull request of ours to follow edits this file. The description, under "How it fits", has one row per related pull request.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 3 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 2 not verified, 3 limits that stay</summary>
 
-1. **CI is not green** until #634 merges.
-2. **On CI's own runners** the unit test jobs ran once at this head, and passed. One run does not show that a rare timeout is gone.
-3. **macOS** never ran.
+1. **On CI's own runners** the job that runs the case ran twice at this head, and the case passed both times. Two runs do not show that a rare timeout is gone.
+2. **macOS** never ran.
 
 **Limits that stay**
 
@@ -101,7 +99,7 @@ The description on GitHub is the record. "How you tested it" holds the interleav
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The pull request's one run, read on 13 November 2026 | 9 jobs passed, both unit test jobs among them. 8 skipped. 2 failed: `Dependency audit`, and `CI result`, the job that reports the others. |
+| CI on GitHub | The pull request's checks at 01a2115b3, read on 13 November 2026 | 12 of 20 checks passed, `Unit tests (1/2)`, `Unit tests (2/2)`, `Dependency audit` and `CI result` among them. 8 skipped. None failed. In the first attempt `Unit tests (2/2)` failed on one test of main that this pull request does not touch, in `code-rule-bridge.test.ts`. We reran the failed job once and it passed. This pull request's case passed in both attempts. |
 | Linux, 32 cores | The case alone, main and this change taking turns, eight runs at a time on four CPUs, while other work kept the machine's load at 20 to 50 | Timed out, main against this change. No busy loop: 50 of 67 against 0 of 201. One loop: 64 of 67 against 0 of 201. Three loops: 67 of 67 against 5 of 201. |
 | Linux, 32 cores | The whole file, idle, eight runs at a time | 64 of 64 runs passed at main and 64 of 64 here. The case took 1.9 to 2.7 s at main and 0.9 to 1.2 s here. |
 | Linux, 32 cores | An independent rerun of the comparison | 1,192 runs. No `beforeAll` timed out. |
@@ -110,11 +108,11 @@ The description on GitHub is the record. "How you tested it" holds the interleav
 
 **What this report adds to the description**
 
-- **CI ran what the description lists as not run.** The description says the whole `npm test`, `npm run check:licenses` and `reuse lint` were not run. In CI's run at b53486de3 both unit test jobs passed, and so did the job named "Licences (REUSE and copyleft gate)". The description's checklist can now say so.
-- **What a slow compile fails now, and the line count.** A read of the diff: `beforeAll` sits at the file's top level, so a compile past vitest's 10 s hook limit fails the file, where at main it failed one case. The description's options table says the chosen option breaks nothing and costs 4 lines. The diff adds five lines and removes one.
-- **A product cache would not shorten the case.** The description's "What would change our mind" says a compiled-catalog cache in the product would win on slower runners. At b53486de3 the case's `rules add` reuses the catalog `beforeAll` compiled, and `rules test` never compiles. Only splitting the case shortens it.
+- **CI ran the whole suite and the licence checks.** The description's own runs cover one test file. In CI's run at 01a2115b3 both unit test jobs passed, `Unit tests (2/2)` on a rerun, and so did the job named "Licences (REUSE and copyleft gate)". The description's checklist says so.
+- **What a slow compile fails now, and the line count.** A read of the diff: `beforeAll` sits at the file's top level, so a compile past vitest's 10 s hook limit fails the file, where at main it failed one case. The description's options table says the same, and gives the cost: five lines added, one removed.
+- **A product cache would not shorten the case.** The description's "What would change our mind" says a compiled-catalog cache in the product would not shorten the case. At b53486de3 the case's `rules add` reuses the catalog `beforeAll` compiled, and `rules test` never compiles. Only splitting the case shortens it.
 - **Our answer to the read-first question.** A read of the file at b53486de3: no case installs or removes a pack. One case switches the Rerail home and runs only `rules test` there, which does not compile. So the file compiles once, in `beforeAll`, for the home and packs every `rules add` case uses.
 
-**Sources.** The pull request, its diff and its CI on GitHub, read on 13 November 2026. Rerail at main (feef6b5f0) for each quoted intent and for the cause. The description for the runs. [Tracking issue #632](https://github.com/neralabs/rerail/issues/632) for the related pull requests.
+**Sources.** The pull request, its diff and its CI on GitHub, read on 13 November 2026. The head, 01a2115b3, is b53486de3 plus one merge of main; the diff against main is unchanged. Rerail at main (feef6b5f0) for each quoted intent and for the cause. The description for the runs, all but CI's made before that merge. The open pull requests on GitHub and their diffs for the related pull requests.
 
 </details>
