@@ -1345,9 +1345,17 @@ The record pass also got cheaper. A token mark's bit in the record is its first 
 (`word == W`), since its mask holds at every grammar token: one compare, not a mask word's
 load, shift and test, for each of the eight token marks at every token.
 
-The pass 2 merge is not built. The record pass reads each token's first and last byte and the
-marks' words at its start, and pass 2 writes them with delays of their own,
-so a merged pass would make each token's code a block behind its last byte.
+Then the record pass was merged into pass 2: each file's records are made at its end in the
+same pass, while its positions and mask words are still in the cache (`record_file`).
+It gains nothing. A file is 6.5 KB on average, so the separate pass already found them there:
+
+| | Pass 2 and the records, apart | Merged |
+|---|---|---|
+| JIT | 399.7M instructions, 71.5M cycles | 403.2M, 70.6M |
+| Ahead of time | 287.2M, 48.1M | 298.7M, 47.5M |
+
+What the records cost is the work a token: about 150 instructions, against the lean
+lexer's 114 for the whole token.
 
 | | Before | After |
 |---|---|---|
