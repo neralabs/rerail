@@ -136,11 +136,6 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // Library callers and the test runner can park their main thread. Their pool needs
-    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
-    // own main thread explicitly, before its first job.
-    #[cfg(not(feature = "headless"))]
-    threads::configure(false);
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -191,15 +186,17 @@ fn install_tree_sitter_allocator() {
     }
 }
 
-/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
-/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
-/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
-/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
-/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`): made as Node registers the addon's exports,
+/// before any of them runs, and not in the library's constructor. A constructor runs inside `dlopen`, which holds
+/// glibc's loader lock; rayon's `build_global` waits for every pool thread to start, and each one's first
+/// thread-local with a destructor registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load
+/// never returned. Node's main thread returns to its event loop while an async call runs, so the pool's threads are
+/// all actual workers, including with RERAIL_THREADS=1. The headless CLI registers its own main thread explicitly,
+/// before its first job.
 #[cfg(not(target_family = "wasm"))]
 #[napi(module_exports)]
 pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
-    threads::configure(threads::is_main_thread());
+    threads::configure(false);
 }
 
 #[napi(object)]
