@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,8 @@ import {
   temporaryDatabase,
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
+import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts). Every other rule compiles in the
@@ -204,6 +207,41 @@ describe("the installed-pack catalog", () => {
         { path: installed, reason: "Rule pack complexity: package.json name must be rerail-pack-<id> or @<scope>/rerail-pack-<id>" },
       ]);
     });
+  });
+
+  it("loads a pack whose rule reads a token a tape may leave out, an older pack's form: the checkout catalog skips that rule alone and reports it with the engine's reason", async () => {
+    // Python 2's `print >>f, x` as a published pack once asked for it: the `print` token, which a print statement implies.
+    const directory = await copyPack(COMPLEXITY);
+    writeJson(join(directory, "rules", `${PYTHON_RULE}.json`), {
+      ...codeRule(PYTHON_RULE),
+      clauses: [{
+        id: "print-token",
+        violation: { anchor: "witness.start", code: "PRINT", message: "never" },
+        forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
+      }],
+    });
+    installPackDirectory(directory, "complexity");
+
+    const catalog = loadRuleCatalog();
+
+    expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
+    expect(catalog.documents.has(PYTHON_RULE)).toBe(true);
+
+    const root = await temporaryDirectory();
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    const databasePath = join(root, ".rerail", "rerail.sqlite");
+    setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    try {
+      const checkoutCatalog = catalogs.catalog(root);
+      const others = [...catalog.packOf.keys()].filter(id => id !== PYTHON_RULE).sort();
+      expect(checkoutCatalog.snapshot().codeRules.map(({ id }) => id)).toEqual(others);
+      expect(checkoutCatalog.quarantined()).toEqual([
+        { ruleId: PYTHON_RULE, kind: "code", owner: "rerail", reason: expect.stringMatching(/^a token test reads a token the tape may leave out, which nothing answers: \/clauses\/0\/rule \(`\^print\$`, root\)/u) },
+      ]);
+    } finally {
+      catalogs.close();
+    }
   });
 
   describe("third parties' packs", () => {

@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
-import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
+import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -25,6 +25,7 @@ import {
   type RulePackLocalSource,
 } from "./rule-packs.js";
 import { engineRegexIssues } from "./rule-regexes.js";
+import type { RuleDocument } from "./rule-store.js";
 
 /** In the Rerail home: the npm prefix rule packs are installed into. */
 export const INSTALLED_PACKS_DIR = "packs";
@@ -228,28 +229,39 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
 }
 
 /**
- * The first rule of `loaded` the engine rejects, or undefined; throws `EngineUnavailableError` without the engine. A
- * code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern leaves the
- * pack out here rather than failing a session when it loads the rule.
+ * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
+ * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
+ * leaves the pack out here rather than failing a session when it loads the rule.
+ * One refusal is no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
+ * older pack's form this engine no longer answers, so its pack loads, and the live catalog skips that rule alone and
+ * reports it with the engine's reason, as it does every rule that fails to compile when it loads.
+ */
+function engineRefusal(document: RuleDocument): string | undefined {
+  if (document.kind === "conversation") {
+    // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
+    const [issue] = engineRegexIssues(document.rule);
+    return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
+  }
+  try {
+    storableCodeRule(document.rule);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof CodeRuleCompileError)) throw error;
+    return readsLeftOutToken(error.reason) ? undefined : error.reason;
+  }
+}
+
+/**
+ * Why the first rule of `loaded` the engine rejects (`engineRefusal`) leaves the pack out, or undefined.
  * A published pack passed the engine of the core it was released with, so on a person's machine a rule that does not
  * compile almost always means their Rerail is older than the pack: the reason says so before the engine's own words.
  */
 function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined): string | undefined {
   const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
-  const cannotRun = (ruleId: string, engineSays: string): string =>
-    `${rerail} cannot run its rule ${ruleId}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
   for (const document of loaded.documents) {
-    if (document.kind === "conversation") {
-      // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
-      const [issue] = engineRegexIssues(document.rule);
-      if (issue !== undefined) return cannotRun(document.rule.id, `${issue.path.join(".")} ${issue.message}`);
-      continue;
-    }
-    try {
-      storableCodeRule(document.rule);
-    } catch (error) {
-      if (!(error instanceof CodeRuleCompileError)) throw error;
-      return cannotRun(document.rule.id, error.reason);
+    const engineSays = engineRefusal(document);
+    if (engineSays !== undefined) {
+      return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
     }
   }
   return undefined;
