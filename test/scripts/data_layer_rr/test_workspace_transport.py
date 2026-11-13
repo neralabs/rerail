@@ -86,6 +86,18 @@ class ExistingRepositoryTransportTests(unittest.TestCase):
                 self.assertEqual(seen['options'].get('inputFiles'),[] if mode=='snapshot' else None)
 
 class NativeInterpreterGuardTests(unittest.TestCase):
+    def test_native_signal_is_visible_even_without_stderr(self):
+        run=subprocess.CompletedProcess(['/engine','run-rr'],-10,'','')
+        with patch.object(migration,'verify_source_cohort'),patch.object(migration,'verify_engine_artifact'),patch.object(replay.subprocess,'run',return_value=run):
+            with self.assertRaisesRegex(RuntimeError,'Native run-rr exited with status -10'):
+                replay.execute_workspace(Path('/engine'),Path('/rule.rr'),[],dict(entryPoint='scan'))
+
+    def test_native_status_and_error_details_are_both_retained(self):
+        run=subprocess.CompletedProcess(['/engine','run-rr'],2,'','planning failed')
+        with patch.object(migration,'verify_source_cohort'),patch.object(migration,'verify_engine_artifact'),patch.object(replay.subprocess,'run',return_value=run):
+            with self.assertRaisesRegex(RuntimeError,'status 2: planning failed'):
+                replay.execute_workspace(Path('/engine'),Path('/rule.rr'),[],dict(entryPoint='scan'))
+
     def test_even_a_swallowed_python_worker_attempt_fails_native_acceptance(self):
         import os
         def engine(command,**kwargs):
