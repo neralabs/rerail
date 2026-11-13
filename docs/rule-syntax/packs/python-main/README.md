@@ -99,5 +99,15 @@ on one file, under the caps (2 minutes, 2 GB).
 
 ### 8 too heavy, or aborting, at scale
 
-These pass on one file and fail at 10 or 50 (see the plan's notes below for the cause of each, as measured).
+Measured on 2026-11-13, each rule alone (`RERAIL_PROFILE`'s `heads.tsv` and `analysis.txt`).
+
+| Rule | Measured | Cause | Fix |
+|---|---|---|---|
+| PIE810 | 1 file 221 MB; 10 files over 2 GB | A context's cover (`rr_cover41(c2)`) pairs every node `c2` under an ancestor with every other node `c7` under it, 1,988 rows into 107,176, and then rejects them all on `!rr_not104(c7)`. `c7` is only tested for existence. | Planner: an existence-only side of a join is checked once per ancestor (a semi-join), not paired. |
+| C416 | 1 file 3.5 s; 10 files 80 s | The same shape: `dm_c416_alt_14_0` pairs a node under one sibling with nodes under a later sibling (23,263 rows into 1.9 M). | The same semi-join. |
+| ANN401 | 1 file 254 MB; 10 files over 2 GB | The translator's demand `ann401_demand_alt_34(c5, LA)` carries `c5`, every node of the module, beside each annotation: 621 rows into 1.2 M. | Translator: a demand carries only the columns its helper is asked at. |
+| UP028 | 1 file 1.4–2.1 GB, 33–70 s (the old engine too) | An inlined util joins names by text (`text(J, t), text(N, t)`) over every identifier of a scope inside a count, which is quadratic in a scope's names. Main resolves the name once a match. Not yet profiled to the relation: the run passes the cap first. | Translator: read same-name bindings through the library's name resolution (`binding`, `ref_site`). |
+| B606, B323, B304 | Clean alone on 10 files | Strict mode aborted grouped 50-file runs: `$rr_sd0 >= 1073741824 has no native step` (a hiding bound with no native step). | Engine: the bound's comparison gets a native step. To be reproduced alone on 50 files. |
+| AIR312 | Clean alone on 10 files (531 MB) | On 50 files, the writer's queue fills with the memo's entries (about 200 MB). | Engine: the memo's writes are bounded, as the other writes are. To be reproduced. |
+| D418, TC006 | Abort alone on one file | Strict mode: `a stratum the native engine declined`. Grouped runs hid it. | Engine: the stratum's native lowering. |
 
