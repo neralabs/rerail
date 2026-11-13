@@ -532,6 +532,8 @@ pub fn compile_sub_rule(
             min: spec.min,
             max: spec.max,
             binding: None,
+            // A parsed tree keeps its tokens.
+            gap: None,
         })));
     }
     if let Some(compare) = rule.get("compare") {
