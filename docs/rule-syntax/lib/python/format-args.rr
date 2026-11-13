@@ -1,0 +1,176 @@
+// python/format-args: main's `formatArgs` term, for `S.format(…)` (style "brace") and `S % R` (style "percent"):
+// which arguments no field of the format string consumes ("unused"), and which fields no argument fills
+// ("missing"). It reads them as Ruff 0.16.9's Pyflakes rules do (F504, F505, F507, F522, F523, F524) and as main's
+// matcher does (native/src/code_rule_dsl/matcher/format_args/python.rs). The JSON translator writes a `formatArgs`
+// term as these relations (docs/rule-syntax/site/translate.py, `format_args`).
+//
+//   "{a}".format(a=1, b=2)        fa_brace_unused(n, b=2)              F522: a keyword no field names
+//   "{} {}".format(1)             fa_brace_missing(n, the second {})   F524: a field past the arguments
+//   "%(a)s" % {"a": 1, "b": 2}    fa_percent_unused(n, "b": 2)         F504
+//   "%s %s" % (1,)                fa_percent_missing(n, the second %s) F507
+//
+// Interface (n is the call or the `%` expression; <style> is brace or percent)
+//   fa_<style>_tree(n, s, r)      n formats the plain str literal s (parentheses off), whose tree (the guest dialect
+//                                 braceFormat or percentFormat, decision 0176) is r and holds no error
+//   fa_<style>_unused(n, a)       argument a (a call argument, a dict pair, a tuple element or the operand) is unused
+//   fa_<style>_missing(n, f)      field f of the tree (`field`; `placeholder` or `star` for %) has no argument
+//   fa_<style>_unused_open(n)     some argument may be unused that the analysis cannot name (`**kw`, an operand of
+//                                 unknown type)
+//   fa_<style>_missing_open(n)    some field may be missing that the analysis cannot name (`*args`, `**kw`, a dict
+//                                 with a computed key)
+//   fa_unknown(n)                 Ruff reads n's string as unknown: a string that is no plain literal, or that does
+//                                 not parse
+//
+// Each style has relations of its own, so each guest column holds nodes of one grammar. A kind constant on such a
+// node is resolved in that grammar (`kind(f, "field")` is braceFormat's `field`; decision 0058 §2).
+//
+// Ruff's verdict is three-valued. A known candidate that matches makes the term true. With none, the term is false
+// only when the side is complete and the string is known; otherwise it is unknown. An unknown verdict reports
+// nothing, so a positive term needs only the unused or missing relation. A negated one also needs `!fa_unknown(n)`
+// and `!fa_<style>_unused_open(n)` or `!fa_<style>_missing_open(n)`, which the translator adds.
+//
+// The string and the arguments are read from n itself: the object of the call's `.format` attribute, or the left
+// operand of `%` with the right one as the values. Those are the captures `string` and `args` name in every one of
+// main's rules (`$S.format($$$A)`, `($S.format)($$$A)`, `$S % $R`).
+#include "python/pyflakes-format.rr"   // known_non_tuple; python/ast's unparen, plain_str_node, plain_str
+
+// ---- the string ------------------------------------------------------------------------------------------------
+.decl fa_brace_string(n: node, s: node)
+fa_brace_string(n, s) :- kind(n, "call"), field(n, "function", f0), unparen(f0, f), attr_of(f, o, "format"),
+    unparen(o, s).
+.decl fa_percent_string(n: node, s: node)
+fa_percent_string(n, s) :- kind(n, "binary_operator"), op(n, "%"), field(n, "left", s0), unparen(s0, s).
+.decl fa_brace_tree(n: node, s: node, r: node)
+fa_brace_tree(n, s, r) :- fa_brace_string(n, s), plain_str_node(s), parsed(s, "braceFormat", r),
+    count : { child(r, e, _), kind(e, "error") } = 0.
+.decl fa_percent_tree(n: node, s: node, r: node)
+fa_percent_tree(n, s, r) :- fa_percent_string(n, s), plain_str_node(s), parsed(s, "percentFormat", r),
+    count : { child(r, e, _), kind(e, "error") } = 0.
+// A string that is no plain literal (an f-string, bytes) or that Ruff refuses (F501, F521) is unknown; any other
+// operand (a name) is no match.
+.decl fa_unknown(n: node)
+fa_unknown(n) :- fa_brace_string(n, s), (kind(s, "string") ; kind(s, "concatenated_string")), !fa_brace_tree(n, s, _).
+fa_unknown(n) :- fa_percent_string(n, s), (kind(s, "string") ; kind(s, "concatenated_string")),
+    !fa_percent_tree(n, s, _).
+
+// ---- str.format ------------------------------------------------------------------------------------------------
+// fa_brace_field(n, f, key, type): field f reads argument key, an index ("int": `{0}`, and `{}` numbered in order)
+// or a name ("str"). Fields nested in a format spec count (`{:{width}}`).
+.decl fa_brace_field(n: node, f: node, key: symbol, t: symbol)
+fa_brace_field(n, f, k, t) :- fa_brace_tree(n, _, r), within(f, r), kind(f, "field"), value(f, k), value_type(k, t).
+.decl fa_brace_index(n: node, i: number)
+fa_brace_index(n, to_number(k)) :- fa_brace_field(n, _, k, "int").
+.decl fa_brace_name(n: node, x: symbol)
+fa_brace_name(n, x) :- fa_brace_field(n, _, x, "str").
+
+// fa_arg(n, a, j): a is the call's j-th argument. fa_pos(n, i, a): a is positional argument i (a `*args` takes one
+// position). fa_kw(n, a, x): a is the keyword argument x.
+.decl fa_arg(n: node, a: node, j: number)
+fa_arg(n, a, j) :- fa_brace_tree(n, _, _), field(n, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+    !kind(a, "comment").
+.decl fa_positional(n: node, a: node, j: number)
+fa_positional(n, a, j) :- fa_arg(n, a, j), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
+.decl fa_pos(n: node, i: number, a: node)
+fa_pos(n, i, a) :- fa_positional(n, a, j), i = count : { fa_positional(n, b, j2), j2 < j }.
+.decl fa_kw(n: node, a: node, x: symbol)
+fa_kw(n, a, x) :- fa_arg(n, a, _), kind(a, "keyword_argument"), field(a, "name", m), text(m, x).
+.decl fa_star(n: node)
+fa_star(n) :- fa_arg(n, a, _), kind(a, "list_splat").
+.decl fa_kwsplat(n: node)
+fa_kwsplat(n) :- fa_arg(n, a, _), kind(a, "dictionary_splat").
+.decl fa_npos(n: node, c: number)
+fa_npos(n, c) :- fa_brace_tree(n, _, _), c = count : { fa_positional(n, _, _) }.
+
+// Unused: a positional argument (not `*args`) whose index no field reads; a keyword no field names (unknown past
+// a `**kw`, which may be the one a field names).
+.decl fa_brace_unused(n: node, a: node)
+fa_brace_unused(n, a) :- fa_pos(n, i, a), !kind(a, "list_splat"), !fa_brace_index(n, i).
+fa_brace_unused(n, a) :- fa_kw(n, a, x), !fa_kwsplat(n), !fa_brace_name(n, x).
+.decl fa_brace_unused_open(n: node)
+fa_brace_unused_open(n) :- fa_kw(n, _, x), fa_kwsplat(n), !fa_brace_name(n, x).
+// Missing: a field whose index is past the positional arguments, or whose name no keyword passes. A `*args` or a
+// `**kw` may fill any field, so with one the side is open.
+.decl fa_brace_missing(n: node, f: node)
+fa_brace_missing(n, f) :- fa_brace_field(n, f, k, "int"), fa_npos(n, c), to_number(k) >= c, !fa_star(n),
+    !fa_kwsplat(n).
+fa_brace_missing(n, f) :- fa_brace_field(n, f, x, "str"), !fa_kw(n, _, x), !fa_star(n), !fa_kwsplat(n).
+.decl fa_brace_missing_open(n: node)
+fa_brace_missing_open(n) :- fa_brace_tree(n, _, _), (fa_star(n) ; fa_kwsplat(n)).
+
+// ---- % -----------------------------------------------------------------------------------------------------------
+// fa_percent_field(n, f, key, type): placeholder or `*` f reads key, a mapping key ("str") or a positional value
+// ("int", its position).
+.decl fa_percent_field(n: node, f: node, key: symbol, t: symbol)
+fa_percent_field(n, f, k, t) :- fa_percent_tree(n, _, r), within(f, r), (kind(f, "placeholder") ; kind(f, "star")),
+    value(f, k), value_type(k, t).
+.decl fa_percent_name(n: node, x: symbol)
+fa_percent_name(n, x) :- fa_percent_field(n, _, x, "str").
+.decl fa_keyed(n: node)
+fa_keyed(n) :- fa_percent_field(n, _, _, "str").
+.decl fa_ordered(n: node)
+fa_ordered(n) :- fa_percent_field(n, _, _, "int").
+.decl fa_positionals(n: node, c: number)
+fa_positionals(n, c) :- fa_percent_tree(n, _, _), c = count : { fa_percent_field(n, _, _, "int") }.
+
+// With no positional placeholder, a dict display is read against the mapping keys; with no mapping key, the
+// operand is the values. Both readings apply to a format with no placeholder; a format that mixes keys and
+// positions (F506) has neither, so both sides are open.
+.decl fa_operand(n: node, o: node)
+fa_operand(n, o) :- fa_percent_tree(n, _, _), field(n, "right", r0), unparen(r0, o).
+.decl fa_mapping(n: node, d: node)
+fa_mapping(n, d) :- fa_operand(n, d), !fa_ordered(n), kind(d, "dictionary").
+.decl fa_sequence(n: node, o: node)
+fa_sequence(n, o) :- fa_operand(n, o), !fa_keyed(n).
+.decl fa_percent_unused(n: node, a: node)
+.decl fa_percent_missing(n: node, f: node)
+.decl fa_percent_unused_open(n: node)
+.decl fa_percent_missing_open(n: node)
+fa_percent_unused_open(n) :- fa_operand(n, o), !fa_mapping(n, o), !fa_sequence(n, o).
+fa_percent_missing_open(n) :- fa_operand(n, o), !fa_mapping(n, o), !fa_sequence(n, o).
+
+// A dict display: a pair whose str key no placeholder names is unused; a key no pair passes is missing. Any entry
+// but a pair (`**m`) opens both sides; a key that is no str literal opens the missing one.
+.decl fa_entry(d: node, e: node)
+fa_entry(d, e) :- fa_mapping(_, d), child(d, e, _), !kind(e, "comment").
+.decl fa_dict_open(d: node)
+fa_dict_open(d) :- fa_entry(d, e), !kind(e, "pair").
+.decl fa_dict_key(d: node, p: node, x: symbol)
+fa_dict_key(d, p, x) :- fa_entry(d, p), kind(p, "pair"), field(p, "key", k0), unparen(k0, k), plain_str(k, x).
+.decl fa_dict_dynamic(d: node)
+fa_dict_dynamic(d) :- fa_entry(d, p), kind(p, "pair"), !fa_dict_key(d, p, _).
+fa_percent_unused(n, p) :- fa_mapping(n, d), !fa_dict_open(d), fa_dict_key(d, p, x), !fa_percent_name(n, x).
+fa_percent_missing(n, f) :- fa_mapping(n, d), !fa_dict_open(d), !fa_dict_dynamic(d), fa_percent_field(n, f, x, "str"),
+    !fa_dict_key(d, _, x).
+fa_percent_unused_open(n) :- fa_mapping(n, d), fa_dict_open(d).
+fa_percent_missing_open(n) :- fa_mapping(n, d), (fa_dict_open(d) ; fa_dict_dynamic(d)).
+
+// The values. A tuple display gives its elements: those past the positional placeholders are unused, and
+// placeholders past its length are missing (unknown with a `*x` element). An operand Ruff types as a tuple it
+// cannot count (`(1,) + (2,)`) opens both sides. An operand of a known other type is one value. With no
+// positional placeholder, any other operand is unused (Ruff's F507 reads `"done" % x` so).
+.decl fa_element(o: node, e: node, i: number)
+fa_element(o, e, i) :- fa_sequence(_, o), kind(o, "tuple"), child(o, e, j), !kind(e, "comment"),
+    i = count : { child(o, e2, j2), j2 < j, !kind(e2, "comment") }.
+.decl fa_tuple_open(o: node)
+fa_tuple_open(o) :- fa_element(o, e, _), kind(e, "list_splat").
+.decl fa_length(o: node, c: number)
+fa_length(o, c) :- fa_sequence(_, o), kind(o, "tuple"), c = count : { fa_element(o, _, _) }.
+fa_percent_unused(n, e) :- fa_sequence(n, o), !fa_tuple_open(o), fa_element(o, e, i), fa_positionals(n, c), i >= c.
+fa_percent_missing(n, f) :- fa_sequence(n, o), !fa_tuple_open(o), fa_length(o, c), fa_percent_field(n, f, k, "int"),
+    to_number(k) >= c.
+fa_percent_unused_open(n) :- fa_sequence(n, o), fa_tuple_open(o).
+fa_percent_missing_open(n) :- fa_sequence(n, o), fa_tuple_open(o).
+fa_percent_unused(n, o) :- fa_sequence(n, o), !kind(o, "tuple"), !fa_tuple_typed(o), fa_positionals(n, 0).
+fa_percent_missing(n, f) :- fa_sequence(n, o), !kind(o, "tuple"), !fa_tuple_typed(o), known_non_tuple(o),
+    fa_percent_field(n, f, k, "int"), to_number(k) >= 1.
+fa_percent_unused_open(n) :- fa_sequence(n, o), fa_tuple_typed(o).
+fa_percent_missing_open(n) :- fa_sequence(n, o), fa_tuple_typed(o).
+fa_percent_unused_open(n) :- fa_sequence(n, o), !kind(o, "tuple"), !fa_tuple_typed(o), !known_non_tuple(o),
+    !fa_positionals(n, 0).
+fa_percent_missing_open(n) :- fa_sequence(n, o), !kind(o, "tuple"), !fa_tuple_typed(o), !known_non_tuple(o),
+    !fa_positionals(n, 0).
+// fa_tuple_typed(e): Ruff types e as a tuple, but it is no display: `t1 + t2` or `t * k` with a tuple display
+// operand.
+.decl fa_tuple_typed(e: node)
+fa_tuple_typed(e) :- fa_sequence(_, e), kind(e, "binary_operator"), (op(e, "+") ; op(e, "*")),
+    (field(e, "left", x) ; field(e, "right", x)), unparen(x, t), kind(t, "tuple").

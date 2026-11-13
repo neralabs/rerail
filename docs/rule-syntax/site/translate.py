@@ -349,6 +349,8 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(alternatives(prog, val, v, vs))
         elif k == "not":
             lits.extend(negate(lower(prog, val, v, vs)))
+            if isinstance(val, dict) and is_format_args(prog, val.get("formatArgs")):
+                lits.extend(format_args_decided(val["formatArgs"], v))
         elif k == "matches" and isinstance(val, str):
             prog.names.add(prog.util_rel(val))
             lits.append(f"{prog.util_rel(val)}({v})")
@@ -358,6 +360,8 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(main_terms.arguments(prog, val, v, vs))
         elif k == "resolves" and isinstance(val, dict):
             lits.extend(resolves(prog, val, v, vs))
+        elif k == "formatArgs" and is_format_args(prog, val):
+            lits.extend(format_args(prog, val, v, vs))
         else:
             rest[k] = val
     if rest:
@@ -425,6 +429,41 @@ def nth_child(prog, c, v, vs):
         return [f"child({p}, {v}, _), {rel}({v})",
                 f"{k} = count : {{ child({p}, {s}, _), {order}, {rel}({s}) }}"] + at
     return [f"child({p}, {v}, _), {k} = count : {{ child({p}, {s}, _), {order} }}"] + at
+
+
+def is_format_args(prog, val):
+    """A `formatArgs` term the library python/format-args reads: Python's `brace` or `percent` style."""
+    return prog.lang == "python" and isinstance(val, dict) and val.get("style") in ("brace", "percent") and \
+        set(val) <= {"style", "string", "args", "unused", "missing"} and ("unused" in val or "missing" in val)
+
+
+def format_args(prog, val, v, vs):
+    """`formatArgs` at node v (the call or the `%` expression): an unused argument, or a missing field of the
+    string's tree, that matches the side's rule (python/format-args, a relation per style). The library reads the string and the
+    arguments from v, where main's rules capture them."""
+    prog.use("format-args")
+    style = val["style"]
+    lits = [f"fa_{style}_tree({v}, _, _)"]
+    if "unused" in val:
+        a = vs.fresh("a")
+        lits.append(f"fa_{style}_unused({v}, {a})")
+        lits.extend(lower(prog, val["unused"], a, vs))
+    if "missing" in val:
+        f = vs.fresh("f")
+        lits.append(f"fa_{style}_missing({v}, {f})")
+        lits.extend(lower(prog, val["missing"], f, vs))
+    return lits
+
+
+def format_args_decided(val, v):
+    """Beside a negated `formatArgs`: Ruff's verdict is known. An unknown one (a string that does not parse, an
+    open side) reports nothing, so its negation must not hold either."""
+    lits = [f"!fa_unknown({v})"]
+    if "unused" in val:
+        lits.append(f"!fa_{val['style']}_unused_open({v})")
+    if "missing" in val:
+        lits.append(f"!fa_{val['style']}_missing_open({v})")
+    return lits
 
 
 def site_filters(prog, filters, s, vs):

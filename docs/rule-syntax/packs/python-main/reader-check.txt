@@ -513,9 +513,9 @@ reader-passed ruff-up025-unicode-kind-prefix
 reader-passed ruff-up026-deprecated-mock-import
 reader-passed ruff-up028-yield-in-for-loop
 reader-passed ruff-up029-unnecessary-builtin-import
-reader-failed ruff-up030-format-literals  line 104: a JSON term or an `ast` capture outside `ast(…)`
+reader-passed ruff-up030-format-literals
 reader-passed ruff-up031-printf-string-formatting
-reader-failed ruff-up032-f-string  line 173: a JSON term or an `ast` capture outside `ast(…)`
+reader-passed ruff-up032-f-string
 reader-passed ruff-up033-lru-cache-with-maxsize-none
 reader-passed ruff-up034-extraneous-parentheses
 reader-passed ruff-up035-deprecated-import

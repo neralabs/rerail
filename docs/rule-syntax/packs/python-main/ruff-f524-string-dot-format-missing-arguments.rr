@@ -5,18 +5,19 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // F524(n): a finding at node n, from clause `string-dot-format-missing-arguments`.
 // Each rule below is one way the JSON `rule` can match.
 .violation F524(at: node) "`.format` call is missing argument(s) for placeholder(s)"
     suppress noqa "F524"
-F524(n) :- n ~ `$S.format($$$A)`,
-    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
-F524(n) :- kind(n, "call"), field(n, "arguments", c1),
-    kind(c1, "generator_expression"), field(n, "function", c2), kind(c2, "attribute"),
-    field(c2, "attribute", c3), glob("format", c3), field(n, "function", c4),
-    field(c4, "object", c5), f524_reads_past_one(c5).
+F524(n) :- n ~ `$S.format($$$A)`, fa_brace_tree(n, _, _), fa_brace_missing(n, f1),
+    kind(f1, "field").
+F524(n) :- kind(n, "call"), field(n, "arguments", c2),
+    kind(c2, "generator_expression"), field(n, "function", c3), kind(c3, "attribute"),
+    field(c3, "attribute", c4), glob("format", c4), field(n, "function", c5),
+    field(c5, "object", c6), f524_reads_past_one(c6).
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl f524_plain_string(n: node)

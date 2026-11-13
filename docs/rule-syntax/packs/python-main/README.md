@@ -72,7 +72,7 @@ on one file, under the caps (2 minutes, 2 GB).
 | COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The translator names the kinds the node can have, from the grammar's node types under its parent, as the overrides do by hand. |
 | N806 | A util that reads the caller's metavariable (`NAME`). | The translator's `demand()` pass already hands a caller's metavariable to a helper; it is extended to a util whose only binder is the caller's. |
 
-### 14 refused by the reader: 12 fixed, 2 left
+### 14 refused by the reader: all fixed
 
 - **Done: the `percentFormat` and `braceFormat` grammars** (F501–F503, F506, F508, F509, F521, F523–F525, FAST003,
   UP031; decision 0176). These are the grammars of the format mini-languages: `%` printf formats and `str.format`'s
@@ -81,10 +81,11 @@ on one file, under the caps (2 minutes, 2 GB).
   Ruff's message). They are now the guest dialects `percent-format` and `brace-format` of the registry language
   `languages/python-format.json`. The same ported parsers write the tree, and the error's message is the node's
   value. The reader passes all 12 rules. On 10 files, F501, F502, F503, F506, F508, F509, F521, F525 and UP031 run.
-  Their findings have not been compared with main's yet. F523 and F524 need `formatArgs` (below). FAST003 needs the
+  Their findings have not been compared with main's yet. F523 and F524 now run too (`formatArgs`, below). FAST003 needs the
   `host` term (`{"host": {"not": {"matches": …}}}`), which the engine's matcher compiler lacks. The final shape is a
   transducer program per grammar (rank 0 allows a lean parser until then).
-- **Left: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` in Datalog (below).
+- **Fixed: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` is now Datalog (below). UP030 runs;
+  UP032 still needs the `host` term, as FAST003 does.
 
 ### 13 refused at run time: 9 fixed, 4 left
 
@@ -96,8 +97,15 @@ on one file, under the caps (2 minutes, 2 GB).
   {"bindings": …})`), which is no matcher. It now writes the whole matcher (`{"language", "rule"}`), and writes
   `binds.bindings` (a count of the name's bindings) and `binds.redefines` (an earlier binding of the name in the scope)
   in Datalog, since the engine's matcher compiler has neither. `binds.site` is the statement that binds, not the name.
-- **Left: `formatArgs`** (F504, F505, F507, F522): unsupported by the engine's matcher compiler. **Plan:** in Datalog,
-  over the format string's guest tree (the grammars above) and the call's arguments.
+- **Fixed: `formatArgs`** (F504, F505, F507, F522; and F523, F524, UP030, UP032). The engine's matcher compiler
+  has no `formatArgs`, so the translator writes it in Datalog over the library `lib/python/format-args.rr`. That
+  library reads the call's arguments or the `%` operand against the format string's guest tree, as Ruff's
+  Pyflakes rules do. It has relations per style (`fa_brace_unused`, `fa_percent_missing`, …), so a guest column holds
+  one grammar's nodes, and a kind test on them is resolved in that grammar. Ruff's verdict is three-valued. A
+  negated term also gets a guard that the verdict is known (`!fa_unknown(n), !fa_brace_missing_open(n)`), so an
+  unknown verdict reports nothing either way. On a probe of 15 lines with known answers
+  (`"{a}".format(a=1, b=2)`, `"%s %s" % pair`, …), F504, F505, F507, F522, F523, F524 and UP030 each give exactly
+  the expected lines. UP030 also agrees with the hand-written `packs/python` rule.
 
 ### 8 too heavy, or aborting, at scale
 

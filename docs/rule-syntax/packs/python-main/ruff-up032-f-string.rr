@@ -7,6 +7,7 @@
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
 // ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
 
+#include "python/format-args.rr"
 #include "python/names.rr"
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
@@ -107,7 +108,7 @@ up032_gen_template(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
 .violation UP032(at: node) "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress noqa "UP032"
 UP032(n) :- up032_alt_13(n),
-    count : { inside(n, p26, "call"), field(p26, "function", c27), (sym_of(c27, "django.utils.translation.gettext") ; sym_of(c27, "django.utils.translation.gettext_lazy")) } = 0.
+    count : { inside(n, p28, "call"), field(p28, "function", c29), (sym_of(c29, "django.utils.translation.gettext") ; sym_of(c29, "django.utils.translation.gettext_lazy")) } = 0.
 
 // UP032_f_string_annotation(n): a finding at node n, from clause `f-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
@@ -174,17 +175,19 @@ up032_alt_13(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "o
     up032_template(c2), field(n, "arguments", c3), child(c3, c4, _), up032_real_arg(c4),
     count : { field(n, "arguments", c5), child(c5, c6, _), up032_bad_arg(c6) } = 0,
     count : { field(n, "function", c7), field(c7, "object", c8), up032_repeats_effect(c8) } = 0,
-    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
-up032_alt_13(n) :- n ~ `($S.format)($$$A)`, field(n, "function", c9), child(c9, c10, _),
-    kind(c10, "attribute"), field(c10, "object", c11), up032_template(c11),
-    field(n, "arguments", c12), child(c12, c13, _), up032_real_arg(c13),
-    count : { field(n, "arguments", c14), child(c14, c15, _), up032_bad_arg(c15) } = 0,
-    count : { field(n, "function", c16), child(c16, c17, _), kind(c17, "attribute"), field(c17, "object", c18), up032_repeats_effect(c18) } = 0,
-    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
-up032_alt_13(n) :- kind(n, "call"), field(n, "arguments", c19),
-    kind(c19, "generator_expression"), !up032_alt_11(c19), field(n, "function", c20),
-    ( kind(c20, "attribute"), field(c20, "attribute", c1), glob("format", c1), field(c20, "object", c2), up032_gen_template(c2)
-    ; kind(c20, "parenthesized_expression"), child(c20, c3, _), kind(c3, "attribute"), field(c3, "attribute", c4), glob("format", c4), field(c3, "object", c5), up032_gen_template(c5)
+    count : { fa_brace_tree(n, _, _), fa_brace_missing(n, f9), kind(f9, "field") } = 0,
+    !fa_unknown(n), !fa_brace_missing_open(n).
+up032_alt_13(n) :- n ~ `($S.format)($$$A)`, field(n, "function", c10), child(c10, c11, _),
+    kind(c11, "attribute"), field(c11, "object", c12), up032_template(c12),
+    field(n, "arguments", c13), child(c13, c14, _), up032_real_arg(c14),
+    count : { field(n, "arguments", c15), child(c15, c16, _), up032_bad_arg(c16) } = 0,
+    count : { field(n, "function", c17), child(c17, c18, _), kind(c18, "attribute"), field(c18, "object", c19), up032_repeats_effect(c19) } = 0,
+    count : { fa_brace_tree(n, _, _), fa_brace_missing(n, f20), kind(f20, "field") } = 0,
+    !fa_unknown(n), !fa_brace_missing_open(n).
+up032_alt_13(n) :- kind(n, "call"), field(n, "arguments", c21),
+    kind(c21, "generator_expression"), !up032_alt_11(c21), field(n, "function", c22),
+    ( kind(c22, "attribute"), field(c22, "attribute", c1), glob("format", c1), field(c22, "object", c2), up032_gen_template(c2)
+    ; kind(c22, "parenthesized_expression"), child(c22, c3, _), kind(c3, "attribute"), field(c3, "attribute", c4), glob("format", c4), field(c3, "object", c5), up032_gen_template(c5)
     ).
 
 

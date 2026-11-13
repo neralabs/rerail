@@ -5,11 +5,12 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // F522(n): a finding at node n, from clause `string-dot-format-extra-named-arguments`.
 // Each rule below is one way the JSON `rule` can match.
 .violation F522(at: node) "Remove the keyword arguments that no named placeholder in this str.format() string uses."
     suppress noqa "F522"
-F522(n) :- n ~ `$S.format($$$A)`,
-    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "unused": {"kind": "keyword_argument"}}}}).
+F522(n) :- n ~ `$S.format($$$A)`, fa_brace_tree(n, _, _), fa_brace_unused(n, a1),
+    kind(a1, "keyword_argument").
