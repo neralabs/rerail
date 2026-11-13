@@ -236,3 +236,17 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
+
+#[cfg(test)]
+mod consulted_transport_tests {
+    #[test]
+    fn consulted_paths_round_trip_without_dropping_or_inventing_reads() {
+        let reads = vec![
+            ("dir".into(), "impl/line\nbreak".into(), "abc".into()),
+            ("dir-metadata".into(), "impl/tab\tname".into(), "def".into()),
+            ("file".into(), "名前\0:\r\ndoc\tinvented\t123".into(), "ghi".into()),
+            ("refused".into(), "".into(), "".into()),
+        ];
+        assert_eq!(super::decode_consulted(&super::encode_consulted(&reads)), reads);
+    }
+}
