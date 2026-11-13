@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { open } from "node:fs";
+import { close, open, write } from "node:fs";
 import { request, type RequestOptions } from "node:http";
 import { Socket } from "node:net";
+import { Duplex } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { isNamedPipe } from "./engine-pipe.js";
@@ -62,15 +63,15 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 export type EngineProofAnswer = "proved" | "refused" | "silent";
 
 /**
- * A socket connected to the Windows named pipe `path`, opened as a file: an open that finds every instance of the pipe
- * taken fails at once with `EBUSY`, and is tried again every {@link PIPE_RETRY_MS} until `deadline` (epoch ms), when
- * the `EBUSY` is thrown. Node's own connect waits up to 30 s for a free instance, in a thread that closing the socket
- * does not stop, and that thread keeps the process alive after the proof has answered.
+ * The Windows named pipe `path` opened as a file, its descriptor: an open that finds every instance of the pipe taken
+ * fails at once with `EBUSY`, and is tried again every {@link PIPE_RETRY_MS} until `deadline` (epoch ms), when the
+ * `EBUSY` is thrown. Node's own connect waits up to 30 s for a free instance, in a thread that closing the socket does
+ * not stop, and that thread keeps the process alive after the proof has answered.
  */
-async function openPipe(path: string, deadline: number): Promise<Socket> {
+async function openPipe(path: string, deadline: number): Promise<number> {
   for (;;) {
     try {
-      return new Socket({ fd: await openFile(path, "r+"), readable: true, writable: true });
+      return await openFile(path, "r+");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EBUSY" || Date.now() >= deadline) throw error;
     }
@@ -79,16 +80,64 @@ async function openPipe(path: string, deadline: number): Promise<Socket> {
 }
 
 /**
+ * The stream a proof's request runs over on a pipe {@link openPipe} opened. A pipe opened as a file is synchronous: a
+ * read waiting for data holds it, and a write waits behind that read, so the request would never leave. The request is
+ * written with `fs.write` first, and only then does a socket on the descriptor start reading the answer. Closing that
+ * socket stops its waiting read, so nothing keeps the process alive.
+ */
+class PipeExchange extends Duplex {
+  readonly #fd: number;
+  #socket: Socket | undefined;
+
+  constructor(fd: number) {
+    super();
+    this.#fd = fd;
+  }
+
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    write(this.#fd, chunk, (error) => {
+      if (error === null) this.#startReading();
+      callback(error);
+    });
+  }
+
+  override _read(): void {
+    this.#socket?.resume();
+  }
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    if (this.#socket === undefined) {
+      close(this.#fd, () => callback(error));
+      return;
+    }
+    this.#socket.destroy();
+    callback(error);
+  }
+
+  #startReading(): void {
+    // A proof ended while its request was being written has closed the descriptor, which the OS may since have reused.
+    if (this.#socket !== undefined || this.destroyed) return;
+    const socket = new Socket({ fd: this.#fd, readable: true, writable: false });
+    socket.on("data", (chunk: Buffer) => {
+      if (!this.push(chunk)) socket.pause();
+    });
+    socket.on("end", () => this.push(null));
+    socket.on("error", error => this.destroy(error));
+    this.#socket = socket;
+  }
+}
+
+/**
  * How a proof's request reaches the listener on `socketPath`: a Windows pipe opened by {@link openPipe} before the
- * request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux a path spelled like one is a Unix
- * socket's. A pipe that is not opened by `deadline` is the verdict: every instance still taken is no answer (`silent`);
- * a pipe that is gone, or that this user may not open, is `refused`.
+ * request and written then read through {@link PipeExchange}, a Unix socket by its path. Only Windows has named pipes:
+ * on macOS and Linux a path spelled like one is a Unix socket's. A pipe that is not opened by `deadline` is the verdict:
+ * every instance still taken is no answer (`silent`); a pipe that is gone, or that this user may not open, is `refused`.
  */
 async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
   if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
   try {
-    const socket = await openPipe(socketPath, deadline);
-    return { createConnection: () => socket };
+    const exchange = new PipeExchange(await openPipe(socketPath, deadline));
+    return { createConnection: () => exchange };
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EBUSY" ? "silent" : "refused";
   }
