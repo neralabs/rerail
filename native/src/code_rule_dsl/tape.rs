@@ -175,8 +175,8 @@ impl Grammar {
         Ok(Arc::new(Self { lang, kinds, named }))
     }
 
-    /// The grammar of an embedded program's dialect, built once per process.
-    fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+    /// A dialect's grammar, built once per process: an embedded program's, a pattern's.
+    fn shared(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
@@ -470,7 +470,7 @@ impl DerivedImage {
                 "an embedded program's host errors are not sorted ranges of the host".into(),
             );
         }
-        let grammar = Grammar::embedded(program.dialect)?;
+        let grammar = Grammar::shared(program.dialect)?;
         let tape = TapeImage::encode_tree_image(
             program.root(),
             &grammar,
@@ -600,7 +600,7 @@ impl FileImage {
             if !parent_dialect.embeds().contains(&(via, dialect)) {
                 return Err("a derived document's dialect is not one its parent embeds".into());
             }
-            let tape = TapeImage::from_bytes(stored.tape, &Grammar::embedded(dialect)?)?;
+            let tape = TapeImage::from_bytes(stored.tape, &Grammar::shared(dialect)?)?;
             if tape.source_len != text.len() {
                 return Err("a derived document's tape is not of its text".into());
             }
@@ -1818,7 +1818,7 @@ impl TapeDoc {
         guest: &DerivedImage,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let grammar = Grammar::embedded(guest.tape.language)?;
+        let grammar = Grammar::shared(guest.tape.language)?;
         // Positions read through the segments slice both texts: a map that does not fit them is
         // refused here, so the tape is encoded again, never read wrong.
         guest.source_map.check(&guest.text, &host.source)?;
@@ -2562,7 +2562,7 @@ pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> V
 /// does not ([`PatternShape`]).
 pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, PatternShape), String> {
     use ast_grep_core::language::Language as _;
-    let grammar = Grammar::new(lang)?;
+    let grammar = Grammar::shared(lang)?;
     let tree = ast_grep_core::tree_sitter::StrDoc::try_new(source, lang)?;
     let root = tree.tree.root_node();
     let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
