@@ -644,17 +644,25 @@ function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["da
  */
 function installBuild(packageRoot: string, home: string): RerailBuild | undefined {
   const override = contentStoreOverride();
-  let build: RerailBuild | undefined;
-  try {
-    build = resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
-  } catch (error) {
-    if (override === undefined || !(error instanceof NoContentStoreError)) throw error;
-  }
+  const build = buildWithStore(packageRoot, home, override !== undefined);
   if (override === undefined || build?.kind === "main" || !isInMainContentStoreDirectory(override)) return build;
   throw new Error(
     `RERAIL_CONTENT_STORE_PATH names ${override}, in the machine-wide content store directory ` +
       `${mainContentStoreDirectory()}, which only the main Rerail daemon opens`,
   );
+}
+
+/**
+ * The build the package at `packageRoot` is ({@link resolveRerailBuild}); undefined for a package with no content store
+ * of its own when `storeNamed`, since the store RERAIL_CONTENT_STORE_PATH names serves it. Any other error throws.
+ */
+function buildWithStore(packageRoot: string, home: string, storeNamed: boolean): RerailBuild | undefined {
+  try {
+    return resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
+  } catch (error) {
+    if (storeNamed && error instanceof NoContentStoreError) return undefined;
+    throw error;
+  }
 }
 
 function emptyRepository(state: string, git: boolean): SupportBundle["repository"] {
