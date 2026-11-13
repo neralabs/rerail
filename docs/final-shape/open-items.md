@@ -4011,6 +4011,36 @@ corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which
 Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
 setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
 
+## O-pha000-kept-part (closed 2026-11-12). A negation-only reader of a demanded relation reported a false finding
+
+**Seen (2026-11-12).** `plan-helpers-allowlist.rr` over dl1, strict: with no store it reported `PHA000`; with any
+store, even an empty one, it reported nothing. **The run with a store was right.** `allow_status` holds
+`("plan_helpers", "valid")` (the allowlist's signature is in the policy's tables), so `PHA000 :-
+!allow_status("plan_helpers", "valid")` must not hold.
+
+**Cause.** Demand (decision 0048) computes `allow_status` only for the keys its readers reach. A reader whose body
+is only demanded negations has nothing to make a `pre_<i>` of, and was left as written, demanding nothing: its key
+was never computed, and the negation held. A run that keeps its cross-file part (K4 or the kept part) does not
+demand there, so it was right; the session tests' oracle (both off) had the fault.
+
+**Fixed** (`demand::split_with`): such a reader refuses demand for the relations it reads, which are built whole.
+`a_reader_that_only_negates_a_demanded_relation_reads_it_whole` runs the policy from nothing kept and by default
+and asserts they agree, with no `PHA000` (it fails without the fix). The 44 policies give 48 findings over dl1 and
+over dl10, with a store and without; the 49th of the earlier measurements was this false one.
+
+## O-store-single-program. A single program's combined form cannot be kept in the store yet
+
+**Seen (2026-11-12)** while trying O-combine-hiding-single: with `combine_stored` keeping one program too, the third
+batch of the 44 policies over one store failed: `leg-083-typed.rr: _internal/__init__.py: its memo entry is gone`.
+Not kept. **Closure:** three batches over one store, findings equal each time.
+
+## O-dl10-demand-computed-head (closed 2026-11-12, 6ec67d811)
+
+The 44 policies over dl10 stopped under `RERAIL_SQL_STRICT` (on the hub too):
+`demand_bch_allowed($d, @add($l, 1)) has no native step`. Demand copied a demanded rule's computed head column
+into its demand atom. It now reads a fresh variable, checked equal to the term once the body binds it. dl10 gives
+the 48 findings a run without demand gives; the `demand` tests pass.
+
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
 **Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
@@ -4025,6 +4055,15 @@ per policy. O91 is the same work across runs; this is the same work within one b
 phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands each policy its rows. Measured as
 `run_typed` once per batch, not once per policy, with findings unchanged on dl1 and dl10 (CPU and device).
 
+
+**Found (2026-11-12): the typing program runs once a batch already.** Traced on dl1 and dl10, the bridge runs
+`calls.rr` once in the whole batch (outputs `call_target` and `possible_type`): only one policy's pruned program
+reaches a bridged relation. The 15–20% is that one run's own cost, not a rerun per policy, so the closure as
+written holds. What is left is O91 (the same run across batches and edits) and the typing run's own planning.
+A combined run of the batch (all policies of a language as one, decision 0051) was tried: 202.4 G against
+212.3 G instructions on dl1. It gave 48 findings to the per-policy runs' 49; the 49th was false
+(O-pha000-kept-part, closed).
+
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
 **Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
@@ -4033,6 +4072,12 @@ policies of a batch read the same phases over the same files.
 
 **Closure:** as O-batch-typing-once: each phase runs once per batch for every policy that reads it, and is measured
 so.
+
+
+**Closed (2026-11-12, 149c06bf2).** `run_policies` holds a `phases::Batch`; phase 1 is a function of its files,
+tree, language and options, so a policy whose run has the same ones takes the earlier run's documents and
+exports. Nothing is kept past the batch. dl1 runs it 11 times, dl10 24 times over 6 file sets. Measured on the 44 strict data-layer policies of `run-policies`, CPU, `RERAIL_TAPE_CACHE=off` (debug, load 10-25).
+dl1 195.8 G → 190.0 G, dl10 306.3 G → 282.6 G; `phases::sources` 4.2% → 1.4%; findings unchanged.
 
 ## O-lower-aggregate-demand. Aggregate demand clones and rescans the whole program for each aggregate
 
@@ -4046,6 +4091,13 @@ program, not with the rules it touches.
 they change, with an undo when refused. `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and
 the `lowering_is_idempotent_*` shards pass, and `optimize` costs a small fraction of lowering.
 
+
+**Closed (2026-11-12, 16b5d2870).** One dependency map, the readers and makers of each aggregate by rule index,
+and whether the program is declared, made once and kept as candidates are placed; a candidate is placed in the
+program itself and taken out where stratifying refuses it. Measured on the 44 strict data-layer policies of `run-policies`, CPU, `RERAIL_TAPE_CACHE=off` (debug, load 10-25). dl1 227.9 G → 212.4 G; `optimize` 8.6% → 1.4%;
+findings unchanged; `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and the 11
+`lowering_is_idempotent_*` shards pass.
+
 ## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
 
 **Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
@@ -4057,6 +4109,20 @@ program.
 by the text's digest (like the combined program, decision 0094 §6). Measured as `hiding::hide` below 1% of a
 batch.
 
+
+**Part built (2026-11-12, e3ee52294).** Hiding cannot be skipped for one program: it adds the shown-documents
+bounds. A rule's analysis is made only where it can find something (`hiding::reaching`: a seed, or a guest
+relation read, transitively); 130–200 of a policy's 600–800 rules do. dl1 190.0 G → 186.9 G; `hide` 8.3% →
+7.5–7.8%. **Still open:** what is left is each policy analysing the library's rules again. Two ways were tried
+and not kept:
+- the hidden program kept in the store by its text for one program too (`combine_stored` keeps it for packs
+  only): the third batch over one store failed (`leg-083-typed.rr: _internal/__init__.py: its memo entry is
+  gone`), and the warm batch with a store (206 G) cost more than one without (187 G);
+- one run of the batch (above): the library held once, hidden once (decision 0089); its findings were right
+  (O-pha000-kept-part), so it is open again as the way to share the library's analysis.
+The closure is a hiding analysis kept per library module (its relations' carried columns depend only on its
+rules and what they read), or a combined run that is exact.
+
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 
 **Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
@@ -4066,6 +4132,13 @@ most of their library patterns, but each policy's vocabulary is compiled from sc
 **Closure:** compiled searchers kept by pattern set (or per pattern, then combined), so a pattern set already built
 in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
 saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
+
+
+**Closed (2026-11-12, f5f20564b).** A group determinized once is kept by its key for the process. Across the
+44 policies only 3 of 41 groups repeat: each policy's group mixes its own patterns with the library's. So a group
+neither kept nor cached is determinized only where it pays: the run keeps it in its store (decision 0075), or
+reads at least 64 documents; otherwise it runs on the lazy DFA. dl1 210.8 G → 196.8 G; `Vocabulary::compile`
+4.4% → below 1%; findings unchanged.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 

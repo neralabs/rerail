@@ -68,6 +68,9 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
+    // The device parity tests' temporary inputs and heads (`setfix/device/parity.rs`, a `#[cfg(test)]` module the
+    // file filter cannot leave out by name).
+    "ia", "ib", "ic", "iz", "io", "ie", "dn", "sn", "sm", "sp", "h0",
     "x",
     "t",
     "input",
@@ -257,8 +260,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
-    // The device copies of `replace_all`'s regex automata, per thread: resident buffers, as `RESIDENT`.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "UPLOADED"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),
@@ -330,6 +331,17 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/frames.rs", "KNOWN"),
     ("content_store/journal.rs", "LIVE"),
     ("content_store/journal.rs", "BY_DEV"),
+    // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
+    // may read them).
+    ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
+    // A run's record under way: the plans of the runs nested in it, for its manifest.
+    ("code_rule_dsl/logic/plan/corpus.rs", "INNER_PLANS"),
+    ("code_rule_dsl/logic/plan/corpus.rs", "NESTED_PLANS"),
+    // A switch: testing mode's store (decision 0130).
+    ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
+    // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -343,6 +355,10 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
     ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
     ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),
+    // Programs already lowered, by the text they print as (0ae9e091c, the hub's): as `PROGRAMS`.
+    ("code_rule_dsl/logic/rr.rs", "LOWERED", "2"),
+    // A text's include seed, by the text (04f66708c, the hub's): as `PROGRAMS`.
+    ("code_rule_dsl/logic/rr.rs", "SEEDS", "2"),
     ("code_rule_dsl/logic/plan/corpus/phase0.rs", "KEPT", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
@@ -365,8 +381,10 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
-/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 24;
+/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. Raised once, 24 to 26, by the merge of the
+/// hub into the planning trees (2026-11-12): `rr.rs`'s `LOWERED` and `SEEDS`, caches by a program's text made on the
+/// hub, which a move to facts has yet to take.
+const NOT_YET_MAPS_PIN: usize = 26;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

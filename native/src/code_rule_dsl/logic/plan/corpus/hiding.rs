@@ -125,8 +125,10 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     let mut carried;
     // Rules split once already: a variable of theirs that may be a guest's node has its clone (O110).
     let mut split: BTreeSet<usize> = BTreeSet::new();
+    let mut reaches;
     loop {
-        carried = carry(prog, &base_locations, &seeds, &view);
+        reaches = reaching(prog, &seeds);
+        carried = carry(prog, &base_locations, &seeds, &view, &reaches);
         let snapshot = prog.rules.clone();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
@@ -136,7 +138,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if view(&rule.head.rel) {
                 continue;
             }
-            let facts = analyse(rule, &base_locations, &carried, &seeds[i]);
+            let facts = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]) } else { BTreeMap::new() };
             // A variable that may be a guest's node of a known grammar, and may be a host's: the rule stays as it is
             // for the host's, and a clone with the variable seeded as the guest's reads the guest's copies. Copying
             // in place of the atom would drop the host's rows (`tv`'s nodes are both, and `tbv`'s `live_asg` read
@@ -221,8 +223,9 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
-    for (rule, seed) in prog.rules.iter_mut().zip(&seeds).filter(|(r, _)| !VIEWS.contains(&r.head.rel.as_str())) {
-        let facts = analyse(rule, &base_locations, &carried, seed);
+    let reaches = reaching(prog, &seeds);
+    for ((rule, seed), reaches) in prog.rules.iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str())) {
+        let facts = if reaches { analyse(rule, &base_locations, &carried, seed) } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
         let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
@@ -316,8 +319,46 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
 }
 
+/// Which rules' analysis can find anything (O-combine-hiding-single): one with a seed, or a positive atom of a guest
+/// relation (`ENTRIES`) or of a relation such a rule makes, transitively. Any other rule reads no scoped column and
+/// enters no guest, so its analysis is empty, and is not made: in a policy most rules are such.
+fn reaching(prog: &Program, seeds: &[BTreeMap<String, Fact>]) -> Vec<bool> {
+    // A worklist over each relation's readers: a rule is looked at once, and again only when it is marked.
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
+    let mut out = vec![false; prog.rules.len()];
+    let mut work = Vec::new();
+    for (i, rule) in prog.rules.iter().enumerate() {
+        let mut enters = seeds.get(i).is_some_and(|s| !s.is_empty());
+        for l in &rule.body {
+            if let Literal::Atom(a) = l
+                && !a.neg
+            {
+                enters |= ENTRIES.iter().any(|(e, ..)| *e == a.rel);
+                readers.entry(a.rel.as_str()).or_default().push(i);
+            }
+        }
+        if enters {
+            out[i] = true;
+            work.push(i);
+        }
+    }
+    let mut made: BTreeSet<&str> = BTreeSet::new();
+    while let Some(i) = work.pop() {
+        let head = prog.rules[i].head.rel.as_str();
+        if made.insert(head) {
+            for &j in readers.get(head).into_iter().flatten() {
+                if !out[j] {
+                    out[j] = true;
+                    work.push(j);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What each derived relation's columns carry, to a fixpoint over the rules.
-fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> HashMap<String, Vec<Fact>> {
+fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool, reaches: &[bool]) -> HashMap<String, Vec<Fact>> {
     let mut carried: HashMap<String, Vec<Fact>> =
         prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(r.as_str()).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
@@ -341,7 +382,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
         while let Some(i) = work.pop_front() {
             queued[i] = false;
             let (rule, seed) = (&prog.rules[i], &seeds[i]);
-            let facts = analyse(rule, base, carried, seed);
+            let facts = if reaches[i] { analyse(rule, base, carried, seed) } else { BTreeMap::new() };
             let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
             let mut changed = false;
             for (c, t) in rule.head.args.iter().enumerate() {
