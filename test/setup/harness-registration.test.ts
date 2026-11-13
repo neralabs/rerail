@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath,
 import { tmpdir } from "node:os";
 import { dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
+import { build } from "esbuild";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
 import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
@@ -423,15 +424,22 @@ describe("Claude Code settings.json", () => {
     expect(await command()).toBe("node");
   });
 
-  it.runIf(process.platform === "win32")("starts a Windows hook as Claude Code does, under the recorded node and, once it is gone, under node.exe from PATH", async () => {
+  it.runIf(process.platform === "win32")("starts a Windows hook as Claude Code does, in one node: the recorded one, and once it is gone node.exe from PATH", async () => {
     const { home, root } = await fixture();
     const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
     const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
-    await mkdir(dirname(launcherPath), { recursive: true });
-    // Stands in for the launcher: answers with the node that ran it, its arguments and the event it read.
-    await writeFile(launcherPath, [
-      'const event = require("node:fs").readFileSync(0, "utf8");',
-      "process.stdout.write(JSON.stringify({ node: process.execPath, args: process.argv.slice(2), event }));",
+    await mkdir(dirname(hookPath), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0", type: "module" }));
+    // The launcher this package ships, in one file.
+    await build({ entryPoints: ["src/harness/hook-launcher.ts"], bundle: true, platform: "node", format: "esm", outfile: launcherPath, logLevel: "silent" });
+    // Stands in for the hook: answers with the node that runs it, the program its parent process runs and the event.
+    const tasklist = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "tasklist.exe");
+    await writeFile(hookPath, [
+      'import { execFileSync } from "node:child_process";',
+      'import { readFileSync } from "node:fs";',
+      'const event = readFileSync(0, "utf8");',
+      `const row = execFileSync(${JSON.stringify(tasklist)}, ["/fi", "PID eq " + process.ppid, "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });`,
+      'process.stdout.write(JSON.stringify({ node: process.execPath, parent: row.split(",")[0].replaceAll(\'"\', ""), event }));',
     ].join("\n"));
     // The recorded node in a folder cmd.exe reads whole only inside quotes, and another node first on PATH.
     const nodePath = join(dirname(home), "node (24) & é", "node.exe");
@@ -447,7 +455,9 @@ describe("Claude Code settings.json", () => {
     const [{ hooks: [entry] }] = (settings.hooks as { SessionStart: [{ hooks: [{ command: string; args: string[] }] }] }).SessionStart;
     // As Claude Code starts an exec-form hook: no shell, no window, the event on stdin.
     const start = () => spawnSync(entry.command, entry.args, { cwd: repository, input: "{}", encoding: "utf8", windowsHide: true });
-    const answer = (node: string) => ({ node, args: [nodePath, hookPath], event: "{}" });
+    // The hook's parent is the cmd.exe Claude Code started, so the event ran one node. A launcher on another node would
+    // be the parent, a second node.
+    const answer = (node: string) => ({ node, parent: "cmd.exe", event: "{}" });
 
     const recorded = start();
     expect(JSON.parse(recorded.stdout), recorded.stderr).toEqual(answer(nodePath));
@@ -455,7 +465,7 @@ describe("Claude Code settings.json", () => {
     const fallback = start();
     expect(fallback.error).toBeUndefined();
     expect(JSON.parse(fallback.stdout), fallback.stderr).toEqual(answer(process.execPath));
-  }, 30_000);
+  }, 60_000);
 
   it("reads a Windows hook entry in either form as current when asked to keep it, whatever PATH finds", async () => {
     const { home, root } = await fixture();
