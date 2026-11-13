@@ -4,8 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
-import { RerailRuntime } from "../../src/runtime/runtime.js";
+import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../src/runtime/runtime.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+/**
+ * The suspended sessions an engine service keeps for its runtimes (`suspendedSessions` in engine-service.ts): the idle
+ * close keeps a quiet session's owner claim there, and the session's next open in a runtime takes it back.
+ */
+function keptSuspensions(): SuspendedSessions {
+  const kept = new Map<string, SessionSuspension>();
+  return {
+    keep: (suspension) => {
+      kept.set(suspension.descriptor.sessionId, suspension);
+    },
+    get: sessionId => kept.get(sessionId),
+    take: sessionId => {
+      const suspension = kept.get(sessionId);
+      kept.delete(sessionId);
+      return suspension;
+    },
+  };
+}
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -41,9 +60,14 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
   await writeFile(join(root, "a.ts"), "export const a = 1;\n");
   let delivery: RuleSteerDelivery | undefined;
   const checked: string[] = [];
+  /** Each edit a rule check read, with the mode it read it in: Log for another writer's change. */
+  const reads: { path: string; mode: string; bad: boolean }[] = [];
   let evaluators = 0;
+  // One for the session's whole life, as the engine service keeps one across the runtimes it makes.
+  const suspendedSessions = keptSuspensions();
   const open = () => new RerailRuntime({
     autostart: false,
+    suspendedSessions,
     workspaceRoot: root,
     storageRoot: join(root, "sessions"),
     databasePath: join(root, "rerail.sqlite"),
@@ -67,6 +91,7 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
           }
           // Once the steer is placed, so a test that waits for the check finds it pending.
           checked.push(...batch.edits.map(edit => edit.path));
+          reads.push(...batch.edits.map(edit => ({ path: edit.path, mode: batch.mode ?? "session", bad: edit.generatedText?.includes("bad") === true })));
           return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
         },
         close: async () => undefined,
@@ -79,7 +104,7 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
   await runtime.codeRulesOpened(session.sessionId);
   const ledger = join(root, "sessions", createHash("sha256").update(session.sessionId).digest("hex"), "events.jsonl");
   return {
-    root, session, ledger, checked,
+    root, session, ledger, checked, reads,
     get runtime() {
       return runtime;
     },
@@ -162,6 +187,35 @@ describe("what a session owes its agent while it is closed", () => {
       expect(result).toEqual([]);
       await vi.waitFor(() => expect(owing.checked).toContain("a.ts"));
       expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The suspension keeps where the session's walks stood, and the waiting call's check reads the file once the rules are
+  // open: the edit is the call's, read once in the session's mode, not again as another writer's change.
+  it("checks once, as the call's own, the edit a call that waited across the day's close made to a file the session had edited", async () => {
+    const owing = await owingSession();
+    const { session } = owing;
+    const tool = (toolCallId: string) => ({ sessionId: session.sessionId, session, toolCallId, toolName: "Write" }) as const;
+    const call = (toolCallId: string) => owing.runtime.ingest({
+      kind: "call", eventId: `${toolCallId}:call`, ...tool(toolCallId), input: { file_path: join(owing.root, "a.ts"), content: "" },
+    });
+    const result = (toolCallId: string) => owing.runtime.ingest({ kind: "result", eventId: `${toolCallId}:result`, ...tool(toolCallId), output: "ok" });
+    try {
+      await call("t0");
+      await writeFile(join(owing.root, "a.ts"), "export const a = 1;\nconst ok = 1;\n");
+      await result("t0");
+      await owing.turnEnd("turn-1");
+      await call("t1");
+      // Left at the permission prompt past the day, then allowed: the write lands, and its result opens the session again.
+      expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await writeFile(join(owing.root, "a.ts"), BAD);
+      expect(await result("t1")).toEqual([]);
+      await vi.waitFor(() => expect(owing.reads.some(read => read.bad)).toBe(true));
+      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
+      expect(await owing.turnEnd("turn-2")).toEqual([]);
+      expect(owing.reads.filter(read => read.bad)).toEqual([{ path: "a.ts", mode: "session", bad: true }]);
     } finally {
       await owing.runtime.dispose();
     }
