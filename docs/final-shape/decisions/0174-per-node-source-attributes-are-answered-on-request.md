@@ -170,9 +170,31 @@ Checked against the oracle (`RERAIL_NODE_SOURCES=eager`, every node), each on a 
 | `cached-pure-lazy-allowlist`, `impl/sqlite` (26 widened relations) | 8 = 8 | 59.2 = 59.2 MB | |
 
 `cached-pure-lazy-allowlist` reads the text of every node of the kinds it canonicalizes (`cpl_raw`, about 250 k
-requests), so its requests are as many as the nodes. What the 55 MB left on `impl/` holds is
-not yet broken down.
+requests), so its requests are as many as the nodes: over all of `impl/` that is 718 MB of atoms and 2.2 GB at peak
+with requests, and over 3 GB (killed) without.
 Test: `node_text_answered_on_request`.
+
+**The analysis in the profile.** The rewrite is made whether or not it is applied. The profile's decisions say,
+per attribute (`node_text on request`), whether it is answered on request or why not, and with
+`RERAIL_NODE_SOURCES=eager` whether it could be. Per reader (`node_text on request: readers`) they give the request
+it asks and each literal it leaves out, with the reason (reads the value, a negation, an aggregate, not joined to
+the node, reads what nothing kept binds). They also give each widened copy and its columns (`on request: widened
+copies`). An attribute left eager is a structural finding (`EAGER_NODE_ATTRIBUTE`), with its reader and reason.
+
+**What the 55 MB left were.** 40 MB were every distinct physical line of the corpus. They were not rule rows:
+any program reading `text` made a `text` row for every span within the 256-byte bound, the lines included,
+though `span_text_demand` already knew no rule read a line's text (`wants_line_text`). The source and its lines
+now have text only where a rule reads it (`RERAIL_LINE_TEXT=all`: as before). `authentication-plan-purity` over
+`impl/` then leaves 18.1 MB. That is 9.2 MB of identifiers and dotted names (6 MB qualified Python names, import
+resolution), 4.1 MB of other one-line strings (decorator and string texts rules read, docstrings, relative module
+names), 2.5 MB of multi-line texts and 1.9 MB of paths. The 11 rules of the pack that read `src_line` give the same
+findings either way over `impl/sqlite`.
+
+**What the widened copies cost.** Measured cold, by the native joins' work. `versioned-merged-identity` over
+`impl/sqlite` (13 copies): 646,886 against 645,841 eager (+0.2%). `cached-pure-lazy-allowlist` over `impl/` (26
+copies): the copies, requests and answers are 133,658 of 11.7 M (1.1%). A large planner figure in its profile
+(`rr_wide_cached_gate`: "readers would add 950543476 work") is the price of inlining the copy into its readers,
+which is why it is stored. It is not work done.
 
 ## 8. Order
 
