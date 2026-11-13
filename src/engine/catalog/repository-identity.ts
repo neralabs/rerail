@@ -17,7 +17,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit, type GitResult } from "../git.js";
+import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -272,20 +272,22 @@ function soleRemote(root: string, read: GitTextRead): RemoteAddress | undefined 
   return url === undefined || url === "" ? undefined : { name, url };
 }
 
+type GitRun = ReturnType<typeof runGit>;
+
 /**
  * Git started and gave no answer: it could not start, ran past its time limit or was killed, or ended with a status
  * Git never exits with, as a process Windows could not initialise does. Git's own refusal, such as exit 128 for a
  * folder outside Git, is an answer.
  */
 export class GitDidNotAnswerError extends Error {
-  constructor(folder: string, result: GitResult) {
+  constructor(folder: string, result: GitRun) {
     super(`Git gave no answer in ${folder}: ${result.error?.message ?? `exit status ${String(result.status)}`}`);
     this.name = "GitDidNotAnswerError";
   }
 }
 
 /** Whether Git ended on its own: an exit status of its own (0 to 255), and no error starting or stopping it. */
-function gitAnswered(result: GitResult): boolean {
+function gitAnswered(result: GitRun): boolean {
   return result.error === undefined && result.status !== null && result.status >= 0 && result.status <= 255;
 }
 
