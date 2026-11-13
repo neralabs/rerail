@@ -118,13 +118,13 @@ FAST002_dependency_default(n, NAME, TYPE, DEFAULT) :- fast002_route_param(n, NAM
 // tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast002_tok_precedes_1(n: node)
 .stored fast002_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast002_tok_precedes_1(n) :- precedes(n, s7), glob("as", s7).
-fast002_tok_precedes_1(n) :- child(p10, n, _), node(_, n, _, _, en13),
-    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
-fast002_tok_precedes_1(n) :- structural_after(n, g9),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
-fast002_tok_precedes_1(n) :- precedes(n, o11), structural_after(o11, g9),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+fast002_tok_precedes_1(n) :- precedes(n, s9), glob("as", s9).
+fast002_tok_precedes_1(n) :- child(p12, n, _), node(_, n, _, _, en15),
+    token(p12, _, t10, st14, _), st14 >= en15, match("as", t10).
+fast002_tok_precedes_1(n) :- structural_after(n, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
+fast002_tok_precedes_1(n) :- precedes(n, o13), structural_after(o13, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
 
 // set_2: symbols from the JSON `resolves.import`
 .decl fast002_set_2(v: symbol)
@@ -135,12 +135,13 @@ fast002_set_2("fastapi.Form").
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl fast002_alt_1(n: node)
 fast002_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast002_route_init(x2),
-    count : { child(b1, c3, _), kind(c3, "type") } = 0.
-fast002_alt_1(n) :- ref_site(n, b4), kind(b4, "as_pattern"), child(p5, b4, _),
-    kind(p5, "with_item"), child(b4, c6, _), fast002_route_init(c6), fast002_tok_precedes_1(c6),
-    child(b4, c14, _), kind(c14, "as_pattern_target"), child(c14, c15, _),
-    fast002_plain_target(c15).
-fast002_alt_1(n) :- ref_site(n, b16), site_annotation(b16, o17), fast002_route_ann(o17),
-    count : { child(b16, c18, _), (kind(c18, "list_splat_pattern") ; kind(c18, "dictionary_splat_pattern")) } = 0.
-fast002_alt_1(n) :- ref_site(n, b19), kind(b19, "function_definition"),
-    field(b19, "return_type", c20), fast002_route_ann(c20).
+    (st3 = b1 ; within(b1, st3)), count : { child(st3, c4, _), kind(c4, "type") } = 0.
+fast002_alt_1(n) :- ref_site(n, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "as_pattern"),
+    child(p7, st6, _), kind(p7, "with_item"), child(st6, c8, _), fast002_route_init(c8),
+    fast002_tok_precedes_1(c8), child(st6, c16, _), kind(c16, "as_pattern_target"),
+    child(c16, c17, _), fast002_plain_target(c17).
+fast002_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast002_route_ann(o19),
+    (st20 = b18 ; within(b18, st20)),
+    count : { child(st20, c21, _), (kind(c21, "list_splat_pattern") ; kind(c21, "dictionary_splat_pattern")) } = 0.
+fast002_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
+    kind(st23, "function_definition"), field(st23, "return_type", c24), fast002_route_ann(c24).

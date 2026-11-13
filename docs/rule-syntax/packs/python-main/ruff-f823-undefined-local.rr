@@ -13,4 +13,4 @@
 .violation F823(at: node, n: loc) "Assign `{n}` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable."
     suppress noqa "F823"
 F823(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
-    ast(n, {"resolves": {"beforeLocal": true}}).
+    ast(n, {"language": "python", "rule": {"resolves": {"beforeLocal": true}}}).

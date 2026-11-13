@@ -82,8 +82,8 @@ pth208_name_root(n) :- kind(n, "call"), field(n, "function", c2), pth208_name_ro
 .decl pth208_int_attribute(n: node)
 pth208_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
     kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), kind(b3, "class_definition"), within_stop(c4, b3, pth208_stop_4),
-    pth208_alt_6(c4, A).
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    within_stop(c5, st4, pth208_stop_4), pth208_alt_6(c5, A).
 
 // file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
 .decl pth208_file_descriptor(n: node)
@@ -268,9 +268,10 @@ pth208_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth208_ar
 
 // demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
 .decl pth208_demand_alt_6(n: node, a: loc)
-pth208_demand_alt_6(c4, A) :- kind(n, "attribute"), field(n, "attribute", c1),
+pth208_demand_alt_6(c5, A) :- kind(n, "attribute"), field(n, "attribute", c1),
     kind(c1, "identifier"), node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), kind(b3, "class_definition"), within_stop(c4, b3, pth208_stop_4).
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    within_stop(c5, st4, pth208_stop_4).
 
 // stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pth208_stop_4(kind: symbol)
@@ -288,17 +289,18 @@ pth208_alt_2(n) :- field(n, "right", c2), pth208_int_typed(c2).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl pth208_alt_3(n: node)
-pth208_alt_3(n) :- ref_site(n, b1), site_only(b1),
-    count : { kind(b1, "assignment"), field(b1, "type", c2), kind(c2, "type") } = 0,
-    binding_value(b1, x3), pth208_int_value(x3).
-pth208_alt_3(n) :- ref_site(n, b4), site_only(b4), kind(b4, "as_pattern"), child(b4, c5, _),
-    pth208_int_value(c5), child(b4, c6, _), kind(c6, "as_pattern_target"), child(c6, c7, _),
-    kind(c7, "identifier").
-pth208_alt_3(n) :- ref_site(n, b8), site_only(b8),
-    count : { child(b8, c9, _), (kind(c9, "list_splat_pattern") ; kind(c9, "dictionary_splat_pattern")) } = 0,
-    site_annotation(b8, o10), pth208_int_annotation(o10).
-pth208_alt_3(n) :- ref_site(n, b11), site_only(b11), kind(b11, "function_definition"),
-    field(b11, "return_type", c12), pth208_int_annotation(c12).
+pth208_alt_3(n) :- ref_site(n, b1), site_only(b1), (st2 = b1 ; within(b1, st2)),
+    count : { kind(st2, "assignment"), field(st2, "type", c3), kind(c3, "type") } = 0,
+    binding_value(b1, x4), pth208_int_value(x4).
+pth208_alt_3(n) :- ref_site(n, b5), site_only(b5), (st6 = b5 ; within(b5, st6)),
+    kind(st6, "as_pattern"), child(st6, c7, _), pth208_int_value(c7), child(st6, c8, _),
+    kind(c8, "as_pattern_target"), child(c8, c9, _), kind(c9, "identifier").
+pth208_alt_3(n) :- ref_site(n, b10), site_only(b10), (st11 = b10 ; within(b10, st11)),
+    count : { child(st11, c12, _), (kind(c12, "list_splat_pattern") ; kind(c12, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b10, o13), pth208_int_annotation(o13).
+pth208_alt_3(n) :- ref_site(n, b14), site_only(b14), (st15 = b14 ; within(b14, st15)),
+    kind(st15, "function_definition"), field(st15, "return_type", c16),
+    pth208_int_annotation(c16).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable of the calling rule, passed in (bound by the caller)

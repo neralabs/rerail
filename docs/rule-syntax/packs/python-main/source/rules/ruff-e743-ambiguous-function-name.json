@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e743-ambiguous-function-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid naming functions or methods l, I or O; in many fonts they are hard to tell apart from 1 and 0.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "ambiguous-function-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "regex": "^(?<NAME>[lIO])$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "function_definition"
+            },
+            "follows": {
+              "stopBy": "neighbor",
+              "regex": "^(?:class|def)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E743",
+        "message": "Rename function `$NAME` to a descriptive name; in many fonts it is easy to confuse with 1 or 0.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E743"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -26,7 +26,7 @@ pt023_mark_ns(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt023_
 pt023_mark_ref(n) :- kind(n, "attribute"), field(n, "object", c1), pt023_mark_ns(c1).
 pt023_mark_ref(n) :- kind(n, "identifier"),
     sym_of(n, q2), match("(pytest\\.mark)(\\.|$).*", q2), !pt023_alt_1(n).
-pt023_mark_ref(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt023_mark_ref(c4).
+pt023_mark_ref(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), pt023_mark_ref(c5).
 
 // empty_mark_call(n): the JSON util `empty-mark-call`, used where the JSON says `matches: "empty-mark-call"`
 .decl pt023_empty_mark_call(n: node)
@@ -47,7 +47,8 @@ pt023_deeper_import_site(n) :- child(p3, n, _), kind(p3, "import_from_statement"
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pt023_alt_1(n: node)
 pt023_alt_1(n) :- sym_of(n, "pytest.mark").
-pt023_alt_1(n) :- ref_site(n, b1), site_form(b1, "import"), pt023_deeper_import_site(b1).
+pt023_alt_1(n) :- ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)),
+    pt023_deeper_import_site(st2).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl pt023_alt_2(n: node)

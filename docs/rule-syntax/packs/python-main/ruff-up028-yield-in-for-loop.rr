@@ -23,7 +23,7 @@ UP028(LOOP, n, IT) :- kind(n, "for_statement"),
     k32 <= 1, count : { child(c30, c33, _), !up028_alt_33(c33) } = 0, child(c30, c34, _),
     kind(c34, "expression_statement"), node(_, c34, _, _, _), S = c34, child(c34, c35, _), up028_yielded(c35, V),
     field(n, "right", c36), node(_, c36, _, _, _), IT = c36, value(T, t37), value(V, t37),
-    count : { field(n, "left", c39), (kind(c39, "identifier"), node(_, c39, _, _, _), N = c39, up028_stop_1_within(c39, p1_2_4), (kind(p1_2_4, "function_definition") ; kind(p1_2_4, "class_definition") ; kind(p1_2_4, "module")), node(_, p1_2_4, _, _, _), G = p1_2_4, within(c2_2_4, p1_2_4), kind(c2_2_4, "identifier"), node(_, c2_2_4, _, _, _), J = c2_2_4, text(J, t1_1_2_4), text(N, t1_1_2_4), count : { inside(c2_2_4, p3_1_2_4, "expression_statement"), node(_, p3_1_2_4, _, _, _), S2 = p3_1_2_4, text(S2, t4_1_2_4), text(S, t4_1_2_4), @doc(S2) = @doc(S) } = 0, ref_site(c2_2_4, b6_1_2_4), (site_scope(b6_1_2_4, "function") ; site_scope(b6_1_2_4, "class") ; site_scope(b6_1_2_4, "module")), up028_stop_1_within(b6_1_2_4, p7_1_2_4), (kind(p7_1_2_4, "function_definition") ; kind(p7_1_2_4, "class_definition") ; kind(p7_1_2_4, "module")), node(_, p7_1_2_4, _, _, _), G2 = p7_1_2_4, text(G, t8_1_2_4), text(G2, t8_1_2_4), count : { up028_stop_1_within(c2_2_4, p10_1_2_4), !up028_scope(p10_1_2_4), up028_alt_8(p10_1_2_4, N) } = 0, @doc(J) = @doc(N), @doc(G) = @doc(G2) ; within(c1_5, c39), kind(c1_5, "identifier"), node(_, c1_5, _, _, _), N = c1_5, up028_stop_1_within(c1_5, p1_3_5), (kind(p1_3_5, "function_definition") ; kind(p1_3_5, "class_definition") ; kind(p1_3_5, "module")), node(_, p1_3_5, _, _, _), G = p1_3_5, within(c2_3_5, p1_3_5), kind(c2_3_5, "identifier"), node(_, c2_3_5, _, _, _), J = c2_3_5, text(J, t1_1_3_5), text(N, t1_1_3_5), count : { inside(c2_3_5, p3_1_3_5, "expression_statement"), node(_, p3_1_3_5, _, _, _), S2 = p3_1_3_5, text(S2, t4_1_3_5), text(S, t4_1_3_5), @doc(S2) = @doc(S) } = 0, ref_site(c2_3_5, b6_1_3_5), (site_scope(b6_1_3_5, "function") ; site_scope(b6_1_3_5, "class") ; site_scope(b6_1_3_5, "module")), up028_stop_1_within(b6_1_3_5, p7_1_3_5), (kind(p7_1_3_5, "function_definition") ; kind(p7_1_3_5, "class_definition") ; kind(p7_1_3_5, "module")), node(_, p7_1_3_5, _, _, _), G2 = p7_1_3_5, text(G, t8_1_3_5), text(G2, t8_1_3_5), count : { up028_stop_1_within(c2_3_5, p10_1_3_5), !up028_scope(p10_1_3_5), up028_alt_8(p10_1_3_5, N) } = 0, @doc(J) = @doc(N), @doc(G) = @doc(G2) ) } = 0,
+    count : { field(n, "left", c39), (kind(c39, "identifier"), node(_, c39, _, _, _), N = c39, up028_stop_1_within(c39, p1_2_4), (kind(p1_2_4, "function_definition") ; kind(p1_2_4, "class_definition") ; kind(p1_2_4, "module")), node(_, p1_2_4, _, _, _), G = p1_2_4, within(c2_2_4, p1_2_4), kind(c2_2_4, "identifier"), node(_, c2_2_4, _, _, _), J = c2_2_4, text(J, t1_1_2_4), text(N, t1_1_2_4), count : { inside(c2_2_4, p3_1_2_4, "expression_statement"), node(_, p3_1_2_4, _, _, _), S2 = p3_1_2_4, text(S2, t4_1_2_4), text(S, t4_1_2_4), @doc(S2) = @doc(S) } = 0, ref_site(c2_2_4, b6_1_2_4), (site_scope(b6_1_2_4, "function") ; site_scope(b6_1_2_4, "class") ; site_scope(b6_1_2_4, "module")), (st7_1_2_4 = b6_1_2_4 ; within(b6_1_2_4, st7_1_2_4)), up028_stop_1_within(st7_1_2_4, p8_1_2_4), (kind(p8_1_2_4, "function_definition") ; kind(p8_1_2_4, "class_definition") ; kind(p8_1_2_4, "module")), node(_, p8_1_2_4, _, _, _), G2 = p8_1_2_4, text(G, t9_1_2_4), text(G2, t9_1_2_4), count : { up028_stop_1_within(c2_2_4, p11_1_2_4), !up028_scope(p11_1_2_4), up028_alt_8(p11_1_2_4, N) } = 0, @doc(J) = @doc(N), @doc(G) = @doc(G2) ; within(c1_5, c39), kind(c1_5, "identifier"), node(_, c1_5, _, _, _), N = c1_5, up028_stop_1_within(c1_5, p1_3_5), (kind(p1_3_5, "function_definition") ; kind(p1_3_5, "class_definition") ; kind(p1_3_5, "module")), node(_, p1_3_5, _, _, _), G = p1_3_5, within(c2_3_5, p1_3_5), kind(c2_3_5, "identifier"), node(_, c2_3_5, _, _, _), J = c2_3_5, text(J, t1_1_3_5), text(N, t1_1_3_5), count : { inside(c2_3_5, p3_1_3_5, "expression_statement"), node(_, p3_1_3_5, _, _, _), S2 = p3_1_3_5, text(S2, t4_1_3_5), text(S, t4_1_3_5), @doc(S2) = @doc(S) } = 0, ref_site(c2_3_5, b6_1_3_5), (site_scope(b6_1_3_5, "function") ; site_scope(b6_1_3_5, "class") ; site_scope(b6_1_3_5, "module")), (st7_1_3_5 = b6_1_3_5 ; within(b6_1_3_5, st7_1_3_5)), up028_stop_1_within(st7_1_3_5, p8_1_3_5), (kind(p8_1_3_5, "function_definition") ; kind(p8_1_3_5, "class_definition") ; kind(p8_1_3_5, "module")), node(_, p8_1_3_5, _, _, _), G2 = p8_1_3_5, text(G, t9_1_3_5), text(G2, t9_1_3_5), count : { up028_stop_1_within(c2_3_5, p11_1_3_5), !up028_scope(p11_1_3_5), up028_alt_8(p11_1_3_5, N) } = 0, @doc(J) = @doc(N), @doc(G) = @doc(G2) ) } = 0,
     match("(?P<LOOP>(?:[^\"'#]|#[^\\n]*|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*')*?(?:[^\\s\"'#;]|\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\"?(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|''?(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\\n\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^\\n'\\\\]|\\\\[\\s\\S])*'))(?:\\s|;|#[^\\n]*)*", n).
 
 // yielded(n): the JSON util `yielded`, used where the JSON says `matches: "yielded"`
@@ -131,7 +131,7 @@ up028_tok_has_6(n) :- node_text(n, g11), !child(n, _, _), match("(?s)^(?:.*(?:,)
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
 .decl up028_demand_alt_8(n: node, n_mv: loc)
-up028_demand_alt_8(p10_1_2_4, N) :- kind(n, "for_statement"), field(n, "left", c11),
+up028_demand_alt_8(p11_1_2_4, N) :- kind(n, "for_statement"), field(n, "left", c11),
     up028_alt_32(c11, T), field(n, "body", c30), kind(c30, "block"), child(c30, c34, _),
     kind(c34, "expression_statement"), node(_, c34, _, _, _), S = c34, child(c34, c35, _), up028_yielded(c35, V),
     field(n, "right", c36), node(_, c36, _, _, _), IT = c36, value(T, t37), value(V, t37),
@@ -148,14 +148,15 @@ up028_demand_alt_8(p10_1_2_4, N) :- kind(n, "for_statement"), field(n, "left", c
     ; site_scope(b6_1_2_4, "class")
     ; site_scope(b6_1_2_4, "module")
     ),
-    within_stop(b6_1_2_4, p7_1_2_4, up028_stop_1),
-    ( kind(p7_1_2_4, "function_definition")
-    ; kind(p7_1_2_4, "class_definition")
-    ; kind(p7_1_2_4, "module")
+    (st7_1_2_4 = b6_1_2_4 ; within(b6_1_2_4, st7_1_2_4)),
+    within_stop(st7_1_2_4, p8_1_2_4, up028_stop_1),
+    ( kind(p8_1_2_4, "function_definition")
+    ; kind(p8_1_2_4, "class_definition")
+    ; kind(p8_1_2_4, "module")
     ),
-    node(_, p7_1_2_4, _, _, _), G2 = p7_1_2_4, text(G, t8_1_2_4), text(G2, t8_1_2_4),
-    within_stop(c2_2_4, p10_1_2_4, up028_stop_1), @doc(J) = @doc(N), @doc(G) = @doc(G2).
-up028_demand_alt_8(p10_1_3_5, N) :- kind(n, "for_statement"), field(n, "left", c11),
+    node(_, p8_1_2_4, _, _, _), G2 = p8_1_2_4, text(G, t9_1_2_4), text(G2, t9_1_2_4),
+    within_stop(c2_2_4, p11_1_2_4, up028_stop_1), @doc(J) = @doc(N), @doc(G) = @doc(G2).
+up028_demand_alt_8(p11_1_3_5, N) :- kind(n, "for_statement"), field(n, "left", c11),
     up028_alt_32(c11, T), field(n, "body", c30), kind(c30, "block"), child(c30, c34, _),
     kind(c34, "expression_statement"), node(_, c34, _, _, _), S = c34, child(c34, c35, _), up028_yielded(c35, V),
     field(n, "right", c36), node(_, c36, _, _, _), IT = c36, value(T, t37), value(V, t37),
@@ -172,13 +173,14 @@ up028_demand_alt_8(p10_1_3_5, N) :- kind(n, "for_statement"), field(n, "left", c
     ; site_scope(b6_1_3_5, "class")
     ; site_scope(b6_1_3_5, "module")
     ),
-    within_stop(b6_1_3_5, p7_1_3_5, up028_stop_1),
-    ( kind(p7_1_3_5, "function_definition")
-    ; kind(p7_1_3_5, "class_definition")
-    ; kind(p7_1_3_5, "module")
+    (st7_1_3_5 = b6_1_3_5 ; within(b6_1_3_5, st7_1_3_5)),
+    within_stop(st7_1_3_5, p8_1_3_5, up028_stop_1),
+    ( kind(p8_1_3_5, "function_definition")
+    ; kind(p8_1_3_5, "class_definition")
+    ; kind(p8_1_3_5, "module")
     ),
-    node(_, p7_1_3_5, _, _, _), G2 = p7_1_3_5, text(G, t8_1_3_5), text(G2, t8_1_3_5),
-    within_stop(c2_3_5, p10_1_3_5, up028_stop_1), @doc(J) = @doc(N), @doc(G) = @doc(G2).
+    node(_, p8_1_3_5, _, _, _), G2 = p8_1_3_5, text(G, t9_1_3_5), text(G2, t9_1_3_5),
+    within_stop(c2_3_5, p11_1_3_5, up028_stop_1), @doc(J) = @doc(N), @doc(G) = @doc(G2).
 
 // demand_restarting_del: the rows of restarting_del its callers ask for (the metavariable columns they pass in)
 .decl up028_demand_restarting_del(n: node, n_mv: loc)

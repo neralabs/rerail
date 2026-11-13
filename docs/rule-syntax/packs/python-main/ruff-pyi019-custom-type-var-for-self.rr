@@ -74,21 +74,21 @@ pyi019_typevar_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // metaclass_base(n): the JSON util `metaclass-base`, used where the JSON says `matches: "metaclass-base"`
 .decl pyi019_metaclass_base(n: node)
-pyi019_metaclass_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
-    global_ref(n, "type"),
+pyi019_metaclass_base(n) :- pyi019_demand_metaclass_base(n),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "type"),
     ( sym_of(n, "builtins.type")
     ; sym_of(n, "abc.ABCMeta")
     ; sym_of(n, "enum.EnumMeta")
     ; sym_of(n, "enum.EnumType")
     ).
 
-pyi019_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c1),
-    kind(c1, "identifier"), global_ref(c1, "type").
-pyi019_metaclass_base(n) :- kind(n, "identifier"), ref_site(n, b2),
-    kind(b2, "class_definition"), field(b2, "superclasses", c3), child(c3, c4, _),
-    pyi019_metaclass_base(c4).
-pyi019_metaclass_base(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    pyi019_metaclass_base(c5).
+pyi019_metaclass_base(n) :- pyi019_demand_metaclass_base(n), kind(n, "subscript"),
+    field(n, "value", c1), kind(c1, "identifier"), global_ref(c1, "type").
+pyi019_metaclass_base(n) :- pyi019_demand_metaclass_base(n), kind(n, "identifier"), ref_site(n, b2),
+    (st3 = b2 ; within(b2, st3)), kind(st3, "class_definition"),
+    field(st3, "superclasses", c4), child(c4, c5, _), pyi019_metaclass_base(c5).
+pyi019_metaclass_base(n) :- pyi019_demand_metaclass_base(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _), pyi019_metaclass_base(c6).
 
 // declares_d(n): the JSON util `declares-D`, used where the JSON says `matches: "declares-D"`
 //   D: metavariable this relation binds for the calling rule
@@ -127,7 +127,7 @@ pyi019_first_param(n) :- (kind(n, "typed_parameter") ; kind(n, "typed_default_pa
 //   N: metavariable this relation binds for the calling rule
 .decl pyi019_typevar_ident(n: node, n_mv: loc)
 pyi019_typevar_ident(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
-    ( ref_site(n, b1), kind(b1, "assignment"), count : { field(b1, "type", c1), kind(c1, "type") } = 0, field(b1, "right", c2), pyi019_typevar_rhs(c2), binding_value(b1, x1), pyi019_typevar_call(x1)
+    ( ref_site(n, b1), (st1 = b1 ; within(b1, st1)), kind(st1, "assignment"), count : { field(st1, "type", c1), kind(c1, "type") } = 0, field(st1, "right", c2), pyi019_typevar_rhs(c2), binding_value(b1, x1), pyi019_typevar_call(x1)
     ; pyi019_own_type_param_n(n, N)
     ).
 
@@ -350,6 +350,17 @@ pyi019_demand_binds_n(c8, N) :- pyi019_demand_binds_n(n, N), kind(n, "decorated_
 pyi019_demand_binds_n(c1, N) :- pyi019_demand_scope_binds_n(n, N), within_stop(c1, n, pyi019_stop_13).
 pyi019_demand_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N).
 pyi019_demand_binds_n(c1, N) :- pyi019_demand_later_binds_n(n, N), within_stop(c1, n, pyi019_stop_13).
+
+// demand_metaclass_base: the nodes metaclass_base is asked at (its recursion looks at every descendant)
+.decl pyi019_demand_metaclass_base(n: node)
+pyi019_demand_metaclass_base(c5) :- pyi019_demand_metaclass_base(n), kind(n, "identifier"),
+    ref_site(n, b2), (st3 = b2 ; within(b2, st3)), kind(st3, "class_definition"),
+    field(st3, "superclasses", c4), child(c4, c5, _).
+pyi019_demand_metaclass_base(c6) :- pyi019_demand_metaclass_base(n),
+    kind(n, "parenthesized_expression"), child(n, c6, _).
+pyi019_demand_metaclass_base(c3) :- kind(n, "function_definition"),
+    within_stop(n, p1, pyi019_stop_14), kind(p1, "class_definition"),
+    field(p1, "superclasses", c2), child(c2, c3, _).
 
 // stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl pyi019_stop_10(kind: symbol)

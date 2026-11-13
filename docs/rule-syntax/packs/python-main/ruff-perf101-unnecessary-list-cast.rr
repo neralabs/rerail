@@ -114,10 +114,10 @@ PERF101(n) :- kind(n, "call"), perf101_list_callee(n), perf101_up_1(n, p1), fiel
 PERF101_name_list_cast(n, NAME) :- kind(n, "call"), perf101_list_callee(n),
     field(n, "arguments", c1), perf101_sole_arg(c1), child(c1, c2, _), perf101_name_arg(c2, NAME),
     ( ref_site(c2, b1), site_stop_at_global(b1), binding_value(b1, x1), perf101_literal(x1)
-    ; ref_site(c2, b2), site_stop_at_global(b2), site_form(b2, "with"), kind(b2, "as_pattern"), child(b2, c3, _), perf101_literal(c3)
+    ; ref_site(c2, b2), site_stop_at_global(b2), site_form(b2, "with"), (st1 = b2 ; within(b2, st1)), kind(st1, "as_pattern"), child(st1, c3, _), perf101_literal(c3)
     ),
-    perf101_up_2(n, p7), field(_, "right", n), !perf101_alt_8(p7, NAME),
-    count : { perf101_stop_10_within(n, p11), (kind(p11, "function_definition") ; kind(p11, "class_definition")), perf101_stop_10_within(c12, p11), kind(c12, "nonlocal_statement"), child(c12, c13, _), kind(c13, "identifier"), node(_, c13, _, _, _), NAME = c13 } = 0.
+    perf101_up_2(n, p8), field(_, "right", n), !perf101_alt_8(p8, NAME),
+    count : { perf101_stop_10_within(n, p12), (kind(p12, "function_definition") ; kind(p12, "class_definition")), perf101_stop_10_within(c13, p12), kind(c13, "nonlocal_statement"), child(c13, c14, _), kind(c14, "identifier"), node(_, c14, _, _, _), NAME = c14 } = 0.
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl perf101_tok_has_1(n: node)
@@ -132,12 +132,9 @@ perf101_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,
 
 // demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
 .decl perf101_demand_alt_8(n: node, name: loc)
-perf101_demand_alt_8(p7, NAME) :- kind(n, "call"), perf101_list_callee(n), field(n, "arguments", c1),
-    perf101_sole_arg(c1), child(c1, c2, _), perf101_name_arg(c2, NAME),
-    ( ref_site(c2, b1), site_stop_at_global(b1), binding_value(b1, x1), perf101_literal(x1)
-    ; ref_site(c2, b2), site_stop_at_global(b2), site_form(b2, "with"), kind(b2, "as_pattern"), child(b2, c3, _), perf101_literal(c3)
-    ),
-    perf101_up_2(n, p7), field(_, "right", n).
+perf101_demand_alt_8(p8, NAME) :- kind(n, "call"), perf101_list_callee(n), field(n, "arguments", c1),
+    perf101_sole_arg(c1), child(c1, c2, _), perf101_name_arg(c2, NAME), perf101_up_2(n, p8),
+    field(_, "right", n).
 
 // demand_mutation: the rows of mutation its callers ask for (the metavariable columns they pass in)
 .decl perf101_demand_mutation(n: node, name: loc)

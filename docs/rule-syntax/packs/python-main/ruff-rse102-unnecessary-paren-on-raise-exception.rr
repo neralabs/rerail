@@ -65,8 +65,8 @@ rse102_callee(n) :- rse102_demand_callee(n), kind(n, "parenthesized_expression")
     rse102_callee(c1).
 rse102_callee(n) :- rse102_demand_callee(n), kind(n, "identifier"),
     ( global_ref(n, _)
-    ; !rse102_nonlocal_name(n, NM), ref_site(n, b1), site_stop_at_global(b1), kind(b1, "class_definition")
-    ; count : { !rse102_nonlocal_name(n, NM), ref_site(n, b1_4), site_stop_at_global(b1_4), kind(b1_4, "function_definition") } = 0, count : { rse102_lowercase_name(n) } = 0, count : { rse102_win_error(n) } = 0
+    ; !rse102_nonlocal_name(n, NM), ref_site(n, b1), site_stop_at_global(b1), (st1 = b1, kind(st1, "class_definition") ; inside(b1, st1, "class_definition"))
+    ; count : { !rse102_nonlocal_name(n, NM), ref_site(n, b1_4), site_stop_at_global(b1_4), (st2_4 = b1_4, kind(st2_4, "function_definition") ; inside(b1_4, st2_4, "function_definition")) } = 0, count : { rse102_lowercase_name(n) } = 0, count : { rse102_win_error(n) } = 0
     ),
     node(_, n, _, _, _), NM = n.
 rse102_callee(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n,
@@ -83,8 +83,8 @@ rse102_nonlocal_name(n, NM) :- rse102_demand_nonlocal_name(n, NM),
     inside(n, p1, "function_definition"), within_stop(c2, p1, rse102_stop_14),
     kind(c2, "nonlocal_statement"), child(c2, c3, _), kind(c3, "identifier"),
     node(_, c3, _, _, _), NL = c3, value(NL, t4), value(NM, t4), node(_, p1, _, _, _), F = p1, ref_site(n, b6),
-    site_stop_at_global(b6),
-    count : { inside(b6, p7, "function_definition"), node(_, p7, _, _, _), G = p7, text(G, t8), text(F, t8), @doc(G) = @doc(F) } = 0.
+    site_stop_at_global(b6), (st7 = b6 ; within(b6, st7)),
+    count : { inside(st7, p8, "function_definition"), node(_, p8, _, _, _), G = p8, text(G, t9), text(F, t9), @doc(G) = @doc(F) } = 0.
 
 // demand_callee: the rows of callee its callers ask for (the metavariable columns they pass in)
 .decl rse102_demand_callee(n: node)
@@ -100,9 +100,14 @@ rse102_demand_member_def(n) :- rse102_demand_callee(n), kind(n, "attribute"), no
 // demand_nonlocal_name: the rows of nonlocal_name its callers ask for (the metavariable columns they pass in)
 .decl rse102_demand_nonlocal_name(n: node, nm: loc)
 rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifier"), node(_, n, _, _, _), NM = n,
-    ref_site(n, b1), site_stop_at_global(b1), kind(b1, "class_definition").
+    ref_site(n, b1), site_stop_at_global(b1),
+    (st1 = b1, kind(st1, "class_definition") ; inside(b1, st1, "class_definition")).
 rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifier"), node(_, n, _, _, _), NM = n,
-    ref_site(n, b1_4), site_stop_at_global(b1_4), kind(b1_4, "function_definition").
+    ref_site(n, b1_4), site_stop_at_global(b1_4),
+    ( st2_4 = b1_4, kind(st2_4, "function_definition")
+    ; inside(b1_4, st2_4, "function_definition")
+    ).
+
 
 // demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
 .decl rse102_demand_alt_2(n: node)
@@ -121,8 +126,8 @@ rse102_demand_class_of(c1) :- node(_, P, _, _, _), rse102_demand_member_def(n), 
     inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5),
     text(P, t5), within_stop(c7, c4, rse102_stop_14), kind(c7, "function_definition"),
     field(c7, "name", c8), node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), site_latest(c8), @doc(Q) = @doc(P).
-rse102_demand_class_of(c2) :- rse102_demand_alt_2(n), kind(n, "parenthesized_expression"),
-    child(n, c2, _), node(_, c2, _, _, _), I = c2.
+rse102_demand_class_of(c3) :- rse102_demand_alt_2(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), node(_, c3, _, _, _), I = c3.
 
 // demand_member_class: the nodes member_class is asked at (its recursion looks at every descendant)
 .decl rse102_demand_member_class(n: node)
@@ -147,8 +152,8 @@ rse102_stop_1(n) :- node(_, n, _, _, _), !kind(n, "line_continuation").
 //   I, N, ND, O, Q: metavariables this relation binds for the calling rule
 .decl rse102_alt_2(n: node, e: loc, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
 // I, N, ND, O, Q: not bound by this rule, so empty (unset) here, as in ast-grep.
-rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _),rse102_demand_alt_2(n),kind(n, "identifier"),ref_site(n, b1),site_stop_at_global(b1),kind(b1, "class_definition"),text(b1, t_k1),text(K, t_k1),unset(I),unset(N),unset(ND),unset(O),unset(Q),@doc(b1) = @doc(K), unset(E), unset(P).
-rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n),kind(n, "parenthesized_expression"),child(n, c2, _),node(_, c2, _, _, _),I = c2,rse102_class_of(c2, I, K, I, N, ND, O, P, Q), unset(E).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _),rse102_demand_alt_2(n),kind(n, "identifier"),ref_site(n, b1),site_stop_at_global(b1),(st2 = b1 ; within(b1, st2)),kind(st2, "class_definition"),text(st2, t_k1),text(K, t_k1),unset(I),unset(N),unset(ND),unset(O),unset(Q),@doc(st2) = @doc(K), unset(E), unset(P).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n),kind(n, "parenthesized_expression"),child(n, c3, _),node(_, c3, _, _, _),I = c3,rse102_class_of(c3, I, K, I, N, ND, O, P, Q), unset(E).
 rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n), kind(n, "attribute"),
     rse102_member_class(n, E, K, I, N, ND, O, P, Q).
 

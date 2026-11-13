@@ -13,8 +13,8 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation AIR312(at: node, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
     suppress noqa "AIR312"
-AIR312(ATTR, n) :- air312_alt_20(n, ATTR), inside(n, p3, "module"), within(c4, p3),
-    air312_airflow_name(c4), air312_seen_airflow(n).
+AIR312(ATTR, n) :- air312_alt_20(n, ATTR), inside(n, p4, "module"), within(c5, p4),
+    air312_airflow_name(c5), air312_seen_airflow(n).
 
 // deprecated(n): the JSON util `deprecated`, used where the JSON says `matches: "deprecated"`
 .decl air312_deprecated(n: node)
@@ -237,8 +237,8 @@ air312_demand_alt_2(n, REAL) :- within_stop(n, p10, air312_stop_3), kind(p10, "e
 
 // demand_guarded_attribute: the rows of guarded_attribute its callers ask for (the metavariable columns they pass in)
 .decl air312_demand_guarded_attribute(n: node, attr: loc)
-air312_demand_guarded_attribute(p2, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
-    field(p2, "attribute", n), kind(p2, "attribute"), air312_deprecated(p2).
+air312_demand_guarded_attribute(p3, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
+    field(p3, "attribute", n), kind(p3, "attribute"), air312_deprecated(p3).
 air312_demand_guarded_attribute(n, ATTR) :- air312_string_attribute(n, ATTR).
 
 // demand_guarded_forward: the rows of guarded_forward its callers ask for (the metavariable columns they pass in)
@@ -263,7 +263,7 @@ air312_demand_guarded_local(c9, ATTR) :- air312_demand_alt_12(n, ATTR), within_s
 
 // demand_seen_airflow: the nodes seen_airflow is asked at (it looks at every ancestor of every node)
 .decl air312_demand_seen_airflow(n: node)
-air312_demand_seen_airflow(n) :- inside(n, p3, "module"), within(c4, p3), air312_airflow_name(c4).
+air312_demand_seen_airflow(n) :- inside(n, p4, "module"), within(c5, p4), air312_airflow_name(c5).
 
 // set_1: symbols from the JSON `resolves.import`
 .decl air312_set_1(v: symbol)
@@ -395,13 +395,13 @@ air312_alt_17(n, ATTR) :- air312_string_attribute(n, ATTR).
 .decl air312_alt_19(n: node)
 air312_alt_19(n) :- air312_aug_target(n).
 air312_alt_19(n) :- air312_del_target(n).
-air312_alt_19(n) :- ref_site(n, b1), air312_guarded_import(b1).
+air312_alt_19(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air312_guarded_import(st2).
 
 // alt_20(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule
 .decl air312_alt_20(n: node, attr: loc)
 air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, air312_deprecated(n), !air312_alt_19(n).
-air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, field(p2, "attribute", n),
-    kind(p2, "attribute"), air312_deprecated(p2), !air312_guarded_attribute(p2, ATTR).
+air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, field(p3, "attribute", n),
+    kind(p3, "attribute"), air312_deprecated(p3), !air312_guarded_attribute(p3, ATTR).
 air312_alt_20(n, ATTR) :- air312_string_name(n, ATTR), !air312_guarded_forward(n, ATTR).
 air312_alt_20(n, ATTR) :- air312_string_attribute(n, ATTR), !air312_guarded_attribute(n, ATTR).

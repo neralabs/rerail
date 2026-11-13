@@ -12,4 +12,4 @@
 .violation F522(at: node) "Remove the keyword arguments that no named placeholder in this str.format() string uses."
     suppress noqa "F522"
 F522(n) :- n ~ `$S.format($$$A)`,
-    ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "unused": {"kind": "keyword_argument"}}}).
+    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "unused": {"kind": "keyword_argument"}}}}).

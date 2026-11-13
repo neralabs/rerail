@@ -44,17 +44,18 @@ async221_p_wait_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _)
 
 // p_wait_arg(n): the JSON util `p-wait-arg`, used where the JSON says `matches: "p-wait-arg"`
 .decl async221_p_wait_arg(n: node)
-async221_p_wait_arg(n) :- async221_p_wait_value(n).
-async221_p_wait_arg(n) :- kind(n, "identifier"), ref_site(n, b1), site_stop_at_global(b1),
-    binding_value(b1, x2), async221_p_wait_value(x2).
-async221_p_wait_arg(n) :- kind(n, "identifier"), node(_, n, _, _, _), PW = n, ref_site(n, b3),
-    site_stop_at_global(b3), kind(b3, "assignment"), field(b3, "left", c4),
-    child(c4, c5, _), kind(c5, "identifier"), node(_, c5, _, _, _), UT = c5, value(UT, t6), value(PW, t6),
-    count : { precedes(c5, s8), kind(s8, "identifier"), node(_, s8, _, _, _), UU = s8, value(UU, t9), value(PW, t9) } = 0,
-    field(b3, "right", c11), child(c11, c12, _), async221_p_wait_value(c12), node(_, c12, _, _, _), UV = c12,
-    value(UV, t13), value(UT, t13).
-async221_p_wait_arg(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
-    async221_p_wait_arg(c15).
+async221_p_wait_arg(n) :- async221_demand_p_wait_arg(n), async221_p_wait_value(n).
+async221_p_wait_arg(n) :- async221_demand_p_wait_arg(n), kind(n, "identifier"), ref_site(n, b1),
+    site_stop_at_global(b1), binding_value(b1, x2), async221_p_wait_value(x2).
+async221_p_wait_arg(n) :- async221_demand_p_wait_arg(n), kind(n, "identifier"), node(_, n, _, _, _), PW = n,
+    ref_site(n, b3), site_stop_at_global(b3), (st4 = b3 ; within(b3, st4)),
+    kind(st4, "assignment"), field(st4, "left", c5), child(c5, c6, _),
+    kind(c6, "identifier"), node(_, c6, _, _, _), UT = c6, value(UT, t7), value(PW, t7),
+    count : { precedes(c6, s9), kind(s9, "identifier"), node(_, s9, _, _, _), UU = s9, value(UU, t10), value(PW, t10) } = 0,
+    field(st4, "right", c12), child(c12, c13, _), async221_p_wait_value(c13), node(_, c13, _, _, _), UV = c13,
+    value(UV, t14), value(UT, t14).
+async221_p_wait_arg(n) :- async221_demand_p_wait_arg(n), kind(n, "parenthesized_expression"),
+    child(n, c16, _), async221_p_wait_arg(c16).
 
 // spawn(n): the JSON util `spawn`, used where the JSON says `matches: "spawn"`
 .decl async221_spawn(n: node)
@@ -153,6 +154,13 @@ async221_arg_no_mode_1(n) :- kind(n, "call"), field(n, "arguments", l), !async22
 // demand_alt_4: the nodes alt_4 is asked at (it looks at every ancestor of every node)
 .decl async221_demand_alt_4(n: node)
 async221_demand_alt_4(n) :- async221_callee_position(n), async221_async_context(n), async221_spawn(n).
+
+// demand_p_wait_arg: the nodes p_wait_arg is asked at (its recursion looks at every descendant)
+.decl async221_demand_p_wait_arg(n: node)
+async221_demand_p_wait_arg(c16) :- async221_demand_p_wait_arg(n), kind(n, "parenthesized_expression"),
+    child(n, c16, _).
+async221_demand_p_wait_arg(c4) :- async221_demand_alt_4(n), async221_up_3(n, p2), async221_arg_mode_1(p2, a3), M = a3,
+    within(c4, p2), node(_, c4, _, _, _), MODE_ARG = c4, text(M, t5), text(MODE_ARG, t5), @doc(M) = @doc(MODE_ARG).
 
 // demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
 .decl async221_demand_async_context(n: node)

@@ -1,0 +1,109 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz002-call-datetime-today",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use datetime.now with a timezone instead of datetime.today; today returns a naive local time with no zone information.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "call-datetime-today",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      }
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "datetime.datetime.today"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "astz-safe": {
+       "inside": {
+        "stopBy": {
+         "not": {
+          "kind": "parenthesized_expression"
+         }
+        },
+        "kind": "attribute",
+        "any": [
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^astimezone$"
+          }
+         },
+         {
+          "has": {
+           "stopBy": "neighbor",
+           "field": "attribute",
+           "regex": "^replace$"
+          },
+          "inside": {
+           "stopBy": {
+            "not": {
+             "kind": "parenthesized_expression"
+            }
+           },
+           "kind": "call",
+           "matches": "astz-safe"
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ002",
+    "message": "Replace `today()` with `now(tz=...)`, passing the zone you mean (`datetime.timezone.utc` for UTC) so the result is aware. Keep `today()` only where a naive local time is required.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ002"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

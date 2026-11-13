@@ -27,11 +27,12 @@ pyi041_ref_of(n, q1) :- pyi041_ref_of_case(q1, s1), (kind(n, "identifier") ; kin
 .decl pyi041_register_ref(n: node)
 pyi041_register_ref(n) :- kind(n, "attribute"), field(n, "attribute", c1),
     glob("register", c1), field(n, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), kind(b3, "function_definition"), child(p4, b3, _),
-    kind(p4, "decorated_definition"), child(p4, c5, _), kind(c5, "decorator"),
-    child(c5, c6, _), (kind(c6, "identifier") ; kind(c6, "attribute")),
-    ( sym_of(c6, "functools.singledispatch")
-    ; sym_of(c6, "functools.singledispatchmethod")
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), kind(st4, "function_definition"),
+    child(p5, st4, _), kind(p5, "decorated_definition"), child(p5, c6, _),
+    kind(c6, "decorator"), child(c6, c7, _),
+    (kind(c7, "identifier") ; kind(c7, "attribute")),
+    ( sym_of(c7, "functools.singledispatch")
+    ; sym_of(c7, "functools.singledispatchmethod")
     ).
 
 

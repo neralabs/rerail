@@ -1,0 +1,360 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b905-zip-without-explicit-strict",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "zip-without-explicit-strict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.10"
+            }
+          },
+          "utils": {
+            "it-cycle-count": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "itertools.cycle",
+                      "itertools.count"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "it-cycle-count"
+                  }
+                }
+              ]
+            },
+            "it-repeat": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "itertools.repeat"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "it-repeat"
+                  }
+                }
+              ]
+            },
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "infinite-call": {
+              "kind": "call",
+              "any": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "it-cycle-count"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "it-repeat"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "argument_list",
+                        "any": [
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "matches": "not-positional"
+                                }
+                              },
+                              "min": 1,
+                              "max": 1
+                            },
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "any": [
+                                  {
+                                    "kind": "keyword_argument"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "matches": "not-positional"
+                                }
+                              },
+                              "min": 2,
+                              "max": 2
+                            },
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "matches": "not-positional"
+                              },
+                              "matches": "none-literal",
+                              "follows": {
+                                "stopBy": "end",
+                                "not": {
+                                  "matches": "not-positional"
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "name",
+                                    "regex": "^(times)$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "matches": "none-literal"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "it-repeat"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "generator_expression"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "infinite": {
+              "any": [
+                {
+                  "matches": "infinite-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "infinite"
+                  }
+                }
+              ]
+            },
+            "callee-zip": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "zip"
+                    ],
+                    "import": [
+                      "builtins.zip"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-zip"
+                  }
+                }
+              ]
+            },
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
+            "not-positional": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "matches": "trivia"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "arguments": {
+              "signature": [
+                "*",
+                "strict"
+              ],
+              "absent": [
+                "strict"
+              ],
+              "mode": "syntactic"
+            },
+            "all": [
+              {
+                "any": [
+                  {
+                    "pattern": "$CALL",
+                    "has": {
+                      "field": "function",
+                      "matches": "callee-zip"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee-zip",
+                        "pattern": "$CALL"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "matches": "not-positional"
+                      },
+                      "matches": "infinite"
+                    }
+                  },
+                  "any": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "matches": "not-positional"
+                          }
+                        },
+                        "min": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "B905",
+        "message": "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B905"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

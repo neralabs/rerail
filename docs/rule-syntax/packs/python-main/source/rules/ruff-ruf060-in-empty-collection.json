@@ -1,0 +1,550 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf060-in-empty-collection",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the result is almost always fixed, so the test hides a mistake or dead code.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "global-declared-builtin": {
+            "kind": "identifier",
+            "resolves": {
+              "imported": [
+                "builtins"
+              ],
+              "seenBefore": true
+            },
+            "not": {
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "not": {
+                          "kind": "global_statement"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "unresolved": true
+                  }
+                }
+              ]
+            }
+          },
+          "callee-collection": {
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "list",
+                    "tuple",
+                    "set",
+                    "frozenset",
+                    "dict",
+                    "bytes",
+                    "bytearray",
+                    "str"
+                  ],
+                  "import": [
+                    "builtins.list",
+                    "builtins.tuple",
+                    "builtins.set",
+                    "builtins.frozenset",
+                    "builtins.dict",
+                    "builtins.bytes",
+                    "builtins.bytearray",
+                    "builtins.str"
+                  ]
+                }
+              },
+              {
+                "regex": "^(list|tuple|set|frozenset|dict|bytes|bytearray|str)$",
+                "matches": "global-declared-builtin"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee-collection"
+                }
+              }
+            ]
+          },
+          "callee-set": {
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "set",
+                    "frozenset"
+                  ],
+                  "import": [
+                    "builtins.set",
+                    "builtins.frozenset"
+                  ]
+                }
+              },
+              {
+                "regex": "^(set|frozenset)$",
+                "matches": "global-declared-builtin"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "callee-set"
+                }
+              }
+            ]
+          },
+          "trivia": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              }
+            ]
+          },
+          "elem": {
+            "not": {
+              "any": [
+                {
+                  "matches": "trivia"
+                },
+                {
+                  "regex": "^[\\[\\](){},]$"
+                }
+              ]
+            }
+          },
+          "str-plain-empty": {
+            "matches": "str-any-empty",
+            "not": {
+              "regex": "^[A-Za-z]*[bB]"
+            }
+          },
+          "str-any-empty": {
+            "kind": "string",
+            "regex": "^(?i:(?:[ubf]?(?:'(?:\\\\\\r?\\n)*'|\"(?:\\\\\\r?\\n)*\"|'''(?:\\\\\\r?\\n)*'''|\"\"\"(?:\\\\\\r?\\n)*\"\"\")|[rbfu]{1,2}(?:''|\"\"|''''''|\"\"\"\"\"\")))$"
+          },
+          "fstr-empty": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "string_start"
+                    },
+                    {
+                      "kind": "string_end",
+                      "regex": "^(?:'|\"|'''|\"\"\")$"
+                    },
+                    {
+                      "kind": "interpolation",
+                      "matches": "interp-empty"
+                    },
+                    {
+                      "kind": "string_content",
+                      "regex": "^(?:\\\\\\r?\\n)+$",
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "kind": "string_start",
+                          "regex": "^[A-Za-z]*[rR]"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "matches": "fstr-part"
+          },
+          "interp-empty": {
+            "kind": "interpolation",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "inner-empty"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "type_conversion"
+                  },
+                  {
+                    "kind": "format_specifier"
+                  },
+                  {
+                    "regex": "^=$"
+                  }
+                ]
+              }
+            }
+          },
+          "inner-part": {
+            "any": [
+              {
+                "matches": "str-plain-empty"
+              },
+              {
+                "matches": "fstr-empty"
+              }
+            ]
+          },
+          "inner-empty": {
+            "any": [
+              {
+                "matches": "inner-part"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "inner-part"
+                        },
+                        {
+                          "matches": "trivia"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fstr-part"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fstr-part",
+                    "not": {
+                      "matches": "fstr-empty"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "inner-empty"
+                }
+              }
+            ]
+          },
+          "outer-part": {
+            "any": [
+              {
+                "matches": "str-any-empty"
+              },
+              {
+                "matches": "fstr-empty"
+              }
+            ]
+          },
+          "empty": {
+            "any": [
+              {
+                "kind": "list",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              },
+              {
+                "kind": "tuple",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              },
+              {
+                "kind": "dictionary",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elem"
+                  }
+                }
+              },
+              {
+                "matches": "outer-part"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "outer-part"
+                        },
+                        {
+                          "matches": "trivia"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "empty"
+                }
+              },
+              {
+                "kind": "call",
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "callee-collection"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "argument_list",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "elem"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "matches": "callee-set"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "argument_list",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "empty",
+                            "not": {
+                              "follows": {
+                                "stopBy": "end",
+                                "matches": "elem"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "fstr-part": {
+            "kind": "string",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_start",
+              "regex": "^[A-Za-z]*[fF]"
+            }
+          },
+          "in-compare": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
+                "regex": "^in$"
+              }
+            }
+          },
+          "in-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "in-compare",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "in-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "not-in-compare": {
+            "matches": "single-compare",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "empty",
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
+                "regex": "^not(?:\\s|\\\\)+in$"
+              }
+            }
+          },
+          "not-in-in-string": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "not-in-compare",
+                    "capture": "C"
+                  },
+                  {
+                    "matches": "not-in-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "single-compare": {
+            "kind": "comparison_operator",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "matches": "trivia"
+                }
+              },
+              "max": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "membership-in-empty",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "in-compare",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "RUF060",
+        "message": "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False` and simplify, or fill the collection if items were meant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF060"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "membership-not-in-empty",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "not-in-compare",
+                "pattern": "$C"
+              },
+              {
+                "matches": "not-in-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "RUF060",
+        "message": "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True` and simplify, or fill the collection if items were meant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF060"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

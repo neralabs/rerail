@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pgh003-blanket-type-ignore",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give type-ignore comments specific error codes instead of silencing every type error on the line; a blanket ignore hides new, unrelated problems.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "blanket-type-ignore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "(?<D>#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*)?)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH003",
+        "message": "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PGH003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "second-blanket-type-ignore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*?)??(?<D>#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*)?)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH003",
+        "message": "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PGH003"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "third-blanket-type-ignore",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*?)??#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*?)??(?<D>#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*)?)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH003",
+        "message": "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PGH003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

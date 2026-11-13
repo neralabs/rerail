@@ -145,16 +145,17 @@ n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n),
     ).
 
 n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
-    ref_site(n, b1), n815_typed_dict_class(b1),
-    count : { n815_stop_4_within(b1, p2), n815_class_body(p2) } = 0.
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), n815_typed_dict_class(st2),
+    count : { n815_stop_4_within(st2, p3), n815_class_body(p3) } = 0.
 n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
-    field(n, "attribute", c3), node(_, c3, _, _, _), TDATTR = c3, field(n, "object", c4),
-    kind(c4, "identifier"), ref_site(c4, b5), kind(b5, "class_definition"),
-    field(b5, "body", c6), within_stop(c7, c6, n815_stop_5), kind(c7, "class_definition"),
-    field(c7, "name", c8), node(_, c8, _, _, _), TDATTR = c8, n815_typed_dict_class(c7),
-    count : { n815_stop_4_within(b5, p9), n815_class_body(p9) } = 0.
+    field(n, "attribute", c4), node(_, c4, _, _, _), TDATTR = c4, field(n, "object", c5),
+    kind(c5, "identifier"), ref_site(c5, b6), (st7 = b6 ; within(b6, st7)),
+    kind(st7, "class_definition"), field(st7, "body", c8), within_stop(c9, c8, n815_stop_5),
+    kind(c9, "class_definition"), field(c9, "name", c10), node(_, c10, _, _, _), TDATTR = c10,
+    n815_typed_dict_class(c9),
+    count : { n815_stop_4_within(st7, p11), n815_class_body(p11) } = 0.
 n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "parenthesized_expression"),
-    child(n, c10, _), n815_typed_dict_name(c10).
+    child(n, c12, _), n815_typed_dict_name(c12).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl n815_tok_has_1(n: node)
@@ -179,21 +180,21 @@ n815_demand_typed_dict_base(c2) :- n815_demand_typed_dict_base(n),
 .decl n815_demand_typed_dict_class(n: node)
 n815_demand_typed_dict_class(p1) :- kind(n, "block"), field(p1, "body", n),
     kind(p1, "class_definition").
-n815_demand_typed_dict_class(b1) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
-    ref_site(n, b1).
-n815_demand_typed_dict_class(c7) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
-    field(n, "attribute", c3), node(_, c3, _, _, _), TDATTR = c3, field(n, "object", c4),
-    kind(c4, "identifier"), ref_site(c4, b5), kind(b5, "class_definition"),
-    field(b5, "body", c6), within_stop(c7, c6, n815_stop_5), kind(c7, "class_definition"),
-    field(c7, "name", c8), node(_, c8, _, _, _), TDATTR = c8.
+n815_demand_typed_dict_class(st2) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)).
+n815_demand_typed_dict_class(c9) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
+    field(n, "attribute", c4), node(_, c4, _, _, _), TDATTR = c4, field(n, "object", c5),
+    kind(c5, "identifier"), ref_site(c5, b6), (st7 = b6 ; within(b6, st7)),
+    kind(st7, "class_definition"), field(st7, "body", c8), within_stop(c9, c8, n815_stop_5),
+    kind(c9, "class_definition"), field(c9, "name", c10), node(_, c10, _, _, _), TDATTR = c10.
 
 // demand_typed_dict_name: the nodes typed_dict_name is asked at (its recursion looks at every descendant)
 .decl n815_demand_typed_dict_name(n: node)
 n815_demand_typed_dict_name(n) :- n815_demand_typed_dict_base(n).
 n815_demand_typed_dict_name(c1) :- n815_demand_typed_dict_base(n), kind(n, "subscript"),
     field(n, "value", c1).
-n815_demand_typed_dict_name(c10) :- n815_demand_typed_dict_name(n),
-    kind(n, "parenthesized_expression"), child(n, c10, _).
+n815_demand_typed_dict_name(c12) :- n815_demand_typed_dict_name(n),
+    kind(n, "parenthesized_expression"), child(n, c12, _).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl n815_up_1(n: node, p: node)

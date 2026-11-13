@@ -57,33 +57,57 @@ climbs to the parent where the gap reaches the parent's edge, and steps past com
 | `ruff-pyi010-non-empty-stub-body` | A capture regex over a node of unknown kind: the statement kinds are named. |
 | `ruff-n806-non-lowercase-variable-in-function` | Main passes `NAME` in from the caller, and Datalog cannot, so the reader refuses it as ungrounded. Here `NAME` ranges over the nodes of the model's file, and the caller's join keeps its own. A stray `unset(MODEL)` is dropped. |
 
-## Rules that still fail
+## Rules that still fail, and the plan to run them all
 
-Checked on 2026-11-13: 537 translated, 523 pass the reader (`reader-check.txt`), 507 were run on
-50 files, and 502 of those run clean.
+The pinned source is `source/` (main's Python pack 0.1.8: `pack.json` and `rules/`). `reader-check.txt` holds each
+rule's reader verdict, and `run-check.txt` (from `../../site/run_main_pack.sh`) each rule's verdict when run alone
+on one file, under the caps (2 minutes, 2 GB).
 
-**The reader refuses 14 rules.**
+### The 9 overrides: what makes each expressible
 
-- `ruff-f501`, `f502`, `f503`, `f506`, `f508`, `f509`, `f521`, `f523`, `f524`, `f525`, `ruff-fast003`, `ruff-up031`:
-  main parses format strings with the `percentFormat` and `braceFormat` grammars. The engine has neither.
-- `ruff-up030`, `ruff-up032`: they use the `formatArgs` term outside `ast()`, which has no `.rr` form.
+| Rule | What the translator cannot say | The fix that makes it generated |
+|---|---|---|
+| B110, B112 | `pattern: {context, selector}`: a snippet parsed in a context (`try: … except: pass`), matched at the node of the selector's kind. | The translator parses the context itself and writes out the selected node's shape (its kind and children's kinds and texts), as it already does for a plain pattern. |
+| RET505–RET508 | A capture of an anonymous token (`else`, `elif`), which the tape does not store. | The translator already reads such tokens from the source gaps (`structural_before`) for tests; a capture of one becomes the gap's span, with the finding at the clause, which starts with the keyword. |
+| COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The translator names the kinds the node can have, from the grammar's node types under its parent, as the overrides do by hand. |
+| N806 | A util that reads the caller's metavariable (`NAME`). | The translator's `demand()` pass already hands a caller's metavariable to a helper; it is extended to a util whose only binder is the caller's. |
 
-**The engine refuses 13 rules at run time, on any input.**
+### 14 refused by the reader
 
-- A JSON term in `ast()` does not lower: `formatArgs` (`ruff-f504`, `f505`, `f507`, `f522`), `bindings`
-  (`ruff-up008`, `ruff-sim113`, `bandit-b615`), `redefines` (`ruff-f402`) and `resolves.beforeLocal` (`ruff-f823`).
-- Not stratifiable, because a negation or an aggregate sits inside a recursive component: `ruff-ruf018`,
-  `ruff-fbt001`, `ruff-n805`, `ruff-pyi051`.
+- **12 use the `percentFormat` or `braceFormat` grammar** (F501–F503, F506, F508, F509, F521, F523–F525, FAST003, UP031). These
+  are main's grammars of the format mini-languages, the `%` printf formats and `str.format`'s `{}` templates. Main parses
+  a string's value with Rust ports of Ruff's own parsers (`native/src/code_rule_dsl/literal/percent.rs`, `brace.rs`) and
+  hands the rule the tree (`format`, `placeholder`, `mapping_key`, …, and `error` with Ruff's message). The engine's
+  guests (decision 0055) parse only the registry's grammars (`languages/*.json`: a dialect or a fragment), so the reader
+  refuses the name. **Plan:** make the two parsers guest grammars, giving a guest document with main's tree kinds and the
+  error's message as its value. The rules then run as written. The final shape is a transducer program per grammar
+  (rank 0 allows a lean parser until then).
+- **UP030 and UP032 use `formatArgs` outside `ast(…)`**: the same plan, then `formatArgs` in Datalog (below).
 
-**Rules that pass the reader but are too heavy, or abort, at scale.** Each run had caps of 2 minutes and 2 GB.
+### 13 refused at run time: 9 fixed, 4 left
 
-- `ruff-up028`: 1.7 GB on a single file. It was set aside after the 1-file run.
-- `ruff-pie810` (over 2 GB) and `ruff-ann401` (2.5 GB): set aside after the 10-file run.
-- `bandit-b606`, `bandit-b323`, `bandit-b304`: strict mode aborts on 50 files with
-  `$rr_sd0 >= 1073741824 has no native step`.
-- `ruff-c416`: runs past 2 minutes on 50 files when run alone.
-- `ruff-air312`: aborts on 50 files when run alone, because the writer's queue is full (the memo's
-  entries, about 200 MB).
+- **Fixed: not stratifiable** (RUF018, FBT001, N805, PYI051). The engine narrows a negated or aggregated helper with a
+  context relation built from the rule's other literals. In a recursive rule (a translator demand) those literals are
+  the helper's own component, so the negation closed a cycle. Lowering now widens such a context: it drops the cycle's
+  literals from it (`rr::lower::widen_cyclic_contexts`). A wider context gives the same rows where the rule reads it.
+- **Fixed: JSON terms** (UP008, SIM113, B615, F402, F823). The translator cut the term out of its matcher (`ast(n,
+  {"bindings": …})`), which is no matcher. It now writes the whole matcher (`{"language", "rule"}`), and writes
+  `binds.bindings` (a count of the name's bindings) and `binds.redefines` (an earlier binding of the name in the scope)
+  in Datalog, since the engine's matcher compiler has neither. `binds.site` is the statement that binds, not the name.
+- **Left: `formatArgs`** (F504, F505, F507, F522): unsupported by the engine's matcher compiler. **Plan:** in Datalog,
+  over the format string's guest tree (the grammars above) and the call's arguments.
 
-On 50 files, two groups of about 30 rules went past 2 GB together, but each half passed. That is the
-combined memory of many rules in one program, not one heavy rule.
+### 8 too heavy, or aborting, at scale
+
+Measured on 2026-11-13, each rule alone (`RERAIL_PROFILE`'s `heads.tsv` and `analysis.txt`).
+
+| Rule | Measured | Cause | Fix |
+|---|---|---|---|
+| PIE810 | 1 file 221 MB; 10 files over 2 GB | A context's cover (`rr_cover41(c2)`) pairs every node `c2` under an ancestor with every other node `c7` under it, 1,988 rows into 107,176, and then rejects them all on `!rr_not104(c7)`. `c7` is only tested for existence. | Planner: an existence-only side of a join is checked once per ancestor (a semi-join), not paired. |
+| C416 | 1 file 3.5 s; 10 files 80 s | The same shape: `dm_c416_alt_14_0` pairs a node under one sibling with nodes under a later sibling (23,263 rows into 1.9 M). | The same semi-join. |
+| ANN401 | 1 file 254 MB; 10 files over 2 GB | The translator's demand `ann401_demand_alt_34(c5, LA)` carries `c5`, every node of the module, beside each annotation: 621 rows into 1.2 M. | Translator: a demand carries only the columns its helper is asked at. |
+| UP028 | 1 file 1.4–2.1 GB, 33–70 s (the old engine too) | An inlined util joins names by text (`text(J, t), text(N, t)`) over every identifier of a scope inside a count, which is quadratic in a scope's names. Main resolves the name once a match. Not yet profiled to the relation: the run passes the cap first. | Translator: read same-name bindings through the library's name resolution (`binding`, `ref_site`). |
+| B606, B323, B304 | Clean alone on 10 files | Strict mode aborted grouped 50-file runs: `$rr_sd0 >= 1073741824 has no native step` (a hiding bound with no native step). | Engine: the bound's comparison gets a native step. To be reproduced alone on 50 files. |
+| AIR312 | Clean alone on 10 files (531 MB) | On 50 files, the writer's queue fills with the memo's entries (about 200 MB). | Engine: the memo's writes are bounded, as the other writes are. To be reproduced. |
+| D418, TC006 | Abort alone on one file | Strict mode: `a stratum the native engine declined`. Grouped runs hid it. | Engine: the stratum's native lowering. |
+

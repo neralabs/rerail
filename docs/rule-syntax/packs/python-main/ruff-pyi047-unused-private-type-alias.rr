@@ -42,8 +42,8 @@ pyi047_named_alias_site(n) :- kind(n, "assignment"), pyi047_alias_site(n), field
 // `options` carries JSON settings that have no .rr form yet.
 .violation PYI047(at: node, name: loc) "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI047"
-PYI047_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n), pyi047_alias_site(n),
-    site_latest(n), !site_used(n),
+PYI047_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
+    (st1 = n ; within(n, st1)), pyi047_alias_site(st1), site_latest(n), !site_used(n),
     (site_scope(n, "module") ; site_scope(n, "function")).
 
 // PYI047_unused_private_type_alias_stub(n): a finding at node n, from clause `unused-private-type-alias-stub`.
@@ -53,7 +53,8 @@ PYI047_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
 .violation PYI047_unused_private_type_alias_stub(at: node, name: loc) code "PYI047" "Nothing in this file uses the private type alias `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI047"
 PYI047_unused_private_type_alias_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
-    prefix("_", n), pyi047_alias_site(n), site_latest(n), !site_used(n).
+    prefix("_", n), (st1 = n ; within(n, st1)), pyi047_alias_site(st1), site_latest(n),
+    !site_used(n).
 
 // PYI047_unused_comprehension_variable_in_stub_alias(n): a finding at node n, from clause `unused-comprehension-variable-in-stub-alias`.
 // Each rule below is one way the JSON `rule` can match.

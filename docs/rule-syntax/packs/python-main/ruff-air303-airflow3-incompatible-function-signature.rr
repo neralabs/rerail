@@ -41,11 +41,13 @@ air303_assigned_collector(n) :- kind(n, "assignment"), field(n, "right", c1),
 
 // collector(n): the JSON util `collector`, used where the JSON says `matches: "collector"`
 .decl air303_collector(n: node)
-air303_collector(n) :- air303_collector_call(n).
-air303_collector(n) :- kind(n, "identifier"), ref_site(n, b1), kind(b1, "assignment"),
-    field(b1, "right", c2), air303_assigned_collector(c2).
-air303_collector(n) :- air303_assigned_chain(n).
-air303_collector(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air303_collector(c3).
+air303_collector(n) :- air303_demand_collector(n), air303_collector_call(n).
+air303_collector(n) :- air303_demand_collector(n), kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), kind(st2, "assignment"), field(st2, "right", c3),
+    air303_assigned_collector(c3).
+air303_collector(n) :- air303_demand_collector(n), air303_assigned_chain(n).
+air303_collector(n) :- air303_demand_collector(n), kind(n, "parenthesized_expression"),
+    child(n, c4, _), air303_collector(c4).
 
 // collector_method(n): the JSON util `collector-method`, used where the JSON says `matches: "collector-method"`
 //   M: metavariable this relation binds for the calling rule
@@ -166,8 +168,8 @@ AIR303_get_link(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1)
 air303_link_name(n) :- kind(n, "attribute"), field(n, "attribute", c1),
     glob("BaseOperatorLink", c1).
 air303_link_name(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), kind(b1, "aliased_import"), field(b1, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob("BaseOperatorLink", c2), count : { precedes(c2, s1), kind(s1, "identifier") } = 0
-    ; glob("BaseOperatorLink", n), count : { ref_site(n, b2), kind(b2, "aliased_import") } = 0
+    ( ref_site(n, b1), (st1 = b1 ; within(b1, st1)), kind(st1, "aliased_import"), field(st1, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob("BaseOperatorLink", c2), count : { precedes(c2, s1), kind(s1, "identifier") } = 0
+    ; glob("BaseOperatorLink", n), count : { ref_site(n, b2), (st2 = b2, kind(st2, "aliased_import") ; inside(b2, st2, "aliased_import")) } = 0
     ).
 
 
@@ -209,12 +211,12 @@ air303_link_ref(n) :- air303_demand_link_ref(n), (kind(n, "identifier") ; kind(n
     sym_of(n, q1), match("(airflow\\.models|airflow\\.sdk)(\\.|$).*", q1),
     air303_link_name(n).
 air303_link_ref(n) :- air303_demand_link_ref(n), (kind(n, "identifier") ; kind(n, "attribute")),
-    ref_site(n, b2), kind(b2, "class_definition"),
-    count : { air303_stop_16_within(b2, p3), kind(p3, "class_definition") } = 0,
-    field(b2, "superclasses", c4), kind(c4, "argument_list"), child(c4, c5, _),
-    air303_link_base(c5).
+    ref_site(n, b2), (st3 = b2 ; within(b2, st3)), kind(st3, "class_definition"),
+    count : { air303_stop_16_within(st3, p4), kind(p4, "class_definition") } = 0,
+    field(st3, "superclasses", c5), kind(c5, "argument_list"), child(c5, c6, _),
+    air303_link_base(c6).
 air303_link_ref(n) :- air303_demand_link_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c6, _), air303_link_ref(c6).
+    child(n, c7, _), air303_link_ref(c7).
 
 .decl air303_alt_5_u0(n: node)
 air303_alt_5_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
@@ -385,13 +387,20 @@ air303_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4
 // tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl air303_tok_precedes_5(n: node)
 .stored air303_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-air303_tok_precedes_5(n) :- precedes(n, s11), glob("as", s11).
-air303_tok_precedes_5(n) :- child(p14, n, _), node(_, n, _, _, en17),
-    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
-air303_tok_precedes_5(n) :- structural_after(n, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
-air303_tok_precedes_5(n) :- precedes(n, o15), structural_after(o15, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+air303_tok_precedes_5(n) :- precedes(n, s14), glob("as", s14).
+air303_tok_precedes_5(n) :- child(p17, n, _), node(_, n, _, _, en20),
+    token(p17, _, t15, st19, _), st19 >= en20, match("as", t15).
+air303_tok_precedes_5(n) :- structural_after(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+air303_tok_precedes_5(n) :- precedes(n, o18), structural_after(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+
+// demand_collector: the nodes collector is asked at (its recursion looks at every descendant)
+.decl air303_demand_collector(n: node)
+air303_demand_collector(c4) :- air303_demand_collector(n), kind(n, "parenthesized_expression"),
+    child(n, c4, _).
+air303_demand_collector(c2) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("create_asset", c1), node(_, c1, _, _, _), M = c1, field(n, "object", c2).
 
 // demand_link_base: the nodes link_base is asked at (its recursion looks at every descendant)
 .decl air303_demand_link_base(n: node)
@@ -402,18 +411,18 @@ air303_demand_link_base(c4) :- kind(n, "function_definition"), field(n, "name", 
     kind(c5, "parameters").
 air303_demand_link_base(c2) :- air303_demand_link_base(n), kind(n, "parenthesized_expression"),
     child(n, c2, _).
-air303_demand_link_base(c5) :- air303_demand_link_ref(n),
+air303_demand_link_base(c6) :- air303_demand_link_ref(n),
     (kind(n, "identifier") ; kind(n, "attribute")), ref_site(n, b2),
-    kind(b2, "class_definition"), field(b2, "superclasses", c4),
-    kind(c4, "argument_list"), child(c4, c5, _).
+    (st3 = b2 ; within(b2, st3)), kind(st3, "class_definition"),
+    field(st3, "superclasses", c5), kind(c5, "argument_list"), child(c5, c6, _).
 
 // demand_link_ref: the nodes link_ref is asked at (its recursion looks at every descendant)
 .decl air303_demand_link_ref(n: node)
 air303_demand_link_ref(n) :- air303_demand_link_base(n).
 air303_demand_link_ref(c1) :- air303_demand_link_base(n), kind(n, "subscript"),
     field(n, "value", c1).
-air303_demand_link_ref(c6) :- air303_demand_link_ref(n), kind(n, "parenthesized_expression"),
-    child(n, c6, _).
+air303_demand_link_ref(c7) :- air303_demand_link_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c7, _).
 
 // alt_5_u0_empty: level -1 of an unrolled recursion, empty
 .decl air303_alt_5_u0_empty(n: node)
@@ -443,14 +452,14 @@ air303_assigned_callee_case("lineage", "airflow.lineage").
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl air303_alt_1(n: node)
 air303_alt_1(n) :- match("\\w+\\s*\\.\\s*HookLineageCollector", n), has(n, c1, "identifier"),
-    ref_site(c1, b2), kind(b2, "assignment"), field(b2, "right", c3),
-    air303_assigned_call(c3, "hook").
+    ref_site(c1, b2), (st3 = b2 ; within(b2, st3)), kind(st3, "assignment"),
+    field(st3, "right", c4), air303_assigned_call(c4, "hook").
 air303_alt_1(n) :- match("\\w+\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector", n),
-    has(n, c4, "identifier"), ref_site(c4, b5), kind(b5, "assignment"),
-    field(b5, "right", c6), air303_assigned_call(c6, "lineage").
+    has(n, c5, "identifier"), ref_site(c5, b6), (st7 = b6 ; within(b6, st7)),
+    kind(st7, "assignment"), field(st7, "right", c8), air303_assigned_call(c8, "lineage").
 air303_alt_1(n) :- match("\\w+\\s*\\.\\s*lineage\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector", n),
-    has(n, c7, "identifier"), ref_site(c7, b8), kind(b8, "assignment"),
-    field(b8, "right", c9), air303_assigned_call(c9, "airflow").
+    has(n, c9, "identifier"), ref_site(c9, b10), (st11 = b10 ; within(b10, st11)),
+    kind(st11, "assignment"), field(st11, "right", c12), air303_assigned_call(c12, "airflow").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl air303_alt_2(n: node)
@@ -463,21 +472,23 @@ air303_alt_5(n) :- air303_alt_5_u7(n).
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 .decl air303_alt_7(n: node)
-air303_alt_7(n) :- ref_site(n, b1),
-    ( kind(b1, "dictionary_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
-    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "dictionary_splat_pattern")
+air303_alt_7(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ( kind(st2, "dictionary_splat_pattern"), child(p1, st2, _), kind(p1, "parameters")
+    ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
     ).
 
-air303_alt_7(n) :- ref_site(n, b5), binding_value(b5, x6), air303_dict_init(x6),
-    count : { child(b5, c7, _), kind(c7, "type") } = 0.
-air303_alt_7(n) :- ref_site(n, b8), kind(b8, "as_pattern"), child(p9, b8, _),
-    kind(p9, "with_item"), child(b8, c10, _), air303_dict_init(c10), air303_tok_precedes_5(c10),
-    child(b8, c18, _), kind(c18, "as_pattern_target"), child(c18, c19, _),
-    air303_plain_target(c19).
-air303_alt_7(n) :- ref_site(n, b20), site_annotation(b20, o21), air303_dict_ann(o21),
-    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
-air303_alt_7(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
-    kind(c24, "type"), child(c24, c25, _), air303_dict_ann(c25).
+air303_alt_7(n) :- ref_site(n, b6), binding_value(b6, x7), air303_dict_init(x7),
+    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+air303_alt_7(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
+    kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
+    child(st11, c13, _), air303_dict_init(c13), air303_tok_precedes_5(c13), child(st11, c21, _),
+    kind(c21, "as_pattern_target"), child(c21, c22, _), air303_plain_target(c22).
+air303_alt_7(n) :- ref_site(n, b23), site_annotation(b23, o24), air303_dict_ann(o24),
+    (st25 = b23 ; within(b23, st25)),
+    count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
+air303_alt_7(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
+    kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),
+    child(c29, c30, _), air303_dict_ann(c30).
 
 // stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl air303_stop_10(n: node)

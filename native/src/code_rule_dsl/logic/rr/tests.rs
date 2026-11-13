@@ -377,6 +377,25 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(p.rules.iter().find(|r| r.head.rel == "cv").unwrap().head.args[1], Term::Top);
 }
 
+/// A context built from a rule's literals that sit in the rule's own recursion (another relation of it, as a
+/// translator's demand is) is widened past them: the aggregate it narrows would otherwise close the cycle
+/// (`pyi051_has_of` with `pyi051_demand_has_of`, main's pack).
+#[test]
+fn a_context_in_a_negations_cycle_is_widened() {
+    let p = parse(concat!(
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n",
+        ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
+        "ask(n) :- seed(n).\n",
+        "ask(m) :- cb(n), e(n, x, s), e(m, x, s).\n",
+        "cb(n) :- ask(n), count : { e(m, \"x\", _), m > n } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
+}
+
 /// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
 /// aggregate would sit in the head's recursion (lazy-analyzer.rr's `la_cb`).
 #[test]

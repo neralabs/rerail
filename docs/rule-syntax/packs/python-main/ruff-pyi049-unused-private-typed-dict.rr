@@ -45,8 +45,8 @@ pyi049_simple_target(n) :- (kind(n, "tuple_pattern"), !pyi049_tok_has_3(n) ; kin
 .violation PYI049(at: node, name: loc) "Nothing in this file uses the private TypedDict `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI049"
 PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
-    (site_form(n, "definition") ; site_form(n, "assignment")), pyi049_typeddict_site(n),
-    site_latest(n), !site_used(n),
+    (site_form(n, "definition") ; site_form(n, "assignment")),
+    (st1 = n ; within(n, st1)), pyi049_typeddict_site(st1), site_latest(n), !site_used(n),
     (site_scope(n, "module") ; site_scope(n, "function")).
 
 // PYI049_unused_private_typed_dict_stub(n): a finding at node n, from clause `unused-private-typed-dict-stub`.
@@ -57,7 +57,7 @@ PYI049_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
     suppress noqa "PYI049"
 PYI049_unused_private_typed_dict_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     prefix("_", n), (site_form(n, "definition") ; site_form(n, "assignment")),
-    pyi049_typeddict_site(n), site_latest(n), !site_used(n).
+    (st1 = n ; within(n, st1)), pyi049_typeddict_site(st1), site_latest(n), !site_used(n).
 
 // PYI049_unused_comprehension_variable_in_stub_typed_dict(n): a finding at node n, from clause `unused-comprehension-variable-in-stub-typed-dict`.
 // Each rule below is one way the JSON `rule` can match.

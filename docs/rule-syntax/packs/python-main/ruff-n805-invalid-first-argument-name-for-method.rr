@@ -62,17 +62,19 @@ n805_builtin_type_family(n, q1) :- n805_builtin_type_family_case(q1, s1, s2),
 
 // local_meta(n): the JSON util `local-meta`, used where the JSON says `matches: "local-meta"`
 .decl n805_local_meta(n: node)
-n805_local_meta(n) :- kind(n, "identifier"), ref_site(n, b1), n805_meta_class(b1),
-    count : { within(b1, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0.
-n805_local_meta(n) :- kind(n, "attribute"), field(n, "attribute", c3), node(_, c3, _, _, _), MATTR = c3,
-    field(n, "object", c4), kind(c4, "identifier"), ref_site(c4, b5),
-    kind(b5, "class_definition"),
-    count : { within(b5, p6), (kind(p6, "function_definition") ; kind(p6, "class_definition")) } = 0,
-    field(b5, "body", c7), within_stop(c8, c7, n805_stop_9), kind(c8, "class_definition"),
-    n805_meta_class(c8), field(c8, "name", c9), node(_, c9, _, _, _), MATTR = c9.
-n805_local_meta(n) :- kind(n, "subscript"), field(n, "value", c10), n805_local_meta(c10).
-n805_local_meta(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
-    n805_local_meta(c11).
+n805_local_meta(n) :- kind(n, "identifier"), ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    n805_meta_class(st2),
+    count : { within(st2, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")) } = 0.
+n805_local_meta(n) :- kind(n, "attribute"), field(n, "attribute", c4), node(_, c4, _, _, _), MATTR = c4,
+    field(n, "object", c5), kind(c5, "identifier"), ref_site(c5, b6),
+    (st7 = b6 ; within(b6, st7)), kind(st7, "class_definition"),
+    count : { within(st7, p8), (kind(p8, "function_definition") ; kind(p8, "class_definition")) } = 0,
+    field(st7, "body", c9), within_stop(c10, c9, n805_stop_9),
+    kind(c10, "class_definition"), n805_meta_class(c10), field(c10, "name", c11),
+    node(_, c11, _, _, _), MATTR = c11.
+n805_local_meta(n) :- kind(n, "subscript"), field(n, "value", c12), n805_local_meta(c12).
+n805_local_meta(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    n805_local_meta(c13).
 
 // meta_class(n): the JSON util `meta-class`, used where the JSON says `matches: "meta-class"`
 .decl n805_meta_class(n: node)

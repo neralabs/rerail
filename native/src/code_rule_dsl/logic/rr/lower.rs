@@ -479,7 +479,86 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         *rows = kept;
     }
     drop(demand);
+    widen_cyclic_contexts(&mut program);
     Ok(program)
+}
+
+/// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule
+/// binds. Built from a recursive rule's literals, it reads the rule's own component, and a negated or aggregated
+/// helper it narrows then sits in that component: `has_of(n) :- demand_has_of(n), …, count : { … } = 0` with
+/// `demand_has_of` asked by `has_of` is not stratifiable, though the helper's rows at the rule's values are not in
+/// doubt. Each context in a component that a negation or an aggregate closes a cycle in drops the literals of that
+/// component, and of the comparisons and negations only those whose variables the rest still binds (an aggregate is left out). A node
+/// column the rest leaves unbound ranges over the nodes (`node(_, v, _, _, _)`). The context then holds more rows than before,
+/// never fewer, and every rule that reads it joins it with its own literals, so no row it gives changes.
+fn widen_cyclic_contexts(program: &mut Program) {
+    let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
+    for _ in 0..16 {
+        let mut changed = false;
+        for e in crate::code_rule_dsl::logic::front::unstratified(program) {
+            let Some((scc, _)) = e.unstratified() else { continue };
+            let scc = scc.clone();
+            for rule in program.rules.iter_mut().filter(|r| r.head.rel.starts_with(&ctx_prefix) && scc.contains(r.head.rel.as_str())) {
+                let in_cycle = |l: &Literal| l.atom().is_some_and(|a| scc.contains(a.rel.as_str()));
+                if !rule.body.iter().any(in_cycle) {
+                    continue;
+                }
+                let kept: Vec<Literal> = rule.body.iter().filter(|l| !in_cycle(l)).cloned().collect();
+                // What the positive atoms left bind; then the literals that only test.
+                let binds = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. } | Literal::Ast { .. });
+                let mut bound: BTreeSet<String> = kept.iter().filter(|l| binds(l)).flat_map(Literal::vars).collect();
+                let mut body: Vec<Literal> = kept.iter().filter(|l| binds(l)).cloned().collect();
+                let mut rest: Vec<Literal> = kept.into_iter().filter(|l| !binds(l)).collect();
+                loop {
+                    let before = rest.len();
+                    rest.retain(|l| {
+                        let ready = match l {
+                            Literal::Cmp { l: a, op, r } => crate::code_rule_dsl::logic::front::cmp_binds(a, op, r, &bound),
+                            // An aggregate is left out: it only narrows, and its body's variables are its own.
+                            Literal::Agg { .. } => None,
+                            _ => l.vars().is_subset(&bound).then(BTreeSet::new),
+                        };
+                        match ready {
+                            Some(new) => {
+                                bound.extend(new);
+                                body.push(l.clone());
+                                false
+                            }
+                            None => true,
+                        }
+                    });
+                    if rest.len() == before {
+                        break;
+                    }
+                }
+                let types: std::collections::BTreeMap<String, String> =
+                    program.decls.get(rule.head.rel.as_str()).into_iter().flatten().zip(&rule.head.args).filter_map(|((_, t), a)| match a {
+                        Term::Var(v) => Some((v.clone(), t.clone())),
+                        _ => None,
+                    }).collect();
+                let mut ok = true;
+                for v in rule.head.vars() {
+                    if bound.contains(&v) {
+                        continue;
+                    }
+                    if types.get(&v).is_some_and(|t| t == "node") && program.decls.contains_key("node") {
+                        let wild = Term::Wild;
+                        body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![wild.clone(), Term::Var(v.clone()), wild.clone(), wild.clone(), wild], neg: false, gated: false }));
+                        bound.insert(v);
+                    } else {
+                        ok = false;
+                    }
+                }
+                if ok {
+                    rule.body = body;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// [`Lowerer::unit`]'s rule over a program: each rule that reads no relation reads `rr_unit(0)`.

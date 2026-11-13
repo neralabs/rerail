@@ -16,12 +16,12 @@ B102(n) :- kind(n, "call"), field(n, "function", c1), b102_exec_callee(c1).
 
 // exec_callee(n): the JSON util `exec-callee`, used where the JSON says `matches: "exec-callee"`
 .decl b102_exec_callee(n: node)
-b102_exec_callee(n) :- kind(n, "identifier"), glob("exec", n),
-    count : { ref_site(n, b1), site_form(b1, "import"), b102_alias_to_other(b1) } = 0.
-b102_exec_callee(n) :- kind(n, "identifier"), ref_site(n, b2), site_form(b2, "import"),
-    b102_alias_to_exec(b2).
-b102_exec_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    b102_exec_callee(c3).
+b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "identifier"), glob("exec", n),
+    count : { ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b102_alias_to_other(st2) } = 0.
+b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "identifier"), ref_site(n, b3),
+    site_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b102_alias_to_exec(st4).
+b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c5, _), b102_exec_callee(c5).
 
 // from_with_module(n): the JSON util `from-with-module`, used where the JSON says `matches: "from-with-module"`
 .decl b102_from_with_module(n: node)
@@ -40,3 +40,9 @@ b102_alias_to_exec(n) :- kind(n, "aliased_import"), field(n, "name", c1), glob("
 .decl b102_alias_to_other(n: node)
 b102_alias_to_other(n) :- kind(n, "aliased_import"), !b102_alias_to_exec(n).
 b102_alias_to_other(n) :- kind(n, "dotted_name"), child(p1, n, _), b102_from_with_module(p1).
+
+// demand_exec_callee: the nodes exec_callee is asked at (its recursion looks at every descendant)
+.decl b102_demand_exec_callee(n: node)
+b102_demand_exec_callee(c1) :- kind(n, "call"), field(n, "function", c1).
+b102_demand_exec_callee(c5) :- b102_demand_exec_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c5, _).

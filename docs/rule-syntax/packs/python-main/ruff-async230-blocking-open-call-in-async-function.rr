@@ -52,8 +52,8 @@ async230_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _)
 .decl async230_typed_name(n: node)
 async230_typed_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), TN = n,
     ( ref_site(n, b1_1), binding_value(b1_1, x2_1), async230_init(x2_1)
-    ; ref_site(n, b3_2), kind(b3_2, "as_pattern"), child(p4_2, b3_2, _), kind(p4_2, "with_item"), child(b3_2, c5_2, _), async230_init(c5_2), async230_tok_precedes_3(c5_2), child(b3_2, c13_2, _), kind(c13_2, "as_pattern_target"), child(c13_2, c14_2, _), async230_plain_target(c14_2)
-    ; ref_site(n, b15_3), kind(b15_3, "assignment"), field(b15_3, "left", c16_3), child(c16_3, c17_3, _), kind(c17_3, "identifier"), node(_, c17_3, _, _, _), UT = c17_3, value(UT, t18_3), value(TN, t18_3), count : { precedes(c17_3, s20_3), kind(s20_3, "identifier"), node(_, s20_3, _, _, _), UU = s20_3, value(UU, t21_3), value(TN, t21_3) } = 0, field(b15_3, "right", c23_3), child(c23_3, c24_3, _), async230_init(c24_3), node(_, c24_3, _, _, _), UV = c24_3, value(UV, t25_3), value(UT, t25_3)
+    ; ref_site(n, b3_2), (st4_2 = b3_2 ; within(b3_2, st4_2)), kind(st4_2, "as_pattern"), child(p5_2, st4_2, _), kind(p5_2, "with_item"), child(st4_2, c6_2, _), async230_init(c6_2), async230_tok_precedes_3(c6_2), child(st4_2, c14_2, _), kind(c14_2, "as_pattern_target"), child(c14_2, c15_2, _), async230_plain_target(c15_2)
+    ; ref_site(n, b16_3), (st17_3 = b16_3 ; within(b16_3, st17_3)), kind(st17_3, "assignment"), field(st17_3, "left", c18_3), child(c18_3, c19_3, _), kind(c19_3, "identifier"), node(_, c19_3, _, _, _), UT = c19_3, value(UT, t20_3), value(TN, t20_3), count : { precedes(c19_3, s22_3), kind(s22_3, "identifier"), node(_, s22_3, _, _, _), UU = s22_3, value(UU, t23_3), value(TN, t23_3) } = 0, field(st17_3, "right", c25_3), child(c25_3, c26_3, _), async230_init(c26_3), node(_, c26_3, _, _, _), UV = c26_3, value(UV, t27_3), value(UT, t27_3)
     ).
 
 
@@ -91,13 +91,13 @@ async230_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
 // tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl async230_tok_precedes_3(n: node)
 .stored async230_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-async230_tok_precedes_3(n) :- precedes(n, s6), glob("as", s6).
-async230_tok_precedes_3(n) :- child(p9, n, _), node(_, n, _, _, en12),
-    token(p9, _, t7, st11, _), st11 >= en12, match("as", t7).
-async230_tok_precedes_3(n) :- structural_after(n, g8),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
-async230_tok_precedes_3(n) :- precedes(n, o10), structural_after(o10, g8),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+async230_tok_precedes_3(n) :- precedes(n, s7), glob("as", s7).
+async230_tok_precedes_3(n) :- child(p10, n, _), node(_, n, _, _, en13),
+    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
+async230_tok_precedes_3(n) :- structural_after(n, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+async230_tok_precedes_3(n) :- precedes(n, o11), structural_after(o11, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
 
 // tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl async230_tok_precedes_4(n: node)

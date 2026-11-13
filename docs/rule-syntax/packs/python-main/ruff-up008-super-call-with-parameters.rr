@@ -5,7 +5,6 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
 
 #include "python/names.rr"
 
@@ -68,7 +67,8 @@ up008_first_param(n, P) :- up008_positional_param(n), child(p1, n, _), up008_cou
 // own_class_binding(n): the JSON util `own-class-binding`, used where the JSON says `matches: "own-class-binding"`
 .decl up008_own_class_binding(n: node)
 up008_own_class_binding(n) :- within_stop(c1, n, up008_stop_17), kind(c1, "identifier"),
-    glob("__class__", c1), ast(c1, {"bindings": {"min": 1}}).
+    glob("__class__", c1), binding(sc2, x3, c1, _),
+    k5 = count : { binding(sc2, x3, s4, _) }, k5 >= 1.
 
 // class_cell_reference(n): the JSON util `class-cell-reference`, used where the JSON says `matches: "class-cell-reference"`
 .decl up008_class_cell_reference(n: node)
@@ -280,9 +280,9 @@ up008_stop_10(n) :- kind(n, "decorated_definition"), field(n, "definition", c1),
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 .decl up008_alt_11(n: node)
-up008_alt_11(n) :- ast(n, {"bindings": {"min": 1}}).
-up008_alt_11(n) :- field(p1, "attribute", n), kind(p1, "attribute").
-up008_alt_11(n) :- field(p2, "name", n), kind(p2, "keyword_argument").
+up008_alt_11(n) :- binding(sc1, x2, n, _), k4 = count : { binding(sc1, x2, s3, _) }, k4 >= 1.
+up008_alt_11(n) :- field(p5, "attribute", n), kind(p5, "attribute").
+up008_alt_11(n) :- field(p6, "name", n), kind(p6, "keyword_argument").
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   SEG: metavariable this relation binds for the calling rule
@@ -342,20 +342,20 @@ up008_alt_30(n, T0) :- has(n, c1, "identifier"), node(_, c1, _, _, _), T0 = c1.
 //   SH: metavariable this relation binds for the calling rule
 .decl up008_alt_33(n: node, sh: loc)
 up008_alt_33(n, SH) :- (kind(n, "identifier") ; kind(n, "dotted_name")), node(_, n, _, _, _), SH = n,
-    ast(n, {"bindings": {"min": 1}}).
+    binding(sc1, x2, n, _), k4 = count : { binding(sc1, x2, s3, _) }, k4 >= 1.
 up008_alt_33(n, SH) :- (kind(n, "function_definition") ; kind(n, "class_definition")),
-    field(n, "name", c1), node(_, c1, _, _, _), SH = c1.
-up008_alt_33(n, SH) :- kind(n, "identifier"), node(_, n, _, _, _), SH = n, child(p2, n, _),
-    kind(p2, "nonlocal_statement").
+    field(n, "name", c5), node(_, c5, _, _, _), SH = c5.
+up008_alt_33(n, SH) :- kind(n, "identifier"), node(_, n, _, _, _), SH = n, child(p6, n, _),
+    kind(p6, "nonlocal_statement").
 
 // alt_35(n): the JSON `any`: n matches if any one of these rules does
 //   T0: metavariable of the calling rule, passed in (bound by the caller)
 .decl up008_alt_35(n: node, t0: loc)
 up008_alt_35(n, T0) :- up008_demand_alt_35(n, T0), within_stop(c1, n, up008_stop_17),
     text(SH, t2), text(T0, t2), up008_alt_33(c1, SH), @doc(SH) = @doc(T0).
-up008_alt_35(n, T0) :- up008_demand_alt_35(n, T0), within_stop(c6, n, up008_stop_34),
-    kind(c6, "named_expression"), field(c6, "name", c7), node(_, c7, _, _, _), SW = c7,
-    text(SW, t8), text(T0, t8), @doc(SW) = @doc(T0).
+up008_alt_35(n, T0) :- up008_demand_alt_35(n, T0), within_stop(c10, n, up008_stop_34),
+    kind(c10, "named_expression"), field(c10, "name", c11), node(_, c11, _, _, _), SW = c11,
+    text(SW, t12), text(T0, t12), @doc(SW) = @doc(T0).
 
 // alt_39(n): the JSON `any`: n matches if any one of these rules does
 .decl up008_alt_39(n: node)

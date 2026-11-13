@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b308-mark-safe",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid Django's mark_safe(); it turns off autoescaping and can expose cross-site scripting when the content isn't fully trusted.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B308",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "django.utils.safestring.mark_safe"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B308",
+        "anchor": "witness.span",
+        "message": "Build this HTML with format_html() instead of mark_safe so any untrusted parts get escaped.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B308"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

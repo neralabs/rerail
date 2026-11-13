@@ -2,19 +2,20 @@
 # Regenerate docs/rule-syntax/packs/python-main/ (main's 537 Python JSON rules as engine .rr rules) and
 # reader-check it.
 #
-#   PACK_RULES=<main's pack rules dir> ENGINE=<rerail-engine binary> RERAIL_RR_LIB=<engine lib dir> \
+#   ENGINE=<rerail-engine binary> [PACK_RULES=<main's pack rules dir>] [RERAIL_RR_LIB=<engine lib dir>] \
 #       docs/rule-syntax/site/regen_main_pack.sh [ids file]
 #
-# PACK_RULES holds main's <id>.json files; the ids file (default: every JSON there) names the rules to
+# PACK_RULES holds main's <id>.json files (default: the pack's pinned copy, packs/python-main/source/rules, main's
+# Python pack 0.1.8); RERAIL_RR_LIB defaults to the repo's docs/rule-syntax/lib. The ids file (default: every JSON there) names the rules to
 # translate. Each rule goes through translate_rules.py (translate.py, then engine_dialect.py); a hand-written
 # overrides/<id>.rr then replaces the generated file. The reader check's verdicts go to reader-check.txt
 # ("<status> <id>", and the first line of the error), sorted by id.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/../packs/python-main"
-: "${PACK_RULES:?set PACK_RULES to main's pack rules dir}"
+: "${PACK_RULES:=$out/source/rules}"
 : "${ENGINE:?set ENGINE to the rerail-engine binary}"
-: "${RERAIL_RR_LIB:?set RERAIL_RR_LIB to the engine's .rr library dir}"
+: "${RERAIL_RR_LIB:=$here/../lib}"
 export RERAIL_RR_LIB
 ids=${1:--}
 

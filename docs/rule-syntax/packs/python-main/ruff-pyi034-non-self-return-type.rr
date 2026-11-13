@@ -108,28 +108,31 @@ pyi034_metaclass_params(n) :- kind(n, "parameters"), child(n, c1, _), pyi034_par
 
 // metaclass_base(n): the JSON util `metaclass-base`, used where the JSON says `matches: "metaclass-base"`
 .decl pyi034_metaclass_base(n: node)
-pyi034_metaclass_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n),
+    (kind(n, "identifier") ; kind(n, "attribute")),
     ( sym_of(n, "builtins.type")
     ; sym_of(n, "abc.ABCMeta")
     ; sym_of(n, "enum.EnumMeta")
     ; sym_of(n, "enum.EnumType")
     ),
     global_ref(n, "type").
-pyi034_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c1),
-    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, "builtins.type"),
-    global_ref(c1, "type").
-pyi034_metaclass_base(n) :- kind(n, "call"), field(n, "function", c2),
-    (kind(c2, "identifier") ; kind(c2, "attribute")), sym_of(c2, "builtins.type"),
-    global_ref(c2, "type"), field(n, "arguments", c3), kind(c3, "argument_list"),
-    k5 = count : { child(c3, c4, _), !pyi034_alt_9(c4) }, k5 >= 1, k5 <= 1.
-pyi034_metaclass_base(n) :- kind(n, "identifier"), ref_site(n, b6),
-    kind(b6, "class_definition"), field(b6, "superclasses", c7), child(c7, c8, _),
-    pyi034_metaclass_base(c8).
-pyi034_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c9),
-    kind(c9, "identifier"), ref_site(c9, b10), kind(b10, "class_definition"),
-    field(b10, "superclasses", c11), child(c11, c12, _), pyi034_metaclass_base(c12).
-pyi034_metaclass_base(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
-    pyi034_metaclass_base(c13).
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n), kind(n, "subscript"),
+    field(n, "value", c1), (kind(c1, "identifier") ; kind(c1, "attribute")),
+    sym_of(c1, "builtins.type"), global_ref(c1, "type").
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n), kind(n, "call"),
+    field(n, "function", c2), (kind(c2, "identifier") ; kind(c2, "attribute")),
+    sym_of(c2, "builtins.type"), global_ref(c2, "type"), field(n, "arguments", c3),
+    kind(c3, "argument_list"), k5 = count : { child(c3, c4, _), !pyi034_alt_9(c4) }, k5 >= 1,
+    k5 <= 1.
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n), kind(n, "identifier"), ref_site(n, b6),
+    (st7 = b6 ; within(b6, st7)), kind(st7, "class_definition"),
+    field(st7, "superclasses", c8), child(c8, c9, _), pyi034_metaclass_base(c9).
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n), kind(n, "subscript"),
+    field(n, "value", c10), kind(c10, "identifier"), ref_site(c10, b11),
+    (st12 = b11 ; within(b11, st12)), kind(st12, "class_definition"),
+    field(st12, "superclasses", c13), child(c13, c14, _), pyi034_metaclass_base(c14).
+pyi034_metaclass_base(n) :- pyi034_demand_metaclass_base(n), kind(n, "parenthesized_expression"),
+    child(n, c15, _), pyi034_metaclass_base(c15).
 
 // base(n): the JSON util `base`, used where the JSON says `matches: "base"`
 .decl pyi034_base(n: node)
@@ -179,30 +182,37 @@ pyi034_iter_subclass(n) :- pyi034_demand_iter_subclass(n), pyi034_up_1(n, p1),
 
 // iter_base(n): the JSON util `iter-base`, used where the JSON says `matches: "iter-base"`
 .decl pyi034_iter_base(n: node)
-pyi034_iter_base(n) :- pyi034_iterator_ref(n).
-pyi034_iter_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi034_iterator_ref(c1).
-pyi034_iter_base(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
-    pyi034_iterator_ref(c2).
-pyi034_iter_base(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "class_definition"),
-    field(b3, "superclasses", c4), child(c4, c5, _), pyi034_iter_base(c5).
-pyi034_iter_base(n) :- kind(n, "subscript"), field(n, "value", c6), kind(c6, "identifier"),
-    ref_site(c6, b7), kind(b7, "class_definition"), field(b7, "superclasses", c8),
-    child(c8, c9, _), pyi034_iter_base(c9).
-pyi034_iter_base(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), pyi034_iter_base(c10).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), pyi034_iterator_ref(n).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), kind(n, "subscript"), field(n, "value", c1),
+    pyi034_iterator_ref(c1).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), kind(n, "generic_type"), child(n, c2, _),
+    kind(c2, "identifier"), pyi034_iterator_ref(c2).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), kind(n, "identifier"), ref_site(n, b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    field(st4, "superclasses", c5), child(c5, c6, _), pyi034_iter_base(c6).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), kind(n, "subscript"), field(n, "value", c7),
+    kind(c7, "identifier"), ref_site(c7, b8), (st9 = b8 ; within(b8, st9)),
+    kind(st9, "class_definition"), field(st9, "superclasses", c10), child(c10, c11, _),
+    pyi034_iter_base(c11).
+pyi034_iter_base(n) :- pyi034_demand_iter_base(n), kind(n, "parenthesized_expression"),
+    child(n, c12, _), pyi034_iter_base(c12).
 
 // aiter_base(n): the JSON util `aiter-base`, used where the JSON says `matches: "aiter-base"`
 .decl pyi034_aiter_base(n: node)
-pyi034_aiter_base(n) :- pyi034_async_iterator_ref(n).
-pyi034_aiter_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi034_async_iterator_ref(c1).
-pyi034_aiter_base(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
-    pyi034_async_iterator_ref(c2).
-pyi034_aiter_base(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "class_definition"),
-    field(b3, "superclasses", c4), child(c4, c5, _), pyi034_aiter_base(c5).
-pyi034_aiter_base(n) :- kind(n, "subscript"), field(n, "value", c6), kind(c6, "identifier"),
-    ref_site(c6, b7), kind(b7, "class_definition"), field(b7, "superclasses", c8),
-    child(c8, c9, _), pyi034_aiter_base(c9).
-pyi034_aiter_base(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
-    pyi034_aiter_base(c10).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), pyi034_async_iterator_ref(n).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), kind(n, "subscript"), field(n, "value", c1),
+    pyi034_async_iterator_ref(c1).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), kind(n, "generic_type"), child(n, c2, _),
+    kind(c2, "identifier"), pyi034_async_iterator_ref(c2).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), kind(n, "identifier"), ref_site(n, b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    field(st4, "superclasses", c5), child(c5, c6, _), pyi034_aiter_base(c6).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), kind(n, "subscript"), field(n, "value", c7),
+    kind(c7, "identifier"), ref_site(c7, b8), (st9 = b8 ; within(b8, st9)),
+    kind(st9, "class_definition"), field(st9, "superclasses", c10), child(c10, c11, _),
+    pyi034_aiter_base(c11).
+pyi034_aiter_base(n) :- pyi034_demand_aiter_base(n), kind(n, "parenthesized_expression"),
+    child(n, c12, _), pyi034_aiter_base(c12).
 
 // ret_iterable(n): the JSON util `ret-iterable`, used where the JSON says `matches: "ret-iterable"`
 .decl pyi034_ret_iterable(n: node)
@@ -263,17 +273,60 @@ pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method
     field(n, "name", c12), node(_, c12, _, _, _), M = c12, field(n, "return_type", c1), kind(c1, "type"),
     child(c1, c2, _).
 
+// demand_aiter_base: the nodes aiter_base is asked at (its recursion looks at every descendant)
+.decl pyi034_demand_aiter_base(n: node)
+pyi034_demand_aiter_base(c6) :- pyi034_demand_aiter_base(n), kind(n, "identifier"), ref_site(n, b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    field(st4, "superclasses", c5), child(c5, c6, _).
+pyi034_demand_aiter_base(c11) :- pyi034_demand_aiter_base(n), kind(n, "subscript"),
+    field(n, "value", c7), kind(c7, "identifier"), ref_site(c7, b8),
+    (st9 = b8 ; within(b8, st9)), kind(st9, "class_definition"),
+    field(st9, "superclasses", c10), child(c10, c11, _).
+pyi034_demand_aiter_base(c12) :- pyi034_demand_aiter_base(n), kind(n, "parenthesized_expression"),
+    child(n, c12, _).
+pyi034_demand_aiter_base(c9) :- field(n, "name", c4), glob("__aiter__", c4),
+    field(n, "return_type", c5), kind(c5, "type"), child(c5, c6, _),
+    pyi034_ret_async_iterable(c6), within_stop(n, p7, "function_definition"),
+    kind(p7, "class_definition"), field(p7, "superclasses", c8), child(c8, c9, _).
+
+// demand_iter_base: the nodes iter_base is asked at (its recursion looks at every descendant)
+.decl pyi034_demand_iter_base(n: node)
+pyi034_demand_iter_base(c3) :- within_stop(n, p1, "function_definition"),
+    kind(p1, "class_definition"), field(p1, "superclasses", c2), child(c2, c3, _).
+pyi034_demand_iter_base(c6) :- pyi034_demand_iter_base(n), kind(n, "identifier"), ref_site(n, b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
+    field(st4, "superclasses", c5), child(c5, c6, _).
+pyi034_demand_iter_base(c11) :- pyi034_demand_iter_base(n), kind(n, "subscript"),
+    field(n, "value", c7), kind(c7, "identifier"), ref_site(c7, b8),
+    (st9 = b8 ; within(b8, st9)), kind(st9, "class_definition"),
+    field(st9, "superclasses", c10), child(c10, c11, _).
+pyi034_demand_iter_base(c12) :- pyi034_demand_iter_base(n), kind(n, "parenthesized_expression"),
+    child(n, c12, _).
+
 // demand_iter_subclass: the nodes iter_subclass is asked at (it looks at every ancestor of every node)
 .decl pyi034_demand_iter_subclass(n: node)
 pyi034_demand_iter_subclass(n) :- field(n, "name", c1), glob("__iter__", c1),
     field(n, "return_type", c2), kind(c2, "type"), child(c2, c3, _), pyi034_ret_iterable(c3).
 
+// demand_metaclass_base: the nodes metaclass_base is asked at (its recursion looks at every descendant)
+.decl pyi034_demand_metaclass_base(n: node)
+pyi034_demand_metaclass_base(c9) :- pyi034_demand_metaclass_base(n), kind(n, "identifier"),
+    ref_site(n, b6), (st7 = b6 ; within(b6, st7)), kind(st7, "class_definition"),
+    field(st7, "superclasses", c8), child(c8, c9, _).
+pyi034_demand_metaclass_base(c14) :- pyi034_demand_metaclass_base(n), kind(n, "subscript"),
+    field(n, "value", c10), kind(c10, "identifier"), ref_site(c10, b11),
+    (st12 = b11 ; within(b11, st12)), kind(st12, "class_definition"),
+    field(st12, "superclasses", c13), child(c13, c14, _).
+pyi034_demand_metaclass_base(c15) :- pyi034_demand_metaclass_base(n),
+    kind(n, "parenthesized_expression"), child(n, c15, _).
+pyi034_demand_metaclass_base(c2) :- kind(n, "class_definition"), field(n, "superclasses", c1),
+    child(c1, c2, _).
+
 // demand_in_final: the nodes in_final is asked at (it looks at every ancestor of every node)
 .decl pyi034_demand_in_final(n: node)
-pyi034_demand_in_final(n) :- kind(n, "function_definition"), pyi034_method(n, C),
-    field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
-    field(n, "name", c6), node(_, c6, _, _, _), M = c6, match("async\\b.*", n), field(n, "name", c3),
-    glob("__aenter__", c3).
+pyi034_demand_in_final(n) :- kind(n, "function_definition"), field(n, "return_type", c1),
+    kind(c1, "type"), child(c1, c2, _), field(n, "name", c6), node(_, c6, _, _, _), M = c6,
+    match("async\\b.*", n), field(n, "name", c3), glob("__aenter__", c3).
 pyi034_demand_in_final(n) :- field(n, "name", c2), glob("{__enter__,__new__}", c2).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows

@@ -23,13 +23,14 @@ pyi052_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // enum_class(n): the JSON util `enum-class`, used where the JSON says `matches: "enum-class"`
 .decl pyi052_enum_class(n: node)
-pyi052_enum_class(n) :- kind(n, "class_definition"), child(n, c1, _),
+pyi052_enum_class(n) :- pyi052_demand_enum_class(n), kind(n, "class_definition"), child(n, c1, _),
     kind(c1, "argument_list"), child(c1, c2, _), pyi052_alt_2(c2).
 
 // enum_ref(n): the JSON util `enum-ref`, used where the JSON says `matches: "enum-ref"`
 .decl pyi052_enum_ref(n: node)
-pyi052_enum_ref(n) :- pyi052_enum_base(n).
-pyi052_enum_ref(n) :- kind(n, "identifier"), ref_site(n, b1), pyi052_enum_class(b1).
+pyi052_enum_ref(n) :- pyi052_demand_enum_ref(n), pyi052_enum_base(n).
+pyi052_enum_ref(n) :- pyi052_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), pyi052_enum_class(st2).
 
 // plain_lit(n): the JSON util `plain-lit`, used where the JSON says `matches: "plain-lit"`
 .decl pyi052_plain_lit(n: node)
@@ -160,6 +161,22 @@ pyi052_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
 pyi052_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
 
+// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
+.decl pyi052_demand_alt_2(n: node)
+pyi052_demand_alt_2(c2) :- pyi052_demand_enum_class(n), kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _).
+
+// demand_enum_class: the nodes enum_class is asked at (its recursion looks at every descendant)
+.decl pyi052_demand_enum_class(n: node)
+pyi052_demand_enum_class(st2) :- pyi052_demand_enum_ref(n), kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)).
+pyi052_demand_enum_class(p3) :- within_stop(n, p3, "class_definition").
+
+// demand_enum_ref: the nodes enum_ref is asked at (its recursion looks at every descendant)
+.decl pyi052_demand_enum_ref(n: node)
+pyi052_demand_enum_ref(n) :- pyi052_demand_alt_2(n).
+pyi052_demand_enum_ref(c1) :- pyi052_demand_alt_2(n), kind(n, "subscript"), field(n, "value", c1).
+
 // set_1: symbols from the JSON `resolves.import`
 .decl pyi052_set_1(v: symbol)
 pyi052_set_1("enum.Enum"). pyi052_set_1("enum.Flag"). pyi052_set_1("enum.IntEnum"). pyi052_set_1("enum.IntFlag").
@@ -176,8 +193,8 @@ pyi052_set_3("sys.hexversion"). pyi052_set_3("sys.winver").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl pyi052_alt_2(n: node)
-pyi052_alt_2(n) :- pyi052_enum_ref(n).
-pyi052_alt_2(n) :- kind(n, "subscript"), field(n, "value", c1), pyi052_enum_ref(c1).
+pyi052_alt_2(n) :- pyi052_demand_alt_2(n), pyi052_enum_ref(n).
+pyi052_alt_2(n) :- pyi052_demand_alt_2(n), kind(n, "subscript"), field(n, "value", c1), pyi052_enum_ref(c1).
 
 // counted_4(n): the siblings the JSON `nthChild.ofRule` counts
 .decl pyi052_counted_4(n: node)

@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b508-snmp-insecure-version",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use SNMPv3 instead of SNMPv1 or v2c in pysnmp CommunityData; the older versions send community strings in clear text.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B508",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "communityIndex",
+                "communityName",
+                "mpModel",
+                "contextEngineId",
+                "contextName",
+                "tag",
+                "securityName"
+              ],
+              "bind": {
+                "MODEL": "mpModel"
+              }
+            }
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "pysnmp.hlapi.CommunityData"
+                ]
+              }
+            },
+            "MODEL": {
+              "any": [
+                {
+                  "value": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "value": {
+                    "eq": 1
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B508",
+        "anchor": "capture.F",
+        "message": "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B508"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

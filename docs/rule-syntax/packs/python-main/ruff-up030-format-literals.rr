@@ -103,7 +103,7 @@ up030_alt_3(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "ob
     up030_in_order(c2).
 up030_alt_3(n) :- up030_alt_2(n),
     count : { field(n, "arguments", c5), child(c5, c6, _), (kind(c6, "keyword_argument") ; kind(c6, "dictionary_splat")) } = 0,
-    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
 up030_alt_3(n) :- kind(n, "call"), field(n, "arguments", c7),
     kind(c7, "generator_expression"), field(n, "function", c8), kind(c8, "attribute"),
     field(c8, "attribute", c9), glob("format", c9), field(c8, "object", c10),

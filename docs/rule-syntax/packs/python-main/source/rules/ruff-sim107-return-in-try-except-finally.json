@@ -1,0 +1,82 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-sim107-return-in-try-except-finally",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't return from a finally block when the try or except also returns; the finally return silently overrides theirs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "return-in-try-except-finally",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "return_statement",
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "return_statement"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "finally_clause",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "try_statement",
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "block",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "return_statement"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "except_clause",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "return_statement"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "SIM107",
+        "message": "Remove the `return` from the `finally` block; it silently overrides the `return` in `try` or `except`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "SIM107"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

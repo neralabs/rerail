@@ -94,14 +94,15 @@ fast001_type_shape(n) :- fast001_type_shape_u7(n).
 // decorator_host(n): the JSON util `decorator-host`, used where the JSON says `matches: "decorator-host"`
 //   RET, RETS: metavariables this relation binds for the calling rule
 .decl fast001_decorator_host(n: node, ret: loc, rets: loc)
-fast001_decorator_host(n, RET, RETS) :- fast001_route_decorator(n), child(p1, n, _),
-    kind(p1, "decorated_definition"), child(p1, c2, _),
+fast001_decorator_host(n, RET, RETS) :- fast001_demand_decorator_host(n), fast001_route_decorator(n),
+    child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
     kind(c2, "function_definition"), node(_, c2, _, _, _), FN = c2, field(c2, "return_type", c3),
     kind(c3, "type"), child(c3, c4, _), node(_, c4, _, _, _), RET = c4, fast001_type_shape(c4),
     (fast001_plain_shape(c4), node(_, c4, _, _, _), RETS = c4 ; !fast001_plain_shape(c4), unset(RETS)),
-    count : { field(c2, "return_type", c5), has(c5, c6, "identifier"), ref_site(c6, b7), site_form(b7, "typeParameter"), inside(b7, p8, "function_definition"), node(_, p8, _, _, _), SF = p8, text(SF, t9), text(FN, t9), @doc(SF) = @doc(FN) } = 0.
-fast001_decorator_host(n, RET, RETS) :- kind(n, "parenthesized_expression"), child(p11, n, _),
-    fast001_decorator_host(p11, RET, RETS).
+    count : { field(c2, "return_type", c5), has(c5, c6, "identifier"), ref_site(c6, b7), site_form(b7, "typeParameter"), (st8 = b7 ; within(b7, st8)), inside(st8, p9, "function_definition"), node(_, p9, _, _, _), SF = p9, text(SF, t10), text(FN, t10), @doc(SF) = @doc(FN) } = 0.
+fast001_decorator_host(n, RET, RETS) :- fast001_demand_decorator_host(n),
+    kind(n, "parenthesized_expression"), child(p12, n, _),
+    fast001_decorator_host(p12, RET, RETS).
 
 // in_multi(n): the JSON util `in-multi`, used where the JSON says `matches: "in-multi"`
 .decl fast001_in_multi(n: node)
@@ -216,13 +217,13 @@ fast001_type_shape_u7(n) :- kind(n, "parenthesized_expression"), child(n, c9, _)
 // tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl fast001_tok_precedes_1(n: node)
 .stored fast001_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-fast001_tok_precedes_1(n) :- precedes(n, s7), glob("as", s7).
-fast001_tok_precedes_1(n) :- child(p10, n, _), node(_, n, _, _, en13),
-    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
-fast001_tok_precedes_1(n) :- structural_after(n, g9),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
-fast001_tok_precedes_1(n) :- precedes(n, o11), structural_after(o11, g9),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+fast001_tok_precedes_1(n) :- precedes(n, s9), glob("as", s9).
+fast001_tok_precedes_1(n) :- child(p12, n, _), node(_, n, _, _, en15),
+    token(p12, _, t10, st14, _), st14 >= en15, match("as", t10).
+fast001_tok_precedes_1(n) :- structural_after(n, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
+fast001_tok_precedes_1(n) :- precedes(n, o13), structural_after(o13, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
 
 // all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
 //   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
@@ -284,6 +285,16 @@ fast001_tok_follows_5(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:,).*)
 fast001_tok_follows_5(n) :- precedes(o13, n), structural_before(o13, g11),
     match("(?s)^(?:.*(?:,).*)$", g11).
 
+// demand_decorator_host: the nodes decorator_host is asked at (its recursion looks at every descendant)
+.decl fast001_demand_decorator_host(n: node)
+fast001_demand_decorator_host(p9) :- kind(n, "keyword_argument"), field(n, "name", c3),
+    glob("response_model", c3), field(n, "value", c4), node(_, c4, _, _, _), RM = c4, fast001_type_shape(c4),
+    child(p7, n, _), kind(p7, "argument_list"), child(p8, p7, _), kind(p8, "call"),
+    fast001_route_call(p8), child(p9, p8, _),
+    (value(RM, t1_5), value(RET, t1_5) ; value(NRM, t3_6), value(NRET, t3_6)).
+fast001_demand_decorator_host(p12) :- fast001_demand_decorator_host(n),
+    kind(n, "parenthesized_expression"), child(p12, n, _).
+
 // alt_4_u0_empty: level -1 of an unrolled recursion, empty
 .decl fast001_alt_4_u0_empty(n: node)
 
@@ -298,15 +309,16 @@ fast001_set_3("type_parameter").
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl fast001_alt_1(n: node)
 fast001_alt_1(n) :- ref_site(n, b1), binding_value(b1, x2), fast001_route_init(x2),
-    count : { child(b1, c3, _), kind(c3, "type") } = 0.
-fast001_alt_1(n) :- ref_site(n, b4), kind(b4, "as_pattern"), child(p5, b4, _),
-    kind(p5, "with_item"), child(b4, c6, _), fast001_route_init(c6), fast001_tok_precedes_1(c6),
-    child(b4, c14, _), kind(c14, "as_pattern_target"), child(c14, c15, _),
-    fast001_plain_target(c15).
-fast001_alt_1(n) :- ref_site(n, b16), site_annotation(b16, o17), fast001_route_ann(o17),
-    count : { child(b16, c18, _), (kind(c18, "list_splat_pattern") ; kind(c18, "dictionary_splat_pattern")) } = 0.
-fast001_alt_1(n) :- ref_site(n, b19), kind(b19, "function_definition"),
-    field(b19, "return_type", c20), fast001_route_ann(c20).
+    (st3 = b1 ; within(b1, st3)), count : { child(st3, c4, _), kind(c4, "type") } = 0.
+fast001_alt_1(n) :- ref_site(n, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "as_pattern"),
+    child(p7, st6, _), kind(p7, "with_item"), child(st6, c8, _), fast001_route_init(c8),
+    fast001_tok_precedes_1(c8), child(st6, c16, _), kind(c16, "as_pattern_target"),
+    child(c16, c17, _), fast001_plain_target(c17).
+fast001_alt_1(n) :- ref_site(n, b18), site_annotation(b18, o19), fast001_route_ann(o19),
+    (st20 = b18 ; within(b18, st20)),
+    count : { child(st20, c21, _), (kind(c21, "list_splat_pattern") ; kind(c21, "dictionary_splat_pattern")) } = 0.
+fast001_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
+    kind(st23, "function_definition"), field(st23, "return_type", c24), fast001_route_ann(c24).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl fast001_alt_2(n: node)

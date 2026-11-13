@@ -1,0 +1,222 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt003-pytest-extraneous-scope-function",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove an explicit function scope from a pytest fixture decorator; function scope is already the default.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "extraneous-scope-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "fixture-name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-ref": {
+              "matches": "fixture-name",
+              "pattern": "$F"
+            },
+            "callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "plain-callee": {
+              "any": [
+                {
+                  "matches": "fixture-name"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "plain-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "plain-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            },
+            "deco-parent": {
+              "any": [
+                {
+                  "kind": "decorator",
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "fixture-expr"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "field": "definition",
+                      "kind": "function_definition"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "deco-parent"
+                  }
+                }
+              ]
+            },
+            "str-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "^[^'\"]*[bBfFtT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "string_start",
+                        "regex": "^[^'\"]*[bBfFtT]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-literal"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "keyword_argument",
+            "has": {
+              "field": "name",
+              "regex": "^scope$"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "str-literal",
+                  "value": {
+                    "type": "str",
+                    "eq": "function"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "keyword_argument",
+                    "has": {
+                      "field": "name",
+                      "regex": "^scope$"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "has": {
+                      "field": "function",
+                      "matches": "callee"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "deco-parent"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT003",
+        "message": "Delete this `scope=\"function\"` argument from `$F(...)`, since function scope is the default; drop the parentheses too if no arguments remain.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

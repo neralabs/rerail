@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b301-pickle",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid deserializing with pickle, dill, shelve, jsonpickle, or pandas.read_pickle; loading untrusted data this way can execute arbitrary code.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unsafe-deserialization",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "pickle.loads",
+                  "pickle.load",
+                  "pickle.Unpickler",
+                  "dill.loads",
+                  "dill.load",
+                  "dill.Unpickler",
+                  "shelve.open",
+                  "shelve.DbfilenameShelf",
+                  "jsonpickle.decode",
+                  "jsonpickle.unpickler.decode",
+                  "jsonpickle.unpickler.Unpickler",
+                  "pandas.read_pickle"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B301",
+        "anchor": "witness.span",
+        "message": "Load this data with json or another data-only format instead; unpickling untrusted input can run arbitrary code.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B301"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

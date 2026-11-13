@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-e722-bare-except",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name the exception types in except clauses instead of a bare except, unless the handler re-raises; a bare except also catches KeyboardInterrupt and SystemExit.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bare-except",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "regex": "^except$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement",
+                    "regex": "^raise$"
+                  }
+                }
+              }
+            },
+            "precedes": {
+              "stopBy": "neighbor",
+              "regex": "^:$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "E722",
+        "message": "Name the exception types this bare except should catch; it also catches KeyboardInterrupt and SystemExit.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "E722"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

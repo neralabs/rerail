@@ -152,10 +152,10 @@ up032_alt_4(n) :- !kind(n, "keyword_argument"), up032_multiline(n).
 .decl up032_alt_7(n: node)
 up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c1, "name"), H1 = c1, precedes(n, s2),
     kind(s2, "field"), has(s2, c3, "name"), F2 = s2, value(F1, t4), value(F2, t4),
-    ast(n, {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"kind": "keyword_argument", "matches": "effectful", "has": {"field": "name", "pattern": "$KN"}}}}, "compare": {"left": "H1", "op": "eq", "right": "KN", "text": "source"}}}).
+    ast(n, {"language": "python", "rule": {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"kind": "keyword_argument", "matches": "effectful", "has": {"field": "name", "pattern": "$KN"}}}}, "compare": {"left": "H1", "op": "eq", "right": "KN", "text": "source"}}}}).
 up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c6, "index"), H1 = c6, precedes(n, s7),
     kind(s7, "field"), has(s7, c8, "index"), F2 = s7, value(F1, t9), value(F2, t9),
-    ast(n, {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"not": {"kind": "keyword_argument"}, "matches": "effectful"}}}}}).
+    ast(n, {"language": "python", "rule": {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"not": {"kind": "keyword_argument"}, "matches": "effectful"}}}}}}).
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl up032_alt_9(n: node)
@@ -174,13 +174,13 @@ up032_alt_13(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "o
     up032_template(c2), field(n, "arguments", c3), child(c3, c4, _), up032_real_arg(c4),
     count : { field(n, "arguments", c5), child(c5, c6, _), up032_bad_arg(c6) } = 0,
     count : { field(n, "function", c7), field(c7, "object", c8), up032_repeats_effect(c8) } = 0,
-    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
 up032_alt_13(n) :- n ~ `($S.format)($$$A)`, field(n, "function", c9), child(c9, c10, _),
     kind(c10, "attribute"), field(c10, "object", c11), up032_template(c11),
     field(n, "arguments", c12), child(c12, c13, _), up032_real_arg(c13),
     count : { field(n, "arguments", c14), child(c14, c15, _), up032_bad_arg(c15) } = 0,
     count : { field(n, "function", c16), child(c16, c17, _), kind(c17, "attribute"), field(c17, "object", c18), up032_repeats_effect(c18) } = 0,
-    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
 up032_alt_13(n) :- kind(n, "call"), field(n, "arguments", c19),
     kind(c19, "generator_expression"), !up032_alt_11(c19), field(n, "function", c20),
     ( kind(c20, "attribute"), field(c20, "attribute", c1), glob("format", c1), field(c20, "object", c2), up032_gen_template(c2)

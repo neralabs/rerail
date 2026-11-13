@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f402-import-shadowed-by-loop-var",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't reuse an imported name as a for-loop variable; the loop silently overwrites the import.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "import-shadowed-by-loop-var",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "binds": {
+              "form": "for",
+              "site": {
+                "kind": "for_statement"
+              },
+              "redefines": {
+                "form": "import"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F402",
+        "message": "Import `$NAME` shadowed by loop variable",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F402"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
