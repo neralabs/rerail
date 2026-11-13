@@ -367,13 +367,26 @@ async function startHealthRepository(cli: string, workspace: string, env: NodeJS
   await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
 }
 
-export async function validateManagedInstallation(installation: Installation): Promise<void> {
+/** The installed package's manifest names Rerail at the version installed. */
+async function checkPackageIdentity(installation: Installation): Promise<void> {
   const manifestPath = join(installation.packageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
   if (manifest.name !== RERAIL_PACKAGE_NAME || manifest.version !== installation.version) {
     throw new Error(`Installed package identity mismatch at ${manifestPath}`);
   }
+}
 
+/** Why the native health check failed: a child that ran past `NATIVE_HEALTH_TIMEOUT_MS` was stopped, not broken. */
+function nativeHealthError(error: unknown): Error {
+  // `execFile` sets `killed` on the error when it stopped the child for running past its `timeout`.
+  if ((error as { killed?: unknown } | null)?.killed === true) {
+    return new Error(`Installed native runtime health check did not finish within ${formatDuration(NATIVE_HEALTH_TIMEOUT_MS)} and was stopped`, { cause: error });
+  }
+  return new Error(`Installed native runtime health check failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+}
+
+/** The installed engine loads and reports itself healthy, in a child stopped at `NATIVE_HEALTH_TIMEOUT_MS`. */
+async function checkNativeHealth(installation: Installation): Promise<void> {
   const entrypoint = join(installation.packageRoot, ENTRY_POINTS.index);
   // A child loads the staged engine: on Windows a process with the engine mapped cannot rename the staging
   // directory into place or remove it, so an in-process check failed every install there with EPERM.
@@ -390,15 +403,27 @@ export async function validateManagedInstallation(installation: Installation): P
     });
     health = JSON.parse(stdout.slice(stdout.lastIndexOf("\n") + 1));
   } catch (error) {
-    throw new Error(`Installed native runtime health check failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw nativeHealthError(error);
   }
   if (typeof health !== "object" || health === null || (health as Record<string, unknown>).ok !== true) {
     throw new Error("Installed native runtime health check failed");
   }
+}
 
-  // The round-trip runs in a scratch repository with its own Rerail home and user home, so it neither autostarts
-  // a daemon from a staging directory, connects a coding agent, nor writes into a database or user file shared with
-  // anything else; a candidate that does not speak this build's protocol fails here without touching the real home.
+/** A scratch repository the installed CLI started, for the event-stream round-trip, and the environment it runs in. */
+interface HealthRepository {
+  readonly root: string;
+  readonly workspace: string;
+  readonly storageRoot: string;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+/**
+ * The round-trip runs in a scratch repository with its own Rerail home and user home, so it neither autostarts a
+ * daemon from a staging directory, connects a coding agent, nor writes into a database or user file shared with
+ * anything else; a candidate that does not speak this build's protocol fails here without touching the real home.
+ */
+async function startHealthCheckRepository(installation: Installation): Promise<HealthRepository> {
   const root = await mkdtemp(join(tmpdir(), "rerail-update-health-"));
   const workspace = join(root, "workspace");
   const storageRoot = join(root, "sessions");
@@ -420,6 +445,13 @@ export async function validateManagedInstallation(installation: Installation): P
     await rm(root, { recursive: true, force: true });
     throw new Error(`Installed CLI could not start a health-check repository: ${error instanceof Error ? error.message : String(error)}`);
   }
+  return { root, workspace, storageRoot, env };
+}
+
+export async function validateManagedInstallation(installation: Installation): Promise<void> {
+  await checkPackageIdentity(installation);
+  await checkNativeHealth(installation);
+  const { root, workspace, storageRoot, env } = await startHealthCheckRepository(installation);
   const child = spawn(process.execPath, [join(installation.packageRoot, ENTRY_POINTS.eventStream)], {
     cwd: workspace,
     env,

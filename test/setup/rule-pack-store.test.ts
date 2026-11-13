@@ -428,7 +428,7 @@ describe("newerPackVersions", () => {
     }
   });
 
-  it("offers no older version, no version the active core leaves out, nothing for a pack from a folder, and nothing npm has no version of under the tag", async () => {
+  it("offers no older version, no version the active core leaves out, nothing for a pack from a folder, and nothing npm has no version of under the tag or next", async () => {
     const home = temporaryHome();
     // Installed from next, newer than latest.
     installBare(home, "@neralabs/rerail-pack-typescript", "0.1.7-next.1");
@@ -446,9 +446,39 @@ describe("newerPackVersions", () => {
     await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
     expect(calls.map(call => call.args[1]).sort()).toEqual([
       "@neralabs/rerail-pack-go@latest",
+      "@neralabs/rerail-pack-go@next",
       "@neralabs/rerail-pack-python@latest",
       "@neralabs/rerail-pack-typescript@latest",
     ]);
+  });
+
+  it.each([
+    ["has no version under the channel", undefined],
+    // npm prints nothing for a tag the package's dist-tags do not hold.
+    ["prints nothing for the channel", ""],
+  ])("looks a pack up under next when npm %s, where set-up installs it from", async (_why, latest) => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
+    const registry: Record<string, unknown> = { "@neralabs/rerail-pack-java@next": { version: "0.1.0-next.3" } };
+    const { npm, calls } = registryNpm(registry);
+    const answering: NpmRunner = async (args, options) => latest === "" && args[1] === "@neralabs/rerail-pack-java@latest"
+      ? { stdout: "", stderr: "" }
+      : await npm(args, options);
+
+    await expect(newerPackVersions(home, "latest", "0.1.5", answering)).resolves.toEqual({
+      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.3" }],
+      problems: [],
+    });
+    expect(calls.map(call => call.args[1])).toEqual([...latest === "" ? [] : ["@neralabs/rerail-pack-java@latest"], "@neralabs/rerail-pack-java@next"]);
+  });
+
+  it("asks next once when it is the channel", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
+    const { npm, calls } = registryNpm({});
+
+    await expect(newerPackVersions(home, "next", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
+    expect(calls.map(call => call.args[1])).toEqual(["@neralabs/rerail-pack-java@next"]);
   });
 
   it("names a pack npm could not be asked about, with why, and still checks the others", async () => {

@@ -93,6 +93,13 @@ describe("runCommand", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
+  it("kills a command that ignores SIGTERM once its grace period is over", async () => {
+    const started = Date.now();
+    const script = "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1_000)";
+    await expect(runCommand(process.execPath, ["-e", script], { timeoutMs: 500 })).rejects.toThrow(CommandTimeoutError);
+    expect(Date.now() - started).toBeLessThan(12_000);
+  }, 20_000);
+
   it("leaves a command that finishes in time alone", async () => {
     await expect(runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "ok", stderr: "" });
   });
@@ -135,6 +142,16 @@ describe.skipIf(process.platform === "win32")("runNpm", () => {
     await expect(failure).rejects.toThrow(CommandTimeoutError);
     await expect(failure).rejects.toThrow("npm install did not finish within 1 s and was stopped");
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("keeps the last lines npm printed before it was stopped, redacted", async () => {
+    const bin = await fakeNpm('printf "npm http fetch GET 200 one\\nnpm http fetch GET 200 two\\n//x/:_authToken=secret-token\\n" >&2; exec sleep 30');
+    const failure = runNpm(["install", "@neralabs/rerail@1.0.0"], { env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, timeoutMs: 1_000 });
+    await expect(failure).rejects.toThrow(
+      "npm install did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one\nnpm http fetch GET 200 two\n//x/:_authToken=[REDACTED]",
+    );
+    await expect(failure).rejects.not.toThrow("secret-token");
+    await expect(failure).rejects.toHaveProperty("cause", expect.any(CommandTimeoutError));
   });
 
   it("leaves other npm failures unchanged", async () => {

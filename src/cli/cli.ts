@@ -80,6 +80,7 @@ import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   ManagedUpdater,
+  type UpdateCheck,
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
@@ -135,13 +136,19 @@ function printUpdateResult(result: UpdateResult, home: string, tookMs: number): 
     : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
   if (!result.changed) return;
   const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
-  if (leftOut.length === 0) return;
-  process.stdout.write([
-    `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
+  if (leftOut.length > 0) process.stdout.write(`${leftOutPackLines(result.current.version, leftOut).join("\n")}\n`);
+}
+
+/** The installed rule packs core `coreVersion` leaves out, each with why, and how to install a version that fits. */
+function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): string[] {
+  const one = leftOut.length === 1;
+  return [
+    `Rerail ${coreVersion} leaves out ${one ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${one ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    // A pack is pinned to the version installed, so a bare package name keeps it: the tag moves it.
-    `Install a version that fits with \`rerail packs add <package>@${result.channel}\`.`,
-  ].join("\n") + "\n");
+    // A pack is pinned to the version installed, so a bare package name keeps it, and a tag can name a version the pack
+    // does not have (one installed from `next`): the version is what moves it.
+    "Install a version that fits with `rerail packs add <package>@<version>`; the newer versions that fit are listed once the update is done.",
+  ];
 }
 
 /**
@@ -173,7 +180,7 @@ async function suggestPackUpdates(home: string, result: UpdateResult, progress: 
     check = await progress.step(
       "Checking your rule packs for newer versions",
       async () => await newerPackVersions(home, result.channel, result.current.version),
-      { afterMs: 30_000, hint: "npm may be slow or stuck; each pack's check stops at 1 min, and the update itself is done." },
+      { afterMs: 30_000, hint: "npm may be slow or stuck; each npm request about a pack stops at 1 min, and the update itself is done." },
     );
   } catch (error) {
     check = { updates: [], problems: [error instanceof Error ? error.message : String(error)] };
@@ -448,6 +455,13 @@ async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
 }
 
+/** `rerail update check`: the status, and the version the channel offers. */
+function printUpdateCheck(result: UpdateCheck): void {
+  printStatus(result);
+  process.stdout.write(`Available: ${result.availableVersion}\n`);
+  process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
+}
+
 async function runUpdateCommand(
   args: readonly string[],
   updater: ManagedUpdater,
@@ -462,10 +476,7 @@ async function runUpdateCommand(
   const requestedChannel = selectedChannel(args);
   const channel = authorizedUpdateChannel(policy, requestedChannel);
   if (action === "check") {
-    const result = await updater.check(channel);
-    printStatus(result);
-    process.stdout.write(`Available: ${result.availableVersion}\n`);
-    process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
+    printUpdateCheck(await updater.check(channel));
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);

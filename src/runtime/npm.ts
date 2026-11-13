@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,12 +17,43 @@ export interface CommandOptions {
   timeoutMs?: number;
 }
 
-/** A command `runCommand` stopped because it ran past its `timeoutMs`. */
+/** How many of a stopped command's last output lines its `CommandTimeoutError` keeps: npm's retries say why it hung. */
+const TIMEOUT_OUTPUT_LINES = 5;
+
+/**
+ * A command `runCommand` stopped because it ran past its `timeoutMs`, with the last lines it printed (redacted), if
+ * any.
+ */
 export class CommandTimeoutError extends Error {
-  constructor(readonly command: string, readonly timeoutMs: number) {
-    super(`${command} did not finish within ${formatDuration(timeoutMs)} and was stopped`);
+  constructor(readonly command: string, readonly timeoutMs: number, readonly output = "", options?: ErrorOptions) {
+    super(`${command} did not finish within ${formatDuration(timeoutMs)} and was stopped${output === "" ? "" : `; its last output:\n${output}`}`, options);
     this.name = "CommandTimeoutError";
   }
+}
+
+/** The last `TIMEOUT_OUTPUT_LINES` lines of `text` that are not blank. */
+const lastLines = (text: string): string => text.split(/\r?\n/u).filter(line => line.trim() !== "").slice(-TIMEOUT_OUTPUT_LINES).join("\n");
+
+/** How long a command stopped for running too long has to exit after SIGTERM before it is killed. */
+const KILL_GRACE_MS = 5_000;
+
+/**
+ * Stops `child` once it has run `timeoutMs`, calling `stopping` first: SIGTERM, then SIGKILL if it is still running
+ * `KILL_GRACE_MS` later, since a command that ignores SIGTERM would otherwise never end. The function returned
+ * cancels both; with no `timeoutMs` there is nothing to cancel.
+ */
+function stopAfter(child: ChildProcess, timeoutMs: number | undefined, stopping: () => void): () => void {
+  if (timeoutMs === undefined) return () => {};
+  let kill: NodeJS.Timeout | undefined;
+  const term = setTimeout(() => {
+    stopping();
+    child.kill();
+    kill = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+  }, timeoutMs);
+  return () => {
+    clearTimeout(term);
+    clearTimeout(kill);
+  };
 }
 
 export interface NpmOptions extends CommandOptions {
@@ -44,10 +75,9 @@ export async function runCommand(command: string, args: readonly string[], optio
   let stdout = "";
   let stderr = "";
   let timedOut = false;
-  const timeout = options.timeoutMs === undefined ? undefined : setTimeout(() => {
+  const cancelStop = stopAfter(child, options.timeoutMs, () => {
     timedOut = true;
-    child.kill();
-  }, options.timeoutMs);
+  });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -57,20 +87,20 @@ export async function runCommand(command: string, args: readonly string[], optio
     stderr += chunk;
   });
   child.once("error", (error) => {
-    clearTimeout(timeout);
+    cancelStop();
     reject(error);
   });
   child.once("exit", (code, signal) => {
-    clearTimeout(timeout);
+    cancelStop();
+    const detail = cleanCommandError(stderr || stdout);
     if (timedOut) {
-      reject(new CommandTimeoutError(command, options.timeoutMs!));
+      reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(detail)));
       return;
     }
     if (code === 0) {
       resolveCommand({ stdout, stderr });
       return;
     }
-    const detail = cleanCommandError(stderr || stdout);
     const detailSuffix = detail.length === 0 ? "" : `: ${detail}`;
     reject(new Error(`${command} failed (${signal ?? code ?? "unknown"})${detailSuffix}`));
   });
@@ -207,7 +237,7 @@ export const runNpm: NpmRunner = async (args, options = {}) => {
     // Named as a person runs it (`npm install`), not as spawned: on Windows that is node running npm's script.
     if (error instanceof CommandTimeoutError) {
       const subcommand = npmSubcommand(args);
-      throw new CommandTimeoutError(subcommand === undefined ? "npm" : `npm ${subcommand}`, error.timeoutMs);
+      throw new CommandTimeoutError(subcommand === undefined ? "npm" : `npm ${subcommand}`, error.timeoutMs, error.output, { cause: error });
     }
     throw unauthorizedError(error) ?? unreachableError(error) ?? error;
   }
