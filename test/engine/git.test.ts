@@ -11,7 +11,7 @@ vi.mock("node:child_process", { spy: true });
 
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, ProcessGit, readGitBlobIds,
   readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
@@ -735,6 +735,48 @@ describe("findGit", () => {
     expect(found.path).toBeUndefined();
     expect(found.looked).toEqual(gitCandidates(search, counted([])));
     expect(new GitUnavailableError(found.looked).message).toContain("/opt/tool-39/bin/git, /usr/bin/git");
+  });
+});
+
+describe("ProcessGit", () => {
+  /** A search that finds each of `paths` in turn, then the last one again, and counts its looks. */
+  const searches = (...paths: (string | undefined)[]) => {
+    let looks = 0;
+    const find = () => ({ path: paths[Math.min(looks++, paths.length - 1)], looked: ["/opt/git/bin/git", "/usr/bin/git"] });
+    return { find, looks: () => looks };
+  };
+
+  it("looks for Git at the first ask and keeps it, or says where it looked when none is installed", () => {
+    const search = searches("/opt/git/bin/git");
+    const git = new ProcessGit(search.find);
+    expect([git.path(), git.path()]).toEqual(["/opt/git/bin/git", "/opt/git/bin/git"]);
+    expect(search.looks()).toBe(1);
+    expect(() => new ProcessGit(searches(undefined).find).path()).toThrow(GitUnavailableError);
+  });
+
+  it("looks again once the Git it kept is gone, once for every start that failed on it", () => {
+    // Git for Windows 2.56 removes the mingw64 git.exe that a process started on 2.55 kept.
+    const [before, after] = [String.raw`C:\Program Files\Git\mingw64\bin\git.exe`, win32.join(String.raw`C:\Program Files\Git`, "ucrt64", "bin", "git.exe")];
+    const search = searches(before, after);
+    const git = new ProcessGit(search.find);
+    expect(git.path()).toBe(before);
+    expect(git.afterMissing(before)).toBe(after);
+    // A start that failed on the same Git at the same time takes the Git found, with no look of its own.
+    expect(git.afterMissing(before)).toBe(after);
+    expect([git.path(), search.looks()]).toEqual([after, 2]);
+  });
+
+  it("keeps the Git it has when the look finds none or the same one, so the next start that fails looks again", () => {
+    const search = searches("/opt/git/bin/git", undefined, "/opt/git/bin/git", "/usr/bin/git");
+    const git = new ProcessGit(search.find);
+    expect(git.path()).toBe("/opt/git/bin/git");
+    // No Git anywhere, as while an installer replaces it: this start fails, and Rerail still has a Git to try.
+    expect(git.afterMissing("/opt/git/bin/git")).toBeUndefined();
+    expect(git.path()).toBe("/opt/git/bin/git");
+    // The same path, back: the next call starts it, this one does not start it twice.
+    expect(git.afterMissing("/opt/git/bin/git")).toBeUndefined();
+    expect(git.afterMissing("/opt/git/bin/git")).toBe("/usr/bin/git");
+    expect([git.path(), search.looks()]).toEqual(["/usr/bin/git", 4]);
   });
 });
 

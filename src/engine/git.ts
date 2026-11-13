@@ -188,8 +188,6 @@ export class GitUnavailableError extends Error {
   }
 }
 
-let probed: FoundGit | undefined;
-
 /** What {@link gitInstalled} asks of the machine; tests pass their own. */
 export interface GitProbe {
   exists(path: string): boolean;
@@ -300,11 +298,57 @@ export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & G
   return { path: undefined, looked };
 }
 
-/** The system Git ({@link findGit}), probed once per process; throws {@link GitUnavailableError} when none is installed. */
+/**
+ * The Git a process runs: looked for (`find`) at the first ask and kept, and looked for again only when starting it
+ * found no program at its path ({@link afterMissing}). A daemon outlives an upgrade of Git, and Git for Windows 2.56
+ * removed the `mingw64\bin\git.exe` that a daemon started on 2.55 runs (it moved to `ucrt64\bin`): every Git call it
+ * made then failed until it restarted.
+ */
+export class ProcessGit {
+  #found: FoundGit | undefined;
+  readonly #find: () => FoundGit;
+
+  constructor(find: () => FoundGit) {
+    this.#find = find;
+  }
+
+  /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
+  path(): string {
+    this.#found ??= this.#find();
+    if (this.#found.path === undefined) throw new GitUnavailableError(this.#found.looked);
+    return this.#found.path;
+  }
+
+  /**
+   * The Git to start once more after a start of `failed`, the Git kept, found no program there (`ENOENT`): Git looked
+   * for again by the same rules ({@link findGit}), and kept from then on. A start that failed on a Git another start
+   * has already replaced gets that one without a look, so one look serves every start that failed at once. Undefined
+   * when the look finds no Git, or `failed` again: that start's failure stands and the Git kept stays, so the next
+   * start that fails looks again, and no call starts the same missing program twice.
+   */
+  afterMissing(failed: string): string | undefined {
+    if (this.#found?.path !== failed) return this.#found?.path;
+    const found = this.#find();
+    if (found.path === undefined || found.path === failed) return undefined;
+    this.#found = found;
+    return found.path;
+  }
+}
+
+/** The Git this process runs, found by {@link findGit}. */
+const processGit = new ProcessGit(() => findGit());
+
+/**
+ * The system Git ({@link findGit}), kept for the process and looked for again only once it is gone ({@link ProcessGit});
+ * throws {@link GitUnavailableError} when none is installed.
+ */
 export function gitExecutable(): string {
-  probed ??= findGit();
-  if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
-  return probed.path;
+  return processGit.path();
+}
+
+/** Whether a Git start failed because no program was at the path it named: Node's `ENOENT` from the start itself. */
+function programMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 /**
@@ -356,10 +400,20 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
- * missing, never on a non-zero exit.
+ * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
+ * again ({@link ProcessGit.afterMissing}).
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
+  const run = (executable: string): GitResult => runGitWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
+  const executable = gitExecutable();
+  const result = run(executable);
+  const again = programMissing(result.error) ? processGit.afterMissing(executable) : undefined;
+  return again === undefined ? result : run(again);
+}
+
+/** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
+function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitResult {
+  const result = spawnSync(executable, args, {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
@@ -423,6 +477,25 @@ function readerGit(signal: AbortSignal | undefined): string | undefined {
   }
 }
 
+/** What one start of Git answered, and whether it found no program at the path it named ({@link programMissing}). */
+interface GitStart<T> {
+  readonly answer: T;
+  readonly missing: boolean;
+}
+
+/**
+ * `read` run with the Git to read with ({@link readerGit}), and once more with the Git found again when that start found
+ * no program at its path ({@link ProcessGit.afterMissing}), unless `signal` was aborted by then: a stopped read starts
+ * no other Git. Undefined without Git, or once `signal` is aborted before the first start.
+ */
+async function readWithGit<T>(signal: AbortSignal | undefined, read: (executable: string) => Promise<GitStart<T>>): Promise<T | undefined> {
+  const executable = readerGit(signal);
+  if (executable === undefined) return undefined;
+  const first = await read(executable);
+  const again = first.missing && signal?.aborted !== true ? processGit.afterMissing(executable) : undefined;
+  return again === undefined ? first.answer : (await read(again)).answer;
+}
+
 /** Resolves once `child` has exited, or at once when it never started. */
 async function exited(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -443,22 +516,25 @@ async function gitOutput(cwd: string, args: readonly string[], signal: AbortSign
   return (await gitStdout(cwd, args, signal))?.trim();
 }
 
-/** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
+/**
+ * Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes.
+ * Run again with the Git found again when the one kept is gone ({@link readWithGit}).
+ */
 async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
-  const executable = readerGit(signal);
-  if (executable === undefined) return undefined;
-  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
-  const child = execFile(
-    executable,
-    [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null && signal?.aborted !== true ? stdout : undefined),
-  );
-  // execFile's own `close` listener comes first and answers with the output; this one answers a Git that was ended and
-  // whose output stays open.
-  settleWhenDone(child, () => settle(undefined), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
-  const [output] = await Promise.all([promise, exited(child)]);
-  return output;
+  return await readWithGit(signal, async executable => {
+    const { promise, resolve: settle } = Promise.withResolvers<GitStart<string | undefined>>();
+    const child = execFile(
+      executable,
+      [...SAFE_CONFIG, "-C", cwd, ...args],
+      { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+      (error, stdout) => settle({ answer: error === null && signal?.aborted !== true ? stdout : undefined, missing: programMissing(error) }),
+    );
+    // execFile's own `close` and `error` listeners come first and answer with the output, or with the start that found
+    // no program; this one answers a Git that was ended and whose output stays open.
+    settleWhenDone(child, () => settle({ answer: undefined, missing: false }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
+    const [output] = await Promise.all([promise, exited(child)]);
+    return output;
+  });
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
@@ -771,22 +847,28 @@ interface GitStream extends GitReadOptions {
 /**
  * Runs `git -C <cwd> <args>` under `runGit`'s safe configuration without blocking, writes `stream.input` to it and hands
  * each chunk it prints to `stream.onData`. Settles once Git is done ({@link settleWhenDone}) and has exited
- * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing.
+ * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing. Run again with the Git
+ * found again when the one kept is gone ({@link readWithGit}); a start that found no program printed nothing.
  */
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
-  const executable = readerGit(stream.signal);
-  if (executable === undefined) return;
-  const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
+  await readWithGit(stream.signal, async executable => {
+    const { promise, resolve: settle } = Promise.withResolvers<void>();
+    const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+      env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    let missing = false;
+    child.once("error", error => {
+      missing = programMissing(error);
+    });
+    child.stdout.on("data", stream.onData);
+    settleWhenDone(child, settle, { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
+    // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(stream.input);
+    await Promise.all([promise, exited(child)]);
+    return { answer: undefined, missing };
   });
-  child.stdout.on("data", stream.onData);
-  settleWhenDone(child, settle, { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
-  // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(stream.input);
-  await Promise.all([promise, exited(child)]);
 }
 
 /**
