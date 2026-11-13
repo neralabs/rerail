@@ -2401,8 +2401,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         flags.push(("enable_pinned_reg", "true"));
     }
     // The passed fields come back with a function's result: more results than registers go
-    // through a return area.
-    if clustered && !cut.pass.is_empty() {
+    // through a return area. So do the table's own functions' (`TableFns`: `drop` gives three)
+    // on x86-64, whose System V convention returns two in registers (aarch64's, eight).
+    if (clustered && !cut.pass.is_empty()) || cfg!(target_arch = "x86_64") {
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
     // A crossing between clusters is a tail call (`return_call`), and x86-64's Cranelift makes
