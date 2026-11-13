@@ -329,6 +329,14 @@ impl<L: Layout> Writer<L> {
         self.starts[node]
     }
 
+    /// A closed node's subtree: itself and its descendants.
+    #[inline]
+    pub fn size(&self, node: usize) -> u32 {
+        let w = self.layout.widths().size;
+        let at = node * usize::from(w);
+        if w == 2 { u32::from(u16::from_le_bytes([self.size[at], self.size[at + 1]])) } else { u32::from_le_bytes(self.size[at..at + 4].try_into().expect("4 bytes")) }
+    }
+
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
     #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
@@ -521,7 +529,8 @@ impl<L: Layout> Writer<L> {
     /// The image of the source `src`: the columns moved into place after the code column, then
     /// the code table, and the header. `Redo` when a column's values do not fit its width, or a
     /// tail from its last descendant is negative: the widths to parse again at.
-    pub fn finish(mut self, src: &[u8]) -> Result<Vec<u8>, Redo> {
+    /// The widths the nodes need: `Redo` where the writer's do not hold them.
+    fn check_widths(&mut self) -> Result<(), Redo> {
         self.commit();
         let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
         let from_start = has(EARLY);
@@ -535,6 +544,29 @@ impl<L: Layout> Writer<L> {
         if want != self.layout.widths() {
             return Err(Redo(want));
         }
+        Ok(())
+    }
+
+    /// The columns alone, for a parser whose codes the caller makes (a key is the parser's own, not
+    /// `kf | flags << 16`): each at its width, and the keys by code id. `Redo` as `finish`.
+    pub fn finish_columns(mut self) -> Result<Columns, Redo> {
+        self.check_widths()?;
+        let w = self.layout.widths();
+        let n = self.n;
+        let base = self.base.iter().flat_map(|b| b.to_le_bytes()).collect();
+        Ok(Columns {
+            code: self.out[HEADER_BYTES..HEADER_BYTES + 2 * n].to_vec(),
+            size: self.size[..n * usize::from(w.size)].to_vec(),
+            base,
+            off: self.off[..n * usize::from(w.off)].to_vec(),
+            tail: self.tail[..n * usize::from(w.tail)].to_vec(),
+            widths: [w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }],
+            keys: self.codes.iter().map(|&(key, _)| key).collect(),
+        })
+    }
+
+    pub fn finish(mut self, src: &[u8]) -> Result<Vec<u8>, Redo> {
+        self.check_widths()?;
         let w = self.layout.widths();
         let nodes = self.n;
         let code_bytes = 6 * self.codes.len();
@@ -583,6 +615,20 @@ impl<L: Layout> Drop for Writer<L> {
         let ids = std::mem::take(&mut self.id_of);
         IDS.with(|t| *t.borrow_mut() = ids);
     }
+}
+
+/// A tape's columns as `Writer::finish_columns` gives them: `code` (2 bytes a node, code ids by
+/// first use), `size`, `base` (4 bytes each 16 nodes), `off`, `tail`, their widths (`tail`'s with
+/// `TAIL_FROM_START`), and each code id's key.
+#[derive(Clone, Debug, Default)]
+pub struct Columns {
+    pub code: Vec<u8>,
+    pub size: Vec<u8>,
+    pub base: Vec<u8>,
+    pub off: Vec<u8>,
+    pub tail: Vec<u8>,
+    pub widths: [u8; 3],
+    pub keys: Vec<u32>,
 }
 
 /// Where byte `at` of image `bytes` lies, as text: the header, a column's node, or a table.

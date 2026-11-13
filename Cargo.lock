@@ -3462,6 +3462,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-lang",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
@@ -4069,6 +4070,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-python-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
