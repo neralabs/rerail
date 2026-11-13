@@ -31,12 +31,17 @@ import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 
-// The lookup of a named engine socket works as it does; a test stands in for one call of it at a time.
-const lookups = vi.hoisted(() => ({ engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>() }));
+// The lookup of a named engine socket, and a later hook's lookup of the running daemon, work as they do; a test stands
+// in for one call of either at a time.
+const lookups = vi.hoisted(() => ({
+  engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>(),
+  runningDaemonEngineEndpoint: vi.fn<(deadline?: number) => Promise<unknown>>(),
+}));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
-  return { ...actual, engineEndpointAt: lookups.engineEndpointAt };
+  lookups.runningDaemonEngineEndpoint.mockImplementation(deadline => actual.runningDaemonEngineEndpoint(deadline));
+  return { ...actual, engineEndpointAt: lookups.engineEndpointAt, runningDaemonEngineEndpoint: lookups.runningDaemonEngineEndpoint };
 });
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
@@ -493,4 +498,26 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
       expect(existsSync(join(process.env.RERAIL_HOME!, "daemon.json"))).toBe(false);
     },
   );
+
+  const laterHooks: Array<Omit<(typeof sessionStarts)[number], "told">> = [
+    { host: "claude-code", run: runClaudeHook, input: cwd => ({ cwd, session_id: "s", hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }) },
+    { host: "codex", run: runCodexHook, input: cwd => ({ cwd, session_id: "s", hook_event_name: "UserPromptSubmit", prompt: "hi" }) },
+    { host: "cursor", run: runCursorHook, input: cwd => ({ workspace_roots: [cwd], conversation_id: "s", hook_event_name: "beforeSubmitPrompt", prompt: "hi" }) },
+  ];
+
+  // A later hook meets the same error when a daemon of another package, which it went to replace, is gone before the
+  // replacement looks again. That hook answers as any failed hook does (`serveHook` writes `{}`, the reason goes to
+  // stderr), and only the session's start tells the person.
+  it.each(laterHooks)("answers a later $host hook as any failed hook when the daemon it went to replace is gone", async ({ run, input }) => {
+    const root = await temporaryDirectory();
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const { AutostartOffError } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    const reason = "RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET";
+    lookups.runningDaemonEngineEndpoint.mockClear().mockRejectedValueOnce(new AutostartOffError(reason));
+    const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+    expect(await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)))).toEqual({ stdout: "{}\n", stderr: `rerail hook: ${reason}\n` });
+    expect(lookups.runningDaemonEngineEndpoint).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
+  });
 });

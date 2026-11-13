@@ -804,6 +804,24 @@ describe("the engine endpoint of a busy daemon", () => {
     // third probe would wait 10 s more.
     expect(probes).toEqual(["http://127.0.0.1:4791/healthz", "http://127.0.0.1:4791/healthz"]);
   });
+
+  // With autostart on, a start leaves a busy daemon alone and waits for it. One that then answers from another package
+  // takes no event, and the error says so without naming a setting the person did not set.
+  it.each([undefined, "1"])("says a daemon of another package that answered late is running (RERAIL_AUTOSTART=%s)", async autostart => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4791/" })));
+    let probes = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      probes += 1;
+      if (probes === 1) throw new Error("connect ECONNREFUSED 127.0.0.1:4791");
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const env = autostart === undefined ? { RERAIL_HOME: home } : { RERAIL_HOME: home, RERAIL_AUTOSTART: autostart };
+    const machine = fakeMachine("linux", { env, kill: () => true });
+    await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
+      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+    );
+    expect(probes).toBe(2);
+  });
 });
 
 describe("launching the daemon", () => {
