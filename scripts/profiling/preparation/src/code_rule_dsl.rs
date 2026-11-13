@@ -23,6 +23,14 @@ pub(crate) mod budget {
         false
     }
 }
+pub(crate) mod facts {
+    pub(crate) mod vtab {
+        // The lab binds no lazily connected fact tables: none waits to be resolved before authorizing.
+        pub(crate) fn resolve_tables(_db: &rusqlite::Connection) -> rusqlite::Result<()> {
+            Ok(())
+        }
+    }
+}
 
 // The engine's sources keep their own layout.
 #[rustfmt::skip]
@@ -33,6 +41,7 @@ mod authorizer;
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/hooks.rs"]
 mod hooks;
+#[rustfmt::skip]
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../../../native/src/code_rule_dsl/residency/admission/relational/storage.rs"]
