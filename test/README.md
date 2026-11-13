@@ -15,12 +15,15 @@ Unit tests, run by `npm test` (vitest over this directory). They mirror the laye
 Tests that need a built package and real hosts are in [`integration/`](../integration/README.md).
 
 Each vitest run, here and in `integration/`, points the temp folder (`TMPDIR`, `TEMP`, `TMP`) at a folder of its own,
-`rerail-vitest-<pid>-*`, and removes it when the run ends, so a test needs no cleanup to leave nothing behind
-([`support/temporary/run-folder.ts`](support/temporary/run-folder.ts)). A run killed before its end leaves the folder,
-and a later run removes it once that run has ended. The folder's `.owner` file says where its pid means something
-(the host and, on Linux, the pid namespace), and the run touches it every minute. So a run from the same place goes
-once its pid has ended, one from another container or host that shares the temp folder once it has stopped touching
-the file for ten minutes, and any run a day after it stopped.
+`rerail-vitest-<pid>-*`, and removes it when the run ends
+([`support/temporary/run-folder.ts`](support/temporary/run-folder.ts)). So a folder a test leaves goes when the run
+ends; a test still removes what a later test in the same run could see, and what it makes outside `tmpdir()`. A run
+killed before its end leaves the folder, and a later run removes it once that run has ended. The folder's `.owner`
+file says where its pid means something (the host and, on Linux, the pid namespace), and the run touches it every
+minute. So a run from the same place goes once its pid has ended, one from another container or host that shares the
+temp folder once it has stopped touching the file for ten minutes, and any run a day after it stopped. The owner file
+also names the folder vitest copies the run's modules into when its module cache is off or cannot be made: vitest
+makes that folder in the temp folder before the run folder exists, and it goes with the run folder.
 
 On Linux and macOS the folder goes in `/tmp`, or in the folder `RERAIL_TEST_SHORT_TEMP` names, when the temp folder
 leaves no room below it for the deepest socket a test binds: that socket ends 54 bytes below the run folder, the run

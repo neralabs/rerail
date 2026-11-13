@@ -16,18 +16,29 @@
  * (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the temp folder before there was a run folder, and a
  * checkout on an older commit may still be running its tests in one. A run picks those folders at its start and
  * removes them while its tests run, so its first test file waits for none of them; its end waits for that removal.
+ *
+ * vitest makes one folder of its own outside the run folder: when its module cache is off or cannot be made (a
+ * read-only node_modules), it copies each transformed module into a folder it names in the temp folder as it starts,
+ * before this setup runs, and removes only when it closes. The owner file names that folder too, and a later run
+ * removes it with the run folder of a run killed before vitest closed. vitest keeps that folder's path in a field it
+ * does not make public; a vitest without the field leaves the folder after a kill, as before.
  */
 import { readFileSync, readlinkSync, type Stats } from "node:fs";
 import { chmod, lstat, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, isAbsolute, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import type { TestProject } from "vitest/node";
 
 const PREFIX = "rerail-vitest-";
 /** A run folder's name: the prefix, the pid of the vitest process that made it, then mkdtemp's six characters. */
 const RUN_FOLDER = /^rerail-vitest-(\d+)-[A-Za-z0-9]{6}$/u;
 /** The file in a run folder that names where its run's pid means something, and that the run touches while it runs. */
 export const OWNER_FILE = ".owner";
+/** How a line of the owner file starts that names a folder vitest made for the run's module copies. */
+export const MODULE_COPIES_LINE = "module copies ";
+/** The name vitest gives a folder of module copies: 21 characters of nanoid's alphabet. */
+const MODULE_COPIES = /^[A-Za-z0-9_-]{21}$/u;
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 /** How often a run touches its owner file. */
@@ -71,13 +82,14 @@ const OWN_FOLDER: Patience = { tries: 5, waitMs: 100 };
 const ENDED_FOLDER: Patience = { tries: 2, waitMs: 100 };
 
 /**
- * A run folder's owner: the pid of the vitest process the folder's name gives, where that pid means something, and when
- * the run last touched its owner file.
+ * A run folder's owner: the pid of the vitest process the folder's name gives, where that pid means something, when
+ * the run last touched its owner file, and the folders vitest named for the run's module copies.
  */
 interface Owner {
   readonly pid: number;
   readonly place: string;
   readonly touchedMs: number;
+  readonly copies: readonly string[];
 }
 
 /** A folder to remove, with its owner when it is a run folder whose owner file was read. */
@@ -89,17 +101,17 @@ interface Folder {
 /**
  * Makes this run's folder, with its owner file, points the temp folder variables at it, and starts removing ended runs'
  * folders. The run's end removes its folder and waits for the others. A run whose folder cannot be made runs as runs
- * did before there was a run folder.
+ * did before there was a run folder. vitest passes the project whose setup this is.
  */
-export default async function setUpRunFolder(): Promise<() => Promise<void>> {
+export default async function setUpRunFolder(project: TestProject): Promise<() => Promise<void>> {
   const parent = runFolderParent();
   const folder = await makeRunFolder(parent);
   if (folder === undefined) return async () => undefined;
   const place = thisPlace();
-  const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now() };
+  const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now(), copies: moduleCopies(project) };
   await writeOwner(folder, owner);
   const stopHeartbeat = startHeartbeat(join(folder, OWNER_FILE), HEARTBEAT_MS);
-  const ended = removeFolders(await endedFolders(parent, basename(folder), place), ENDED_FOLDER);
+  const ended = removeEndedRuns(await endedFolders(parent, basename(folder), place));
   const restoreVariables = pointVariablesAt(folder);
   return async () => {
     restoreVariables();
@@ -141,6 +153,25 @@ async function makeRunFolder(parent: string): Promise<string | undefined> {
 }
 
 /**
+ * The folders vitest names for this run's module copies, whether or not it makes them: it does when its module cache
+ * is off or cannot be made. A project of its own config copies into its `tmpDir`; the project a config with no
+ * `projects` makes, as Rerail's is, into vitest's own folder.
+ */
+function moduleCopies(project: TestProject): string[] {
+  const projects = [project, ...project.vitest.projects].map(each => each.tmpDir);
+  return [...new Set([...vitestCopies(project.vitest), ...projects])];
+}
+
+/**
+ * vitest's own folder for module copies, which it keeps in a field it does not make public (`_tmpDir`). A vitest
+ * without that field gives none, and the folder then stays after a killed run, as `run-folder.test.ts` would show.
+ */
+function vitestCopies(vitest: object): string[] {
+  const folder = "_tmpDir" in vitest ? vitest._tmpDir : undefined;
+  return typeof folder === "string" ? [folder] : [];
+}
+
+/**
  * Where this process's pid means something, as a run folder's owner file names it: the host, and on Linux the pid
  * namespace and the boot, since a container or sandbox with a pid namespace of its own may share the temp folder.
  * Undefined when this process cannot read its own namespace, so that no run folder's pid is checked.
@@ -157,13 +188,15 @@ export function thisPlace(): string | undefined {
 }
 
 /**
- * Writes `owner` into the run folder at `folder`, touched when it says. A folder already gone, or one this user may not
- * write, keeps none: a later run then goes by the folder's age.
+ * Writes `owner` into the run folder at `folder`, touched when it says: its place, then a line for each folder of
+ * module copies. A folder already gone, or one this user may not write, keeps none: a later run then goes by the
+ * folder's age.
  */
 async function writeOwner(folder: string, owner: Owner): Promise<void> {
   const file = join(folder, OWNER_FILE);
   const touched = new Date(owner.touchedMs);
-  await writeFile(file, owner.place)
+  const copies = owner.copies.map(path => `${MODULE_COPIES_LINE}${path}\n`).join("");
+  await writeFile(file, owner.place + copies)
     .then(async () => await utimes(file, touched, touched))
     .catch(() => undefined);
 }
@@ -238,11 +271,19 @@ async function readOwner(path: string): Promise<Owner | undefined> {
   if (pid === undefined) return undefined;
   const file = join(path, OWNER_FILE);
   try {
-    const [place, info] = await Promise.all([readFile(file, "utf8"), lstat(file)]);
-    return { pid: Number(pid), place, touchedMs: info.mtimeMs };
+    const [text, info] = await Promise.all([readFile(file, "utf8"), lstat(file)]);
+    return { pid: Number(pid), touchedMs: info.mtimeMs, ...ownerText(text) };
   } catch {
     return undefined;
   }
+}
+
+/** The place and the folders of module copies an owner file's text names. */
+function ownerText(text: string): { place: string; copies: string[] } {
+  const lines = text.split("\n").filter(line => line !== "");
+  const copies = lines.filter(line => line.startsWith(MODULE_COPIES_LINE));
+  const place = lines.filter(line => !line.startsWith(MODULE_COPIES_LINE)).map(line => `${line}\n`);
+  return { place: place.join(""), copies: copies.map(line => line.slice(MODULE_COPIES_LINE.length)) };
 }
 
 /**
@@ -265,6 +306,33 @@ function isRunning(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** Removes the folders of ended runs, each with its module copies; returns why each one that stays did. */
+async function removeEndedRuns(folders: readonly Folder[]): Promise<string[]> {
+  const left = await Promise.all(folders.map(async folder => await removeEndedRun(folder)));
+  return left.flat();
+}
+
+/**
+ * Removes an ended run's folders of module copies, then its run folder. While one of them stays, so does the run
+ * folder, whose owner file names it for the next run.
+ */
+async function removeEndedRun(folder: Folder): Promise<string[]> {
+  const copiesLeft = await removeFolders(await copyFolders(folder.owner?.copies ?? []), ENDED_FOLDER);
+  if (copiesLeft.length > 0) return copiesLeft;
+  const left = await removeFolder(folder, ENDED_FOLDER);
+  return left === undefined ? [] : [left];
+}
+
+/**
+ * Those of `paths` that are folders of module copies to remove: a full path to this user's folder, not a link, with the
+ * name vitest gives them. An owner file can name no other folder for removal.
+ */
+async function copyFolders(paths: readonly string[]): Promise<Folder[]> {
+  const named = paths.filter(path => isAbsolute(path) && MODULE_COPIES.test(basename(path)));
+  const found = await Promise.all(named.map(async path => ((await ownFolder(path)) === undefined ? [] : [path])));
+  return found.flat().map(path => ({ path, owner: undefined }));
 }
 
 /** Removes each of `folders` with `patience`; returns why each one that stays did. */

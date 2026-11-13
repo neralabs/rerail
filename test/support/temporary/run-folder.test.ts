@@ -6,7 +6,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { OWNER_FILE, thisPlace } from "./run-folder.js";
+import { MODULE_COPIES_LINE, OWNER_FILE, thisPlace } from "./run-folder.js";
 
 /** This checkout, whose vitest.config.ts every run below uses. */
 const CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -15,6 +15,8 @@ const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 /** A pid no process has: above Linux's highest pid, and not one Windows gives. */
 const NO_PROCESS = 2147483644;
+/** The name vitest gives the folder it copies a run's transformed modules into. */
+const MODULE_COPIES = /^[A-Za-z0-9_-]{21}$/u;
 /** Where this worker's pid means something, as a run folder's owner file names it: the runs below share it. */
 const HERE = thisPlace() ?? "";
 /** What the `stuck` and `locked` test files write next to themselves: the pid of the process in the folder, or the folder. */
@@ -115,10 +117,11 @@ function runEnvironment(temp: string, extra: NodeJS.ProcessEnv): NodeJS.ProcessE
 
 /**
  * `vitest run` on this checkout's config over the test files in `directory`, with `temp` as its temp folder and the
- * variables in `extra`.
+ * variables in `extra`. Its module cache is off, as it is wherever node_modules cannot hold the cache, so vitest copies
+ * each transformed module into a folder of its own in `temp`, which a run killed before vitest closes leaves.
  */
 function startRun(directory: string, temp: string, extra: NodeJS.ProcessEnv = {}): Run {
-  const child = spawn(process.execPath, [VITEST, "run", "--root", CHECKOUT, "--dir", directory], {
+  const child = spawn(process.execPath, [VITEST, "run", "--root", CHECKOUT, "--dir", directory, "--no-fsModuleCache"], {
     cwd: CHECKOUT,
     env: runEnvironment(temp, extra),
     stdio: ["ignore", "pipe", "pipe"],
@@ -174,12 +177,13 @@ async function waitForFolder(folder: string, prefix: string, run: Run): Promise<
 }
 
 /**
- * Makes a run folder at `path` with a folder inside and an owner file that names `place`, last touched `agoMs` ago, as
- * a run there left it.
+ * Makes a run folder at `path` with a folder inside and an owner file that names `place` and the folders of module
+ * copies in `copies`, last touched `agoMs` ago, as a run there left it.
  */
-async function ownedFolder(path: string, owner: { place: string; agoMs: number }): Promise<void> {
+async function ownedFolder(path: string, owner: { place: string; agoMs: number; copies?: string[] }): Promise<void> {
   await mkdir(join(path, "inside"), { recursive: true });
-  await writeFile(join(path, OWNER_FILE), owner.place);
+  const copies = (owner.copies ?? []).map(copy => `${MODULE_COPIES_LINE}${copy}\n`).join("");
+  await writeFile(join(path, OWNER_FILE), owner.place + copies);
   await backdate(join(path, OWNER_FILE), owner.agoMs);
 }
 
@@ -237,8 +241,14 @@ describe("a test run's temporary folders", () => {
     const olderRunsRecent = "rerail-vitest-store-j1k2l3";
     // A running Rerail's own folder, of a family the sweep never removes.
     const notATestFolder = "rerail-clock-m4n5o6";
-    for (const name of [endedRun, runningRun]) await ownedFolder(join(temp, name), { place: HERE, agoMs: 0 });
-    for (const name of [olderRunsDayOld, olderRunsRecent, notATestFolder]) {
+    // Folders of module copies that vitest named for the ended run and for the running one.
+    const endedRunCopies = "AbCdEfGhIjKlMnOpQrStU";
+    const runningRunCopies = "VwXyZ0123456789_-abcd";
+    // The ended run's owner file also names a folder that is not one of vitest's, which no owner file can have removed.
+    const endedCopies = [endedRunCopies, notATestFolder].map(name => join(temp, name));
+    await ownedFolder(join(temp, endedRun), { place: HERE, agoMs: 0, copies: endedCopies });
+    await ownedFolder(join(temp, runningRun), { place: HERE, agoMs: 0, copies: [join(temp, runningRunCopies)] });
+    for (const name of [olderRunsDayOld, olderRunsRecent, notATestFolder, endedRunCopies, runningRunCopies]) {
       await mkdir(join(temp, name, "inside"), { recursive: true });
     }
     for (const name of [olderRunsDayOld, notATestFolder]) await backdate(join(temp, name), 2 * DAY_MS);
@@ -246,7 +256,8 @@ describe("a test run's temporary folders", () => {
     const run = await startRun(join(tests, "leaves"), temp).ended;
 
     expect(run.code, run.output).toBe(0);
-    expect((await readdir(temp)).sort()).toEqual([notATestFolder, olderRunsRecent, runningRun].sort());
+    const left = [notATestFolder, olderRunsRecent, runningRun, runningRunCopies];
+    expect((await readdir(temp)).sort()).toEqual(left.sort());
   }, 120_000);
 
   it("of a run from another place stay until it stops touching its owner file, and any run's go a day after it stopped", async () => {
@@ -278,7 +289,10 @@ describe("a test run's temporary folders", () => {
     const held = await waitForFolder(temp, "held-", killed);
     killRun(killed, Number(held.split("-")[1]));
     await killed.ended;
-    expect(await readdir(temp)).not.toEqual([]);
+    // The killed run's folder, and the folder vitest copied its modules into.
+    const afterKill = await readdir(temp);
+    expect(afterKill.filter(name => name.startsWith("rerail-vitest-"))).toHaveLength(1);
+    expect(afterKill.filter(name => MODULE_COPIES.test(name))).toHaveLength(1);
 
     const next = await startRun(join(tests, "leaves"), temp).ended;
 
