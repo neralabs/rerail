@@ -1,1 +1,0 @@
-A repository audit of a folder that is not a Git checkout now reads its files in path order, as it does in a Git checkout. Before, it took them in the order the filesystem listed them, so when more than 20 files failed, which 20 the audit listed could differ from one machine to the next.
