@@ -388,7 +388,8 @@ recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its ve
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
 Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Claude
 Code's hooks on Windows fall back only when set-up found the recorded Node first on `PATH`; otherwise they start the
-recorded Node directly, so each hook event runs one Node rather than two.
+recorded Node directly, so each hook event runs one Node rather than two. `rerail update` chooses again from the `PATH`
+it runs with, and `rerail status` and the dashboard count Claude Code as connected in either case.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
