@@ -227,17 +227,18 @@ preferences saved under the other spelling.
 A database an earlier version wrote can hold keys in the caller's spelling: a folder outside Git as it was typed, and
 the audit settings and presentation preferences of a session opened as `c:\…`. The first time this version opens the
 database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) copies the rows under
-each key to the spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule
-settings, its audit settings and audit, and its presentation preferences. The rows under the old spelling stay as they
-were, so an earlier version that opens the database later, after a downgrade or for a coding agent whose Rerail is still
-on that version, reads everything it read before. The step records each spelling it copied from in the table
-`path_key_spellings`, and this version's lists leave the copies under those spellings out, so each folder is listed
-once: repositories and their checkouts, the checkouts above and inside one, presentation preferences, and the list of
-repository audits, which also reads where each audit ran through that table (an earlier version wrote a Git checkout's
-audits under the session's spelling and its repository audit under Git's). Removing a presentation preference removes
-its copies too. The audit history itself is never rewritten. Two rows that come to one folder merge: the newer one stays
-(last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
-a start state either row held is kept.
+each key to the spelling this version looks it up by (`currentPathKey`), or, for a key on another drive, leaves them for
+the first reader of that folder (below), so a checkout keeps its start state, its rule settings, its audit settings and
+audit, and its presentation preferences. The rows under the old spelling stay as they were, so an earlier version that
+opens the database later, after a downgrade or for a coding agent whose Rerail is still on that version, reads
+everything it read before. The step records each spelling it copied from in the table `path_key_spellings`, and this
+version's lists leave the copies under those spellings out, so each folder is listed once: repositories and their
+checkouts, the checkouts above and inside one, presentation preferences, and the list of repository audits, which also
+reads where each audit ran through that table (an earlier version wrote a Git checkout's audits under the session's
+spelling and its repository audit under Git's). Removing a presentation preference removes its copies too. The audit
+history itself is never rewritten. Two rows that come to one folder merge: the newer one stays (last seen, last saved,
+last started; of two presentation preferences, which keep no time, the one created later), and a start state either row
+held is kept.
 
 The step reads the keys, and where the audit history says each audit ran, and looks every folder up before it takes the
 database's write lock; under the lock it only copies rows. So no other writer waits for a lookup, nor for the read of a
@@ -246,16 +247,24 @@ drive (`%SystemDrive%`, which holds Windows and is never on a network), and the 
 works in, when it names one, which answered as the caller came to it. It looks each drive's keys up within a second. A
 key on any other drive (another disk, a drive mapped to a network share, a share itself as `\\host\share\…`), or left
 once its drive's second is spent, keeps its key, and the table holds it with no new spelling, without any read of that
-drive. Each time a coding agent's hook, or a command such as `rerail start`, checks whether Rerail runs in a folder on
-such a drive (`workspaceStartState`), it looks the keys that wait on that drive up first, opening the database for
-writing, and copies their rows before it reads the folder's start state. A key on a drive mapped to a share is looked up
-through the mapping, which gives the share's spelling, the one this version keys the folder by; a key stored through the
-letter waits for a session that works through the letter. A drive that is absent (a disk not attached) or a share whose
-host is gone costs no open anything: Windows waits about 21 seconds for such a share, and a process that started that
-read could not exit before it ended, however briefly it waited for the answer, so no open starts it. A folder that is
-gone from a drive that is there keeps its key: the file system holds no spelling for it, and a session opened there as
-`c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database
-still opens. On macOS and Linux the step reads and copies nothing.
+drive. Before they read a folder's records, these look the keys that wait on that folder's drive up, through an open for
+writing made from the folder, and copy their rows: the daemon, when a coding agent's hook or status line asks it about
+a folder (`copyWaitingKeys`); a hook or a runtime that reads the database itself, when it checks whether Rerail runs
+there (`workspaceStartState`); and `rerail start`, `rerail stop`, `rerail status` and `rerail state`. So a folder on
+another disk or a mapped drive keeps its start state and settings from the first coding agent event or the first of
+these commands there. A reader that never writes the database (the status line and `/rerail` while no daemon runs)
+reads the folder as it is until one of them has run there. The daemon reads where keys wait once, so a request from a
+folder on any other drive reads nothing for them, and once a drive's keys are copied no request from it does. A hook or
+a status line names its folder to the daemon as the session spells it, not by its realpath: through a drive mapped to a
+share, or made with `subst`, the realpath names what the letter stands for, and the daemon would not see the letter the
+keys wait on. A key on a drive mapped to a share is looked up through the mapping, which gives the share's spelling,
+the one this version keys the folder by; a key stored through the letter waits for a session that works through the
+letter. A drive that is absent (a disk not attached) or a share whose host is gone costs nothing at any open: Windows
+waits about 21 seconds for such a share, and a process that started that read could not exit before it ended, however
+briefly it waited for the answer, so no open starts it, and the daemon reads a drive only for a request from a folder
+on it. A folder that is gone from a drive that is there keeps its key: the file system holds no spelling for it, and a
+session opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its
+key, and the database still opens. On macOS and Linux the step reads and copies nothing.
 
 Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
 runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version

@@ -109,9 +109,10 @@ function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string 
  * reads where an audit ran through that table. An open looks up keys on this computer's system drive and on the drive
  * or share of the folder its caller works in, and reads no other drive (`readableRoots`): a key elsewhere (another
  * disk, a mapped drive, a share), or past its drive's time in this open, is recorded with no key and looked up before
- * the lock by a later writable open that reads its drive (`later`), such as the one a hook makes from a session there
- * (`openRerailDatabaseIn`). A folder that is gone keeps its spelling. On macOS and Linux keys keep their spelling and
- * the step reads nothing. No floor: an older build ignores the new table.
+ * the lock by a later writable open that reads its drive (`later`): one made from a folder there, which every reader of
+ * a folder's records makes before it reads them (`openRerailDatabaseIn`). A folder that is gone keeps
+ * its spelling. On macOS and Linux keys keep their spelling and the step reads nothing. No floor: an older build
+ * ignores the new table.
  */
 const PATH_KEYS_AS_STORED: Migration<PathKeyLookups | undefined> = {
   id: "path-keys-as-stored",

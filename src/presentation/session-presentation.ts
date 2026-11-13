@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type AdapterDelivery, type AdapterSession, type RerailHost } from "../engine/adapter-contract.js";
 import {
@@ -348,6 +348,17 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
 }
 
 /**
+ * The folder a presentation request names for `cwd`. On Windows it is `cwd` as the session spells it, made whole: the
+ * daemon looks it up by the same native realpath this process read (`checkoutRealpath`), and its drive letter tells the
+ * daemon where keys an earlier build stored under that letter wait, which the realpath loses for a drive mapped to a
+ * share or made with `subst` (`copyWaitingKeys`). Elsewhere it is that realpath, which the daemon's own lookup would
+ * not always give back (on macOS it keeps the letter case a path was typed in).
+ */
+function requestedFolder(cwd: string, daemon: VerifiedDaemon): string {
+  return process.platform === "win32" ? resolve(cwd) : daemon.workspace;
+}
+
+/**
  * The rules page of the live daemon serving `cwd`'s checkout, or the reason there is none, scoped to the
  * repository and checkout `cwd` is in when the daemon knows them (else the page opens on its repository picker).
  * Probes before answering: a URL a caller is about to open must point at something running. Passive: never
@@ -376,7 +387,7 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: requestedFolder(cwd, daemon), host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch {
     return null;
@@ -438,7 +449,7 @@ async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: Pres
   const daemon = await verifyDaemon(cwd);
   if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return undefined;
   const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
+    repository: requestedFolder(cwd, daemon), host, sessionId, onDemand: String(onDemand),
   })}`, presentationReadSchema);
   const context = response.context;
   return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };

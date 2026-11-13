@@ -1,17 +1,24 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
+import { startRerail } from "../../../src/cli/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
-import { setCheckoutStarted, SqlitePresentationPreferenceStore, workspaceStartState } from "../../../src/runtime/index.js";
+import { hookRerailStarted } from "../../../src/harness/index.js";
+import {
+  setCheckoutStarted, SqlitePresentationPreferenceStore, stopRerail, workspaceStartState, type RepositorySetupIo,
+} from "../../../src/runtime/index.js";
+import { fakeSetupEnvironment } from "../../support/fake-setup-environment.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 type PathKeySpelling = typeof import("../../../src/engine/storage/path-key-spelling.js");
@@ -46,11 +53,15 @@ vi.mock("node:worker_threads", async importOriginal => {
 
 const STEP = "path-keys-as-stored";
 const temporaryDirectories: string[] = [];
+/** What a test started that outlives it unless ended: a daemon's stores and engine endpoint, a `subst` drive letter. */
+const ends: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
+  for (const end of ends.splice(0).reverse()) await end();
   vi.mocked(currentPathKey).mockReset();
   vi.mocked(withDriveBudget).mockReset();
   vi.mocked(pathKeysCanMove).mockReset().mockImplementation(() => true);
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   threads.started = 0;
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
@@ -255,6 +266,62 @@ const EARLIER_BUILD_READS = {
   presence: { presence: "silent" },
   audits: [{ audit_id: "audit-1" }],
 };
+
+/**
+ * The daemon a coding agent's hooks find while it runs, over `databasePath`: its stores, made as the daemon makes them
+ * as it starts (a writable open that names no folder), and its API, reached through the state file in a Rerail home as
+ * a hook reaches it. A hook asks it first, and reads the database itself only when none answers.
+ */
+async function daemonRunning(databasePath: string): Promise<void> {
+  const home = join(dirname(databasePath), "home");
+  mkdirSync(home);
+  const stores = new DatabaseApiStores(databasePath, {
+    health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+    origin: () => "http://127.0.0.1:4737",
+  });
+  const api = createRerailApi(stores, operations, { version: "0.0.0-test" });
+  // On Windows a hook counts a recorded daemon alive only while its engine pipe exists.
+  const kernelSocketPath = testEngineEndpoint(home);
+  const release = await holdEngineEndpoint(kernelSocketPath);
+  ends.push(async () => {
+    stores.close();
+    await release();
+  });
+  writeFileSync(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4737,
+    url: "http://127.0.0.1:4737/", version: "test", databasePath, kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home }));
+  vi.stubEnv("RERAIL_HOME", home);
+  vi.stubGlobal("fetch", (input: URL | string, init?: RequestInit) => api.request(String(input), init));
+}
+
+/**
+ * What this build reads for `folder`, spelt `spelled` by its caller, by readers that look nothing up: its own rule
+ * setting under its key, its audit settings and its presentation in Claude Code.
+ */
+function heldFor(databasePath: string, folder: string, spelled = folder) {
+  const controls = new SqliteAuditControlStore(databasePath);
+  const preferences = new SqlitePresentationPreferenceStore(databasePath);
+  const client = new Database(databasePath, { readonly: true });
+  try {
+    return {
+      setting: client.prepare(`SELECT "on" FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?`).get(folder),
+      auditSettings: controls.getWorkspaceSettings(spelled),
+      presence: preferences.effective(spelled, "claude-code"),
+    };
+  } finally {
+    client.close();
+    preferences.close();
+    controls.close();
+  }
+}
+
+/** The settings `earlierBuildRecorded` left for its checkout, as `heldFor` reads them once they are copied. */
+const HELD = { setting: { on: 0 }, auditSettings: { scope: "ai-output", mode: "log", steerStrategy: "message" }, presence: "silent" };
+
+/** A terminal `rerail start` or `rerail stop` runs in, keeping what it says. */
+function terminal(): RepositorySetupIo & { said: string[] } {
+  const said: string[] = [];
+  return { lane: "terminal", said, say: text => { said.push(text); } };
+}
 
 function spellings(databasePath: string): unknown[] {
   const client = new Database(databasePath, { readonly: true });
@@ -474,6 +541,87 @@ describe("path keys an earlier build stored under another spelling", () => {
     for (let check = 0; check < 100; check += 1) expect(workspaceStartState(folder, databasePath)).toBe("started");
     expect({ looked, threads: threads.started }).toEqual({ looked: [stored], threads: 0 });
     expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  }, 60_000);
+
+  // While a daemon ran, every Claude Code, Codex, Cursor and OMP hook took its start state from the daemon, whose opens
+  // read no drive but the system drive and which made no start-state check of its own: a folder an earlier build keyed
+  // on another disk read stopped, with its settings unset, until a command such as `rerail status` ran there.
+  it("copy the rows of a folder on another drive at the first hook a running daemon answers there, and look up nothing after", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    const looked: string[] = [];
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      looked.push(path);
+      return path === stored ? folder : path;
+    });
+    await daemonRunning(databasePath);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+
+    expect(await hookRerailStarted("claude-code", folder)).toBe(true);
+    expect(heldFor(databasePath, folder)).toEqual(HELD);
+    for (let event = 1; event < 100; event += 1) expect(await hookRerailStarted("claude-code", folder)).toBe(true);
+    expect({ looked, threads: threads.started }).toEqual({ looked: [stored], threads: 0 });
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
+  }, 60_000);
+
+  // A hook named its folder to the daemon by its realpath, which for a drive letter made with `subst` or mapped to a
+  // share names the folder or share the letter stands for: a key an earlier build stored through the letter waited on
+  // the letter's drive, which no request named, and the folder read stopped at every event.
+  it.runIf(process.platform === "win32")("copy, on Windows, a key stored through a drive letter that stands for another folder, at the first hook there", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    vi.mocked(withDriveBudget).mockImplementation(actual.withDriveBudget);
+    const { folder, databasePath } = await checkoutFolder();
+    const letter = [..."GHIJKLMNOPQRSTUVWXYZ"].map(name => `${name}:`).find(drive => !existsSync(`${drive}\\`))!;
+    execFileSync("subst", [letter, dirname(folder)], { stdio: "ignore" });
+    ends.push(() => { execFileSync("subst", [letter, "/d"], { stdio: "ignore" }); });
+    const throughLetter = `${letter}\\${basename(folder)}`;
+    expect(actual.currentPathKey(throughLetter)).toBe(folder);
+    // As VS Code passes a folder: the drive letter in lower case.
+    const stored = throughLetter.toLowerCase();
+    earlierBuildRecorded(folder, databasePath, stored);
+    await daemonRunning(databasePath);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+
+    expect(await hookRerailStarted("claude-code", throughLetter)).toBe(true);
+    expect(heldFor(databasePath, folder, throughLetter)).toEqual(HELD);
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  }, 60_000);
+
+  // `rerail start` in a repository set up already read whether it was set up, and recorded the checkout, through opens
+  // that read only the system drive: it said Rerail was off there before, and counted rules the person had turned off.
+  it("copy the rows of a folder on another drive when `rerail start` runs there in a repository set up already", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+
+    const io = terminal();
+    expect(await startRerail(folder, io, { databasePath, environment: fakeSetupEnvironment() }))
+      .toMatchObject({ previous: "started", setUpRan: false, status: "started" });
+    expect(io.said).toEqual([expect.stringMatching(/^● Rerail is already on in /u)]);
+    expect(heldFor(databasePath, folder)).toEqual(HELD);
+  }, 60_000);
+
+  // `rerail stop` there said Rerail had been off already, while the copy a later check made read it started.
+  it("copy the rows of a folder on another drive when `rerail stop` runs there, so it stops what the earlier build started", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+
+    expect(stopRerail(folder, terminal(), { databasePath })).toBe("started");
+    expect(workspaceStartState(folder, databasePath)).toBe("stopped");
+    expect(heldFor(databasePath, folder)).toEqual(HELD);
   }, 60_000);
 
   it.runIf(process.platform === "win32")("look, on Windows, a key on a drive not attached up at no writable open", async () => {

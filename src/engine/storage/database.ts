@@ -211,14 +211,17 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
 }
 
 /**
- * A read-only open for a caller that works in `workspace` (a hook's session folder, a command's checkout). On Windows,
- * folder keys an earlier build stored that wait on that folder's drive or share (`keysWaitOn`: the open that ran the
- * `path-keys-as-stored` step read only this computer's system drive) are looked up first, by a writable open that reads
- * that drive: it answered as the caller came to it. Elsewhere, and once none waits there, it is the read-only open
- * alone, with one read of an empty table. A caller that may not write the file reads it as it is, the keys still waiting.
+ * An open for a caller that works in `workspace` (a hook's session folder, a command's checkout, the folder a request to
+ * the daemon names). On Windows, the folder keys an earlier build stored that wait on that folder's drive or share
+ * (`keysWaitOn`: an open reads only this computer's system drive and the drive of the folder its caller works in) are
+ * looked up and their rows copied before the caller reads, by a writable open whose steps read that drive too
+ * (`openedIn`): it answered as the caller came to it. A writable open (`readonly: false`) is that open itself. A
+ * read-only one makes it only where keys wait there; elsewhere, and once none waits there, it is the read-only open
+ * alone, with one read of an empty table. A reader that may not write the file reads it as it is, the keys still waiting.
  */
-export function openRerailDatabaseIn(path: string, workspace: string): RerailDatabase {
+export function openRerailDatabaseIn(path: string, workspace: string, { readonly = true } = {}): RerailDatabase {
   const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
+  if (!readonly) return openRerailDatabase(path, { migrations });
   const database = openRerailDatabase(path, { readonly: true, migrations });
   if (!keysWaitHere(database, workspace)) return database;
   try {

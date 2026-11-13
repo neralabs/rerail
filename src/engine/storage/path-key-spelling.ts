@@ -10,7 +10,9 @@
  * up before the open takes the write lock (`lookUpPathKeys`), then, under the lock, writes a few rows per moved folder
  * (`respellPathKeys`). It never rewrites the audit history, and no lookup on disk runs under the lock. An open looks up
  * only keys on this computer's system drive and on the drive or share of the folder its caller works in
- * (`withDriveBudget`); the others wait for an open made from a folder on their drive (`openRerailDatabaseIn`).
+ * (`withDriveBudget`); the others wait for an open made from a folder on their drive (`openRerailDatabaseIn`), which
+ * each reader of a folder's records makes before it reads them: the start-state check of hooks and commands, `rerail
+ * start` and `rerail stop`, and the daemon's answer to a hook or a status line (`DatabaseApiStores.copyWaitingKeys`).
  */
 import { existsSync } from "node:fs";
 import { resolve, win32 } from "node:path";
@@ -156,7 +158,7 @@ export function withDriveBudget(keyOf: PathKeyOf, platform: NodeJS.Platform = pr
 }
 
 /** The drive or share `path` lies on, in one letter case: Windows reads `C:\` and `c:\` as one drive. */
-function rootOf(path: string): string {
+export function rootOf(path: string): string {
   return win32.parse(path).root.toLowerCase();
 }
 
@@ -166,9 +168,15 @@ function rootOf(path: string): string {
  * ask only on Windows.
  */
 export function keysWaitOn(database: RerailDatabase, workspace: string): boolean {
-  if (!holdsTable(database.$client, "path_key_spellings")) return false;
-  const root = rootOf(workspace);
-  return waitingKeys(database).some(stored => rootOf(stored) === root);
+  return rootsKeysWaitOn(database).has(rootOf(workspace));
+}
+
+/**
+ * The drives and shares keys wait on (`keysWaitOn`), each as {@link rootOf} gives it. Only the step adds a waiting key,
+ * once per file, so a process that holds the file open reads this once and again only after a copy.
+ */
+export function rootsKeysWaitOn(database: RerailDatabase): ReadonlySet<string> {
+  return new Set(holdsTable(database.$client, "path_key_spellings") ? waitingKeys(database).map(rootOf) : []);
 }
 
 /**

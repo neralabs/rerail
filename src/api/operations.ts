@@ -333,6 +333,8 @@ export const operations: readonly Operation[] = [
       onDemand: booleanParameter.optional().describe("Read session status even when ambient presentation is silent."),
     }).strict(),
     output: presentationResponseSchema,
+    // The folder a hook or a status line asks about: keys an earlier build stored on its drive are copied first.
+    workspace: input => input.repository,
     handler: (stores, input, caller) => {
       let session = input.sessionId === undefined ? null : sessionResponse(stores, caller, input.sessionId);
       let repository = input.repository;

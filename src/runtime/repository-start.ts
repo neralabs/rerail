@@ -67,11 +67,12 @@ export function workspaceStartState(workspace: string, databasePath = defaultRer
 
 /**
  * Whether `workspace`'s repository is set up, read apart from its start state and without side effects: a repository
- * Rerail never recorded is not set up.
+ * Rerail never recorded is not set up. Keys that wait for `workspace`'s drive are looked up first, as for its start
+ * state (`openRerailDatabaseIn`): `rerail start` reads this before anything else in a repository set up already.
  */
 export function workspaceSetUp(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   if (!existsSync(databasePath)) return false;
-  const database = openRerailDatabase(databasePath, { readonly: true });
+  const database = openRerailDatabaseIn(databasePath, workspace);
   try {
     return hasStartTables(database) && checkoutStatus(database, lookupCheckout(database, workspace)).setUp;
   } finally {
@@ -156,8 +157,10 @@ export class RepositoryStartWatch {
 }
 
 /**
- * The one check hooks, runtimes and the daemon make before doing anything in a checkout. A started repository
- * that is not set up yet counts: its sessions are recorded, though no rule runs there until it is set up.
+ * The check a host that reads the database itself makes before doing anything in a checkout (Pi, OMP under Node), and
+ * a hook no daemon answers. A hook a running daemon answers takes the daemon's answer, which it reads from its own
+ * stores (`DatabaseApiStores.repositoryState`). A started repository that is not set up yet counts: its sessions are
+ * recorded, though no rule runs there until it is set up.
  */
 export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   return rerailRunsIn(workspaceStartState(workspace, databasePath));
@@ -304,7 +307,8 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   // No coding agent named (a terminal, or Cursor, which stops without one): the default sigil.
   const sigil = options.session === undefined ? "/" : ADAPTER_CAPABILITIES[options.session.host].commandSigil;
   const startCommand = io.lane === "terminal" ? "rerail start" : `${sigil}rerail-start`;
-  const database = openRerailDatabase(databasePath);
+  // Made from the folder, so a checkout an earlier build keyed another way on its drive is stopped, not left started.
+  const database = openRerailDatabaseIn(databasePath, workspace, { readonly: false });
   let previous: RepositoryStartState;
   let steered: readonly string[];
   try {
