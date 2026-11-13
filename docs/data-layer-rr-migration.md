@@ -10,6 +10,62 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Hub integration and callback-state parity
+
+The branch includes integration hub `aab36c283`, through merge `b2104f85e`.
+Earlier merges adopt `cabd3ba98` and `64db9edc8`.
+The final merge audit has zero findings. All eleven local generic engine extensions survive.
+The hub supplies parser routing, native JSON kernels, reached-row statistics, constant-growth planning, bounded pool helping, and held-fact preservation.
+Its decision numbering supersedes the earlier local renumbering. The decision records and register match the hub.
+
+The frozen CLI is `4d98231729cf7fd0…`, built from `b2104f85e` over hub `aab36c283`.
+Its receipt binds all six engine source trees and the executable bytes.
+That build costs 68.44 seconds wall, 446.32 seconds user CPU, and 24.07 seconds system CPU.
+The preceding hub64 build costs 127.09 seconds wall across two bounded attempts, including one 110-second deadline.
+These are compilation costs, not rule-execution measurements. No full-repository cold run occurs.
+
+Eleven failing callback observations precede repair commit `35a74bc0f`.
+The replacement transports immutable callback observations to a Datalog state machine.
+The rule determines scope entry, exit, eager-read names, findings, and their order.
+The adapter applies those operations to existing caller-owned objects.
+Reading mutable state forces pending events to run. Later operations then update held references synchronously.
+Scope exits also flush, preserving immediate underflow errors.
+
+Finish serializes accumulated findings instead of replaying the caller's current tree.
+This preserves earlier findings after AST mutation, list clearing, repeated finish calls, and collector reuse.
+Context-supplied children determine references. Caller paths are captured with their callbacks.
+The header transport omits enclosing statement bodies; a 1,000-statement regression checks this boundary.
+The callback kernel has a separate policy, so production scanners do not compile its state machine.
+No Python detector executes. The Python adapter transports syntax, state operations, and passive DTOs.
+
+The final binary passes these complete source-recorded corpora through **both** native APIs:
+
+- 17 incremental callback cases, including mutations, identity, duplicate calls, invalid facts, and custom context children.
+- 158 supplied-AST and collector cases.
+- 197 syntax helper cases.
+- 142 native tape cases, including positives and syntax errors.
+- 35 public scanner and severity cases.
+- All seven unchanged original tests and their complete observations.
+
+This is 549 contract cases plus seven unchanged tests per API.
+The 64-callback witness produces all 64 findings in one native invocation through each API.
+The [retained receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-events-current.json.gz) includes complete results, consumed program bytes, harness revisions, and pre-fix failures.
+Fresh source recordings replace older recordings that named an unretained adapter revision.
+Their complete observations match the older expected results exactly. All native replays bind the fresh recordings.
+
+Five focused request tests pass. Four retained-row tests and the corrected wave-credit test pass.
+The native `@place` test passes in `rerail-facts`, its owning crate.
+The JSON oracle passes for both arm64 kernels this CPU runs.
+An initial constant-growth filter selects zero tests in `rerail-logic`; it is excluded from passing totals.
+The obsolete wave-test helpers exposed on hub64 are resolved by the later hub merge, without a parallel engine implementation.
+All **770 tooling tests pass in 50.110 seconds**, including eight receipt tests.
+A separate failing omission test precedes the consumed-byte validation repair.
+The validator requires every consumed program and harness revision, every corpus case, and the complete native batch witness.
+
+This completes callback-state parity for the recorded corpus, not full rule admission.
+Other public helpers and scanners, raw plugin reporting, CLI, production, history, updates, and removal controls remain open.
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+
 ## 2026-11-13 — Side-effects scanners pass after shared request repairs
 
 All seven unchanged side-effects assertions pass through both native APIs on CLI `23deba96245df660…`.

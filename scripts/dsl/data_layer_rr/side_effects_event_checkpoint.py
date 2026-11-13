@@ -52,7 +52,29 @@ def validate(value):
     require(red['engineSha256']==value['tdd']['build']['sha256'],'Wrong pre-fix TDD engine')
     for item in value['snapshots']:
         require((sha(item['text'].encode())if item['text']is not None else None)==item['sha256'],'Retained bytes differ')
+    retained={(item['path'],item['sha256'])for item in value['snapshots']}
+    require(len(retained)==len(value['snapshots']),'Duplicate retained revision')
+    for report in reports(value):
+        for name,digest in report['harnessFiles'].items():
+            require((name,digest)in retained,'Consumed bytes omitted: '+name)
+        for call in calls(report):
+            for item in call['programInputs']:
+                require((item['path'],item['sha256'])in retained,'Consumed bytes omitted: '+item['path'])
     return dict(originalAssertionsPerAPI=7,comparisonsPerAPI=sum(COUNTS.values()),callbackBatch=64,fullMigrationAcceptance=False)
+
+
+def reports(value):
+    yield from value['originals'].values()
+    yield value['tdd']['source'];yield value['tdd']['native']
+    for group in value['contracts'].values():
+        yield group['source']
+        for mode in MODES:yield from group[mode]
+
+
+def calls(report):
+    if isinstance(report['cases'],dict):yield from report.get('native',[])
+    else:
+        for row in report['cases']:yield from row.get('native',[])
 
 
 def retained_bytes(name,digest):
@@ -67,24 +89,23 @@ def retained_bytes(name,digest):
 
 
 def pack(work):
-    native=ROOT/'.rerail/side-effects-native';public=ROOT/'.rerail/side-effects-public-hub'
+    public=ROOT/'.rerail/side-effects-public-hub'
     sources={'incremental':work/'source-final.json',**{family:work/(family+'-source.json')for family in ['collector','helper','tape','scanner']}}
     contracts={family:dict(source=read_json(path),**{mode:[read_json(p)for p in sorted(work.glob(f'{family}-{mode}-[0-9]*.json'))]for mode in MODES})for family,path in sources.items()}
     originals=dict(source=read_json(work/'original-source.json'),**{mode:read_json(work/f'original-{mode}-0.json')for mode in MODES})
     tdd=dict(source=read_json(work/'source.json'),native=read_json(work/'red.json'),build=read_json(public/'root-build.json'))
-    reports=[*originals.values(),tdd['source'],tdd['native'],*[r for group in contracts.values()for key,data in group.items()for r in ([data]if key=='source'else data)]]
+    value=dict(format='rerail.side-effects-event-progress/v1',sourcePin=PIN,fullMigrationAcceptance=False,contracts=contracts,
+        originals=originals,tdd=tdd,build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
+        remaining=['Other public helpers and scanners','Raw plugin reporting','CLI','Production','History','Updates and removal controls','Strict admission'])
     snapshots={}
-    for report in reports:
+    for report in reports(value):
         for name,digest in report['harnessFiles'].items():
             snapshots[name+'@'+digest]=dict(path=name,sha256=digest,text=retained_bytes(name,digest))
-        calls=report.get('native',[])if isinstance(report['cases'],dict)else [n for row in report['cases']for n in row.get('native',[])]
-        for call in calls:
+        for call in calls(report):
             for item in call['programInputs']:
                 name,digest=item['path'],item['sha256']
                 snapshots[name+'@'+str(digest)]=dict(path=name,sha256=digest,text=retained_bytes(name,digest))
-    value=dict(format='rerail.side-effects-event-progress/v1',sourcePin=PIN,fullMigrationAcceptance=False,contracts=contracts,
-        originals=originals,tdd=tdd,build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
-        snapshots=list(snapshots.values()),remaining=['Other public helpers and scanners','Raw plugin reporting','CLI','Production','History','Updates and removal controls','Strict admission'])
+    value['snapshots']=list(snapshots.values())
     value['summary']=validate(value)
     return value
 
