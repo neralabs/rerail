@@ -637,7 +637,7 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 let p = *g.pick(&pats);
                 let s = match g.next(11) {
                     0 => format!("test {} v{t} {} {}", g.pick(&tests), sym(p), g.next(2)),
-                    1 => format!("testset {} v{t} {} {} {}", g.pick(&["prefix", "suffix", "contains", "equals"]), g.next(2), sym(p), sym(g.pick(&pats))),
+                    1 => format!("testset {} v{t} {} {} {}", g.pick(&["prefix", "suffix", "contains", "equals"]), g.next(2), sym(p), sym(g.pick::<&str>(&pats))),
                     2 => {
                         texts.push(next);
                         next += 1;
@@ -654,9 +654,9 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                         texts.push(next);
                         next += 1;
                         if g.chance(50) {
-                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(g.pick(&rxs)), sym(g.pick(&["", "#", "<>"])))
+                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(g.pick::<&str>(&rxs)), sym(g.pick::<&str>(&["", "#", "<>"])))
                         } else {
-                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(g.pick(&["", "#", "<>"])))
+                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(g.pick::<&str>(&["", "#", "<>"])))
                         }
                     }
                     5 => {
