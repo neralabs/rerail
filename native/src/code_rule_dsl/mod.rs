@@ -4870,17 +4870,19 @@ pub(crate) fn install_languages() {
     // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
     language::set_no_manifest(&package_manifest::NoManifest);
     language::set_manifest_reader(package_manifest::read_wire);
-    // The dialects their languages parse themselves (`tape::TreeParser`). A build without a language's
-    // feature routes no file to it, so its parser is not linked.
+    // The dialects their languages parse themselves (`tape::TreeParser`), each implementation registered
+    // with the parser router, which takes the best this host runs (`tape::install_parsers`). A build
+    // without a language's feature routes no file to it, so its parser is not linked.
     {
-        let mut parsers: Vec<(language::GrammarDialect, &'static dyn tape::TreeParser)> = Vec::new();
+        let mut parsers: Vec<tape::ParserImpl> = Vec::new();
         if cfg!(feature = "lang-blade") {
-            parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Blade, name: "Forte", rank: 0, runs: true, parser: &blade::tape::Forte });
         }
         if cfg!(feature = "lang-json") {
-            // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
+            // (`json_parser::tape::Bitlex`) is not yet the product's.
             #[cfg(not(target_family = "wasm"))]
-            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::simdjson::Simdjson));
+            parsers.extend(transducer::packed::json_parser::simdjson::registrations());
         }
         tape::install_parsers(parsers);
     }
