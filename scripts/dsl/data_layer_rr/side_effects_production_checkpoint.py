@@ -73,6 +73,16 @@ def validate(value):
             for item in call['programInputs']:require((item['path'],item['sha256'])in retained,'Consumed production bytes omitted')
     for failure in value['startupFailures']:
         require(failure['engineSha256']==value['build']['sha256']and failure['occurredBeforeCases']and failure['frames'],'Unbound startup failure')
+    tooling=value.get('toolingRuns',[])
+    if tooling:
+        first=tooling[0];parts=first['parts'];collected=first['collected']
+        require(parts>0 and len(tooling)==parts and {run['part']for run in tooling}==set(range(parts)),'Incomplete tooling partitions')
+        require(len(collected)==len(set(collected))and len(collected)==first['total'],'Duplicate or omitted tooling identity')
+        for run in tooling:
+            require(run['collected']==collected and run['sourceFiles']==first['sourceFiles']and run['parts']==parts,'Tooling source cohorts differ')
+            require(run['passed']and not run['failures']and not run['errors']and not run['skips'],'Tooling test failed or skipped')
+            require(run['selected']==collected[run['part']::parts]and run['testsRun']==len(run['selected']),'Tooling case omitted')
+    for log in value.get('logs',[]):require(sha(log['text'].encode())==log['sha256'],'Retained production log differs')
     return dict(productionCasesPerAPI=25,discoveryCasesPerAPI=15,tapeCasesPerAPI=142,positiveFileBatch=64,fullMigrationAcceptance=False)
 
 
@@ -83,6 +93,8 @@ def pack(work):
         discovery=dict(source=read_json(ROOT/'.rerail/hub-directory-metadata/discovery-source-final.json'),native={mode:read_json(work/f'final-discovery-{mode}.json')for mode in MODES}),
         tape=dict(source=read_json(ROOT/'.rerail/side-effects-events-hubaab/tape-source.json'),native={mode:[read_json(path)for path in sorted(work.glob(f'tape-{mode}-[0-9]*.json'))]for mode in MODES}),
         startupFailures=[read_json(path)for path in sorted(work.glob('*-startup-crash.json'))],
+        toolingRuns=[read_json(path)for path in sorted(work.glob('tooling-shard-[0-9]*.json'))],
+        logs=[dict(name=path.name,sha256=sha(path.read_bytes()),text=path.read_text())for path in sorted(work.glob('*.log'))],
         readerTests={stage:(work/f'world-{stage}-test.log').read_text()for stage in ['red','green']},
         build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
         remaining=['Historical inputs','Retained updates','Effective removal controls','Strict admission'])

@@ -25,6 +25,11 @@ class SideEffectsProductionCheckpointTests(unittest.TestCase):
         value=copy.deepcopy(self.receipt);value['tape']['native']['workspace'][0]['cases'].pop()
         with self.assertRaisesRegex(ValueError,'Production case omitted'):validate(value)
 
+    def test_incomplete_tooling_shards_cannot_claim_full_suite_coverage(self):
+        value=copy.deepcopy(self.receipt)
+        value['toolingRuns']=[dict(total=2,collected=['one','two'],part=0,parts=2,selected=['one'],testsRun=1,passed=True,failures=[],errors=[],skips=[])]
+        with self.assertRaisesRegex(ValueError,'Incomplete tooling partitions'):validate(value)
+
     def test_an_omitted_case_is_rejected(self):
         value=copy.deepcopy(self.receipt);value['native']['workspace'][0]['cases'].pop()
         with self.assertRaisesRegex(ValueError,'Production case omitted'):validate(value)
