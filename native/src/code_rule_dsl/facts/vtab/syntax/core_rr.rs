@@ -780,12 +780,18 @@ impl CoreRows {
         }
         drop(lines_span);
         let text_span = crate::code_rule_dsl::logic::profile::span(|| "span text".into());
+        let all_line_text = std::env::var("RERAIL_LINE_TEXT").is_ok_and(|v| v == "all");
         if wants_text {
             for i in 0..(p.locs() - p.len()) as usize {
                 let [a, b] = p.span(p.len() + i as u32);
+                // The source and its lines have text where a rule reads it (`span_text_demand`), at any length:
+                // within the inline bound too, or every distinct line of the corpus is an atom (40 of the 55 MB of
+                // atoms authentication-plan-purity left over `impl/`). `RERAIL_LINE_TEXT=all` makes every one
+                // within the bound, as before.
+                let container = i >= x.tokens as usize && i <= x.tokens as usize + x.lines.count();
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                if requested_container || i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
+                if requested_container || i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE && (!container || all_line_text) {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
