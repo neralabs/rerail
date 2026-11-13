@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -127,6 +127,9 @@ describe("the hook failure log", () => {
     hookFailureLines(readHookFailures(rerailHome, since), lastRecordedAt);
   // An event recorded after every failure below: the line counts them without the lead.
   const afterEveryFailure = 60_000;
+  // The number of hook events `rerail status` says could not be recorded in `rerailHome`; 0 when it says nothing.
+  const statusCount = (rerailHome: string): number =>
+    Number(/^Hooks: (\d+) hook events? could not be recorded /u.exec(statusSays(rerailHome, 0, afterEveryFailure)[0] ?? "")?.[1] ?? 0);
 
   it("counts the failures it moved aside with the newest ones, over the whole period when those reach back that far", async () => {
     const rerailHome = await home();
@@ -185,10 +188,17 @@ describe("the hook failure log", () => {
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${fullLine}\n`.repeat(full));
   };
 
+  // The files of the log in `rerailHome`, by name.
+  const logFiles = (rerailHome: string): string[] => readdirSync(rerailHome).filter(name => name.startsWith(HOOK_FAILURES_FILE)).sort();
+  // The failure lines in those files, whoever reads them: a line with an event.
+  const failuresWritten = (rerailHome: string): number => logFiles(rerailHome)
+    .flatMap(name => readFileSync(join(rerailHome, name), "utf8").split("\n"))
+    .filter(line => line.includes('"event":')).length;
+
   // A busy daemon fails every hook at once, 25 to 37 at a time on a loaded Windows machine. Each round, every process
   // records one failure into a log already past its size, so each finds it full and moves it aside.
-  it("keeps every failure when hooks running at once each find the log full", async () => {
-    const processes = 8;
+  it("keeps every failure when twenty hooks running at once each find the log full", async () => {
+    const processes = 20;
     const rounds = 4;
     const hooks = await startHookProcesses(processes);
     try {
@@ -196,17 +206,15 @@ describe("the hook failure log", () => {
         const rerailHome = await home();
         writeFullLog(rerailHome);
         await Promise.all(hooks.map((hook, index) => hook.fail(rerailHome, 2 + index)));
-        // The full log moved aside whole, and every hook's own failure after it.
-        expect({ round, kept: readHookFailures(rerailHome, 0).failures.length }).toEqual({ round, kept: full + processes });
+        // The full log moved aside whole, and every hook's own failure after it, and status counts them all.
+        expect({ round, written: failuresWritten(rerailHome) }).toEqual({ round, written: full + processes });
         expect(readFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), "utf8").split("\n").filter(Boolean)).toHaveLength(full);
+        expect({ round, counted: statusCount(rerailHome) }).toEqual({ round, counted: full + processes });
       }
     } finally {
       await stopHookProcesses(hooks);
     }
-  });
-
-  // The files of the log in `rerailHome`, by name.
-  const logFiles = (rerailHome: string): string[] => readdirSync(rerailHome).filter(name => name.startsWith(HOOK_FAILURES_FILE)).sort();
+  }, 120_000);
   // A hook the coding agent stops the moment it has taken the full log under its own name, as it stops a hook past its
   // time limit.
   const stopAfterTheTake = `rename => (from, to) => {
@@ -290,6 +298,21 @@ describe("the hook failure log", () => {
   // The reasons of the failures the log keeps past the full log's.
   const reasonsAfterTheFullLog = (rerailHome: string): string[] => readHookFailures(rerailHome, 0).failures.slice(full).map(entry => entry.reason);
 
+  // A hook opens the full log to append and writes only once another hook has moved it aside: its line lands in the
+  // part moved aside.
+  it("counts the failure a hook writes into the log as another hook moves it aside", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const writing = openSync(join(rerailHome, HOOK_FAILURES_FILE), "a");
+    try {
+      recordLast(rerailHome, 3);
+      writeSync(writing, `${JSON.stringify(failure(2))}\n`);
+    } finally {
+      closeSync(writing);
+    }
+    expect(statusCount(rerailHome)).toBe(full + 2);
+  });
+
   // A hook opens the log to append and is held up before it writes, as a busy machine can hold a process. Meanwhile
   // another hook moves the full log aside and begins the next part, and a hook that found the log full before that takes
   // the new part, finds it small and gives it back. The held-up hook writes as its process ends.
@@ -350,7 +373,7 @@ describe("the hook failure log", () => {
       ${refuse("rename")}
     }`);
     expect(reasonsAfterTheFullLog(rerailHome)).toEqual(["the daemon did not answer", "began a live log", "the daemon did not answer"]);
-    expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 3);
+    expect(statusCount(rerailHome)).toBe(full + 3);
   });
 
   // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
@@ -365,12 +388,12 @@ describe("the hook failure log", () => {
         const recording = hooks[0]!.fail(rerailHome, 2).then(() => { recorded = true; });
         const counts = new Set<number>();
         while (!recorded) {
-          counts.add(readHookFailures(rerailHome, 0).failures.length);
+          counts.add(statusCount(rerailHome));
           await setImmediate();
         }
         await recording;
         expect({ round, counts: [...counts].filter(count => count !== full && count !== full + 1) }).toEqual({ round, counts: [] });
-        expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+        expect(statusCount(rerailHome)).toBe(full + 1);
       }
     } finally {
       await stopHookProcesses(hooks);
