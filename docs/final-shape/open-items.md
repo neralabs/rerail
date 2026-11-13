@@ -4034,6 +4034,26 @@ most of their library patterns, but each policy's vocabulary is compiled from sc
 in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
 saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
 
+## O-tape-pack-cost. Packing a tape costs 30 times simdjson's parse
+
+**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB), simdjson parses and builds the tree in
+1.1 G instructions, and the engine's packing of that tree into a tape (`TapeImage::finish` → `pack`) takes 31.5 G,
+in a debug build. The same packing follows tree-sitter's trees, so every language pays it.
+
+**Closure:** the packing measured per node in the build that runs it, and brought near the tree's own cost
+(written straight from a parser's rows into the tape's columns, or moved to a crate that is optimized as a
+dependency is); `json_parse_costs` shows the tape within a few times the tree.
+
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+
+**Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
+editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
+In this repository 1 of 2,201 files is refused; JavaScript repositories have more.
+
+**Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
+its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
+the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
+
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
 **Seen (2026-11-12).** About 6% of the batch (`texts_digest` → `rr::graph_digest`, twice per policy). `combine`
