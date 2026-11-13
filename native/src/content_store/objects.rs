@@ -24,6 +24,29 @@ pub struct ResidentFrames {
     pub source_sha256: [u8; 32],
 }
 
+/// A source's and its tape's compressed frames, with what storing them needs of the raw bytes (their lengths, the
+/// tape's identity), made before the store's writer takes them (`source_and_tape_frames`): the writer holds and
+/// reads no raw source or tape.
+pub struct SourceAndTapeFrames {
+    pub source_len: usize,
+    pub source: Vec<u8>,
+    pub tape_len: usize,
+    pub tape_identity: HashKey,
+    pub tape: Vec<u8>,
+}
+
+impl SourceAndTapeFrames {
+    /// The bytes the frames hold.
+    pub fn bytes(&self) -> usize {
+        self.source.len() + self.tape.len()
+    }
+
+    /// The tape, decompressed: a read of a tape still queued for the writer.
+    pub fn tape_bytes(&self) -> StoreResult<Vec<u8>> {
+        Ok(super::compression::decompress(&self.tape, self.tape_len)?)
+    }
+}
+
 impl ContentStore {
     /// The frames of the tapes whose SHA-256 is each of `tapes`, in one read: `None` where no tape
     /// has that digest. Frames are returned compressed, for the caller to decompress in place.
@@ -616,36 +639,58 @@ impl ContentStore {
         tape_format_version: i64,
         tape: &[u8],
     ) -> StoreResult<(SourceId, TapeId)> {
+        let frames = self.source_and_tape_frames(source, canonical, tape)?;
+        self.put_source_and_tape_framed(canonical, grammar_id, grammar_version, tape_format_version, &frames)
+    }
+
+    /// The compressed frames [`Self::put_source_and_tape_framed`] stores: made where the source and tape are made (a
+    /// parse worker), so the store's one writer thread only inserts them. Compressing on the writer took most of its
+    /// time on a cold run, and the queue held every source whole until then.
+    pub fn source_and_tape_frames(&self, source: &[u8], canonical: HashKey, tape: &[u8]) -> StoreResult<SourceAndTapeFrames> {
+        Ok(SourceAndTapeFrames {
+            source_len: source.len(),
+            source: compress_source(source, self.compression_level, tape_tag(tape))?,
+            tape_len: tape.len(),
+            tape_identity: HashKey::tape_identity(canonical, tape),
+            tape: compress_tape(tape, self.compression_level)?,
+        })
+    }
+
+    /// [`Self::put_source_and_tape`] of frames made beforehand (`source_and_tape_frames`).
+    pub fn put_source_and_tape_framed(
+        &self,
+        canonical: HashKey,
+        grammar_id: i64,
+        grammar_version: i64,
+        tape_format_version: i64,
+        frames: &SourceAndTapeFrames,
+    ) -> StoreResult<(SourceId, TapeId)> {
         self.require_write_capacity()?;
         if grammar_id < 0 || grammar_version < 0 || tape_format_version < 0 {
             return Err(StoreError::Invalid(
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let source_frame = compress_source(source, self.compression_level, tape_tag(tape))?;
-        let tape_frame = compress_tape(tape, self.compression_level)?;
+        let (source_frame, tape_frame) = (&frames.source, &frames.tape);
         self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
             let source_id = put_source_prepared_tx(
                 transaction,
                 canonical,
-                source.len(),
-                &source_frame,
+                frames.source_len,
+                source_frame,
                 &[],
                 created_generation,
             )?;
-            let tape_id = put_tape_tx(
+            // The source's hash is `canonical` (stored or found under it), so the tape's identity was made with it.
+            let tape_id = put_tape_prepared_tx(
                 transaction,
                 source_id,
-                TapePayload {
-                    grammar_id,
-                    grammar_version,
-                    tape_format_version,
-                    bytes: tape,
-                    documents: &[],
-                },
-                &tape_frame,
-                &[],
+                TapePayload { grammar_id, grammar_version, tape_format_version, bytes: &[], documents: &[] },
+                frames.tape_len,
+                frames.tape_identity,
+                tape_frame,
+                created_generation,
             )?;
             self.pin_held(transaction, source_id)?;
             self.pin_held_tape(transaction, tape_id)?;
@@ -1155,6 +1200,7 @@ pub(super) fn put_tape_tx(
         transaction,
         source_id,
         tape,
+        tape.bytes.len(),
         HashKey::tape_identity(source_hash, tape.bytes),
         frame,
         created_generation,
@@ -1186,6 +1232,7 @@ pub(super) fn put_tape_tx(
                 bytes: document.tape,
                 documents: &[],
             },
+            document.tape.len(),
             HashKey::tape_identity(document_source_hash, document.tape),
             tape_frame,
             created_generation,
@@ -1213,13 +1260,14 @@ fn put_tape_prepared_tx(
     transaction: &Connection,
     source_id: SourceId,
     tape: TapePayload<'_>,
+    raw_length: usize,
     canonical_hash: HashKey,
     frame: &[u8],
     created_generation: i64,
 ) -> StoreResult<TapeId> {
     validate_tape_payload(Some(tape))?;
     let canonical_hash_id = intern_hash(transaction, canonical_hash)?;
-    let raw_length = i64::try_from(tape.bytes.len())
+    let raw_length = i64::try_from(raw_length)
         .map_err(|_| StoreError::Invalid("tape length exceeds i64".to_owned()))?;
     transaction
         .prepare_cached(

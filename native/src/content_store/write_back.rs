@@ -143,11 +143,17 @@ enum Run {
 /// in about one transaction.
 const BATCH_IDLE: Duration = Duration::from_millis(500);
 
-/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
-const BATCH_BYTES: usize = CAP_BYTES_DEFAULT / 2;
+/// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it. Of
+/// the cap in force: with `RERAIL_WRITE_QUEUE_MB` under the default, a batch of half the default never committed
+/// before the queue was full, and every large job waited for `BATCH_IDLE`.
+fn batch_bytes() -> usize {
+    cap_bytes() / 2
+}
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
-const SMALL_JOB: usize = CAP_BYTES_DEFAULT / 64;
+fn small_job() -> usize {
+    cap_bytes() / 64
+}
 
 struct Lane {
     tx: mpsc::Sender<Queued>,
@@ -302,7 +308,7 @@ impl ContentStore {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
             // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
-            let full = |s: &State| bytes >= SMALL_JOB && s.jobs > 0 && s.bytes + bytes > cap_bytes();
+            let full = |s: &State| bytes >= small_job() && s.jobs > 0 && s.bytes + bytes > cap_bytes();
             let t = full(&s).then(std::time::Instant::now);
             // The first hold says what fills the queue (a strict run ends at it).
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -358,9 +364,9 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
         // come while it checkpoints are one.
-        let (told, tells) = mpsc::channel::<()>();
+        let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
-        rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
+        let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
             while tells.recv().is_ok() {
                 while tells.try_recv().is_ok() {}
@@ -371,6 +377,9 @@ impl ContentStore {
             }
         })
         .expect("the store's checkpoint thread");
+        // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
+        // files after its owner removed them.
+        let mut checkpoints = Some(checkpoints);
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
@@ -380,7 +389,14 @@ impl ContentStore {
                 }
                 let mut next: Option<Queued> = None;
                 loop {
-                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
+                    let Some(first) = next.take().or_else(|| rx.recv().ok()) else {
+                        // The queue is closed (the last handle's drop): the checkpointer ends with the writer.
+                        drop(std::mem::replace(&mut told, mpsc::channel().0));
+                        if let Some(c) = checkpoints.take() {
+                            let _ = c.join();
+                        }
+                        break;
+                    };
                     let before = thread_cpu();
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
@@ -393,7 +409,7 @@ impl ContentStore {
                         continue;
                     }
                     // One transaction while jobs keep coming: it commits once the queue is idle for `BATCH_IDLE`, holds
-                    // `BATCH_BYTES`, or a job comes that runs alone (a wait for the writer sends one: `written`).
+                    // `batch_bytes()`, or a job comes that runs alone (a wait for the writer sends one: `written`).
                     let mut batch = vec![first];
                     let run = |batch: &mut Vec<Queued>, next: &mut Option<Queued>| -> Vec<StoreResult<()>> {
                         let mut outcomes = Vec::new();
@@ -409,7 +425,7 @@ impl ContentStore {
                                 );
                                 w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
                             }
-                            if bytes >= BATCH_BYTES {
+                            if bytes >= batch_bytes() {
                                 return outcomes;
                             }
                             match rx.recv_timeout(BATCH_IDLE) {

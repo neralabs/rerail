@@ -27,7 +27,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::{ResidentFrames, TapeFrame};
+pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]

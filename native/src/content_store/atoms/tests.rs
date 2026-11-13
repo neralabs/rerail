@@ -263,11 +263,12 @@ fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
 }
 
 /// The database at `path`, copied to a path of its own: opened there, it is a new process's (its atoms are read
-/// from disk, not the ones this process holds for `path`).
+/// from disk, not the ones this process holds for `path`). `VACUUM INTO` copies one consistent snapshot, WAL included.
+/// A checkpoint and a file copy did not: a checkpoint another connection holds back returns "busy" as a row, not an
+/// error, and the copy then missed the WAL's pages ("database disk image is malformed", about one run in four).
 fn elsewhere(path: &std::path::Path, label: &str) -> std::path::PathBuf {
-    rusqlite::Connection::open(path).unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     let copy = self::path(label);
-    std::fs::copy(path, &copy).unwrap();
+    rusqlite::Connection::open(path).unwrap().execute("VACUUM INTO ?1", [copy.to_string_lossy()]).unwrap();
     copy
 }
 
