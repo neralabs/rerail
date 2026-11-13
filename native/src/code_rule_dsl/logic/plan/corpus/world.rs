@@ -28,6 +28,17 @@ use std::path::{Path, PathBuf};
 use crate::content_store::observe::{Listing, EntryTypes};
 type Directory = (Listing, EntryTypes);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FileError {
+    pub kind: &'static str,
+    pub errno: i64,
+    pub detail: String,
+    pub bytes_hex: String,
+    pub start: i64,
+    pub end: i64,
+    pub reason: String,
+}
+
 /// Documents loaded at most, unless `env("load.budget", n)` says otherwise.
 const BUDGET: usize = 4000;
 /// The request of a load, and the relation of what was loaded.
@@ -145,6 +156,8 @@ impl World {
         self.files.insert(asked.to_owned(), lines.clone());
         lines
     }
+
+    pub(super) fn file_error(&mut self, _asked: &str) -> Option<FileError> { None }
 
     /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
     /// for the file.
@@ -406,5 +419,26 @@ mod directory_metadata_tests {
         symlink("target", root.join("a.py")).unwrap();
         assert!(!World::new(&root, &prog).still(&consulted), "file and symlink-to-file have equal dir_entry rows");
         assert!(World::new(&root, &prog).dir_types(base.path().to_str().unwrap()).0.is_empty(), "outside roots denied");
+    }
+}
+
+#[cfg(test)]
+mod file_error_tests {
+    use super::*;
+    #[test]
+    fn file_lines_and_decode_errors_share_a_single_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("bad.py"), [b'a', 0xe2, 0x82]).unwrap();
+        let prog = front::Program::default();
+        let mut world = World::new(root, &prog);
+        assert!(world.file("bad.py").is_empty());
+        std::fs::write(root.join("bad.py"), "changed\n").unwrap();
+        let error = world.file_error("bad.py").expect("the error of the same snapshot, not the edited file");
+        assert_eq!((error.kind, error.bytes_hex.as_str(), error.start, error.end, error.reason.as_str()),
+                   ("InvalidUtf8", "61e282", 1, 3, "unexpected end of data"));
+        assert_eq!(World::new(root, &prog).file("bad.py"), vec!["changed".to_owned()]);
+        assert!(world.file_error("missing.py").is_none(), "a path not resolved inside the permitted roots is refused");
+        assert!(world.file_error(root.parent().unwrap().to_str().unwrap()).is_none(), "outside roots refused");
     }
 }
