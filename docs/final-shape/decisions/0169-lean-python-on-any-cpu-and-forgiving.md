@@ -78,6 +78,19 @@ The lean lexer's stage 1 is one such kernel. It gives four masks a block (word, 
 from nibble tables. Stage 2 is the scalar lexer, which reads runs and stops off the masks by trailing
 zeros.
 
+The `.rr` parser's micro-lexers (`rr_syntax/src/micro.rs`) are kernels over the same trait, so
+they also run on any CPU. Before, they had NEON code and an 8-bytes-a-word portable version. Two
+NEON-only steps have trait equivalents:
+
+- The pair mask's next bytes come from a second load at offset 1 (the window holds 80 bytes), in
+  place of a byte extract.
+- A non-ASCII first byte (`>= 0xc0`) is found by a high-nibble table, in place of an unsigned
+  compare.
+
+The portable byte compare (8 bytes a word, SWAR) is now the Fallback backend's `eq_mask`, so wasm
+keeps it. The `.rr` lean rows went from 713 to 721 M instructions over the repository's 1,454 `.rr`
+files (`rr_parse_costs`, +1%; the extra table lookup).
+
 ### Keywords by a perfect hash
 
 The 33 keywords and 8 soft keywords (`async`, `await`, `match`, `case`, `type`, `print`, `exec`, `_`)
@@ -201,4 +214,3 @@ A clean text is never lexed again.
   error-cost choices.
 - **Lexing again on a join** reads the whole text again. A lexer that resumes from a saved layout
   state would read only from the join.
-- **rr_syntax's `micro.rs`** has NEON and portable code only. It could move onto `rerail-simd8`.
