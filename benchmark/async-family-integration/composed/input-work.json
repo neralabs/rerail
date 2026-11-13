@@ -1,0 +1,74 @@
+{
+  "doc": {
+    "filters": 211,
+    "batches": 0,
+    "candidate_rows": 13490,
+    "column_reads": 24566
+  },
+  "fl138_violation_at": {
+    "filters": 1,
+    "batches": 0,
+    "candidate_rows": 0,
+    "column_reads": 0
+  },
+  "fl139_violation_at": {
+    "filters": 1,
+    "batches": 0,
+    "candidate_rows": 0,
+    "column_reads": 0
+  },
+  "fl140_violation_at": {
+    "filters": 1,
+    "batches": 0,
+    "candidate_rows": 0,
+    "column_reads": 0
+  },
+  "fl141_violation_at": {
+    "filters": 1,
+    "batches": 0,
+    "candidate_rows": 0,
+    "column_reads": 0
+  },
+  "node": {
+    "filters": 21,
+    "batches": 0,
+    "candidate_rows": 27348,
+    "column_reads": 21
+  },
+  "py_attribute": {
+    "filters": 72,
+    "batches": 0,
+    "candidate_rows": 268338,
+    "column_reads": 310309
+  },
+  "py_call_site": {
+    "filters": 65412,
+    "batches": 0,
+    "candidate_rows": 65401,
+    "column_reads": 261600
+  },
+  "py_exec_context": {
+    "filters": 72,
+    "batches": 0,
+    "candidate_rows": 65399,
+    "column_reads": 392394
+  },
+  "rr_diagnostic_at": {
+    "filters": 1,
+    "batches": 0,
+    "candidate_rows": 0,
+    "column_reads": 0
+  },
+  "strtest_0": {
+    "filters": 6131,
+    "batches": 0,
+    "candidate_rows": 6131,
+    "column_reads": 6131
+  },
+  "text": {
+    "filters": 50255,
+    "batches": 0,
+    "candidate_rows": 50255,
+    "column_reads": 100510
+  }
+}

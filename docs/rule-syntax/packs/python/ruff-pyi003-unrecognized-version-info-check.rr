@@ -1,0 +1,27 @@
+.policy "ruff-pyi003-unrecognized-version-info-check" revision 2
+.description "Compare sys.version_info in stub files only against tuples of integers, or its major version against an integer; type checkers do not understand other forms."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI003 (flake8-pyi), stubs only: an `if` test comparing sys.version_info in a form type checkers do not
+// understand. The left side must be the whole value, `[0]`, `[:1]` or `[:2]`; `[0]` is compared with an int
+// literal, the others with a tuple of int literals (each maybe parenthesised). The `if` test is checked, or each
+// operand of its top-level `and`/`or`; elifs are not.
+//   if sys.version_info[1:] == (8,):     ← PYI003: a start in the slice
+//   if sys.version_info[0] == "3":       ← PYI003: not an int
+//   if sys.version_info >= (3, "8"):     ← PYI003: not all ints
+//   if sys.version_info >= (3, 8):       fine
+#include "python/typing.rr"
+
+.violation PYI003(at: node, msg: symbol) code "PYI003" "{msg}"
+    suppress ruff "PYI003"
+PYI003(c, "Index `sys.version_info` only with `[0]`, `[:1]` or `[:2]`, or compare the whole value against a tuple; type checkers do not understand other forms.") :-
+    stub_version_test(c, "other", _).
+PYI003(c, "Compare `sys.version_info[0]` against an integer literal such as `3`; type checkers do not understand other comparands.") :-
+    stub_version_test(c, "major", r), !pyi_int(r).
+PYI003(c, "Compare `sys.version_info` against a tuple of integer literals such as `(3, 10)`; type checkers do not understand other comparands.") :-
+    stub_version_test(c, f, r), f != "other", f != "major", !int_tuple(r, _).
+// stub_version_test(c, form, r): the stub `if` test c (or an operand of its and/or) compares sys.version_info.
+.decl stub_version_test(c: node, form: symbol, r: node)
+stub_version_test(c, f, r) :- stub_test(c), version_cmp(c, f, _, r).

@@ -1,0 +1,133 @@
+.policy "local:no-nested-routers" revision 2
+.description "A router rendered inside another router, directly or through components."
+.language typescript
+.mode log
+.possible log                    // findings reached only through components whose behaviour is unknown
+.scope include "src/**/*.tsx", "src/**/*.jsx"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
+// Accurate version: also catches nesting through components (across files), router wrappers, re-exports,
+// namespace imports, composites that render {children}, Fragment, and <Route element={…}>.
+//
+// How to read this file
+//   1. provider / provider_el: which components give router context, and the elements that use them.
+//   2. passes: elements that render their children beneath themselves, so router context flows through them.
+//   3. outer(c, r): within one file, c ends up rendered under provider element r (climbing through passes).
+//   4. rendered / roots: per component, the routers it renders at its top, followed through other components
+//      across files. roots is keyed by the component's symbol, so it joins files without walking their trees.
+//   5. Two findings: a router element under a router in the same file (NESTED_ROUTER_JSX), and a component
+//      that renders a router being used under a router (NESTED_ROUTER_VIA_COMPONENT).
+// Compared with the same-meaning version, which stops at the first component element, this one asks what
+// that component does with its children.
+
+#include "tsx/names.rr"
+//   sym_of(n, q)          identifier or member chain n denotes exported symbol q ("module#name"). Follows imports,
+//                         aliases, `import * as`, and re-export chains across files. Stops at package boundaries.
+#include "tsx/jsx.rr"
+//   tag(e, t)             the tag name of element e (none for <>…</>)
+//   host_tag(t)           t is a lowercase intrinsic tag: div, span, …
+//   component(q, f)       function f defines component q: function, arrow, memo(…) or forwardRef(…)
+//   render_root(f, e)     e is a top element of what f returns
+//   render_up(c, p)       p is the element c renders under, one step up within a file. Transparent: fragments
+//                         (<>, Fragment, React.Fragment), {…}, && and ?:, callbacks in child position (xs.map(x => <X/>)).
+//                         Attributes and other functions end it.
+//   render_attr(c, e, a)  c is the value of attribute a ("module#Tag.prop") of element e
+//   children_slot(f, s)   s is a {children} or {props.children} in what f returns
+//
+// Three-valued relations are declared `must, may`. In a must derivation `!R` reads may-R; in a may derivation it
+// reads must-R. So a definite finding never rests on an unknown.
+// A rule prefixed `must` or `may` adds rows to that side only; a rule with no prefix holds on both sides.
+// Findings that hold only on the may side are reported as `possible`, with the .possible mode above.
+
+// Router symbols, as "module#Export" keys once combined by @qname. StaticRouterProvider is new in this version.
+.decl router_module(v: symbol)
+router_module("react-router"). router_module("react-router-dom").
+router_module("react-router/dom"). router_module("react-router-dom/server").
+router_module("react-router/dom/server"). router_module("react-router/server").
+.decl router_export(v: symbol)
+router_export("BrowserRouter"). router_export("HashRouter").
+router_export("MemoryRouter"). router_export("Router").
+router_export("RouterProvider"). router_export("HistoryRouter").
+router_export("unstable_HistoryRouter"). router_export("StaticRouter").
+router_export("StaticRouterProvider").
+// Attributes whose value is rendered inside the element's router context: <Route element={<X/>}>.
+// Written as "module#Tag.prop", the form render_attr produces.
+.decl render_prop(v: symbol)
+render_prop("react-router#Route.element").
+render_prop("react-router#Route.errorElement").
+render_prop("react-router-dom#Route.element").
+render_prop("react-router-dom#Route.errorElement").
+
+// Components that give router context to what they render: routers, and wrappers that render {children} under one.
+.decl provider(q: symbol)
+// Every (module, export) pair of the two sets. @qname builds the symbol key, e.g. "react-router-dom#BrowserRouter".
+provider(q) :- router_module(m), router_export(x), q = @qname(m, x).
+// A wrapper: component q's {children} slot is itself rendered under a provider element inside q.
+// So `function AppShell({children}) { return <BrowserRouter>{children}</BrowserRouter> }` is a provider too.
+provider(q) :- component(q, f), children_slot(f, s), outer(s, _).
+
+// provider_el(e): an element whose tag resolves (across files, through re-exports) to a provider.
+.decl provider_el(e: node)
+provider_el(e) :- tag(e, t), sym_of(t, q), provider(q).
+
+// passes(e): what e is given as children is rendered beneath it.
+// Used by the climb in outer and rendered: router context is inherited only through elements that pass.
+.decl passes(e: node)  must, may
+// Host elements (<div>, <main>) always render their children.
+must passes(e) :- tag(e, t), host_tag(t).
+// A provider renders its children (under itself).
+must passes(e) :- provider_el(e).
+// A workspace component whose returned tree contains a {children} slot.
+must passes(e) :- tag(e, t), sym_of(t, q), component(q, f), children_slot(f, _).
+// Unknown cases go on the may side only. A component that renders no {children} is in neither side: it passes nothing.
+may  passes(e) :- tag(e, t), sym_of(t, q), !component(q, _).   // a package component with no summary
+may  passes(e) :- tag(e, t), !sym_of(t, _).                      // a tag that does not resolve
+
+// outer(c, r): c renders under provider element r, within one file (a tape climb).
+// Every cycle through provider, outer, provider_el and passes is positive, so the program stays stratified.
+.decl outer(c: node, r: node)  must, may
+// One step up reaches a provider element.
+outer(c, r) :- render_up(c, r), provider_el(r).
+// One step up reaches an element that passes its children; keep climbing from there. This recursion is what
+// lets <BrowserRouter><Layout><MemoryRouter/></Layout></BrowserRouter> be found when Layout renders {children}.
+outer(c, r) :- render_up(c, p), passes(p), outer(p, r).
+// An element given as <Route element={c}> is rendered in the Route's context, so it inherits the Route's outer router.
+outer(c, r) :- render_attr(c, e, a), render_prop(a), outer(e, r).
+
+// rendered(f, e): component function f renders element e.
+// Starts at the top elements of f's return value and goes down through elements that pass their children.
+// An element inside a component that does not pass children (e.g. inside <Modal> with no {children}) is not rendered.
+.decl rendered(f: node, e: node)  must, may
+rendered(f, e) :- render_root(f, e).
+rendered(f, e) :- rendered(f, p), render_up(e, p), passes(p).
+
+// roots(q, r): component q renders provider element r with no provider above it inside q.
+// Recurses across files on the interned key q, so it runs in waves.
+// These are the routers q brings with it: using q under another router nests them.
+.decl roots(q: symbol, r: node)  must, may
+// Directly: q's own tree contains a provider element that is not already under another provider in q.
+roots(q, r) :- component(q, f), rendered(f, r), provider_el(r), !outer(r, _).
+// Through a child component: q renders <Q2/> (not under a provider in q) and Q2 has root router r.
+// r is the router element in Q2's file; it is what the second violation cites.
+roots(q, r) :- component(q, f), rendered(f, e), !outer(e, _), tag(e, t), sym_of(t, q2), roots(q2, r).
+
+// Finding 1: a provider element (router or wrapper) under another provider element in the same file.
+// {outer.tag} and {outer.line} print the outer router's tag name and line.
+.violation NESTED_ROUTER_JSX(at: node, outer: node)
+    "Remove this inner router; <{outer.tag}> at line {outer.line} already provides one."
+    fix drop_inner "Remove the inner <{at.tag}> and keep what it contains"
+NESTED_ROUTER_JSX(e, o) :- provider_el(e), outer(e, o).
+
+// Fix for finding 1 (a suggestion: the person or agent confirms it). unwrap (tsx/jsx) deletes the inner element's
+// open and close tags, or turns them into <>…</> when several children need one parent. Offered only when it loses
+// nothing: the inner element is a router itself, not a wrapper component that may do more, and it has no
+// attributes, since `basename` or `initialEntries` would change routing.
+drop_inner(e, o) :- tag(e, t), sym_of(t, q), router_module(m), router_export(x), q = @qname(m, x),
+    field(e, "open_tag", ot), count : { child(ot, a, _), kind(a, "jsx_attribute") } = 0
+    => unwrap(e).
+
+// Finding 2: element u uses a component that renders a router (roots), and u itself sits under a router.
+// !provider_el(u) avoids reporting the same element twice: a provider element is already covered by finding 1.
+.violation NESTED_ROUTER_VIA_COMPONENT(at: node, inner: node)
+    "<{at.tag}> renders a router ({inner.path}:{inner.line}) but is used inside another router."
+NESTED_ROUTER_VIA_COMPONENT(u, r) :-
+    tag(u, t), !provider_el(u), sym_of(t, q), roots(q, r), outer(u, _).

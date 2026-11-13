@@ -1,0 +1,114 @@
+// python/comprehensions: the vocabulary of Ruff's flake8-comprehensions (C4) rules: calls of the collection
+// builtins, the shape of their one argument, and comprehensions with one plain `for`. Also two tests the
+// flake8-simplify rules (python/simplify) share: names bound to a dict.
+//
+// Interface
+//   1. Calls:     c4_call(c, x)          c calls the name x, and x is the builtin there (Ruff's
+//                                        has_builtin_binding): `list(…)`, not `builtins.list(…)`
+//                 c4_named(c, x)         c calls the name x, whatever it is bound to (C402 checks no more)
+//                 c4_builtin(c, x)       c's callee resolves to the builtin x, by name or as `builtins.x`
+//                                        (Ruff's resolve_builtin_symbol)
+//                 c4_only(c, a)          c has exactly one argument, the positional a, parentheses off
+//                 c4_first(c, a)         a is c's first positional argument, parentheses off; none for `*xs`
+//                 c4_builtin_here(n, x)  the name x would read the builtin at n: nothing that n's lookup sees
+//                                        binds it (has_builtin_binding where no name node is written)
+//                 Argument counts and displays come from python/ruff: call_nargs, call_nkwargs, list_like.
+//   2. Shapes:    c4_comp(e, k)          e, parentheses off, is a comprehension: k "list", "set", "dict" or
+//                                        "generator" (a generator expression)
+//                 c4_simple(e, fc)       comprehension e has one `for` clause fc, not `async for`, and no `if`
+//                 c4_elt(e, x)           x is e's element, parentheses off; a dict comprehension's is its pair
+//                 c4_pair(e)             e, parentheses off, is a tuple of two elements, neither `*x`
+//                 c4_passthrough(e)      e is c4_simple and its element is its target: `x for x in y`
+//   3. Types:     dict_ref(n)            name n reads a binding Ruff's typing::is_dict accepts: `d = {}`,
+//                                        `d = dict(…)`, a dict comprehension, `d: dict[…]`, a parameter
+//                                        annotated `dict` or `Dict`, or `**kwargs`
+//
+// Python and Ruff background
+//   - Ruff's tree has no parentheses: `list((x for x in y))` passes the generator itself.
+//   - A C4 check of `list(…)` reads the name `list`, and skips the call when the file has rebound it at that
+//     point (`def list(): …` above); C408, C413 to C415, C417 and C419 also take `builtins.list`.
+//   - A comprehension is a scope of its own (python/names); its first iterable runs outside it.
+//
+//   list(x for x in y)           c4_call(<call>, "list"), c4_only(<call>, <gen>), c4_comp(<gen>, "generator"),
+//                                c4_simple(<gen>, <for x in y>), c4_elt(<gen>, <x>)
+//   dict([(k, v) for k, v in d]) c4_only(<call>, <listcomp>), c4_elt(<listcomp>, <(k, v)>), c4_pair(<(k, v)>)
+#include "python/ruff.rr"       // call_only, ruff_arg, call_nargs, call_nkwargs, ruff_qual
+#include "python/upgrade.rr"    // builtin_at
+#include "python/compare.rr"    // cmp_same, cmp_same_ask
+
+// ---- 1. calls ----------------------------------------------------------------------------------------------------
+.decl c4_call(c: node, x: symbol)
+c4_call(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), builtin_at(f, x).
+.decl c4_named(c: node, x: symbol)
+c4_named(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x).
+.decl c4_builtin(c: node, x: symbol)
+c4_builtin(c, x) :- kind(c, "call"), field(c, "function", f), unparen(f, m), builtin_at(m, x).
+// c4_builtin_here(n, x): in n's own and enclosing scopes (a class body only when n is directly in it), no
+// binding of x that Ruff has seen at n: in code that runs at import time, only the bindings above n.
+.decl c4_builtin_here(n: node, x: symbol)
+c4_builtin_here(n, x) :- c4_builtin_ask(n, x), builtin(x), !c4_shadow(n, x).
+.decl c4_builtin_ask(n: node, x: symbol)
+.decl c4_shadow(n: node, x: symbol)
+c4_shadow(n, x) :- c4_builtin_ask(n, x), binding(s, x, site, _), (within(n, s), !kind(s, "class_definition") ;
+    scope_node(n, s), kind(s, "class_definition")), (!runs_at_import(n) ; earlier(site, n)).
+c4_shadow(n, x) :- c4_builtin_ask(n, x), docof(n, d), modnode(d, m), star(m).
+.decl c4_only(c: node, a: node)
+c4_only(c, m) :- call_only(c, a), unparen(a, m).
+.decl c4_first(c: node, a: node)
+c4_first(c, m) :- ruff_arg(c, 0, a), unparen(a, m).    // `f(*xs, y)` has none: ruff_arg stops at `*xs`
+
+// ---- 2. shapes ---------------------------------------------------------------------------------------------------
+.decl c4_comp(e: node, k: symbol)
+c4_comp(e, k) :- unparen(e, m), kind(m, t), c4_comp_kind(t, k).
+.decl c4_comp_kind(t: symbol, k: symbol)
+c4_comp_kind("list_comprehension", "list"). c4_comp_kind("set_comprehension", "set").
+c4_comp_kind("dictionary_comprehension", "dict"). c4_comp_kind("generator_expression", "generator").
+// c4_simple(e, fc): `[f(x) for x in y]` has one; `[x for x in y if x]`, `[x for y in z for x in y]` and
+// `[x async for x in y]` have none.
+.decl c4_simple(e: node, fc: node)
+c4_simple(m, fc) :- kind(m, t), c4_comp_kind(t, _), child(m, fc, _), kind(fc, "for_in_clause"),
+    !op(fc, "async"), count : { child(m, o, _), kind(o, k), c4_clause(k) } = 1.
+.decl c4_clause(k: symbol)
+c4_clause("for_in_clause"). c4_clause("if_clause").
+.decl c4_elt(e: node, x: node)
+c4_elt(m, x) :- kind(m, t), c4_comp_kind(t, _), field(m, "body", b), unparen(b, x).
+.decl c4_pair(e: node)
+c4_pair(e) :- unparen(e, m), kind(m, "tuple"), count : { child(m, c, _), !kind(c, "comment") } = 2,
+    count : { child(m, c, _), kind(c, "list_splat") } = 0.
+
+.decl c4_passthrough(e: node)
+c4_passthrough(e) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t), cmp_same(x, t).
+cmp_same_ask(x, t) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t).
+
+// ---- 3. dict-typed names -----------------------------------------------------------------------------------------
+// dict_ref(n): the binding n's lookup lands on, the latest one above n in its scope (any, when none is above:
+// a function reads the module's after it is defined), is a dict by Ruff's typing::is_dict.
+//   d = {}               d.get(k, None)     dict_ref(<d>)
+//   def f(**kw): kw.get(k, None)            dict_ref(<kw>)
+.decl dict_ref(n: node)
+dict_ref(n) :- ast_name(n, x), look(n, x, s),
+    k = max i : { binding(s, x, st, _), earlier(st, n), visit_index(st, i) }, binding(s, x, site, _),
+    visit_index(site, k), dict_site(site).
+dict_ref(n) :- ast_name(n, x), look(n, x, s), count : { binding(s, x, st, _), earlier(st, n) } = 0,
+    binding(s, x, site, _), dict_site(site), count : { binding(s, x, o, _), !dict_site(o) } = 0.
+.decl dict_site(site: node)
+dict_site(a) :- kind(a, "assignment"), !field(a, "type", _), field(a, "right", v), dict_value(v).
+dict_site(a) :- kind(a, "named_expression"), field(a, "value", v), dict_value(v).
+dict_site(a) :- kind(a, "assignment"), field(a, "type", t), dict_annotation(t).
+dict_site(p) :- (kind(p, "typed_parameter") ; kind(p, "typed_default_parameter")), field(p, "type", t),
+    dict_annotation(t).
+dict_site(p) :- kind(p, "typed_parameter"), child(p, s, 0), kind(s, "dictionary_splat_pattern").
+dict_site(p) :- kind(p, "dictionary_splat_pattern").
+.decl dict_value(v: node)
+dict_value(v) :- unparen(v, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+dict_value(v) :- unparen(v, m), kind(m, "call"), field(m, "function", f), unparen(f, g), builtin_at(g, "dict").
+// dict_annotation(t): `dict`, `dict[str, int]`, `Dict[…]`, `typing.Dict`, through tree-sitter's `type` wrapper.
+.decl dict_annotation(t: node)
+dict_annotation(t) :- ann_head_node(t, h), builtin_at(h, "dict").
+dict_annotation(t) :- ann_head_node(t, h), typing_ref(h, "Dict").
+.decl ann_head_node(t: node, h: node)
+ann_head_node(t, t) :- kind(t, "identifier").
+ann_head_node(t, t) :- kind(t, "attribute").
+ann_head_node(t, h) :- kind(t, "type"), child(t, x, 0), ann_head_node(x, h).
+ann_head_node(t, h) :- kind(t, "subscript"), field(t, "value", v), ann_head_node(v, h).
+ann_head_node(t, h) :- kind(t, "generic_type"), child(t, v, 0), ann_head_node(v, h).

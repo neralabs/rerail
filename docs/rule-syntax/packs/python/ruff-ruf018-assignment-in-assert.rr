@@ -1,0 +1,21 @@
+.policy "ruff-ruf018-assignment-in-assert" revision 3
+.description "Avoid assignment expressions in assert statements when the name is used outside asserts; the assignment is lost when assertions are disabled."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF018: a walrus inside an `assert` binds a name that code outside asserts reads. Under `python -O`
+// asserts do not run, so that code would find the name unbound. Reads inside asserts are fine.
+//   assert (x := f()) == 0
+//   print(x)                       ← RUF018 at `x := f()`
+//   assert (t := f()) == 1
+//   assert isinstance(t, tuple)    not reported: only asserts read t
+// Only reads of this binding count: after the walrus, with no other binding of the name in between.
+#include "python/ruff.rr"
+
+.violation RUF018(at: node, x: symbol) code "RUF018"
+    "Assign `{x}` in its own statement before the `assert` and assert on `{x}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."
+    suppress ruff "RUF018"
+RUF018(w, x) :- kind(w, "named_expression"), inside(w, _, "assert_statement"), field(w, "name", t), text(t, x),
+    binding(s, x, t, "walrus"), look(n, x, s), expr_ctx(n, "load"), !inside(n, _, "assert_statement"), n > t,
+    count : { binding(s, x, b, _), b > t, b < n } = 0.

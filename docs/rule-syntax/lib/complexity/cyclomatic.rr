@@ -1,0 +1,42 @@
+// complexity/cyclomatic: McCabe's cyclomatic complexity per function, counted as lizard 1.24.0 counts it, for the
+// complexity pack's rules (one per language).
+//
+// A function's cyclomatic complexity (CCN) is 1 plus its decision points: each place where control can take one
+// more path. lizard counts tokens (`if`, `for`, `&&`, `case`, …); these rules count syntax nodes, so a token in a
+// string, a type or a macro never counts, and a `switch` or `match` counts once however many cases it has (the
+// lower of lizard's standard count and its `-m` count, as the pack's README says). A nested function is scored on
+// its own and adds nothing to the function around it; a function kind the language's table leaves out (a Python
+// lambda, a Rust closure, a PHP arrow function) is part of its enclosing function.
+//
+//   def grade(s):                 CCN 1
+//       if s > 90: return "A"     +1 if
+//       elif s > 80 and ok: …     +1 elif, +1 and
+//       for x in xs: …            +1 for
+//   -> 4
+//
+// A function fails at 7 or more: more than 6, the ceiling the pack sets. The finding sits on the whole function and
+// names it: `grade` has cyclomatic complexity 7, over the ceiling of 6. A function with no name of its own takes
+// the one its language's table gives it (a variable, a field, an object key); otherwise it is "This function".
+//
+// Each language is a table (lib/complexity/<language>.rr) that gives rows to three relations, and includes this:
+//   cc_boundary(k)        k is a function kind: a function of this kind is scored, and counting stops at one
+//   cc_decision(n, i)     n is a decision point; i tells apart several at one node (Rust's let-chain `&&`s), else 0
+//   cc_name(f, x)         function f is called x in the message (no row: "This function")
+// What a rule gets from this library:
+//   cc_ccn(f, k)          function f has cyclomatic complexity k
+//   cc_report(f, msg)     f is over the ceiling, with the pack's message
+//
+// Builds on core only (within_stop).
+
+.decl cc_boundary(k: symbol)
+.decl cc_decision(n: node, i: number)
+.decl cc_name(f: node, x: symbol)
+
+.decl cc_ccn(f: node, k: number)
+cc_ccn(f, 1 + count : { cc_decision(n, i), within_stop(n, f, cc_boundary) }) :- kind(f, b), cc_boundary(b).
+
+.decl cc_report(f: node, msg: symbol)
+cc_report(f, cat("`", x, "` has cyclomatic complexity ", to_string(k),
+    ", over the ceiling of 6. Decompose it into smaller functions.")) :- cc_ccn(f, k), k > 6, cc_name(f, x).
+cc_report(f, cat("This function has cyclomatic complexity ", to_string(k),
+    ", over the ceiling of 6. Decompose it into smaller functions.")) :- cc_ccn(f, k), k > 6, !cc_name(f, _).

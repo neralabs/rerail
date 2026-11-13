@@ -1,0 +1,73 @@
+.policy "data-layer:file-length" revision 1
+.description "Python files over 2000 lines that are not allowlisted, or grew past their allowlisted length."
+.language python
+.mode block                      // `--check`; the suite plugin reports the same findings as warnings
+.scope dirs "api", "impl", "conform"
+.scope tests true
+// Python linter: scripts/lint_file_length.py. A file over 2000 lines is a FILE_LENGTH finding at line 1 unless
+// .file-length-allowlist.json lists it with a count it has not grown past. The allowlist is signed; the
+// signature lives in the script itself, as the string constant ALLOWLIST_SIGNATURE.
+//
+// How to read this file
+//   1. line_count (core) gives each file's length, as the script's str.splitlines() counts it.
+//   2. allowlisted reads the allowlist; script_line reads the script, to find the signature.
+//   3. signing.rr rebuilds the signed message from both and checks it.
+//   4. A bad signature is a gate: it replaces every other finding, as the script exits before scanning.
+//
+// Shows: a JSON reader, a signature verified in Datalog, a gate, and a finding at a fixed line of a file.
+
+#include "data-layer/signing.rr"
+//   allow_entry, allow_sig (provided here) -> allow_status("file_length", "valid" | "invalid" | "unsigned")
+
+// .file-length-allowlist.json is one object, {"impl/a.py": 9905, …}: the json reader gives one row per member.
+// A malformed file gives no rows (and an input_error row), and the script then treats the list as empty too.
+.decl allowlisted(path: symbol, max: number)
+.input allowlisted(IO=json, filename=".file-length-allowlist.json")
+
+// The signature is a line of the script: ALLOWLIST_SIGNATURE: str = "6U8R…==". The lines reader reads any
+// repository file, so the script need not be in the policy's scope.
+.decl script_line(l: number, t: symbol)
+.input script_line(IO=lines, filename="scripts/lint_file_length.py")
+
+// What the script signs (_allowlist_to_entries): "path:count" for each entry, under linter "lint_file_length".
+allow_entry("file_length", e) :- allowlisted(p, n), e = cat(p, ":", to_string(n)).
+allow_sig("file_length", "lint_file_length", s) :- script_line(_, t),
+    match("ALLOWLIST_SIGNATURE(?:\\s*:\\s*str)?\\s*=\\s*\"(?<s>[^\"]*)\".*", t).
+
+// The script checks the signature only when the allowlist has entries (cli_main: `if allowlist and …`).
+// Unsigned and invalid both fail. No signature line at all fails too: the script could not run without one.
+.violation invalid_allowlist_signature(at: loc)
+    "The allowlist has been modified without re-signing; sign it with --sign-allowlist"
+invalid_allowlist_signature(@place(".file-length-allowlist.json", 1)) :- allowlisted(_, _),
+    !allow_status("file_length", "valid").
+.gate invalid_allowlist_signature
+
+// The scan: every .py file under the scope directories (find_long_files). Rerail's walk skips .git and
+// __pycache__ already; the script also skips these three.
+.decl skipped(part: symbol)
+skipped(".pytest_cache"). skipped("node_modules"). skipped(".hypothesis").
+.decl long_file(d: number, path: symbol, n: number)
+long_file(d, p, n) :- doc(d, p, _), line_count(d, n), n > 2000, count : { path_part(d, x), skipped(x) } = 0.
+
+// One code for both cases, as in the script; the message says which. Line 1: the finding is about the whole
+// file, and the script reports it at line 1, so the place is the file's first line.
+.violation FILE_LENGTH(at: loc, path: symbol, n: number, max: number)
+    "{path} has {n} lines, above threshold 2000 (allowlisted: {max})"
+.severity FILE_LENGTH warning
+// Not allowlisted: max 0 stands for "none" in the message.
+FILE_LENGTH(@place(p, 1), p, n, 0) :- long_file(_, p, n), !allowlisted(p, _).
+// Allowlisted, but grew past its count.
+FILE_LENGTH(@place(p, 1), p, n, m) :- long_file(_, p, n), allowlisted(p, m), n > m.
+
+// Not findings in the script either: allowlisted files that shrank and stale entries are printed as advice.
+// Published for anyone who wants the burn-down, never reported.
+.decl stale_entry(path: symbol)
+.output stale_entry
+stale_entry(p) :- allowlisted(p, _), !long_file(_, p, _).
+
+// Differences from the script, all at the edges:
+//   the suite plugin counts lines as source.count("\n") (plus one for a last unterminated line), the CLI as
+//   splitlines(); they differ only on files with \r, \f or other separators, and this port follows the CLI,
+//   which is what CI runs.
+//   A file that is not valid UTF-8 is skipped by the script; here its source is read with replacement.
+//   Rerail's walk also skips .venv, venv and tmp, which the script would scan under impl/.

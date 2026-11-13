@@ -1,0 +1,34 @@
+.policy "ruff-ruf006-asyncio-dangling-task" revision 2
+.description "Keep a reference to every asyncio task until it finishes, such as in a set or by awaiting it; the event loop holds tasks only weakly, so they can be dropped mid-run."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF006: a task whose reference is dropped. The event loop keeps only a weak reference to it, so it can
+// be garbage-collected mid-run. A task call is `asyncio.create_task(…)`, `asyncio.ensure_future(…)`, or
+// `loop.create_task(…)` where `loop` is assigned from `asyncio.get_running_loop()`, `get_event_loop()` or
+// `new_event_loop()`. Reported where the result is dropped:
+//   asyncio.create_task(main())                  ← RUF006: an expression statement
+//   task = asyncio.create_task(main())           ← RUF006: a name that is never read (any scope)
+//   tasks.append(asyncio.create_task(main()))    not reported: the reference is kept
+#include "python/ruff.rr"
+
+// task_call(c): a call that starts a task.
+.decl task_call(c: node)
+task_call(c) :- call_q(c, q), (q = "asyncio.create_task" ; q = "asyncio.ensure_future").
+task_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "create_task"), unparen(o, l),
+    look(l, x, s), asg(s, x, r, _), call_q(r, q), loop_maker(q).
+.decl loop_maker(q: symbol)
+loop_maker("asyncio.get_event_loop"). loop_maker("asyncio.get_running_loop"). loop_maker("asyncio.new_event_loop").
+
+.violation RUF006(at: node, msg: symbol) code "RUF006" "{msg}"
+    suppress ruff "RUF006"
+RUF006(c, "Keep a reference to this task: add it to a set and discard it in `add_done_callback`, or await it. Otherwise it can be garbage collected before it finishes.") :-
+    kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), unparen(e, c), task_call(c).
+// A name x of a module, class or function, assigned the task by `x = …` or `x: T = …` (one target), that
+// nothing reads: Ruff's unused binding. Every assignment of x counts once the name is unread in its scope;
+// `global x` and `nonlocal x` bind elsewhere.
+RUF006(c, cat(cat("`", x), "` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it.")) :-
+    rasg(f, x, r, a), !decl(f, x, _), asgstmt(a, _), unparen(r, c), task_call(c), !read_in(f, x).
+.decl read_in(f: node, x: symbol)
+read_in(f, x) :- asg(f, x, _, _), look(n, x, f), expr_ctx(n, c), c != "store".

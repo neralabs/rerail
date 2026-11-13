@@ -1,0 +1,17 @@
+.policy "ruff-c403-unnecessary-list-comprehension-set" revision 2
+.description "Use a set comprehension instead of passing a list comprehension to set; it skips building a throwaway list."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C403 (flake8-comprehensions): `set(…)` of the builtin set, whose one argument is a list
+// comprehension. Its fix is unsafe; none here.
+//   set([f(x) for x in y])     ← C403: {f(x) for x in y}
+//   set([x for x in y], z)     not reported
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), c4_comp(e, k)
+
+.violation C403(at: node) code "C403"
+    "Rewrite `set([expr for ...])` as a set comprehension `{{expr for ...}}`; the intermediate list is not needed."
+    suppress ruff "C403"
+C403(c) :- c4_call(c, "set"), c4_only(c, l), c4_comp(l, "list").

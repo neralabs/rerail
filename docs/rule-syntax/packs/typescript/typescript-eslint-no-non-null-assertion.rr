@@ -1,0 +1,15 @@
+.policy "typescript-eslint-no-non-null-assertion" revision 5
+.description "Avoid non-null assertions in TypeScript; check for null or undefined explicitly so the type system can verify it."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+// typescript-eslint's no-non-null-assertion: every postfix `!` is reported, at the asserted expression.
+//   a!.b   f(a!)   a!!   (two)          → reported
+//   a?.b   a != null && a.b             fine
+// No options. The rule's suggestions (`a!.b` → `a?.b`) are not offered here.
+.violation no_non_null_assertion(at: node) code "@typescript-eslint/no-non-null-assertion" "Replace this ! assertion with an explicit null or undefined check, or with optional chaining."
+    suppress eslint "@typescript-eslint/no-non-null-assertion"
+    suppress oxlint "no-non-null-assertion"
+    suppress biome "lint/style/noNonNullAssertion"
+no_non_null_assertion(n) :- kind(n, "non_null_expression").

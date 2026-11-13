@@ -1,0 +1,39 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl executor_name(n: node)
+.decl executor_noqa(n: node)
+.decl executor_use(n: node)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl out_scope(d: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, line, tape_line
+.output violation
+in_scope(d) :- doc(d, p, _), glob("impl/sqlite/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/postgres/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mariadb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/doltdb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mongodb/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/neo4j/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/l1595_llm_cache/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/common/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/read_through/**", p).
+out_scope(d) :- doc(d, p, _), glob("impl/sqlite/native_async_wrapper.py", p).
+out_scope(d) :- doc(d, p, _), glob("impl/sqlite/connection.py", p).
+executor_name(n) :- node(_, n, "identifier", _, _), text(n, s), suffix("run_in_executor", s).
+executor_use(n) :- executor_name(n), field(c, "function", n), node(_, c, "call", _, _).
+executor_use(n) :- executor_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _), field(c, "function", a), node(_, c, "call", _, _).
+executor_use(n) :- executor_name(n), field(f, "name", n), node(_, f, "function_definition", _, _).
+executor_noqa(n) :- executor_use(n), node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:#\\s*noqa:\\s*async-executor)(?s:.*)", s).
+violation("data-layer-async-executor", "executor", "run_in_executor", p, l) :- executor_use(n), !executor_noqa(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).

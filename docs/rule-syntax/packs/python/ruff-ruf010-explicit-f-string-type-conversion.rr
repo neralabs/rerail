@@ -1,0 +1,42 @@
+.policy "ruff-ruf010-explicit-f-string-type-conversion" revision 3
+.description "Use the f-string conversion flag instead of calling str, repr or ascii on an interpolated value; the flag is shorter and idiomatic."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF010: an f-string interpolation that calls the builtin `str`, `repr` or `ascii` on its value, which
+// the conversion flags `!s`, `!r` and `!a` say directly. The call takes one positional argument (or `str`'s
+// `object=` keyword), and the interpolation has no flag of its own. Ruff reads one f-string (not a t-string)
+// left to right and stops at the first such call that has a debug `=` or is `repr(*a)` or `ascii(*a)`: no
+// later one in that f-string is reported.
+//   f"{repr(x)}"              ← RUF010  `{x!r}`
+//   f"{str(b, 'ascii')}"      not reported: decoding, not a conversion
+//   f"{repr(x)=} {repr(y)}"   not reported: the debug text shows the call, and Ruff stops there
+#include "python/ruff.rr"
+
+.violation RUF010(at: node, msg: symbol) code "RUF010" "{msg}"
+    suppress ruff "RUF010"
+RUF010(c, m) :- convert(s, i, c, f), !stopped(s, i), !debug(i), one_value(c, _), says(f, m).
+// convert(s, i, c, f): interpolation i of f-string s, with no flag, is a call c of the builtin f.
+.decl convert(s: node, i: node, c: node, f: symbol)
+convert(s, i, c, f) :- string_form(s, "fstr"), child(s, i, _), kind(i, "interpolation"), field(i, "expression", e),
+    unparen(e, c), call_q(c, cat("builtins.", f)), says(f, _), !field(i, "type_conversion", _).
+// one_value(c, a): `f(a)`, or `str(object=a)`.
+.decl one_value(c: node, a: node)
+one_value(c, a) :- call_only(c, a).
+one_value(c, a) :- call_q(c, "builtins.str"), call_nargs(c, 0), call_nkwargs(c, 1), call_kwarg(c, "object", a).
+// stopped(s, i): an earlier call in s ends Ruff's walk: it has a debug `=`, or is `repr(*a)` or `ascii(*a)`
+// (Ruff looks for `str`'s value among the arguments before a `*`, so `str(*a)` is merely skipped).
+.decl stopped(s: node, i: node)
+stopped(s, i) :- convert(s, j, _, _), j < i, ends_walk(j), convert(s, i, _, _).
+.decl ends_walk(j: node)
+ends_walk(j) :- convert(_, j, c, _), one_value(c, _), debug(j).
+ends_walk(j) :- convert(_, j, c, f), f != "str", call_nargs(c, 1), call_nkwargs(c, 0), call_item(c, a, _), kind(a, "list_splat").
+// debug(i): `{expr=}`, whose `=` keeps the expression's text in the output.
+.decl debug(i: node)
+debug(i) :- kind(i, "interpolation"), op(i, "=").
+
+.decl says(f: symbol, m: symbol)
+says("str", "Replace the `str(...)` call with the `!s` flag on the interpolation, as in `{value!s}`; with no custom `__format__` and no format spec, the call can be dropped.").
+says("repr", "Replace the `repr(...)` call with the `!r` flag on the interpolation, as in `{value!r}`.").
+says("ascii", "Replace the `ascii(...)` call with the `!a` flag on the interpolation, as in `{value!a}`.").

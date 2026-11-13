@@ -1,0 +1,260 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-unknown-contract-defaults",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer unknown_contract_defaults at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "or-empty",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "kind": "boolean_operator"
+              },
+              {
+                "has": {
+                  "field": "operator",
+                  "regex": "^or$"
+                }
+              },
+              {
+                "has": {
+                  "field": "left",
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "kind": "identifier",
+                    "regex": "^(?:auxiliary_query|relation_role|source_tables)$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "field": "right",
+                  "any": [
+                    {
+                      "all": [
+                        {
+                          "kind": "tuple"
+                        },
+                        {
+                          "regex": "^\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)$"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "list"
+                        },
+                        {
+                          "regex": "^\\[(?:\\s|#[^\\n]*(?:\\n|$))*\\]$"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "dictionary"
+                        },
+                        {
+                          "regex": "^\\{(?:\\s|#[^\\n]*(?:\\n|$))*\\}$"
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "value": {
+                            "regex": "^(?:)$"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "call"
+                            },
+                            {
+                              "has": {
+                                "field": "function",
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^(?:dict|frozenset|list|set|tuple)$"
+                                  },
+                                  {
+                                    "kind": "attribute",
+                                    "has": {
+                                      "field": "attribute",
+                                      "kind": "identifier",
+                                      "regex": "^(?:dict|frozenset|list|set|tuple)$"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "field": "function",
+                            "kind": "identifier"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "arguments",
+                            "regex": "^\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UNKNOWN_DEFAULTED",
+        "anchor": "witness.span",
+        "message": "UNKNOWN_DEFAULTED"
+      }
+    },
+    {
+      "id": "not",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "kind": "not_operator"
+              },
+              {
+                "has": {
+                  "field": "argument",
+                  "kind": "attribute",
+                  "has": {
+                    "field": "attribute",
+                    "kind": "identifier",
+                    "regex": "^(?:auxiliary_query|relation_role|source_tables)$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UNKNOWN_AS_FALSY",
+        "anchor": "witness.span",
+        "message": "UNKNOWN_AS_FALSY"
+      }
+    },
+    {
+      "id": "bool",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "kind": "call"
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^bool$"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "attribute",
+                        "has": {
+                          "field": "attribute",
+                          "kind": "identifier",
+                          "regex": "^(?:auxiliary_query|relation_role|source_tables)$"
+                        }
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "all": [
+                            {
+                              "not": {
+                                "kind": "keyword_argument"
+                              }
+                            },
+                            {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            },
+                            {
+                              "not": {
+                                "regex": "^[(),]$"
+                              }
+                            }
+                          ]
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UNKNOWN_AS_FALSY",
+        "anchor": "witness.span",
+        "message": "UNKNOWN_AS_FALSY"
+      }
+    }
+  ]
+}

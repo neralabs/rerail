@@ -2939,13 +2939,30 @@ describe.skipIf(codeRuleDslRuntime === undefined)("trust sweep (M6)", () => {
     }
   });
 
-  it.each(["expression", "statement", "declaration", "primary_expression", "pattern"])("rejects the abstract kind %s, which no node carries", kind => {
-    expect(() => compileJson([astForbid({ kind }, "typescript")])).toThrow(
-      `/clauses/0/forbid/ast/rule/kind: \`${kind}\` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under \`any\` (typescript, tsx, javascript grammars)`,
-    );
-    if (["expression", "primary_expression", "pattern"].includes(kind)) {
-      expect(() => compileJson([astForbid({ kind: "call", has: { kind } })])).toThrow(/rule\/has\/kind: `\w+` is an abstract kind/);
-    }
+  // An abstract kind (a grammar supertype) matches the nodes the parser reported as its members. Membership is
+  // positional: the assigned `a` is in neither `expression` nor `pattern`, the destructured `c` and the parameter `e`
+  // are `pattern`s, and `e` read in the body is an `expression`.
+  it.each([
+    ["expression", ["a = b", "b", "d", "e + 1", "e", "1"]],
+    ["statement", ["a = b;", "let [c] = d;", "function f(e) { return e + 1; }", "return e + 1;"]],
+    ["declaration", ["let [c] = d;", "function f(e) { return e + 1; }"]],
+    ["primary_expression", ["b", "d", "e", "1"]],
+    ["pattern", ["c", "e"]],
+  ] as Array<[string, string[]]>)("compiles the abstract kind %s and matches the parser's members", (kind, members) => {
+    const source = "a = b;\nlet [c] = d;\nfunction f(e) { return e + 1; }\n";
+    const typescript = evaluate(compileJson([astForbid({ kind }, "typescript")]), snapshot([{ language: "typescript", path: "a.ts", source }]));
+    expect(typescript.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(members);
+  });
+
+  // A call's direct children are its function, reported as a `primary_expression` only, and its argument list.
+  it.each([
+    ["expression", []],
+    ["primary_expression", ["f(a + 1)", "g(y)"]],
+    ["pattern", []],
+  ] as Array<[string, string[]]>)("matches a call that has a member of the abstract kind %s", (kind, members) => {
+    const source = "f(a + 1)\nx = g(y)\n";
+    const python = evaluate(compileJson([astForbid({ kind: "call", has: { kind } })]), snapshot([{ language: "python", path: "a.py", source }]));
+    expect(python.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(members);
   });
 
   it("rejects a Python pattern whose $-name is not a metavariable, and keeps TypeScript's literal $-identifiers", async () => {

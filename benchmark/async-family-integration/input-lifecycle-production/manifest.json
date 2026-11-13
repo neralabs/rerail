@@ -1,0 +1,25 @@
+{
+  "branch": "jeremy/async-family-integration-comparison",
+  "baselineRevision": "e3ea1ad6d66b38e4b9f4e532966ec06854c7f6c9",
+  "integrationRevision": "4ab83ed5190d1af7675f6a66544f9b35b972d9b1",
+  "baselineBinarySha256": "3c01b2c2d987f73c98e6c99e79a217ba31a6fe7678786cb1c7f0eb95a704fcc1",
+  "measuredProductionBinary": {
+    "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845": "94e7349ddd72077928b8a39c69e93299cf874d82f75b71055072942e198f4d85"
+  },
+  "buildProfile": "profiling (optimized, incremental, no LTO)",
+  "measuredSourceHashes": "source-sha256.json",
+  "finalSourceHashes": "final-source-sha256.json",
+  "sourceDifference": "After corpus measurements, only syntax/tests.rs gained separate thread-CPU timers around the reference loop and relation checks. Production code matches the measured source hashes.",
+  "environment": "Four corpus workers; warm tape cache; corpus/cross result memos disabled; fresh process per run; nice 19.",
+  "measurementBoundary": "cpuNs/wallNs cover corpus::run_with_options. processCpu/processWall include test harness and program flattening. Profiles are separate executions.",
+  "limits": [
+    "No full retained cache implemented.",
+    "The corpus has zero positive findings; separate positive and edge fixtures validate results.",
+    "Payload/capacity counters are cumulative at publication, not peak RSS.",
+    "Wall time varies with host contention.",
+    "Axis timing is a single pair, not a speedup confidence interval."
+  ],
+  "artifactsRoot": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production",
+  "finalTestBinarySha256": "7726e17e479e1723df1f586387a72a4c10bdcbe71ab5cb7b6b86843469346cf2",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+}

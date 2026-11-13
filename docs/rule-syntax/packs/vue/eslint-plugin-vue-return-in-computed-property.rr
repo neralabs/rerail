@@ -1,0 +1,34 @@
+.policy "eslint-plugin-vue-return-in-computed-property" revision 2
+.description "Return a value on every path of a Vue computed property getter; a getter that can end without returning yields undefined."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+#include "vue/flow.rr"
+//   vcomputed(o, x, f), vcomputed_fn(c, f), vfalls_off(f), vlast_return(f, r)
+
+// eslint-plugin-vue's return-in-computed-property: a computed getter, of the Options API or of computed() imported
+// from Vue, that can end without returning. With treatUndefinedAsUnspecified (the default true), a getter whose last
+// return has no value is reported too (`return;`), and so is one that only throws. An arrow with an expression body
+// always returns.
+//   computed: { foo() { if (a) return 1 } }               reported: "foo" can end without a value
+//   const c = computed(() => { list.sort() })              reported
+//   computed: { foo() { return a ? 1 : 2 } }   computed(() => a)                     not reported
+.violation no_return(at: node, msg: symbol) code "vue/return-in-computed-property" "{msg}"
+    suppress eslint "vue/return-in-computed-property"
+no_return(at, cat("Expected to return a value in \"", x, "\" computed property.")) :- vcomputed(_, x, f),
+    lacks_return(f), report_at(f, at).
+no_return(at, "Expected to return a value in computed function.") :- vcomputed_fn(_, f), lacks_return(f),
+    report_at(f, at).
+.decl lacks_return(f: node)
+lacks_return(f) :- getter(f), vfalls_off(f).
+lacks_return(f) :- getter(f), !option("treatUndefinedAsUnspecified", "false"), field(f, "body", b),
+    kind(b, "statement_block"), !valued_last(f).
+.decl valued_last(f: node)  // the last return of f's own code has a value
+valued_last(f) :- vlast_return(f, r), child(r, _, 0).
+.decl getter(f: node)
+getter(f) :- vcomputed(_, _, f) ; vcomputed_fn(_, f).
+// ESLint reports the FunctionExpression, which for a method starts at its parameters.
+.decl report_at(f: node, at: node)
+report_at(f, f) :- getter(f), !kind(f, "method_definition").
+report_at(f, p) :- getter(f), kind(f, "method_definition"), field(f, "parameters", p).

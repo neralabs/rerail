@@ -1,0 +1,60 @@
+.policy "eslint-no-redeclare" revision 5
+.description "Don't declare a variable twice in the same JavaScript scope or redeclare a built-in global, including in global comments; the duplicate hides a mistake."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-b-scope.rr"
+//   var_site, global_scope, global_item, es_builtin; pattern_name (tsx/names)
+
+// ESLint's no-redeclare: a variable is declared once. Its declarations, in ESLint's order: being a built-in
+// global (with builtinGlobals, the default), each identifier that declares it, each `/* global */` comment
+// item that names it. Every one after the first is reported, with a message saying what came first.
+//   var a = 1; var a = 2;        → the second a: "'a' is already defined."
+//   function f(a) { var a; }     → the var: a parameter and a var are one variable
+//   var Object;   let JSON;      → in a script: "'Object' is already defined as a built-in global variable."
+//   /* global Array */           → the comment's Array is a built-in already; `/* global a */ var a;` in a script
+//                                  reports the comment's a, and a name listed twice is reported the second time
+//   var a; class C { static { var a; } }   fine: two scopes
+// In a module or CommonJS file the top level is not the global scope, so `var Object` there is fine.
+// Option builtinGlobals (default true). Items with the setting `off` declare nothing.
+.violation no_redeclare(at: loc, msg: symbol) code "no-redeclare" "{msg}"
+    suppress eslint "no-redeclare"
+    suppress oxlint "no-redeclare"
+    suppress biome "lint/suspicious/noRedeclare"
+no_redeclare(id, cat("'", x, "' is already defined.")) :- var_site(s, x, id), !builtin_in(s, x),
+    var_site(s, x, o), node(_, o, _, a, _), node(_, id, _, b, _), a < b.
+no_redeclare(id, cat("'", x, "' is already defined as a built-in global variable.")) :-
+    (var_site(s, x, id) ; lexical_site(s, x, id)), builtin_in(s, x).
+// A comment's item is reported on its own line (a place: the item is not a node). The built-in comes first
+// in every document, script or module: `/* global Array */` alone is reported.
+no_redeclare(at, cat("Remove '", x, "' from this global comment; it is already a built-in global.")) :-
+    listed(c, x, at), docof(c, d), builtin_doc(d, x).
+no_redeclare(at, cat("Remove '", x, "' from this global comment; a variable declaration already defines it.")) :-
+    listed(c, x, at), docof(c, d), !builtin_doc(d, x), program(d, p), script_declared(p, x).
+no_redeclare(at, cat("Remove this duplicate '", x, "' from the global comments; it is already listed.")) :-
+    listed(c, x, at), docof(c, d), program(d, p), !builtin_doc(d, x), !script_declared(p, x), listed(o, x, _),
+    docof(o, d), earlier(o, c).
+
+// builtin_doc(d, x): with builtinGlobals, x is a built-in global of document d. A `/* global x */` comment
+// does not change that: the built-in is still the variable's first declaration, and the comment a later one.
+.decl builtin_doc(d: number, x: symbol)
+builtin_doc(d, x) :- program(d, _), !option("builtinGlobals", "false"), global_var(d, x), (es_builtin(x) ; es_global(x)).
+// builtin_in(s, x): x is a built-in global and s the global scope's block, so a declaration there redeclares it.
+//   var Object;  let JSON;  class Reflect {}      in a script: all three
+.decl builtin_in(s: node, x: symbol)
+builtin_in(p, x) :- global_scope(p), program(d, p), builtin_doc(d, x).
+// lexical_site(p, x, id): a script's top-level let, const or class declares x in the global scope too (eslint-scope
+// puts them there, not in a scope of their own). They cannot repeat each other, so only the built-in counts.
+.decl lexical_site(p: node, x: symbol, id: node)
+lexical_site(p, x, n) :- global_scope(p), kind(l, "lexical_declaration"), child(l, v, _), nearest(l, p, block_scope),
+    (field(v, "name", n), kind(n, "identifier"), text(n, x) ; pattern_name(n, x, v)).
+lexical_site(p, x, n) :- global_scope(p), kind(c, "class_declaration"), nearest(c, p, block_scope),
+    field(c, "name", n), text(n, x).
+.decl script_declared(p: node, x: symbol)
+script_declared(p, x) :- global_scope(p), (var_site(p, x, _) ; lexical_site(p, x, _)).
+// listed(c, x, at): comment c's item x declares the global x (an `off` item removes it instead); at is the
+// comment, or a place on the item's line when that is a later line of the comment.
+.decl listed(c: node, x: symbol, at: loc)
+listed(c, x, c) :- global_item(c, x, v, l), v != "off", line(c, l).
+listed(c, x, @place(f, l)) :- global_item(c, x, v, l), v != "off", !line(c, l), docof(c, d), doc(d, f, _).

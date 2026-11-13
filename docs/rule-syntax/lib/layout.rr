@@ -1,0 +1,93 @@
+// Layout around a node: the code just before and just after it, and the lines it is on. For rules that port
+// ESLint's token-store questions (the token after a statement, the line of the token before a body) to tapes
+// that keep no token their grammar implies (RER-131).
+//
+// It reads core.rr's structural_before and structural_after: the source between a node and its stored
+// neighbours. Where that gap holds code (a `)` or `else` the tape leaves out), the answer is in the gap. Where
+// it is blank, the neighbour is the stored child that starts (or ends) where the gap does, read off the tape;
+// where the gap reaches the parent's edge, the parent's own gap is asked, and a comment is passed over as
+// ESLint's token store passes over it. Nothing here is a token: the answers are source text and lines.
+//
+//   if (a)\n  b()       the condition `(a)` and the body `b()` are children of the if; nothing lies between them
+//                       but a line break, so next_code(condition, "b()"), after_line(condition, 2),
+//                       prev_code(body, "(a)"), before_line(body, 1)
+//
+// A rule asks for the nodes it needs with layout_at(x); only those are walked.
+.decl layout_at(x: node)
+
+// ---- after -------------------------------------------------------------------------------------------------------
+// after_up(x, a): a is x, or a node whose blank source after it ends x's (an ancestor x ends, or a comment
+// right after), from which the next code is looked for.
+.decl after_up(x: node, a: node)
+after_up(x, x) :- layout_at(x).
+after_up(x, p) :- after_up(x, a), structural_after(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, _, e),
+    node(_, p, _, _, pe), pe = e + strlen(g).
+after_up(x, c) :- after_up(x, a), structural_after(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, _, e),
+    o = e + strlen(g), child(p, c, _), node(_, c, _, o, _), comment(c, _).
+// after_stop(x, a, g): the code after x begins in or right after a's gap g.
+.decl after_stop(x: node, a: node, g: symbol)
+after_stop(x, a, g) :- after_up(x, a), structural_after(a, g), match("(?s)\\s*\\S.*", g).
+after_stop(x, a, g) :- after_up(x, a), structural_after(a, g), match("\\s*", g), layout_next(a, g, _).
+// layout_next(a, g, t): with a blank gap g after a, the stored child that starts where g ends is code, text t.
+.stored layout_next "the child starting where a gap ends is the stored neighbour that ends the gap"
+.decl layout_next(a: node, g: symbol, t: symbol)
+layout_next(a, g, t) :- after_up(_, a), structural_after(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, _, e),
+    o = e + strlen(g), token(p, _, t, o, _), !layout_comment_at(p, o).
+.decl layout_comment_at(p: node, o: number)
+layout_comment_at(p, o) :- after_up(_, a), child(p, a, _), child(p, c, _), node(_, c, _, o, _), comment(c, _).
+// next_code(x, s): the source after x starts with its next code: the gap, or the next stored child's text.
+.decl next_code(x: node, s: symbol)
+next_code(x, g) :- after_stop(x, _, g), match("(?s)\\s*\\S.*", g).
+next_code(x, t) :- after_stop(x, a, g), match("\\s*", g), layout_next(a, g, t).
+// after_line(x, l): the code after x starts on line l.
+.decl after_line(x: node, l: number)
+// k: the line breaks in g's leading space (g's length less that of g without them).
+after_line(x, l) :- after_stop(x, a, g), ws = @replace_all(g, "(?s)\\S.*", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), end_line(a, la), l = la + k.
+
+// ---- before ------------------------------------------------------------------------------------------------------
+.decl before_up(x: node, a: node)
+before_up(x, x) :- layout_at(x).
+before_up(x, p) :- before_up(x, a), structural_before(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, s, _),
+    node(_, p, _, ps, _), ps = s - strlen(g).
+before_up(x, c) :- before_up(x, a), structural_before(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, s, _),
+    o = s - strlen(g), child(p, c, _), node(_, c, _, _, o), comment(c, _).
+.decl before_stop(x: node, a: node, g: symbol)
+before_stop(x, a, g) :- before_up(x, a), structural_before(a, g), match("(?s).*\\S\\s*", g).
+before_stop(x, a, g) :- before_up(x, a), structural_before(a, g), match("\\s*", g), layout_prev(a, g, _).
+.stored layout_prev "the child ending where a gap starts is the stored neighbour that starts the gap"
+.decl layout_prev(a: node, g: symbol, t: symbol)
+layout_prev(a, g, t) :- before_up(_, a), structural_before(a, g), match("\\s*", g), child(p, a, _), node(_, a, _, s, _),
+    o = s - strlen(g), token(p, _, t, _, o), !layout_comment_end(p, o).
+.decl layout_comment_end(p: node, o: number)
+layout_comment_end(p, o) :- before_up(_, a), child(p, a, _), child(p, c, _), node(_, c, _, _, o), comment(c, _).
+// prev_code(x, s): the source before x ends with its previous code: the gap, or the previous stored child's text.
+.decl prev_code(x: node, s: symbol)
+prev_code(x, g) :- before_stop(x, _, g), match("(?s).*\\S\\s*", g).
+prev_code(x, t) :- before_stop(x, a, g), match("\\s*", g), layout_prev(a, g, t).
+// before_line(x, l): the code before x ends on line l.
+.decl before_line(x: node, l: number)
+before_line(x, l) :- before_stop(x, a, g), ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\\n", "")), line(a, la), l = la - k.
+
+// ---- neighbours ----------------------------------------------------------------------------------------------
+// prev_node(x, p) / next_node(x, n): where the code before (after) x is a stored named node, that node: the
+// sibling, comments passed over, whose end (start) the blank gap reaches.
+.decl prev_node(x: node, p: node)
+prev_node(x, p) :- before_stop(x, a, g), match("\\s*", g), child(q, a, _), node(_, a, _, s, _), o = s - strlen(g),
+    child(q, p, _), node(_, p, _, _, o), !comment(p, _).
+.decl next_node(x: node, n: node)
+next_node(x, n) :- after_stop(x, a, g), match("\\s*", g), child(q, a, _), node(_, a, _, _, e), o = e + strlen(g),
+    child(q, n, _), node(_, n, _, o, _), !comment(n, _).
+// ends(p, k): k is p or a node inside it ending where p ends: what p's last code belongs to.
+.decl ends(p: node, k: node)
+ends(p, p) :- prev_node(_, p).
+ends(p, k) :- prev_node(_, p), node(_, p, _, _, e), within(k, p), node(_, k, _, _, e).
+// touch_before(x, s) / touch_after(x, s): the code before (after) x touches it, no space between; s is that code.
+.decl touch_before(x: node, s: symbol)
+touch_before(x, s) :- prev_code(x, s), before_stop(x, _, g), !match("(?s).*\\s", g).
+.decl touch_after(x: node, s: symbol)
+touch_after(x, s) :- next_code(x, s), after_stop(x, _, g), !match("(?s)\\s.*", g).
+// in_parens(x): ESLint's isParenthesised: the code before x ends with `(` and the code after it starts with `)`.
+.decl in_parens(x: node)
+in_parens(x) :- prev_code(x, p), match("(?s).*\\(\\s*", p), next_code(x, q), match("(?s)\\s*\\).*", q).

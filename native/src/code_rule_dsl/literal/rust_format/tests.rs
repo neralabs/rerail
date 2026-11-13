@@ -29,7 +29,7 @@ fn is_template_error(message: &str) -> bool {
 
 #[test]
 fn parse_matches_rustc_on_every_template() {
-    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::oracle!(
+    let oracle: serde_json::Value = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
         "rust/matcher/format_args/rust.expected.json"
     ))
     .expect("oracle JSON");

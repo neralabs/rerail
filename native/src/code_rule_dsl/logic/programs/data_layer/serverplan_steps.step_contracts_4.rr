@@ -1,0 +1,251 @@
+// data-layer-serverplan-steps in Rerail logic: clause `step-contracts-4` (STEP-029), a part of serverplan_steps.rdl;
+// options at their defaults (entryPoint "all", strictModulesOnly true). Source:
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+//
+// One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): a SQL row keyed by
+// (__path, id) is a node, `id = kind:start:end` being that node, and text joins stay in one document (`docof`).
+// `nodes` is the set `raw_nodes` matches; a stage that joins `nodes` on a captured id needs that node in the set. The
+// optional captures are tree relations: NAME, LEFT, RIGHT, VALUE, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE, BODY
+// (`has $X, field f, stopBy neighbor`) are `field`, PARENT (`inside $X, stopBy neighbor`) is `child`, ANCESTOR (the
+// nearest strict ancestor matching the region selector, which is the selector of `nodes`) is the deepest strict
+// ancestor in `nodes`. A nullable column is a side relation that holds where it is not NULL.
+//
+// Builtins: @rx_matches, @lower, @trim, @sub, @within, @depth. A builtin with no value (SQL NULL) binds nothing.
+// findings layer (§8): identity (`<prefix>` || node id) and entry; a finding is (issue, node), so two branches whose
+// identities differ only by prefix on one node give one finding.
+// ties: `local_bindings` (last assignment of a name by start) and `ordinal` (start, end, kind) cannot tie on distinct nodes.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl raw_nodes(n: node)
+raw_nodes(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "check_closed_post_op_runtime_builder_no_callable_escape_hatches": {"filePath": {"regex": "(?s).*"}}, "_scan_source": {"filePath": {"regex": "(?s).*"}}, "_scan_file": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}], "stopBy": "end"}}]}, {"any": [{"inside": {"all": [{"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}], "stopBy": "end"}}]}, {"pattern": "$ANCESTOR"}], "stopBy": {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"all": [{"kind": "assignment"}, {"any": [{"has": {"kind": "lambda", "stopBy": "neighbor", "field": "right"}}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)callback|callable|effect|function|hook"}], "stopBy": "neighbor", "field": "left"}}, {"inside": {"all": [{"kind": "class_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderKind)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:RuntimeBuilderSpec|runtime_builder_post_op|runtime_op_post_op)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"all": [{"kind": "call"}, {"has": {"all": [{"regex": "(?i)runtime"}, {"regex": "(?i)register"}, {"regex": "(?i)callback|callable|effect|function|hook|processor|transform"}], "stopBy": "neighbor", "field": "function"}}]}], "stopBy": "end"}}]}}}, {"pattern": "$_"}]}, {"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$LEFT", "stopBy": "neighbor", "field": "left"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RIGHT", "stopBy": "neighbor", "field": "right"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$VALUE", "stopBy": "neighbor", "field": "value"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}, {"pattern": "$_"}]}]}}).
+// `relaxed` is not read by the clause's SQL.
+.decl relaxed(d: number)
+relaxed(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"$option": "strictModulesOnly", "cases": {"true": {"filePath": {"regex": "\\b\\B"}}, "false": {"filePath": {"regex": "(?s).*"}}}}]}}).
+
+// ---- nodes, edges ----
+.decl nodes(n: node)
+nodes(n) :- raw_nodes(n).
+.decl nodes_parent(n: node, p: node)
+nodes_parent(n, p) :- nodes(n), child(p, n, _).
+// edge_parent: ANCESTOR, the deepest node of `nodes` strictly above.
+.decl nodes_above(n: node, a: node, depth: number)
+nodes_above(n, a, k) :- nodes(n), nodes(a), @within(n, a) = 1, k = @depth(a).
+.decl nodes_above_deepest(n: node, depth: number)
+nodes_above_deepest(n, k) :- nodes_above(n, _, _), k = max j : { nodes_above(n, _, j) }.
+.decl nodes_edge_parent(n: node, a: node)
+nodes_edge_parent(n, a) :- nodes_above(n, a, k), nodes_above_deepest(n, k).
+// ordinal: row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1, among `nodes`.
+.decl nodes_before(n: node, m: node)
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), start(n, sn), start(m, sm), sm < sn.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, _, s, en), node(_, m, _, s, em), em < en.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, kn, s, e), node(_, m, km, s, e), km < kn.
+.decl nodes_has_before(n: node)
+nodes_has_before(n) :- nodes_before(n, _).
+.decl nodes_ordinal(n: node, ordinal: number)
+nodes_ordinal(n, 0) :- nodes(n), !nodes_has_before(n).
+nodes_ordinal(n, k) :- nodes_has_before(n), k = count : { nodes_before(n, _) }.
+.decl edges(src: node, dst: node, ordinal: number)
+edges(s, n, o) :- nodes_edge_parent(n, s), nodes_ordinal(n, o).
+
+// ---- functions, ownership, classes, attributes ----
+.decl functions(f: node)
+functions(f) :- nodes(f), kind(f, "function_definition").
+.decl functions_name(f: node, name: symbol)
+functions_name(f, s) :- functions(f), field(f, "name", x), text(x, s).
+// The SQL walks `edges` down from the roots, carrying the nearest function and class and the outermost function
+// (E0 row 57). Every function_definition and class_definition is in `nodes`, so these are ancestors-or-self on the tape.
+.decl ownership(n: node)
+ownership(n) :- nodes(n).
+.decl ownership_fn(n: node, fn: node)
+ownership_fn(n, n) :- nodes(n), kind(n, "function_definition").
+ownership_fn(n, f) :- nodes(n), kind(n, k), k != "function_definition", nearest(n, f, fdef).
+.decl ownership_cls(n: node, cls: node)
+ownership_cls(n, n) :- nodes(n), kind(n, "class_definition").
+ownership_cls(n, c) :- nodes(n), kind(n, k), k != "class_definition", nearest(n, c, cdef).
+.decl fn_nested(f: node)
+fn_nested(f) :- functions(f), nearest(f, g, fdef).
+.decl ownership_top_fn(n: node, fn: node)
+ownership_top_fn(n, n) :- functions(n), !fn_nested(n).
+ownership_top_fn(n, f) :- nodes(n), functions(f), @within(n, f) = 1, !fn_nested(f).
+.decl classes(c: node)
+classes(c) :- nodes(c), kind(c, "class_definition").
+.decl classes_name(c: node, name: symbol)
+classes_name(c, s) :- classes(c), field(c, "name", x), text(x, s).
+.decl attributes(a: node)
+attributes(a) :- nodes(a), kind(a, "attribute").
+.decl attributes_attr(a: node, attr: symbol)
+attributes_attr(a, s) :- attributes(a), field(a, "attribute", x), text(x, s).
+.decl attributes_object(a: node, object: node)
+attributes_object(a, o) :- attributes(a), field(a, "object", o).
+
+// ---- calls, arguments, keywords ----
+// callee = coalesce(attribute's attr, function text).
+.decl calls(c: node, callee_id: node, full_callee: symbol, callee: symbol)
+calls(c, f, t, a) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), text(f, t), attributes_attr(f, a).
+calls(c, f, t, t) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), text(f, t), !attributes_attr(f, _).
+.decl calls_receiver(c: node, receiver: node)
+calls_receiver(c, o) :- calls(c, f, _, _), attributes_object(f, o).
+.decl argument_row(n: node, call: node)
+argument_row(n, c) :- calls(c, _, _, _), field(c, "arguments", l), child(l, n, _), nodes(n), kind(n, k),
+    k != "comment", k != "keyword_argument", k != "list_splat", k != "dictionary_splat".
+.decl argument_before(n: node, m: node)
+argument_before(n, m) :- argument_row(n, c), argument_row(m, c), start(n, sn), start(m, sm), sm < sn.
+.decl argument_has_before(n: node)
+argument_has_before(n) :- argument_before(n, _).
+.decl arguments(n: node, call: node, position: number)
+arguments(n, c, 0) :- argument_row(n, c), !argument_has_before(n).
+arguments(n, c, p) :- argument_row(n, c), argument_has_before(n), p = count : { argument_before(n, _) }.
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, s, v) :- calls(c, _, _, _), field(c, "arguments", l), child(l, k, _), nodes(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), nodes(kn), text(kn, s), field(k, "value", v), nodes(v).
+
+// ---- returns, assignments, local_bindings ----
+.decl returns(n: node, value: node)
+returns(n, v) :- nodes(n), kind(n, "return_statement"), child(n, v, _), nodes(v).
+.decl returns_fn(n: node, fn: node)
+returns_fn(n, f) :- returns(n, _), ownership_fn(n, f).
+.decl assignments(n: node, target: node)
+assignments(n, l) :- nodes(n), kind(n, "assignment"), field(n, "left", l), nodes(l).
+.decl assignments_value(n: node, value: node)
+assignments_value(n, r) :- assignments(n, _), field(n, "right", r), nodes(r).
+.decl assignments_fn(n: node, fn: node)
+assignments_fn(n, f) :- assignments(n, _), ownership_fn(n, f).
+// a.__start > f.__start AND a.__end <= f.__end: a strict descendant of the function (no assignment starts a def).
+.decl local_binding_row(owner: node, name: symbol, a: node, s: number)
+local_binding_row(f, s, a, st) :- functions(f), assignments(a, l), @within(a, f) = 1, kind(l, "identifier"), assignments_value(a, _),
+    text(l, s), start(a, st).
+// row_number() OVER (PARTITION BY owner, name ORDER BY __start DESC) = 1: the last assignment of the name.
+.decl local_binding_last(owner: node, name: symbol, s: number)
+local_binding_last(f, s, st) :- local_binding_row(f, s, _, _), st = max t : { local_binding_row(f, s, _, t) }.
+.decl local_bindings(owner: node, name: symbol, value: node)
+local_bindings(f, s, v) :- local_binding_row(f, s, a, st), local_binding_last(f, s, st), assignments_value(a, v).
+
+// ---- expression_edges, callable_edges ----
+.decl expression_edges(src: node, dst: node)
+expression_edges(c, p) :- nodes(p), kind(p, k), expression_container(k), child(p, c, _), nodes(c).
+expression_edges(c, p) :- nodes(p), kind(p, "pair"), child(p, c, _), nodes(c), nodes_ordinal(c, 1).
+expression_edges(c, p) :- nodes(p), kind(p, "dictionary"), child(p, c, _), nodes(c).
+expression_edges(a, c) :- arguments(a, c, _).
+expression_edges(v, c) :- keywords(c, _, _, v).
+expression_edges(v, n) :- nodes(n), kind(n, "identifier"), ownership_fn(n, f), text(n, s), local_bindings(f, s, v).
+expression_edges(v, c) :- calls(c, _, t, _), docof(c, d), functions_name(f, t), docof(f, d), returns_fn(r, f), returns(r, v).
+.decl expression_container(k: symbol)
+expression_container("tuple"). expression_container("list"). expression_container("set"). expression_container("expression_list").
+expression_container("parenthesized_expression"). expression_container("keyword_argument"). expression_container("argument_list").
+.decl callable_edges(src: node, dst: node)
+callable_edges(o, a) :- attributes_object(a, o).
+callable_edges(x, a) :- attributes(a), field(a, "attribute", x).
+callable_edges(f, c) :- calls(c, f, _, _).
+callable_edges(a, c) :- arguments(a, c, _).
+callable_edges(v, c) :- keywords(c, _, _, v).
+callable_edges(c, n) :- nodes(n), kind(n, "subscript"), child(n, c, _), nodes(c), nodes_ordinal(c, 0).
+callable_edges(c, n) :- nodes(n), kind(n, "parenthesized_expression"), child(n, c, _), nodes(c), nodes_ordinal(c, 0).
+
+// ---- user_callable, direct_callable: set recursions over in-file dataflow (E0 rows 58, 59) ----
+.decl user_callable(n: node)
+user_callable(n) :- nodes(n), kind(n, "lambda").
+user_callable(n) :- nodes(n), kind(n, "identifier"), text(n, s),
+    @rx_matches(@lower(s), "callable|callback|decoder|fn|function|hook|mapper|picker|processor|projector|row_decoder|transform") = 1.
+user_callable(t) :- user_callable(s), callable_edges(s, t).
+.decl direct_callable(n: node)
+direct_callable(n) :- nodes(n), kind(n, "lambda").
+direct_callable(n) :- nodes(n), kind(n, "identifier"), text(n, s), docof(n, d), functions_name(f, s), docof(f, d).
+direct_callable(n) :- nodes(n), kind(n, "identifier"), text(n, s), docof(n, d), assignments(a, l), text(l, s), docof(a, d),
+    assignments_value(a, r), kind(r, "lambda").
+direct_callable(c) :- calls(c, _, "partial", _).
+direct_callable(c) :- calls(c, _, "functools.partial", _).
+direct_callable(t) :- direct_callable(s), expression_edges(s, t), nodes(t), kind(t, k), k != "identifier".
+
+// ---- mutable_values ----
+// The SQL climbs from a mutable literal through parents in `nodes` that are tuples, one per round (E0 row 60, tree).
+// On the tape: a tuple of `nodes` above a seed is reached when every node strictly between is such a tuple, i.e. when
+// the count of those tuples equals the depth difference less one.
+.decl mutable_seed(n: node)
+mutable_seed(n) :- nodes(n), kind(n, k), mutable_kind(k).
+.decl mutable_kind(k: symbol)
+mutable_kind("list"). mutable_kind("dictionary"). mutable_kind("set"). mutable_kind("list_comprehension").
+mutable_kind("dictionary_comprehension"). mutable_kind("set_comprehension").
+.decl mutable_tuple(n: node)
+mutable_tuple(n) :- nodes(n), kind(n, "tuple").
+.decl mutable_above(m: node, x: node)
+mutable_above(m, x) :- mutable_seed(m), mutable_tuple(x), @within(m, x) = 1.
+.decl mutable_between(m: node, x: node, y: node)
+mutable_between(m, x, y) :- mutable_above(m, x), mutable_tuple(y), @within(m, y) = 1, @within(y, x) = 1.
+.decl mutable_between_count(m: node, x: node, c: number)
+mutable_between_count(m, x, c) :- mutable_between(m, x, _), c = count : { mutable_between(m, x, _) }.
+.decl mutable_values(n: node)
+mutable_values(n) :- mutable_seed(n).
+mutable_values(x) :- mutable_above(m, x), child(x, m, _).
+mutable_values(x) :- mutable_between_count(m, x, c), c = @sub(@depth(m), @depth(x), 1).
+
+// ---- builder_calls, literal_kwargs, literal_pairs ----
+.decl builder_calls(c: node, callee: symbol)
+builder_calls(c, e) :- calls(c, _, _, e), builder_callee(e).
+.decl builder_callee(callee: symbol)
+builder_callee("RuntimeBuilderSpec"). builder_callee("runtime_builder_post_op"). builder_callee("runtime_op_post_op").
+.decl literal_kwargs(call: node, keyword: node, value: node)
+literal_kwargs(c, k, v) :- keywords(c, k, "literal_kwargs", v), builder_calls(c, "RuntimeBuilderSpec").
+.decl literal_pairs(root: node, key: symbol, value: node)
+literal_pairs(v, s, x) :- literal_kwargs(_, _, v), child(v, p, _), nodes(p), kind(p, pk), literal_pair_kind(pk),
+    child(p, kn, _), nodes(kn), nodes_ordinal(kn, 0), kind(kn, kk), string_kind(kk), text(kn, s),
+    child(p, x, _), nodes(x), nodes_ordinal(x, 1).
+.decl literal_pair_kind(k: symbol)
+literal_pair_kind("pair"). literal_pair_kind("tuple"). literal_pair_kind("list").
+.decl string_kind(k: symbol)
+string_kind("string"). string_kind("concatenated_string").
+
+// ---- the clause's query: STEP-029 ----
+// '' || n.id: a runtime callable/effect/hook assignment target.
+finding("step-contracts-4", "STEP-029", n) :- assignments(n, l), kind(l, k), target_kind(k), text(l, s),
+    @rx_matches(@lower(s), "runtime") = 1, @rx_matches(@lower(s), "callback|callable|effect|function|hook") = 1.
+.decl target_kind(k: symbol)
+target_kind("identifier"). target_kind("attribute").
+// 'kind:' || n.id: a member of RuntimeBuilderKind (an expression statement of the class body) naming a callable.
+.decl builder_kind_member(n: node)
+builder_kind_member(n) :- assignments(n, _), nodes_parent(n, e), nodes(e), kind(e, "expression_statement"), docof(n, d),
+    classes_name(c, "RuntimeBuilderKind"), docof(c, d), field(c, "body", b), child(b, e, _).
+finding("step-contracts-4", "STEP-029", n) :- builder_kind_member(n), assignments(n, l), kind(l, "identifier"), text(l, s),
+    @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+finding("step-contracts-4", "STEP-029", n) :- builder_kind_member(n), assignments_value(n, r), kind(r, k), string_kind(k), text(r, s),
+    @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+// 'registry:' || n.id: a runtime callback registration call.
+finding("step-contracts-4", "STEP-029", n) :- calls(n, _, t, _), @rx_matches(@lower(t), "runtime") = 1, @rx_matches(@lower(t), "register") = 1,
+    @rx_matches(@lower(t), "callback|callable|effect|function|hook|processor|transform") = 1.
+// 'escape-name:' || n.id: a builder call naming its builder a callable, by position or keyword.
+.decl escape_name_argument(c: node, a: node)
+escape_name_argument(c, a) :- builder_calls(c, "runtime_builder_post_op"), arguments(a, c, 0), kind(a, k), target_kind(k).
+escape_name_argument(c, a) :- builder_calls(c, "runtime_builder_post_op"), arguments(a, c, 1), kind(a, k), string_kind(k).
+escape_name_argument(c, a) :- builder_calls(c, "runtime_op_post_op"), arguments(a, c, 0), kind(a, k), string_kind(k).
+finding("step-contracts-4", "STEP-029", n) :- escape_name_argument(n, a), text(a, s),
+    @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+finding("step-contracts-4", "STEP-029", n) :- builder_calls(n, e), e != "runtime_op_post_op", keywords(n, _, "kind", v), kind(v, k), target_kind(k),
+    text(v, s), @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+finding("step-contracts-4", "STEP-029", n) :- builder_calls(n, _), keywords(n, _, "builder_name", v), kind(v, k), string_kind(k),
+    text(v, s), @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+// 'keyword:' || n.id: a builder call keyword's value that is, or is named as, a callable or a mutable value.
+.decl builder_keyword(name: symbol, value: node)
+builder_keyword(s, v) :- keywords(c, _, s, v), builder_calls(c, _).
+finding("step-contracts-4", "STEP-029", n) :- builder_keyword(s, n), nodes(n), @lower(s) = "builder".
+finding("step-contracts-4", "STEP-029", n) :- builder_keyword(s, n), nodes(n),
+    @rx_matches(@lower(s), "callable|callable_id|callback|callback_id|closure|decoder|effect_id|fn|function|function_id|hook|hook_id|lambda|mapper|partial|picker|processor|processor_id|projector|registry_id|row_decoder|transform|transform_id") = 1.
+finding("step-contracts-4", "STEP-029", n) :- builder_keyword(_, n), nodes(n), user_callable(n).
+finding("step-contracts-4", "STEP-029", n) :- builder_keyword(_, n), nodes(n), direct_callable(n).
+finding("step-contracts-4", "STEP-029", n) :- builder_keyword(s, n), nodes(n), s != "literal_kwargs", mutable_values(n).
+// 'literal-escape:' || n.id: literal_kwargs whose pairs name or carry a callable, or which is one.
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), literal_pairs(n, s, _),
+    @rx_matches(@lower(s), "callable|callback|closure|function|lambda|partial") = 1.
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), literal_pairs(n, s, _), @lower(@trim(s, "\"'")) = "builder".
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), literal_pairs(n, _, x), user_callable(x).
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), user_callable(n).
+// 'literal-callable:' || n.id
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), literal_pairs(n, _, x), direct_callable(x).
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), direct_callable(n).
+// 'literal-mutable:' || n.id
+finding("step-contracts-4", "STEP-029", n) :- literal_kwargs(_, _, n), nodes(n), mutable_values(n).

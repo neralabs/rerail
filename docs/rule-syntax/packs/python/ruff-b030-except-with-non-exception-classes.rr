@@ -1,0 +1,41 @@
+.policy "ruff-b030-except-with-non-exception-classes" revision 2
+.description "Use only exception classes, or tuples of them, in except clauses; other values such as literals or expressions are not valid exception types."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B030 (flake8-bugbear): an except clause's type, taken apart, holds something that cannot be an exception
+// class: only a Name, an attribute, a subscript or a call can. The type is taken apart as Ruff does: a tuple at
+// the top into its elements; `*xs` into its value, or the elements of a starred tuple or list; `a + b` into its
+// operands, a tuple operand into its elements. A tuple nested in the top tuple is not taken apart.
+//   except 1:                                ← B030 at `1`
+//   except (ValueError, (KeyError, TypeError)):  ← B030 at the inner tuple
+//   except (a, b) * (c, d):                  ← B030 at the product
+//   except (ValueError, *(RuntimeError, TypeError)):   not reported
+//   except (a, b) + (c, d):                  not reported
+#include "python/bugbear.rr"
+
+.violation B030(at: node) code "B030"
+    "`except` handlers should only be exception classes or tuples of exception classes"
+    suppress ruff "B030"
+B030(e) :- part(_, e), !kind(e, "list_splat"), !add(e), !class_like(e).
+B030(v) :- part(_, e), splat_value(e, v), !kind(v, "tuple"), !kind(v, "list"), !add(v), !class_like(v).
+.decl class_like(e: node)
+class_like(e) :- kind(e, k), (k = "identifier" ; k = "attribute" ; k = "subscript" ; k = "call").
+// part(x, e): e is a piece of handler x's type still to be taken apart (Ruff's queue).
+.decl part(x: node, e: node)
+part(x, t) :- handler_type(x, t), !kind(t, "tuple").
+part(x, e) :- handler_elt(x, e, _).
+part(x, y) :- part(x, e), splat_value(e, v), (kind(v, "tuple") ; kind(v, "list")), elt(v, y).
+part(x, v) :- part(x, e), splat_value(e, v), add(v).
+part(x, o) :- part(x, e), add(e), operand(e, o), !kind(o, "tuple"), !kind(o, "list_splat").
+part(x, y) :- part(x, e), add(e), operand(e, o), kind(o, "tuple"), elt(o, y).
+part(x, v) :- part(x, e), add(e), operand(e, o), splat_value(o, v).
+.decl add(e: node)
+add(e) :- kind(e, "binary_operator"), op(e, "+").
+.decl operand(e: node, o: node)
+operand(e, o) :- add(e), (field(e, "left", o0) ; field(e, "right", o0)), unparen(o0, o).
+.decl splat_value(e: node, v: node)
+splat_value(e, v) :- kind(e, "list_splat"), child(e, v0, 0), unparen(v0, v).
+.decl elt(s: node, e: node)
+elt(s, e) :- (kind(s, "tuple") ; kind(s, "list")), child(s, e0, _), !kind(e0, "comment"), unparen(e0, e).

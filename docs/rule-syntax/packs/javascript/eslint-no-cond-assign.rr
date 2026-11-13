@@ -1,0 +1,42 @@
+.policy "eslint-no-cond-assign" revision 4
+.description "Avoid assignments in if, while, for and ternary conditions unless wrapped in extra parentheses; they are usually a mistyped comparison."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen_count, assignment, function_node
+
+// ESLint's no-cond-assign. `option`:
+//   "except-parens" (the default): a test of if, while, do-while, for or `?:` that is an assignment, unless it
+//     is in two pairs of parentheses, the statement's own included (for needs only one):
+//       if (x = f()) …          → reported      if ((x = f())) …       fine
+//       for (; x = f(); ) …     → reported      for (; (x = f()); ) …  fine
+//       (x = f()) ? a : b       → reported      ((x = f())) ? a : b    fine
+//   "always": any assignment anywhere inside such a test (not inside a function there), parentheses or not:
+//       if ((x = f())) …        → Unexpected assignment within an 'if' statement.
+.violation no_cond_assign(at: node, msg: symbol) code "no-cond-assign" "{msg}"
+    suppress eslint "no-cond-assign"
+    suppress oxlint "no-cond-assign"
+
+// test(s, c, w, k): c is the test of s as written (an if's includes its parentheses), w names s, and k is how
+// many parentheses an assignment there needs in "except-parens" mode.
+.decl test(s: node, c: node, w: symbol, k: number)
+test(s, c, "an 'if' statement", 2) :- kind(s, "if_statement"), field(s, "condition", c).
+test(s, c, "a 'while' statement", 2) :- kind(s, "while_statement"), field(s, "condition", c).
+test(s, c, "a 'do...while' statement", 2) :- kind(s, "do_statement"), field(s, "condition", c).
+test(s, c, "a 'for' statement", 1) :- kind(s, "for_statement"), field(s, "condition", c).
+test(s, c, "ConditionalExpression", 2) :- kind(s, "ternary_expression"), field(s, "condition", c).
+
+no_cond_assign(a, "Change this assignment to a comparison, or wrap it in extra parentheses if the assignment is deliberate.") :-
+    !option("option", "always"), test(_, c, _, need), deparen_count(c, a, k), assignment(a), k < need.
+no_cond_assign(a, cat("Unexpected assignment within ", cat(w, "."))) :-
+    option("option", "always"), assignment(a), cond_of(a, w).
+
+// cond_of(a, w): a's innermost enclosing test is one of statement w's (a function in between stops it).
+.decl cond_of(a: node, w: symbol)
+cond_of(a, w) :- assignment(a), nearest(a, c, stop), test(_, c, w, _).
+cond_of(a, w) :- assignment(a), test(_, a, w, _).
+.decl stop(n: node)
+stop(c) :- test(_, c, _, _).
+stop(f) :- function_node(f).

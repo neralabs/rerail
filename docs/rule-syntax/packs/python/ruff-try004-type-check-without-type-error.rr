@@ -1,0 +1,57 @@
+.policy "ruff-try004-type-check-without-type-error" revision 2
+.description "Raise TypeError instead of a general-purpose built-in exception when a type check fails; callers can then tell a wrong type from a bad value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY004 (tryceratops): an `if` whose test is only type checks (isinstance, issubclass, callable, under
+// `not` or another unary operator, `and`, `or`) raising a general builtin exception (ValueError, Exception, …) instead of TypeError.
+// Every elif must be a type check too: the clauses are read in order, and reading stops at the first elif
+// that is not. In each body, raises are read until the first statement that may return, break or continue.
+// An `if` nested directly in another `if` counts only when the outer test is a type check as well.
+//   if not isinstance(x, int):
+//       raise ValueError("bad")       ← TRY004
+//   if x > 0 and isinstance(x, int):
+//       raise ValueError("bad")       not reported: `x > 0` is not a type check
+#include "python/exceptions.rr"
+//   exc_raise(r, e), exc_class(e, c), exc_qual(e, q)
+
+.violation TRY004(at: node) code "TRY004"
+    "Raise `TypeError` here: the failed type check is a wrong-type error, not a bad value. Leave it if callers already catch this exception or it is part of the public API."
+    suppress ruff "TRY004"
+TRY004(r) :- checked(b), child(b, r, k), exc_raise(r, e), exc_class(e, c), exc_qual(c, q), general(q),
+    count : { child(b, s, j), j < k, flow_exit(s) } = 0.
+
+// checked(b): a body Ruff reads: the if's own, each elif's up to the first non-type-check elif, the else's.
+.decl checked(b: node)
+checked(b) :- if_ok(i), field(i, "consequence", b).
+checked(b) :- if_ok(i), child(i, c, j), kind(c, "elif_clause"), !bad_elif(i, j), field(c, "consequence", b).
+checked(b) :- if_ok(i), child(i, c, j), kind(c, "else_clause"), !bad_elif(i, j), field(c, "body", b).
+.decl if_ok(i: node)  // the test is a type check, and so is the test of an `if` directly around it
+if_ok(i) :- kind(i, "if_statement"), field(i, "condition", t), type_test(t), !in_other_if(i).
+.decl in_other_if(i: node)  // the statement around i is an `if` whose test is not a type check
+in_other_if(i) :- kind(i, "if_statement"), nearest(i, p, exc_compound), kind(p, "if_statement"),
+    field(p, "condition", u), !type_test(u).
+.decl bad_elif(i: node, j: number)  // an elif at or before position j is not a type check
+bad_elif(i, j) :- kind(i, "if_statement"), child(i, _, j), child(i, c, k), k <= j, kind(c, "elif_clause"),
+    field(c, "condition", t), !type_test(t).
+.decl type_test(t: node)
+type_test(t) :- unparen(t, m), kind(m, "call"), field(m, "function", f), exc_qual(f, q),
+    (q = "builtins.isinstance" ; q = "builtins.issubclass" ; q = "builtins.callable").
+type_test(t) :- unparen(t, m), (kind(m, "not_operator") ; kind(m, "unary_operator")), field(m, "argument", a), type_test(a).
+type_test(t) :- unparen(t, m), kind(m, "boolean_operator"), field(m, "left", a), field(m, "right", b),
+    type_test(a), type_test(b).
+// flow_exit(s): s is, or holds outside a nested def or class, a return, break or continue.
+.decl flow_exit(s: node)
+flow_exit(s) :- kind(s, k), exit_kind(k).
+flow_exit(s) :- child(b, s, _), kind(b, "block"), kind(s, k0), !def_or_class(k0), within_stop(r, s, def_or_class),
+    kind(r, k), exit_kind(k).
+.decl exit_kind(k: symbol)
+exit_kind("return_statement"). exit_kind("break_statement"). exit_kind("continue_statement").
+.decl def_or_class(k: symbol)
+def_or_class("function_definition"). def_or_class("class_definition"). def_or_class("decorated_definition").
+.decl general(q: symbol)  // the builtins Ruff calls general-purpose
+general(cat("builtins.", x)) :- (x = "ArithmeticError" ; x = "AssertionError" ; x = "AttributeError" ;
+    x = "BufferError" ; x = "EOFError" ; x = "Exception" ; x = "ImportError" ; x = "LookupError" ;
+    x = "MemoryError" ; x = "NameError" ; x = "ReferenceError" ; x = "RuntimeError" ; x = "SyntaxError" ;
+    x = "SystemError" ; x = "ValueError").

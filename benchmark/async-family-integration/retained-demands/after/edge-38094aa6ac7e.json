@@ -1,0 +1,162 @@
+{
+  "cpuNs": 432324000,
+  "execution": "combined production corpus::run_with_options; program; CPU",
+  "flattenCpuNs": 20622000,
+  "flattenWallNs": 21589250,
+  "keyCount": 2,
+  "keys": [
+    [
+      "ASYNC230",
+      "doc0.py",
+      3
+    ],
+    [
+      "ASYNC230",
+      "doc0.py",
+      5
+    ]
+  ],
+  "out": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-38094aa6ac7e",
+  "profile": {
+    "decisions": [],
+    "directory": null,
+    "spans": [],
+    "statements": []
+  },
+  "profiling": false,
+  "report": {
+    "chunks": 1,
+    "consulted": [
+      [
+        "doc",
+        "doc0.py",
+        "6ce1cb717b7e0fedfb3d2752da01ed2d91362d428ffafa25b9014ea9c6c39509"
+      ]
+    ],
+    "cross": [
+      0,
+      0
+    ],
+    "crossAgain": {},
+    "crossChanged": [],
+    "crossDeltaCounts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "crossMaintained": [
+      0,
+      0,
+      0
+    ],
+    "crossStrata": null,
+    "files": 1,
+    "memo": [
+      0,
+      0
+    ],
+    "native": 58,
+    "nodes": 59,
+    "phaseRunCount": 0,
+    "phases": [
+      [
+        "combine",
+        0.0022699999999999994,
+        0.0004620000000000006,
+        28.409856,
+        0
+      ],
+      [
+        "parse (worker)",
+        0.000699,
+        0.0008420000000000001,
+        537.280512,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.00025599999999999993,
+        0.00037700000000000006,
+        537.280512,
+        0
+      ],
+      [
+        "constants",
+        0.00011099999999999999,
+        0.00003300000000000004,
+        28.540928,
+        0
+      ],
+      [
+        "stats",
+        0.32385499999999995,
+        0.087897,
+        537.280512,
+        7
+      ],
+      [
+        "wait",
+        0.0002729999999999677,
+        0.0020449999999999913,
+        537.280512,
+        0
+      ],
+      [
+        "local",
+        0.004561000000000037,
+        0.0005080000000000084,
+        537.280512,
+        45
+      ],
+      [
+        "cross",
+        0.0010240000000000249,
+        0.000059000000000003494,
+        537.280512,
+        47
+      ],
+      [
+        "write",
+        0.000016000000000016,
+        0.00043299999999998895,
+        537.280512,
+        0
+      ]
+    ],
+    "prepared": "store",
+    "rounds": {
+      "converged": true,
+      "pending": false,
+      "rows": [],
+      "run": 1
+    },
+    "rows": {
+      "p0_ASYNC210": 0,
+      "p1_ASYNC221": 0,
+      "p2_ASYNC222": 0,
+      "p3_ASYNC230": 2,
+      "rr_diagnostic": 2,
+      "violation": 2
+    },
+    "text": [
+      1,
+      50,
+      0.0003830000000000002
+    ],
+    "typing": "TypingReport { declared: 0, pending: [], conflicts: [], typed_nodes: 0, terms: 0, summaries: 0 }",
+    "typingRunNames": []
+  },
+  "root": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/38094aa6ac7e",
+  "rules": [
+    "ruff-async210-blocking-http-call-in-async-function.rr",
+    "ruff-async221-run-process-in-async-function.rr",
+    "ruff-async222-wait-for-process-in-async-function.rr",
+    "ruff-async230-blocking-open-call-in-async-function.rr"
+  ],
+  "schema": "rerail-async-authored-rr-comparison-v1",
+  "suppression": "declarations retained; raw violation.csv keys",
+  "wallNs": 437616584
+}

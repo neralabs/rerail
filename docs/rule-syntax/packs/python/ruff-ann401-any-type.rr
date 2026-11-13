@@ -1,0 +1,24 @@
+.policy "ruff-ann401-any-type" revision 2
+.description "Use a specific type instead of Any in function signatures; Any switches off type checking for every value that passes through it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN401 (flake8-annotations): a def's parameter or return annotation that amounts to `Any`: `Any`
+// itself, bare `Optional`, `Annotated[Any, …]`, or a Union, `|` union, `Optional[…]` or quoted type with Any as
+// a member. A method's receiver (`self`, `cls`) is not checked, nor are @override methods or the
+// implementation after an @overload. Ruff's option allow-star-arg-any is not supported (its default, false,
+// is what this rule does).
+//   def foo(a: Any, *args: str) -> int: ...      ← ANN401 at Any
+//   def foo(a: int | Any) -> None: ...           ← ANN401
+//   def foo(a: object) -> None: ...              not reported
+//   @override
+//   def foo(self, a: Any) -> int: ...            not reported
+#include "python/annotations.rr"
+
+.violation ANN401(at: node, name: symbol) code "ANN401"
+    "This annotation amounts to `Any`; replace it with the type the code actually accepts or returns (a union, a TypeVar or a Protocol), keeping `Any` only where every type is truly allowed."
+    suppress ruff "ANN401"
+ANN401(a, x) :- ann_def(f), !ann_override(f), ann_param(f, _, x0, k, a), ann_any_type(a),
+    (k = "vararg", x = cat("*", x0) ; k = "kwarg", x = cat("**", x0) ; k != "vararg", k != "kwarg", x = x0).
+ANN401(t, x) :- ann_def(f), !ann_override(f), field(f, "return_type", t), ann_any_type(t), def_name(f, x).

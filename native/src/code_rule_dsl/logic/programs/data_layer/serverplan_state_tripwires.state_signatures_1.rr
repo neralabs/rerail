@@ -1,0 +1,257 @@
+// data-layer-serverplan-state-tripwires in Rerail logic, part file: clause `state-signatures-1` (18 stages), options at
+// their defaults (oracleAnalyzer false and entryPoint "all": the syntax_gate matcher reads them, verbatim; the final
+// query is its entryPoint "all" case). Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+//
+// One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here; a nullable
+// column is a side relation that holds where the column is not NULL. The clause is per file (partitionBy file): joins on
+// node identity stay in one document, joins on text add `docof`.
+// The syntax table `nodes` is the tape of a document the syntax_gate matched, less its excludeKinds; `parent` is `child`,
+// `X_id`/`X_source` are `field` and `text`, `line` is @line, `ordinal` is the index among the non-excluded siblings.
+// `ownership.fn` of an assignment (ancestor-or-self function_definition; an assignment is none) is `nearest` (E0 § 2.5
+// row 28). `descendants` (reachability over the syntax tree, every node a root; E0 row 29) is the node itself or a node
+// `@within` it: no recursion. bad_configs (E0 row 30) and shape_values (E0 row 31) are set recursions.
+// A function_definition and a class_definition always have a `name`, an attribute its `object` and `attribute`: their
+// `*_source` columns are not NULL there.
+//
+// Builtins: @line (the 1-based line of a node's first byte, the syntax table's `line`), @rx_matches, @rx_extract,
+// @instr, @lower. A builtin with no value (SQL NULL) binds nothing.
+// requireNonemptyInput (syntax_gate): an empty gate gives no nodes, hence no rows.
+// ties: SPT-018's row_number() OVER (PARTITION BY __path, fn, line ORDER BY __start, __end DESC) = 1 keeps every node of
+// the least (__start, -__end); distinct nodes with one span are all kept.
+// findings layer (§8): the final query's columns (path, start_byte, end_byte, identity, detector); the finding key is
+// the `issue` column (the clause's `code`).
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl syntax_gate(d: number)
+syntax_gate(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"any": [{"matches": "state-signature-source"}, {"inside": {"matches": "state-signature-source", "stopBy": "end"}}]}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_project_sources": {"filePath": {"regex": "(?s).*"}}, "scan_source": {"filePath": {"regex": "(?s).*"}}, "scan_tree": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"kind": "module"}]}]}]}}).
+
+// ---- the syntax table `nodes` ----
+.decl excluded_kind(k: symbol)
+excluded_kind("comment"). excluded_kind("string_start"). excluded_kind("string_content"). excluded_kind("string_end").
+excluded_kind("escape_sequence"). excluded_kind("line_continuation").
+.decl nodes(n: node)
+nodes(n) :- syntax_gate(d), node(d, n, k, _, _), !excluded_kind(k).
+.decl earlier_sibling(n: node, b: node)
+earlier_sibling(n, b) :- nodes(n), child(p, n, i), child(p, b, j), j < i, nodes(b).
+.decl ordinal(n: node, i: number)
+ordinal(n, i) :- nodes(n), i = count : { earlier_sibling(n, _) }.
+// descendants(root, node): reflexive, every node a root.
+.decl descendants(root: node, n: node)
+descendants(r, r) :- nodes(r).
+descendants(r, n) :- nodes(r), docof(r, d), node(d, n, _, _, _), nodes(n), @within(n, r) = 1.
+
+// ---- functions, classes, methods, attributes ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+.decl classes(c: node, name: symbol)
+classes(c, name) :- nodes(c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+// f.parent = c.body_id, or f's parent is a decorated_definition whose parent is c.body_id.
+.decl methods(f: node, cls: node, class_name: symbol)
+methods(f, c, cn) :- functions(f, _), child(b, f, _), classes(c, cn), field(c, "body", b).
+methods(f, c, cn) :- functions(f, _), child(w, f, _), nodes(w), kind(w, "decorated_definition"), child(b, w, _), classes(c, cn),
+    field(c, "body", b).
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+
+// ---- descendants: above, with `nodes` ----
+
+// ---- assignments ----
+.decl assignments(n: node, target: node, target_kind: symbol, target_text: symbol)
+assignments(n, l, lk, lt) :- nodes(n), kind(n, "assignment"), field(n, "left", l), nodes(l), kind(l, lk), text(l, lt).
+// value (LEFT JOIN nodes r ON r.id = n.right_id); expr_kind/expr_text are kind/text of the value.
+.decl assignment_value(n: node, value: node)
+assignment_value(n, r) :- assignments(n, _, _, _), field(n, "right", r), nodes(r).
+// fn (LEFT JOIN ownership).
+.decl assignment_fn(n: node, fn: node)
+assignment_fn(n, f) :- assignments(n, _, _, _), nearest(n, f, fdef).
+
+// ---- parameters ----
+.decl parameter_kind(k: symbol)
+parameter_kind("identifier"). parameter_kind("typed_parameter"). parameter_kind("default_parameter"). parameter_kind("typed_default_parameter").
+// name: p itself when an identifier, else p's first child (ordinal 0) when an identifier.
+.decl parameters(fn: node, p: node, kind: symbol, name: symbol)
+parameters(f, p, "identifier", name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, "identifier"), text(p, name).
+parameters(f, p, k, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, k), parameter_kind(k),
+    child(p, n, _), nodes(n), ordinal(n, 0), kind(n, "identifier"), text(n, name).
+// annotation = p.type_id.
+.decl parameter_annotation(p: node, annotation: node)
+parameter_annotation(p, t) :- parameters(_, p, _, _), field(p, "type", t).
+// position = row_number() OVER (PARTITION BY fn ORDER BY p.__start) - 1.
+.decl parameter_before(p: node, q: node)
+parameter_before(p, q) :- parameters(f, p, _, _), parameters(f, q, _, _), start(p, ps), start(q, qs), qs < ps.
+.decl parameter_position(p: node, position: number)
+parameter_position(p, i) :- parameters(_, p, _, _), i = count : { parameter_before(p, _) }.
+
+// ---- step_classes ----
+// A non-keyword_argument child of the class's argument_list (its bases) whose text matches.
+.decl class_base(c: node, text: symbol)
+class_base(c, t) :- classes(c, _), child(c, bs, _), nodes(bs), kind(bs, "argument_list"), child(bs, b, _), nodes(b), kind(b, k),
+    k != "keyword_argument", text(b, t).
+.decl step_classes(c: node)
+step_classes(c) :- class_base(c, t), @rx_matches(t, "(?:ServerPlanStep|IntentStep)") = 1.
+.decl step_class_intent(c: node)
+step_class_intent(c) :- step_classes(c), class_base(c, t), @rx_matches(t, "IntentStep") = 1.
+
+// ---- dataclasses ----
+.decl dataclasses(c: node, name: symbol)
+dataclasses(c, n) :- classes(c, n), child(w, c, _), nodes(w), kind(w, "decorated_definition"), text(w, wt),
+    @rx_matches(wt, "(?m)^\\s*@(?:[\\w.]*\\.)?dataclass\\b") = 1.
+.decl dataclass_static(c: node)
+dataclass_static(c) :- dataclasses(c, n), child(w, c, _), text(w, wt), @rx_matches(wt, "(?s)@(?:[\\w.]*\\.)?dataclass\\s*\\([^)]*\\bfrozen\\s*=\\s*True") = 1,
+    @rx_matches(n, "(?:Config|Payload)$") = 1.
+.decl dataclass_named(d: number, name: symbol)
+dataclass_named(d, n) :- dataclasses(c, n), docof(c, d).
+
+// ---- signature_methods ----
+// NOT EXISTS a function with __start < m.__start and __end >= m.__end: a function_definition ancestor.
+.decl outer_function(m: node)
+outer_function(m) :- methods(m, _, _), nearest(m, o, fdef).
+// The body's raise NotImplementedError statement, with no later sibling, only expression/delete/pass statements before
+// it, and no expression_statement sibling without an assignment/literal child: a stub.
+.decl last_raise(m: node, s: node)
+last_raise(m, s) :- methods(m, _, _), field(m, "body", b), child(b, s, _), nodes(s), kind(s, "raise_statement"), text(s, t),
+    @rx_matches(t, "^raise\\s+NotImplementedError\\s*\\(") = 1.
+.decl stub_prefix_kind(k: symbol)
+stub_prefix_kind("expression_statement"). stub_prefix_kind("delete_statement"). stub_prefix_kind("pass_statement").
+.decl raise_other(s: node)
+raise_other(s) :- last_raise(_, s), child(b, s, _), child(b, o, _), nodes(o), kind(o, k), k != "comment", start(o, os), start(s, ss), os > ss.
+raise_other(s) :- last_raise(_, s), child(b, s, _), child(b, o, _), nodes(o), kind(o, k), k != "comment", start(o, os), start(s, ss), os < ss,
+    !stub_prefix_kind(k).
+.decl value_kind(k: symbol)
+value_kind("assignment"). value_kind("string"). value_kind("concatenated_string"). value_kind("integer"). value_kind("float").
+value_kind("none"). value_kind("true"). value_kind("false").
+.decl expression_with_value(e: node)
+expression_with_value(e) :- nodes(e), kind(e, "expression_statement"), child(e, v, _), nodes(v), kind(v, k), value_kind(k).
+.decl raise_bare_expression(s: node)
+raise_bare_expression(s) :- last_raise(_, s), child(b, s, _), child(b, e, _), nodes(e), kind(e, "expression_statement"), !expression_with_value(e).
+.decl stub_method(m: node)
+stub_method(m) :- last_raise(m, s), !raise_other(s), !raise_bare_expression(s).
+.decl signature_methods(m: node)
+signature_methods(m) :- methods(m, c, _), step_classes(c), !outer_function(m), !stub_method(m).
+.decl signature_method_intent(m: node)
+signature_method_intent(m) :- signature_methods(m), methods(m, c, _), step_class_intent(c).
+
+// ---- annotations ----
+// head = coalesce(rx_extract(text, …, 1), '').
+.decl annotation_head(n: node, head: symbol)
+annotation_head(n, h) :- nodes(n), kind(n, "type"), text(n, t), h = @rx_extract(t, "^\\s*(?:[\\w.]+\\.)?([A-Za-z_]\\w*)", 1).
+.decl annotations(n: node, text: symbol, head: symbol)
+annotations(n, t, h) :- annotation_head(n, h), text(n, t).
+annotations(n, t, "") :- nodes(n), kind(n, "type"), text(n, t), !has_annotation_head(n).
+.decl has_annotation_head(n: node)
+has_annotation_head(n) :- annotation_head(n, _).
+.decl annotation_union_type(n: node)
+annotation_union_type(n) :- annotations(n, _, _), descendants(n, a), kind(a, "union_type"), text(a, t), @instr(t, "|") > 0.
+annotation_union_type(n) :- annotations(n, _, _), descendants(n, a), kind(a, "binary_operator"), text(a, t), @instr(t, "|") > 0.
+annotation_union_type(n) :- annotations(n, _, _), descendants(n, a), kind(a, "identifier"), text(a, "Union").
+annotation_union_type(n) :- annotations(n, _, _), descendants(n, a), kind(a, "identifier"), text(a, "Optional").
+.decl annotation_server_ref(n: node)
+annotation_server_ref(n) :- annotations(n, _, _), descendants(n, a), kind(a, "identifier"), text(a, t), @rx_matches(t, "ServerRef$") = 1.
+
+// ---- annotation_contracts: basic ----
+.decl annotation_basic(n: node)
+annotation_basic(n) :- annotation_server_ref(n), !annotation_union_type(n).
+annotation_basic(n) :- annotations(n, t, "type"), !annotation_union_type(n), @instr(t, "[") > 0.
+annotation_basic(n) :- annotations(n, t, _), !annotation_union_type(n),
+    @rx_matches(t, "^\\s*(?:[A-Za-z_]\\w*\\.)*(?:BackendType|BranchTipMaterialization|CommitBranchContextRefId|ScopedCleanupMode|ServerPlanRefId|SessionId|SqlIndexName|SqlTableName|SysId|VectorBackendKind|VectorIndexMaintenanceOperation)\\s*$") = 1.
+annotation_basic(n) :- annotations(n, t, _), !annotation_union_type(n),
+    @rx_matches(t, "^\\s*(?:(?:[A-Za-z_]\\w*\\.)*frozenset\\s*\\[\\s*)+(?:[A-Za-z_]\\w*\\.)*(?:BackendType|BranchTipMaterialization|CommitBranchContextRefId|ScopedCleanupMode|ServerPlanRefId|SessionId|SqlIndexName|SqlTableName|SysId|VectorBackendKind|VectorIndexMaintenanceOperation)\\s*(?:\\]\\s*)+$") = 1.
+
+// ---- config_fields: a typed assignment statement in a dataclass body (row = the assignment) ----
+.decl config_fields(a: node, d: number, cls: symbol)
+config_fields(a, d, cn) :- assignments(a, _, _, _), field(a, "type", _), child(stmt, a, _), nodes(stmt), child(b, stmt, _), dataclasses(c, cn),
+    field(c, "body", b), docof(a, d).
+// annotation (LEFT JOIN annotations t ON t.id = a.type_id).
+.decl config_field_annotation(a: node, annotation: node)
+config_field_annotation(a, t) :- config_fields(a, _, _), field(a, "type", t), annotations(t, _, _).
+.decl has_config_field(d: number, cls: symbol)
+has_config_field(d, cn) :- config_fields(_, d, cn).
+
+// ---- bad_configs: a set recursion over the dataclass field-type graph (E0 row 30) ----
+.decl bad_configs(d: number, name: symbol)
+bad_configs(d, n) :- dataclasses(c, n), !dataclass_static(c), docof(c, d), !has_config_field(d, n).
+// A field with no annotation contract (a NULL: other.__path = NULL never holds).
+bad_configs(d, n) :- dataclasses(c, n), !dataclass_static(c), docof(c, d), config_fields(f, d, n), !config_field_annotation(f, _).
+bad_configs(d, n) :- dataclasses(c, n), !dataclass_static(c), docof(c, d), config_fields(f, d, n), config_field_annotation(f, t),
+    !annotation_basic(t), annotations(t, _, h), !dataclass_named(d, h).
+bad_configs(d, n) :- dataclasses(c, n), !dataclass_static(c), docof(c, d), config_fields(f, d, n), config_field_annotation(f, t),
+    !annotation_basic(t), annotations(t, _, h), bad_configs(d, h).
+
+// ---- signature_parameters ----
+.decl signature_parameters(p: node, fn: node, kind: symbol, name: symbol, method: symbol)
+signature_parameters(p, f, k, name, mn) :- parameters(f, p, k, name), signature_methods(f), functions(f, mn).
+.decl signature_parameter_intent(p: node)
+signature_parameter_intent(p) :- signature_parameters(p, f, _, _, _), signature_method_intent(f).
+// a (LEFT JOIN annotation_contracts a ON a.id = p.annotation): head, union_type, server_ref.
+.decl signature_parameter_contract(p: node, a: node, head: symbol)
+signature_parameter_contract(p, a, h) :- signature_parameters(p, _, _, _, _), parameter_annotation(p, a), annotations(a, _, h).
+// allowed = coalesce(a.basic, 0) OR a dataclass named a.head that is not in bad_configs.
+.decl signature_parameter_allowed(p: node)
+signature_parameter_allowed(p) :- signature_parameter_contract(p, a, _), annotation_basic(a).
+signature_parameter_allowed(p) :- signature_parameter_contract(p, _, h), docof(p, d), dataclass_named(d, h), !bad_configs(d, h).
+// raw_builtin: an identifier str/int/float/bool/bytes in descendants(p.annotation).
+.decl raw_builtin_name(t: symbol)
+raw_builtin_name("str"). raw_builtin_name("int"). raw_builtin_name("float"). raw_builtin_name("bool"). raw_builtin_name("bytes").
+.decl signature_parameter_raw_builtin(p: node)
+signature_parameter_raw_builtin(p) :- signature_parameters(p, _, _, _, _), parameter_annotation(p, a), descendants(a, x), kind(x, "identifier"),
+    text(x, t), raw_builtin_name(t).
+
+// ---- shape_attributes: self.<attr> = <expr naming a disallowed __init__ parameter> (SELECT DISTINCT) ----
+.decl shape_attributes(cls: node, name: symbol)
+shape_attributes(c, an) :- signature_parameters(p, f, _, pn, "__init__"), signature_parameter_intent(p), pn != "self", pn != "ref_id",
+    !signature_parameter_allowed(p), methods(f, c, _), assignment_fn(a, f), assignment_value(a, v), descendants(v, x), kind(x, "identifier"),
+    text(x, pn), assignments(a, t, _, _), attributes(t, an, _, "self").
+
+// ---- shape_values: a set recursion, upward through descendants and through assignments in the method (E0 row 31) ----
+// a.__start >= m.__start AND a.__end <= m.__end for an attribute a and a function m: a is within m.
+.decl shape_values(fn: node, n: node)
+shape_values(m, a) :- methods(m, c, _), functions(m, "lower"), attributes(a, an, _, "self"), @within(a, m) = 1, shape_attributes(c, an).
+shape_values(f, r) :- shape_values(f, n), descendants(r, n).
+shape_values(f, x) :- shape_values(f, v), assignment_value(a, v), assignment_fn(a, f), assignments(a, _, "identifier", tt), docof(a, d),
+    node(d, x, "identifier", _, _), nodes(x), text(x, tt), @within(x, f) = 1.
+
+// ---- shape_branches (SELECT DISTINCT) ----
+// The tested node: a conditional_expression's child of ordinal 1, an if/elif/while's condition, else the node itself.
+.decl shape_branch_test(n: node, test: node)
+shape_branch_test(n, t) :- nodes(n), kind(n, "conditional_expression"), child(n, t, _), nodes(t), ordinal(t, 1).
+shape_branch_test(n, t) :- nodes(n), kind(n, "if_statement"), field(n, "condition", t).
+shape_branch_test(n, t) :- nodes(n), kind(n, "elif_clause"), field(n, "condition", t).
+shape_branch_test(n, t) :- nodes(n), kind(n, "while_statement"), field(n, "condition", t).
+shape_branch_test(n, n) :- nodes(n), kind(n, "not_operator").
+shape_branch_test(n, n) :- nodes(n), kind(n, "boolean_operator").
+// n.__start >= m.__start AND n.__end <= m.__end, n not a function_definition: n is within m.
+.decl shape_branches(fn: node, line: number)
+shape_branches(m, l) :- methods(m, _, _), functions(m, "lower"), shape_branch_test(n, t), @within(n, m) = 1, shape_values(m, t), l = @line(n).
+
+// ---- the clause's query: an issue per finding ----
+.decl config_parameter(p: node)
+config_parameter(p) :- signature_parameters(p, _, _, "config", _), signature_parameter_contract(p, _, h), docof(p, d), dataclass_named(d, h).
+finding("state-signatures-1", "SPT-015", p) :- signature_parameters(p, _, _, n, _), n != "self", n != "ref_id", signature_parameter_raw_builtin(p),
+    !config_parameter(p).
+finding("state-signatures-1", "SPT-016", p) :- signature_parameters(p, _, "default_parameter", n, "__init__"), signature_parameter_intent(p), n != "self",
+    n != "ref_id".
+finding("state-signatures-1", "SPT-016", p) :- signature_parameters(p, _, "typed_default_parameter", n, "__init__"), signature_parameter_intent(p),
+    n != "self", n != "ref_id".
+finding("state-signatures-1", "SPT-017", p) :- signature_parameters(p, _, _, n, "__init__"), signature_parameter_intent(p), n != "self", n != "ref_id",
+    !signature_parameter_allowed(p).
+finding("state-signatures-1", "SPT-013", p) :- signature_parameters(p, _, _, n, "__init__"), n != "self", signature_parameter_contract(p, a, _),
+    annotation_server_ref(a), annotation_union_type(a).
+finding("state-signatures-1", "SPT-014", p) :- signature_parameters(p, _, _, n, "__init__"), n != "self", @instr(@lower(n), "table") > 0,
+    @instr(@lower(n), "alias") = 0, parameter_annotation(p, a), descendants(a, x), kind(x, "identifier"), text(x, "str").
+// SPT-018: per (fn, line) of a shape branch, the node on that line of least __start, then greatest __end.
+.decl line_node(fn: node, line: number, n: node)
+line_node(f, l, n) :- shape_branches(f, l), docof(f, d), node(d, n, _, _, _), nodes(n), l = @line(n).
+.decl line_start(fn: node, line: number, s: number)
+line_start(f, l, s) :- line_node(f, l, n), start(n, s).
+.decl line_first_start(fn: node, line: number, s: number)
+line_first_start(f, l, s) :- line_start(f, l, _), s = min t : { line_start(f, l, t) }.
+.decl line_end(fn: node, line: number, e: number)
+line_end(f, l, e) :- line_node(f, l, n), node(_, n, _, s, e), line_first_start(f, l, s).
+.decl line_last_end(fn: node, line: number, e: number)
+line_last_end(f, l, e) :- line_end(f, l, _), e = max x : { line_end(f, l, x) }.
+finding("state-signatures-1", "SPT-018", n) :- line_node(f, l, n), node(_, n, _, s, e), line_first_start(f, l, s), line_last_end(f, l, e).

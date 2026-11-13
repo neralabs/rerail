@@ -1,0 +1,48 @@
+{
+  "order": [
+    [
+      "before",
+      "after"
+    ],
+    [
+      "after",
+      "before"
+    ],
+    [
+      "before",
+      "after"
+    ]
+  ],
+  "samples": [
+    {
+      "cpu": 8.812046,
+      "wall": 8.283245958,
+      "local_cpu": 0.6382729999999998,
+      "sql": 10272,
+      "chunks": 72,
+      "prepared": "store"
+    },
+    {
+      "cpu": 11.148119,
+      "wall": 9.8448395,
+      "local_cpu": 0.7901379999999991,
+      "sql": 10272,
+      "chunks": 72,
+      "prepared": "store"
+    },
+    {
+      "cpu": 9.358327,
+      "wall": 8.062443,
+      "local_cpu": 0.6742230000000008,
+      "sql": 10272,
+      "chunks": 72,
+      "prepared": "store"
+    }
+  ],
+  "median": {
+    "cpu": 9.358327,
+    "wall": 8.283245958,
+    "local_cpu": 0.6742230000000008,
+    "sql": 10272
+  }
+}

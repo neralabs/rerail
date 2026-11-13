@@ -1,0 +1,2367 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-missing-async-pairs",
+  "revision": 1,
+  "mode": "log",
+  "description": "Candidate port of nera-data-layer missing_async_pairs at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2050_transaction/**/*.py",
+      "l7200_versioned_transactions/**/*.py",
+      "impl/common/l7300_sql_versioned_transactions/**/*.py",
+      "impl/common/l7248_sparse_versioned_transactions/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "pos-param": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:self)$"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "kind": "typed_parameter"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "not": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:self)$"
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "default_parameter"
+                          },
+                          {
+                            "kind": "typed_default_parameter"
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "not": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:self)$"
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "dictionary_splat_pattern"
+                    },
+                    {
+                      "all": [
+                        {
+                          "kind": "typed_parameter"
+                        },
+                        {
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "list_splat_pattern"
+                              },
+                              {
+                                "kind": "dictionary_splat_pattern"
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parameters",
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "not": {
+                  "precedes": {
+                    "kind": "positional_separator",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "any": [
+                      {
+                        "kind": "keyword_separator"
+                      },
+                      {
+                        "kind": "list_splat_pattern"
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "typed_parameter"
+                          },
+                          {
+                            "has": {
+                              "kind": "list_splat_pattern",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "later-sync": {
+            "params": [
+              "GROUP",
+              "NAME",
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "function_definition"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$GROUP",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "kind": "class_definition"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "regex": "_lazy$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "not": {
+                                    "has": {
+                                      "regex": "^_",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "regex": "_async$",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "regex": "^def\\b"
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "pattern": "$OTHER",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "OTHER",
+                            "right": "NAME",
+                            "op": "eq"
+                          }
+                        },
+                        {
+                          "layout": {
+                            "before": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "selected-sync": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "pattern": "$GROUP",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "class_definition"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "regex": "_lazy$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "not": {
+                          "has": {
+                            "regex": "^_",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "_async$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "regex": "^def\\b"
+                  }
+                ]
+              },
+              {
+                "pattern": "$METHOD"
+              },
+              {
+                "has": {
+                  "pattern": "$NAME",
+                  "stopBy": "neighbor",
+                  "field": "name"
+                }
+              },
+              {
+                "not": {
+                  "matches": {
+                    "later-sync": {
+                      "GROUP": "$GROUP",
+                      "NAME": "$NAME",
+                      "CURRENT": "$METHOD"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "later-async": {
+            "params": [
+              "GROUP",
+              "NAME",
+              "CURRENT"
+            ],
+            "rule": {
+              "inside": {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "function_definition"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$GROUP",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                ],
+                                "stopBy": {
+                                  "kind": "class_definition"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "regex": "_lazy$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "not": {
+                                    "has": {
+                                      "regex": "^_",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "regex": "_async$",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "regex": "^async\\b"
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "pattern": "$OTHER",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        },
+                        {
+                          "compare": {
+                            "left": "OTHER",
+                            "right": "NAME",
+                            "op": "eq"
+                          }
+                        },
+                        {
+                          "layout": {
+                            "before": {
+                              "to": "capture.CURRENT",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "selected-async": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "pattern": "$GROUP",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "class_definition"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "regex": "_lazy$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                        "stopBy": "neighbor",
+                        "field": "name"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "not": {
+                          "has": {
+                            "regex": "^_",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "_async$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "regex": "^async\\b"
+                  }
+                ]
+              },
+              {
+                "pattern": "$METHOD"
+              },
+              {
+                "has": {
+                  "pattern": "$NAME",
+                  "stopBy": "neighbor",
+                  "field": "name"
+                }
+              },
+              {
+                "not": {
+                  "matches": {
+                    "later-async": {
+                      "GROUP": "$GROUP",
+                      "NAME": "$NAME",
+                      "CURRENT": "$METHOD"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-async",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "matches": "selected-sync"
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:_CachedQuery)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "class_definition"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "not": {
+                            "regex": "^_"
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many)$"
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "has": {
+                            "all": [
+                              {
+                                "matches": "pos-param"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "pattern": "$IO_PARAM"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "pattern": "$IO_PARAM"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "default_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_default_parameter"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "has": {
+                                          "pattern": "$IO_PARAM",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:conn|connection|db|session|session_id|transaction|txn)$"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:conn|connection|db|session|session_id|transaction|txn)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "parameters"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "call"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "attribute"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:commit|commit_async|count|count_async|delete_by_id|delete_by_id_async|delete_many|delete_many_async|execute|execute_async|first|first_async|insert|insert_async|insert_many|insert_many_async|read|read_async|read_version|read_version_async|select_many|select_many_async|select_one|select_one_async|update|update_async|update_many|update_many_async|upsert|upsert_async|write|write_async|write_version|write_version_async)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "attribute"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "function"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "function_definition"
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$GROUP",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": {
+                                          "kind": "class_definition"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "regex": "_lazy$",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "regex": "^_",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "_async$",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "regex": "^async\\b"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "pattern": "$COUNTERPART_NAME",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "compare": {
+                                        "left": "COUNTERPART_NAME",
+                                        "right": "ASYNC_TARGET",
+                                        "op": "eq"
+                                      }
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "compare": {
+                                            "left": "COUNTERPART_NAME",
+                                            "right": "NAME",
+                                            "op": "eq"
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "regex": "_async$",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |async\\ def\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |async\\ def\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "BASE": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "_async$",
+                "by": ""
+              }
+            },
+            "ASYNC_TARGET": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "$",
+                "by": "_async"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "missing_pair",
+        "anchor": "witness.span",
+        "message": "missing_pair: missing-async"
+      }
+    },
+    {
+      "id": "missing-sync",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "matches": "selected-async"
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:_CachedQuery)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "class_definition"
+                      }
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "not": {
+                          "has": {
+                            "regex": "^_",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:commit_async|commit_branch_async|count_async|create_branch_async|delete_by_id_async|delete_many_async|execute_async|execute_one_async|find_object_branches_async|find_object_revisions_async|first_async|get_history_async|insert_async|insert_many_async|insert_many_raw_async|rollback_async|select_at_revision_async|select_many_async|select_one_async|update_async|update_many_async|upsert_async|upsert_many_async)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "has": {
+                            "all": [
+                              {
+                                "matches": "pos-param"
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "pattern": "$IO_PARAM"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "pattern": "$IO_PARAM"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "default_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_default_parameter"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "has": {
+                                          "pattern": "$IO_PARAM",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:conn|connection|db|session|session_id|transaction|txn)$"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:conn|connection|db|session|session_id|transaction|txn)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          },
+                          "stopBy": "neighbor",
+                          "field": "parameters"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "call"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "attribute"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:commit|commit_async|count|count_async|delete_by_id|delete_by_id_async|delete_many|delete_many_async|execute|execute_async|first|first_async|insert|insert_async|insert_many|insert_many_async|read|read_async|read_version|read_version_async|select_many|select_many_async|select_one|select_one_async|update|update_async|update_many|update_many_async|upsert|upsert_async|write|write_async|write_version|write_version_async)$"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "attribute"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "function"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "function_definition"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "not": {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "function_definition"
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "inside": {
+                                        "all": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "has": {
+                                              "pattern": "$GROUP",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": {
+                                          "kind": "class_definition"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "regex": "_lazy$",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "has": {
+                                          "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "any": [
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "regex": "^_",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "_async$",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "has": {
+                                            "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "regex": "^def\\b"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "pattern": "$COUNTERPART_NAME",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                },
+                                {
+                                  "compare": {
+                                    "left": "COUNTERPART_NAME",
+                                    "right": "BASE",
+                                    "op": "eq"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |async\\ def\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |async\\ def\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "BASE": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "_async$",
+                "by": ""
+              }
+            },
+            "ASYNC_TARGET": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "$",
+                "by": "_async"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "missing_pair",
+        "anchor": "witness.span",
+        "message": "missing_pair: missing-sync"
+      }
+    },
+    {
+      "id": "argument-mismatch",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "matches": "selected-sync"
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:_CachedQuery)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "class_definition"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "not": {
+                            "regex": "^_"
+                          }
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many)$"
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "count": {
+                        "has": {
+                          "matches": "pos-param",
+                          "stopBy": "end"
+                        },
+                        "max": 1000000,
+                        "as": "SYNC_COUNT"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "function_definition"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "all": [
+                                              {
+                                                "kind": "function_definition"
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$GROUP",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": {
+                                            "kind": "class_definition"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "has": {
+                                            "regex": "_lazy$",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "has": {
+                                            "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "any": [
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "regex": "^_",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "_async$",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "function_definition"
+                                      },
+                                      {
+                                        "regex": "^async\\b"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$COUNTERPART_NAME",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "compare": {
+                                          "left": "COUNTERPART_NAME",
+                                          "right": "ASYNC_TARGET",
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "compare": {
+                                              "left": "COUNTERPART_NAME",
+                                              "right": "NAME",
+                                              "op": "eq"
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "has": {
+                                                "regex": "_async$",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "count": {
+                                    "has": {
+                                      "matches": "pos-param",
+                                      "stopBy": "end"
+                                    },
+                                    "max": 1000000,
+                                    "as": "ASYNC_COUNT"
+                                  },
+                                  "stopBy": "neighbor",
+                                  "field": "parameters"
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "compare": {
+                                      "left": "SYNC_COUNT",
+                                      "right": "ASYNC_COUNT",
+                                      "op": "ne"
+                                    }
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "module"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "pattern": "$METHOD"
+                                              },
+                                              {
+                                                "has": {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "matches": "pos-param"
+                                                      },
+                                                      {
+                                                        "any": [
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "identifier"
+                                                              },
+                                                              {
+                                                                "pattern": "$PARAM"
+                                                              }
+                                                            ]
+                                                          },
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "typed_parameter"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "pattern": "$PARAM"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor"
+                                                                }
+                                                              }
+                                                            ]
+                                                          },
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "any": [
+                                                                  {
+                                                                    "kind": "default_parameter"
+                                                                  },
+                                                                  {
+                                                                    "kind": "typed_default_parameter"
+                                                                  }
+                                                                ]
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "pattern": "$PARAM",
+                                                                  "stopBy": "neighbor",
+                                                                  "field": "name"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "count": {
+                                                          "follows": {
+                                                            "matches": "pos-param",
+                                                            "stopBy": "end"
+                                                          },
+                                                          "max": 1000000,
+                                                          "as": "INDEX"
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "inside": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "module"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "all": [
+                                                                        {
+                                                                          "all": [
+                                                                            {
+                                                                              "all": [
+                                                                                {
+                                                                                  "kind": "function_definition"
+                                                                                }
+                                                                              ]
+                                                                            },
+                                                                            {
+                                                                              "not": {
+                                                                                "inside": {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "kind": "function_definition"
+                                                                                    }
+                                                                                  ],
+                                                                                  "stopBy": "end"
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "inside": {
+                                                                                "all": [
+                                                                                  {
+                                                                                    "kind": "class_definition"
+                                                                                  },
+                                                                                  {
+                                                                                    "has": {
+                                                                                      "pattern": "$GROUP",
+                                                                                      "stopBy": "neighbor",
+                                                                                      "field": "name"
+                                                                                    }
+                                                                                  }
+                                                                                ],
+                                                                                "stopBy": {
+                                                                                  "kind": "class_definition"
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "not": {
+                                                                                "has": {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "kind": "identifier"
+                                                                                    },
+                                                                                    {
+                                                                                      "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)$"
+                                                                                    }
+                                                                                  ],
+                                                                                  "stopBy": "neighbor",
+                                                                                  "field": "name"
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "not": {
+                                                                                "has": {
+                                                                                  "regex": "_lazy$",
+                                                                                  "stopBy": "neighbor",
+                                                                                  "field": "name"
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "not": {
+                                                                                "has": {
+                                                                                  "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|__repr__|__str__|_sort_key|add_param|aggregate|authorize_internal_access|base_read_transaction|base_revision_id|base_write_transaction|between_revisions|branch|branch_anchor|branch_id|branches|build_versioning_where_conditions|by_session|cache|cached_mapping|cancel|connection_id|cross_branch|cursor_paginate|deferred|diff_bytes|disable_thread_affinity_checks|distinct|domain|ensure_internal_raw_access|excluding|execute_fire_and_forget|execute_later|execute_raw|execute_returning|execute_runtime|extract_fields_from_expression|fetchall_raw|fetchone_raw|filter|filter_eq|filter_gt|filter_gte|filter_in|filter_lt|filter_lte|filter_ne|filter_revision|final_sort_key|for_object|for_objects|for_update|get_cached|get_session_id_sql|get_sparse_column|get_strict_mode_setting|get_thread_checks_disabled|graph|graph_query_builder|group_by|having|include_deleted|insert_into|is_active|is_cancelled|is_committed|is_determined|is_rolled_back|iter_blob_chunks|keyset_paginate|limit|mode|offset|order_by|original_session_id|plan|query|query_unfiltered|quote_col|read_blob_range|record_async_operation|record_sync_operation|reorder_for_update|replacing|reset|revision_history_query|revision_id|revisions|search|select_tuple|session_id|set_disable_thread_checks|set_session_id|set_strict_mode_setting|since|sort_key|speculative_publish_table_names_hint|table_exists|versioned_read|versioned_write|violation_count|where|window|wrapper)_async$",
+                                                                                  "stopBy": "neighbor",
+                                                                                  "field": "name"
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "any": [
+                                                                                {
+                                                                                  "not": {
+                                                                                    "has": {
+                                                                                      "regex": "^_",
+                                                                                      "stopBy": "neighbor",
+                                                                                      "field": "name"
+                                                                                    }
+                                                                                  }
+                                                                                },
+                                                                                {
+                                                                                  "has": {
+                                                                                    "regex": "_async$",
+                                                                                    "stopBy": "neighbor",
+                                                                                    "field": "name"
+                                                                                  }
+                                                                                },
+                                                                                {
+                                                                                  "has": {
+                                                                                    "regex": "commit|commit_branch|count|create_branch|delete_by_id|delete_many|execute|execute_one|find_object_branches|find_object_revisions|first|get_history|insert|insert_many|insert_many_raw|rollback|select_at_revision|select_many|select_one|update|update_many|upsert|upsert_many",
+                                                                                    "stopBy": "neighbor",
+                                                                                    "field": "name"
+                                                                                  }
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "all": [
+                                                                            {
+                                                                              "kind": "function_definition"
+                                                                            },
+                                                                            {
+                                                                              "regex": "^async\\b"
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "has": {
+                                                                            "pattern": "$COUNTERPART_NAME",
+                                                                            "stopBy": "neighbor",
+                                                                            "field": "name"
+                                                                          }
+                                                                        },
+                                                                        {
+                                                                          "any": [
+                                                                            {
+                                                                              "compare": {
+                                                                                "left": "COUNTERPART_NAME",
+                                                                                "right": "ASYNC_TARGET",
+                                                                                "op": "eq"
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "all": [
+                                                                                {
+                                                                                  "compare": {
+                                                                                    "left": "COUNTERPART_NAME",
+                                                                                    "right": "NAME",
+                                                                                    "op": "eq"
+                                                                                  }
+                                                                                },
+                                                                                {
+                                                                                  "not": {
+                                                                                    "has": {
+                                                                                      "regex": "_async$",
+                                                                                      "stopBy": "neighbor",
+                                                                                      "field": "name"
+                                                                                    }
+                                                                                  }
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "has": {
+                                                                        "has": {
+                                                                          "all": [
+                                                                            {
+                                                                              "matches": "pos-param"
+                                                                            },
+                                                                            {
+                                                                              "any": [
+                                                                                {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "kind": "identifier"
+                                                                                    },
+                                                                                    {
+                                                                                      "pattern": "$OTHER_PARAM"
+                                                                                    }
+                                                                                  ]
+                                                                                },
+                                                                                {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "kind": "typed_parameter"
+                                                                                    },
+                                                                                    {
+                                                                                      "has": {
+                                                                                        "all": [
+                                                                                          {
+                                                                                            "kind": "identifier"
+                                                                                          },
+                                                                                          {
+                                                                                            "pattern": "$OTHER_PARAM"
+                                                                                          }
+                                                                                        ],
+                                                                                        "stopBy": "neighbor"
+                                                                                      }
+                                                                                    }
+                                                                                  ]
+                                                                                },
+                                                                                {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "any": [
+                                                                                        {
+                                                                                          "kind": "default_parameter"
+                                                                                        },
+                                                                                        {
+                                                                                          "kind": "typed_default_parameter"
+                                                                                        }
+                                                                                      ]
+                                                                                    },
+                                                                                    {
+                                                                                      "has": {
+                                                                                        "pattern": "$OTHER_PARAM",
+                                                                                        "stopBy": "neighbor",
+                                                                                        "field": "name"
+                                                                                      }
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            },
+                                                                            {
+                                                                              "count": {
+                                                                                "follows": {
+                                                                                  "matches": "pos-param",
+                                                                                  "stopBy": "end"
+                                                                                },
+                                                                                "max": 1000000,
+                                                                                "as": "OTHER_INDEX"
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "compare": {
+                                                                                "left": "OTHER_INDEX",
+                                                                                "right": "INDEX",
+                                                                                "op": "eq"
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "compare": {
+                                                                                "left": "OTHER_PARAM",
+                                                                                "right": "PARAM",
+                                                                                "op": "eq"
+                                                                              }
+                                                                            }
+                                                                          ],
+                                                                          "stopBy": "neighbor"
+                                                                        },
+                                                                        "stopBy": "neighbor",
+                                                                        "field": "parameters"
+                                                                      }
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "end"
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "end"
+                                                          }
+                                                        }
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor"
+                                                  },
+                                                  "stopBy": "neighbor",
+                                                  "field": "parameters"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "end"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "def\\ |async\\ def\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "def\\ |async\\ def\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "BASE": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "_async$",
+                "by": ""
+              }
+            },
+            "ASYNC_TARGET": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "$",
+                "by": "_async"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "signature_mismatch",
+        "anchor": "witness.span",
+        "message": "signature_mismatch: argument-mismatch"
+      }
+    }
+  ]
+}

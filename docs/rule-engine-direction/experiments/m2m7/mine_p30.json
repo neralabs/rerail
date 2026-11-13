@@ -1,0 +1,116 @@
+{
+  "calibration_s": 0.000018167,
+  "compile_s": 0.007121208,
+  "distinct_leaf_texts": 67,
+  "expansions": 2323,
+  "files": 1,
+  "index_dispatch": false,
+  "keys": [
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",100,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",103,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",106,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",109,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",112,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",115,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",118,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",121,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",124,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",127,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",130,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",133,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",136,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",139,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",142,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",145,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",148,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",151,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",154,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",157,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",160,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",163,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",166,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",169,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",172,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",175,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",178,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",91,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",94,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_pairs.py\",97,\"sync_async_signature_mismatch\"]"
+  ],
+  "load_s": 0.00155675,
+  "nodes": 1531,
+  "op_classes": {
+    "all": 47,
+    "any": 16,
+    "bind": 5,
+    "call": 2,
+    "compare": 1,
+    "const": 2,
+    "kind": 18,
+    "layout": 1,
+    "named": 1,
+    "not": 9,
+    "nth": 1,
+    "regex": 6,
+    "rel.neighbor": 36,
+    "rel.range": 8,
+    "util.backref": 3,
+    "value": 3
+  },
+  "ops": 159,
+  "program_nodes_actual": 1531,
+  "program_nodes_scope": 1531,
+  "programs": 1,
+  "regexes": 6,
+  "reordered_all_nodes": 8,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 60,
+        "evals": 6031,
+        "mask_builds": 2,
+        "mask_cells": 120,
+        "memo_cells": 41337,
+        "memo_hits": 239,
+        "regex_bytes": 5194,
+        "regex_calls": 65,
+        "regex_sym_hits": 116,
+        "scan_visits": 2790,
+        "util_depth_cut": 0
+      },
+      "findings": 30,
+      "mode": "memo",
+      "ns_per_eval": 28.31901840490789,
+      "ns_per_program_node_actual": 111.55584585238373,
+      "ns_per_program_node_scope": 111.55584585238373,
+      "ns_per_scope_node": 111.55584585238373,
+      "seconds_min": 0.00017079199999999947,
+      "top_files": [
+        [
+          "l2050_transaction/synthetic_pairs.py",
+          1531,
+          0.00016625
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          6031
+        ]
+      ],
+      "wall_seconds_min": 0.000171375
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-sync-async-signatures",
+      "programs": 1,
+      "scope_files": 1,
+      "scope_nodes": 1531
+    }
+  ],
+  "syntax_error_files": [],
+  "trie": true
+}

@@ -1,0 +1,220 @@
+{
+  "cases": [
+    {
+      "id": "native-owner-conn-first-match",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "class C:\n    def action(self):\n        grammar_fetchall(owner=self.plan())\n        grammar_fetchall(owner=self._conn)\n        grammar_fetchall(owner=self._conn)\n"
+        }
+      ]
+    },
+    {
+      "id": "native-execution-context-nested",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C(ExecutionContext):\n    class Nested:\n        def execute_sync(self):\n            return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "native-compat-import",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "from l2055_lazy_result.transform import RuntimeMapStep as Alias\n"
+        }
+      ]
+    },
+    {
+      "id": "native-sidequeue-nested-owner",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l2000_connection/bootstrap_example.py",
+          "source": "class Outer:\n    class Ddl:\n        pending_after_create_schema_ddl_statements = []\n"
+        }
+      ]
+    },
+    {
+      "id": "native-auth-message",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "class ReadPlanStep:\n    def __init__(self, client: RemoteClient):\n        self.client = client\n"
+        }
+      ]
+    },
+    {
+      "id": "native-authority-message",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "def run(self):\n    self._restore_persisted_local_overlays()\n"
+        }
+      ]
+    },
+    {
+      "id": "native-adapter-message",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "@pure_lazy\ndef build_lazy(txn):\n    return txn.resolve()\n"
+        }
+      ]
+    },
+    {
+      "id": "native-purity-message",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "@pure_lazy\ndef build_lazy(tx):\n    return tx._conn\n"
+        }
+      ]
+    },
+    {
+      "id": "native-sql-message",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def run():\n    plan.execute()\n"
+        }
+      ]
+    },
+    {
+      "id": "native-eager-traversal-order",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef root_lazy(): return middle_lazy()\n@pure_lazy\ndef middle_lazy():\n    z_lazy()\n    a_lazy()\n@pure_lazy\ndef z_lazy(): return helper_z_async()\n@pure_lazy\ndef a_lazy(): return helper_a_async()\nasync def helper_z_async(): return 1\nasync def helper_a_async(): return 1\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-authentication_plan_purity",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-lazy_adapter_ownership",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-lazy_architecture",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-lazy_sql_surface",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-pure_lazy_runtime_purity",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-message-clean-readthrough_authority_architecture",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "pass\n"
+        }
+      ]
+    },
+    {
+      "id": "native-deferred-call-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C:\n    def eager(self):\n        grammar_fetchall()\n    def build_lazy(self):\n        return defer_lazy_result(sync_resolve=self.eager)\n"
+        }
+      ]
+    },
+    {
+      "id": "native-ordered-cycle",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef first_lazy():\n    second_lazy()\n@pure_lazy\ndef second_lazy():\n    first_lazy()\n    helper_async()\nasync def helper_async(): return 1\n"
+        }
+      ]
+    }
+  ]
+}

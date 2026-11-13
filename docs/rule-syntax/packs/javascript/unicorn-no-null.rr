@@ -1,0 +1,54 @@
+.policy "unicorn-no-null" revision 3
+.description "Use undefined instead of null in JavaScript, except in Object.create(null), useRef(null) and strict equality checks."
+.language javascript
+.mode log
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+#include "tsx/eslint-a-common.rr"
+//   call_arg
+
+// unicorn's no-null: the literal `null`, except where an API needs it:
+//   Object.create(null)  Object.create(null, props)   useRef(null)  React.useRef(null)   el.insertBefore(n, null)
+// and, unless checkStrictEquality is "true", `x === null` / `x !== null`.
+//   foo(null)   let a = null;   return null;   x == null   Object["create"](null)   new Object.create(null)  → reported
+// The API calls must be plain calls of a dotted (not computed) member with that argument count; only
+// insertBefore and useRef may be optional calls.
+// Fixes, as unicorn's: `x == null` becomes `x == undefined` (an autofix: loose equality treats them alike);
+// `return null` and `let a = null` may drop the null; anything else may become undefined.
+.violation unicorn_no_null(at: node) code "unicorn/no-null" "Use undefined instead of null."
+    suppress eslint "unicorn/no-null"
+    suppress oxlint "no-null"
+    fix safe loose "Replace `null` with `undefined`."
+    fix remove "Remove `null`."
+    fix to_undefined "Replace `null` with `undefined`."
+unicorn_no_null(n) :- kind(n, "null"), !null_allowed(n), !strict_eq(n).
+
+.decl null_allowed(n: node)
+null_allowed(n) :- call_arg(c, n, 0), null_args(c, k), k <= 2, null_api(c, "Object", "create", "no").
+null_allowed(n) :- call_arg(c, n, 0), null_args(c, 1), null_api(c, "React", "useRef", "no").
+null_allowed(n) :- call_arg(c, n, 0), null_args(c, 1), field(c, "function", f), kind(f, "identifier"), text(f, "useRef").
+null_allowed(n) :- call_arg(c, n, 1), null_args(c, 2), null_api(c, _, "insertBefore", "yes").
+// null_api(c, o, x, opt): call c is o.x(…), x a plain property; opt "yes" also admits o?.x(…) and o.x?.(…).
+.decl null_api(c: node, o: symbol, x: symbol, opt: symbol)
+null_api(c, o, x, opt) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "object", b), text(b, o), field(m, "property", p), kind(p, "property_identifier"), text(p, x),
+    (opt = "yes" ; opt = "no", !op(c, "?."), !null_opt_member(m)).
+.decl null_opt_member(m: node)
+null_opt_member(m) :- child(m, c, _), kind(c, "optional_chain").
+.decl null_args(c: node, k: number)  // k arguments, none a spread (unicorn's isMethodCall rejects spreads)
+null_args(c, k) :- call_arg(c, _, _), !null_spread(c), k = count : { call_arg(c, _, _) }.
+.decl null_spread(c: node)
+null_spread(c) :- call_arg(c, a, _), kind(a, "spread_element").
+.decl strict_eq(n: node)  // x === null, unless checkStrictEquality
+strict_eq(n) :- !option("checkStrictEquality", "true"), kind(b, "binary_expression"), (op(b, "===") ; op(b, "!==")),
+    (field(b, "left", n) ; field(b, "right", n)).
+
+loose(n) :- loose_eq(n) => replace(n, `undefined`).
+remove(n) :- kind(r, "return_statement"), child(r, n, _) => delete(n).
+remove(n) :- kind(v, "variable_declarator"), field(v, "value", n), field(v, "name", x), child(d, v, _),
+    !kind(d, "lexical_declaration") => replace(v, `$x`).
+remove(n) :- kind(v, "variable_declarator"), field(v, "value", n), field(v, "name", x), child(d, v, _),
+    kind(d, "lexical_declaration"), !op(d, "const") => replace(v, `$x`).
+to_undefined(n) :- !loose_eq(n) => replace(n, `undefined`).
+.decl loose_eq(n: node)  // x == null, x != null
+loose_eq(n) :- kind(b, "binary_expression"), (op(b, "==") ; op(b, "!=")), (field(b, "left", n) ; field(b, "right", n)).

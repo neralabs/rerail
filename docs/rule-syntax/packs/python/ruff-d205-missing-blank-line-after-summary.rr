@@ -1,0 +1,20 @@
+.policy "ruff-d205-missing-blank-line-after-summary" revision 2
+.description "Separate a multi-line docstring's summary line from the description below it with exactly one blank line."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D205 (pydocstyle): a triple-quoted docstring with more than its summary whose summary line is not
+// followed by exactly one blank line. Blank lines before the summary do not count.
+//   """Summary.
+//   More text."""            ← D205: no blank line
+//   """Summary.
+//
+//   More text."""            not reported
+#include "python/docstrings.rr"
+
+.violation D205(at: node) code "D205"
+    "Leave exactly one blank line between this docstring's summary line and the description; if the summary wraps onto a second line, shorten it to fit on one line instead."
+    suppress ruff "D205"
+D205(s) :- doc_checked(s), doc_triple(s), doc_body(s, b), match("\\s*\\S[^\\n]*\\n[\\s\\S]*\\S[\\s\\S]*", b),
+    !match("\\s*\\S[^\\n]*\\n[^\\S\\n]*\\n[^\\S\\n]*\\S[\\s\\S]*", b).

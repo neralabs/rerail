@@ -1,6 +1,6 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+    ValueFeature, gate,
 };
 use crate::code_rule_dsl::matcher::{
     Digits, Reading, Separator, Source, StringCase, Trans, Transform,
@@ -11,6 +11,7 @@ use napi::Result;
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A metavariable name: A-Z, 0-9 and `_`, as captures are named.
 fn is_name(name: &str) -> bool {
@@ -171,9 +172,9 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
             reject_unknown(body, &["source", "default", "value", "digits"], &at)?;
             gate(
                 &at,
-                with_adapter!(reading.family, A => <<A as Adapter>::Value as ValueRules>::feature(
+                { let pack = language_pack::pack(reading.family); pack.value_feature(
                     ValueFeature::ToPrecision
-                )),
+                ) },
             )?;
             let digits = match body.get("digits") {
                 Some(Value::Number(number)) => match number.as_u64() {

@@ -17,7 +17,7 @@ use tree_sitter::Node as TsNode;
 
 /// The documents of the HTML file `source`, persisted as the store keeps them and restored: the
 /// file's tree and the program its scripts and handlers make.
-pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
+pub fn html(source: &str) -> AstGrep<TapeDoc> {
     let grammar = Grammar::new(GrammarDialect::Html).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
@@ -31,10 +31,10 @@ pub(crate) fn html(source: &str) -> AstGrep<TapeDoc> {
 }
 
 /// The embedder of `Via::TestScript`.
-pub(crate) struct TestScript;
+pub struct TestScript;
 
 impl Embedder for TestScript {
-    fn build(root: TsNode<'_>, source: &str) -> Option<Program> {
+    fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
         let mut cursor = root.walk();

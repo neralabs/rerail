@@ -1,0 +1,26 @@
+.policy "eslint-no-loss-of-precision" revision 6
+.description "Avoid number literals that cannot be stored exactly as a JavaScript number; the value silently changes at runtime."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-loss-of-precision: a number literal whose digits a double cannot hold, so the program sees a
+// different number than the one written.
+//   9007199254740993 (stored as …992)    5123000000000000000000000000001    2e999    0x20000000000001
+//   → reported;   9007199254740991   1230000000000000000000000.0   0x1FFFFFFFFFFFFF   0.1   → not
+// A base-10 literal is compared digit for digit with its value printed at the same precision
+// (`value.toPrecision(k)`, k its significant digits; over 100 digits always loses). A 0x, 0b or 0o literal
+// loses when its bits from the first 1 to the last 1 are more than a double's 53. A zero (0, 0.0, 0e5) never
+// does, but a literal that underflows to 0 (1e-350) does: ESLint 10 reports it, ESLint 9 skipped every literal
+// whose value is 0. BigInts (1n) are exact.
+.violation no_loss_of_precision(at: node) code "no-loss-of-precision"
+    "Rewrite this number literal so a JavaScript number stores it exactly, e.g. with fewer digits or as a BigInt."
+    suppress eslint "no-loss-of-precision"
+    suppress oxlint "no-loss-of-precision"
+    suppress biome "lint/correctness/noPrecisionLoss"
+no_loss_of_precision(n) :- decimal(n), !zero(n), raw_number(n, r), sci(r, _, c, _), strlen(c) > 100.
+no_loss_of_precision(n) :- decimal(n), zero(n), raw_number(n, r), sci(r, _, c, _), c != "".
+no_loss_of_precision(n) :- decimal(n), !zero(n), raw_number(n, r), sci(r, _, c, m), stored(n, p),
+    sci(p, 1, c2, m2), (c2 != c ; m2 != m).
+no_loss_of_precision(n) :- number_lit(n), !decimal(n), significant_bits(n, k), k > 53.

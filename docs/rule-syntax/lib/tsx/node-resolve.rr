@@ -1,0 +1,160 @@
+// tsx/node-resolve: the module specifiers eslint-plugin-n's import rules read (its visitRequire and visitImport),
+// and what Node resolves them to (its ImportTarget). For n/no-missing-*, n/no-extraneous-require and
+// n/no-unpublished-*.
+//
+// What a rule gets from this library:
+//   node_target(n, name, style)  string n names a module: the first argument of require() or require.resolve()
+//                         (the global require, aliases followed), the source of import, export … from and import();
+//                         name is its value up to a "!" (a loader prefix); style is "require", "import", or "type"
+//                         for `import type` and `export type … from`
+//   spec_kind(name, k)    "relative" ./x ../x, "absolute" /x, "node", "data", "http", "npm" or "unknown"
+//   spec_package(name, m) the package a name loads: "@a/b/c" gives "@a/b", "lodash/fp" "lodash", a built-in its
+//                         module ("node:fs/promises" gives "fs"); relative names have none
+//   spec_resolved(n, file)    PROPOSED core input: the file n resolves to, from n's document, as the plugin's
+//                         resolver finds it (below); no row when resolution fails
+//   spec_failed(n)        resolution fails (the plugin's resolveError): no file, and not a data: or http(s):
+//                         import, which the plugin takes as found
+//   node_target_file(n, file) the plugin's target.filePath: the resolved file; for a relative or absolute name
+//                         whose resolution fails, the path it names
+//   pkg_lists(d, m)       document d's package.json names m: its own name, or a key of dependencies,
+//                         devDependencies, peerDependencies or optionalDependencies, there or in the workspace
+//                         root that lists d's package among its workspaces
+//   spec_ts_alias(n)      hasTSAlias: a TypeScript file whose tsconfig `paths` has a key (without its trailing /*)
+//                         that the name starts with
+//   allow_module(m)       the allowModules option lists m
+//   spec_allowed(name)    allowModules lists the package name loads
+//   spec_type_skipped(n)  ignoreTypeImport is on and n is the source of an `import type` (not `export type`)
+//   spec_unpublished(n, style, msg)  the plugin's checkPublish: in a file npm publishes (and, with ignorePrivate,
+//                         the default, a package not "private": true), n names a file npm leaves out (or one
+//                         outside the package), or a package that is only a devDependency
+//
+// Examples:
+//   n/no-missing-require       require("./nope")        failed
+//   n/no-missing-import        import x from "nope"     failed
+//   n/no-extraneous-require    require("lodash")        resolved, but package.json does not list lodash
+//   n/no-unpublished-require   require("mocha")         a devDependency only;  require("./test/x") not published
+//
+// Resolution is native, as the JSON policies' importTarget term is: enhanced-resolve with the plugin's options
+// (Node's conditions "node", "require", plus "import" for imports and "types" for type imports; `main` and index
+// files for require and packages; tryExtensions .js, .json, .node, .mjs, .cjs, and for TypeScript files the
+// tsconfig `paths` aliases and the .js -> .ts extension map), reading node_modules, which the repository walk
+// skips. Until core has it, it is declared here and has no rows: every target then fails to resolve.
+//
+// Builds on tsx/values (api_use for the global require and require.resolve, const_str, first_arg), tsx/node
+// (builtin_spec, the Node.js module table), tsx/node-package (pkg_file) and core (package_for, package_field,
+// tsconfig_for, tsconfig_path).
+
+#include "tsx/node.rr"   // builtin_spec
+#include "tsx/node-package.rr"
+
+.decl spec_resolved(n: node, file: symbol)
+.input spec_resolved
+
+// The global require, as values.rr traces it: a CommonJS file's require, `const r = require; r(x)`, and
+// require.resolve. (Rows for values.rr's tables; the same rows may come with other tables.)
+node_global("require"). node_global("global"). node_global("globalThis").   // globalThis.require too
+api_known("require"). api_known("require.resolve").
+
+.decl node_target(n: node, name: symbol, style: symbol)
+node_target(s, x, st) :- spec_value(s, v, st), spec_unbang(v, x).
+.decl spec_value(s: node, v: symbol, style: symbol)
+spec_value(s, v, "require") :- (api_use(c, "require", "call") ; api_use(c, "require.resolve", "call")), first_arg(c, s),
+    const_str(s, v).
+spec_value(s, v, st) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", s),
+    kind(s, "string"), value(s, v), (op(i, "type"), st = "type" ; !op(i, "type"), st = "import").
+spec_value(s, v, "import") :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), first_arg(c, s),
+    kind(s, "string"), value(s, v).
+// spec_unbang(v, x): "style-loader!./a.css" names "style-loader": the plugin keeps what comes before a "!".
+.decl spec_unbang(v: symbol, x: symbol)
+spec_unbang(v, v) :- spec_value(_, v, _), !contains("!", v).
+spec_unbang(v, x) :- spec_value(_, v, _), match("(?<x>[^!]*)!.*", v).
+
+.decl spec_kind(name: symbol, k: symbol)
+spec_kind(x, "relative") :- node_target(_, x, _), match("\\.{1,2}([\\\\/].*)?", x).
+spec_kind(x, "absolute") :- node_target(_, x, _), !match("\\.{1,2}([\\\\/].*)?", x), match("[\\\\/].*", x).
+spec_kind(x, k) :- node_target(_, x, _), !match("\\.{1,2}([\\\\/].*)?", x), !match("[\\\\/].*", x), spec_bare_kind(x, k).
+.decl spec_bare_kind(name: symbol, k: symbol)
+spec_bare_kind(x, "node") :- node_target(_, x, _), builtin_spec(x).
+spec_bare_kind(x, "data") :- node_target(_, x, _), !builtin_spec(x), prefix("data:", x).
+spec_bare_kind(x, "http") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), match("https?://.*", x).
+spec_bare_kind(x, "npm") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
+    match("(@[\\w~-][\\w.~-]*/)?[\\w~-][\\w.~-]*.*", x).
+spec_bare_kind(x, "unknown") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
+    !match("(@[\\w~-][\\w.~-]*/)?[\\w~-][\\w.~-]*.*", x).
+
+.decl spec_package(name: symbol, m: symbol)
+spec_package(x, m) :- spec_kind(x, "npm"), match("(?<m>@[^/]*/[^/]*).*", x), prefix("@", x).
+spec_package(x, x) :- spec_kind(x, "npm"), prefix("@", x), !contains("/", x).
+spec_package(x, m) :- spec_kind(x, "npm"), !prefix("@", x), match("(?<m>[^/]*).*", x).
+spec_package(x, m) :- spec_kind(x, "node"), match("(node:)?(?<m>[^/]*).*", x).
+
+.decl spec_failed(n: node)
+spec_failed(n) :- node_target(n, _, _), !spec_resolved(n, _), !spec_as_is(n).
+.decl spec_as_is(n: node)  // a data: or http(s): import, whose name is its file
+spec_as_is(n) :- node_target(n, x, "import"), (spec_kind(x, "data") ; spec_kind(x, "http")).
+.decl node_target_file(n: node, file: symbol)
+node_target_file(n, f) :- node_target(n, _, _), spec_resolved(n, f).
+node_target_file(n, @join(@dir(p), x)) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(x, "relative"), docof(n, d),
+    doc(d, p, _).
+node_target_file(n, x) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(x, "absolute").
+
+// pkg_lists(d, m): getPackageNames of d's package.json and of its workspace root's.
+.decl pkg_lists(d: number, m: symbol)
+pkg_lists(d, m) :- pkg_file(d, dir, _), pkg_lists_in(dir, m).
+pkg_lists(d, m) :- pkg_file(d, dir, _), pkg_workspace_root(dir, root), pkg_lists_in(root, m).
+.decl pkg_lists_in(dir: symbol, m: symbol)
+pkg_lists_in(dir, m) :- package_field(dir, "name", m).
+pkg_lists_in(dir, m) :- pkg_dep(dir, _, m).
+// pkg_dep(dir, field, m): m is a key of dir/package.json's dependency field (JSON-pointer escapes decoded).
+.decl pkg_dep(dir: symbol, field: symbol, m: symbol)
+pkg_dep(dir, f, @replace_all(@replace_all(e, "~1", "/"), "~0", "~")) :- package_field(dir, k, _),
+    match("(?<f>dependencies|devDependencies|peerDependencies|optionalDependencies)/(?<e>.+)", k).
+// pkg_workspace_root(dir, root): the nearest package.json above dir whose workspaces (a list, or { packages: […] })
+// take dir's path from it: a pattern matches it and no `!` pattern does. pnpm-workspace.yaml is not read.
+.decl pkg_workspace_root(dir: symbol, root: symbol)
+pkg_workspace_root(dir, root) :- pkg_ws_in(dir, root), !pkg_ws_nearer(dir, root).
+.decl pkg_ws_nearer(dir: symbol, root: symbol)  // another root that takes dir is below root
+pkg_ws_nearer(dir, root) :- pkg_ws_in(dir, root), pkg_ws_in(dir, r), strlen(r) > strlen(root).
+.decl pkg_ws_in(dir: symbol, root: symbol)
+pkg_ws_in(dir, root) :- pkg_ws_rel(dir, root, rel), pkg_ws_pat(root, p, 0), glob(p, rel), !pkg_ws_out(dir, root).
+.decl pkg_ws_out(dir: symbol, root: symbol)
+pkg_ws_out(dir, root) :- pkg_ws_rel(dir, root, rel), pkg_ws_pat(root, p, 1), glob(p, rel).
+.decl pkg_ws_pat(root: symbol, p: symbol, neg: number)  // "./pkgs/*/" gives "pkgs/*"; "!x" is negated
+pkg_ws_pat(root, @replace_all(@replace_all(q, "^\\./", ""), "/+$", ""), n) :- package_field(root, k, raw),
+    match("workspaces/([0-9]+|packages/[0-9]+)", k),
+    (prefix("!", raw), n = 1, q = substr(raw, 1, strlen(raw) - 1) ; !prefix("!", raw), n = 0, q = raw), q != "".
+.decl pkg_ws_rel(dir: symbol, root: symbol, rel: symbol)  // dir's path from root, a package.json above it
+pkg_ws_rel(dir, "", dir) :- pkg_file(_, dir, _), dir != "", pkg_ws_pat("", _, _).
+pkg_ws_rel(dir, root, substr(dir, strlen(root) + 1, strlen(dir) - strlen(root) - 1)) :- pkg_file(_, dir, _),
+    pkg_ws_pat(root, _, _), root != "", prefix(cat(root, "/"), dir).
+
+.decl spec_ts_alias(n: node)
+spec_ts_alias(n) :- node_target(n, x, _), docof(n, d), doc(d, p, _), (suffix(".ts", p) ; suffix(".tsx", p) ; suffix(".cts", p) ;
+    suffix(".mts", p)), tsconfig_for(p, dir), tsconfig_path(dir, pat, _), prefix(@replace_all(pat, "[/\\\\*]+$", ""), x).
+
+.decl allow_module(m: symbol)
+allow_module(m) :- option_item("allowModules", _, m).
+.decl spec_allowed(x: symbol)
+spec_allowed(x) :- spec_package(x, m), allow_module(m).
+.decl spec_type_skipped(n: node)
+spec_type_skipped(n) :- option("ignoreTypeImport", "true"), field(i, "source", n), kind(i, "import_statement"),
+    op(i, "type").
+
+.decl spec_unpublished(n: node, style: symbol, msg: symbol)
+spec_unpublished(n, st, "npm does not publish this file, so the published package cannot load it.") :-
+    pkg_checked_file(d, dir), node_target(n, x, st), docof(n, d), !builtin_spec(x), !spec_package(x, _), node_target_file(n, f),
+    (npm_ignored(f) ; pkg_outside(dir, f)).
+spec_unpublished(n, st, "This package is only a devDependency, so the published package cannot load it.") :-
+    pkg_checked_file(d, dir), node_target(n, x, st), docof(n, d), !builtin_spec(x), spec_package(x, m), pkg_dep(dir, "devDependencies", m),
+    !pkg_runtime_dep(dir, m), !allow_module(m).
+.decl pkg_runtime_dep(dir: symbol, m: symbol)
+pkg_runtime_dep(dir, m) :- pkg_dep(dir, f, m), f != "devDependencies".
+// pkg_checked_file(d, dir): a file npm publishes, of package dir that ignorePrivate does not skip.
+.decl pkg_checked_file(d: number, dir: symbol)
+pkg_checked_file(d, dir) :- pkg_file(d, dir, _), doc(d, f, _), !npm_ignored(f), !pkg_private_skip(dir).
+.decl pkg_private_skip(dir: symbol)
+pkg_private_skip(dir) :- package_field(dir, "private", "true"), !option("ignorePrivate", "false").
+// pkg_outside(dir, f): f is not inside package dir (the plugin counts a "../" path as unpublished).
+.decl pkg_outside(dir: symbol, f: symbol)
+pkg_outside(dir, f) :- node_target_file(_, f), pkg_file(_, dir, _), dir != "", !prefix(cat(dir, "/"), f).
+pkg_outside("", f) :- node_target_file(_, f), pkg_file(_, "", _), prefix("../", f).

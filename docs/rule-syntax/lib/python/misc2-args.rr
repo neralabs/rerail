@@ -1,0 +1,127 @@
+// python/misc2-args: unused parameters as Ruff's flake8-unused-arguments rules (ARG001-ARG005) see them.
+//
+// Interface
+//   arg_unused(f, nm, x, code)   parameter x (name node nm) of def or lambda f is never read, and code is the one
+//                                Ruff reports for f: ARG001 function, ARG002 method, ARG003 class method,
+//                                ARG004 static method (and `__new__`), ARG005 lambda
+//   arg_checked(f, code, skip)   f is one Ruff checks, under code; skip is 1 when its receiver (`self`, `cls`, the
+//                                first non-variadic parameter) is left out
+//   arg_stub(f)                  f's body is only `pass`, `...`, string literals and `raise NotImplementedError`
+//                                (Ruff's is_stub), or a message variable raised as NotImplementedError
+//   arg_dummy(x)                 x matches the option dummy-variable-rgx (default: `_`, `__`, `_x`, `_unused1`)
+//
+// Options
+//   dummy-variable-rgx                              names that may go unused (Ruff's dummy-variable-rgx)
+//   flake8-unused-arguments.ignore-variadic-names   "true": never report `*args` and `**kwargs`
+//
+// Ruff background
+//   - A parameter is unused when nothing in the def reads it, nested defs, lambdas and classes included. A
+//     parameter whose name is bound again in the body (`x = …`, `for x in …`) is not reported: Ruff looks at
+//     the name's latest binding, which is then not the parameter.
+//   - A def or lambda that calls the builtin `locals()` is skipped: locals() reads every parameter.
+//   - Methods (defs directly in a class) are classified as Ruff's function_type does: @staticmethod (or
+//     abc.abstractstaticmethod) is static, @classmethod (or abc.abstractclassmethod) and the implicit
+//     `__init_subclass__` and `__class_getitem__` are class methods, `__new__` is an implicit static method
+//     whose `cls` is skipped, everything else is an instance method.
+//   - Skipped: `.pyi` files, stubs, @overload defs, and for methods @abstractmethod, @override and dunders other than
+//     `__init__`, `__call__` and `__new__`.
+//
+//   class C:
+//       def f(self, x): print(1)     arg_checked(<f>, "ARG002", 1); arg_unused(<f>, <x>, "x", "ARG002")
+//       @staticmethod
+//       def g(x): ...                arg_stub(<g>): not checked
+//   lambda x: 1                      arg_unused(<lambda>, <x>, "x", "ARG005")
+#include "python/annotations.rr"   // ann_overload, ann_override; python/ruff (ruff_qual)
+
+// ---- which defs, under which code --------------------------------------------------------------------------------
+.decl arg_checked(f: node, code: symbol, skip: number)
+arg_checked(f, "ARG005", 0) :- kind(f, "lambda"), field(f, "parameters", _), !argt_in_stub(f).
+arg_checked(f, "ARG001", 0) :- kind(f, "function_definition"), !ann_method(f), !arg_stub(f), !ann_overload(f),
+    !argt_in_stub(f).
+// Dunders are skipped except `__init__`, `__call__` and an undecorated `__new__` (Ruff's NewMethod): a
+// `__new__` marked @staticmethod or @classmethod is classified by its decorator, and then skipped as a dunder.
+arg_checked(f, c, k) :- argt_method(f, x, c, k), !arg_stub(f), !argt_abstract(f), !ann_override(f),
+    !ann_overload(f), !argt_in_stub(f), (!glob("__*__", x) ; argt_kept_dunder(x) ; x = "__new__", !argt_dec(f, _)).
+.decl argt_kept_dunder(x: symbol)
+argt_kept_dunder("__init__"). argt_kept_dunder("__call__").
+// argt_in_stub(f): f is in a `.pyi` stub, which Ruff does not check.
+.decl argt_in_stub(f: node)
+argt_in_stub(f) :- docof(f, d), doc(d, p, _), suffix(".pyi", p).
+// argt_method(f, x, code, skip): Ruff's function_type, for a def named x directly in a class.
+.decl argt_method(f: node, x: symbol, code: symbol, skip: number)
+argt_method(f, x, "ARG004", 0) :- ann_method(f), def_name(f, x), argt_dec(f, "static").
+argt_method(f, x, "ARG003", 1) :- ann_method(f), def_name(f, x), !argt_dec(f, "static"), argt_dec(f, "class").
+argt_method(f, x, c, 1) :- ann_method(f), def_name(f, x), !argt_dec(f, "static"), !argt_dec(f, "class"),
+    (x = "__new__", c = "ARG004" ; (x = "__init_subclass__" ; x = "__class_getitem__"), c = "ARG003" ;
+     x != "__new__", x != "__init_subclass__", x != "__class_getitem__", c = "ARG002").
+// argt_dec(f, k): a decorator of f, its call's callee when called, makes f a "static" or "class" method.
+.decl argt_dec(f: node, k: symbol)
+argt_dec(f, k) :- decorator(f, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
+    ruff_qual(e, q), argt_dec_q(q, k).
+.decl argt_dec_q(q: symbol, k: symbol)
+argt_dec_q("builtins.staticmethod", "static"). argt_dec_q("abc.abstractstaticmethod", "static").
+argt_dec_q("builtins.classmethod", "class"). argt_dec_q("abc.abstractclassmethod", "class").
+.decl argt_abstract(f: node)
+argt_abstract(f) :- decorator(f, e), ruff_qual(e, q), argt_abstract_q(q).
+.decl argt_abstract_q(q: symbol)
+argt_abstract_q("abc.abstractmethod"). argt_abstract_q("abc.abstractclassmethod").
+argt_abstract_q("abc.abstractstaticmethod"). argt_abstract_q("abc.abstractproperty").
+
+// ---- stubs -------------------------------------------------------------------------------------------------------
+.decl arg_stub(f: node)
+arg_stub(f) :- kind(f, "function_definition"), field(f, "body", b), count : { body_stmt(b, st, _), !argt_stub_stmt(st) } = 0.
+arg_stub(f) :- argt_raise_msg(f).
+.decl argt_stub_stmt(s: node)
+argt_stub_stmt(st) :- kind(st, "pass_statement").
+argt_stub_stmt(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), unparen(e0, e),
+    kind(e, "ellipsis").
+argt_stub_stmt(st) :- argt_stub_str(st).
+.decl argt_stub_str(st: node)   // a statement that is a lone str literal
+argt_stub_str(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), unparen(e0, e),
+    argt_plain_str(e).
+argt_stub_stmt(st) :- kind(st, "raise_statement"), child(st, e0, 0), unparen(e0, e1),
+    (kind(e1, "call"), field(e1, "function", e) ; !kind(e1, "call"), e = e1),
+    (ruff_qual(e, "builtins.NotImplementedError") ; ruff_qual(e, "builtins.NotImplemented")).
+// argt_raise_msg(f): an optional docstring, then `msg = "…"` (or an f-string) and `raise NotImplementedError(msg)`.
+.decl argt_raise_msg(f: node)
+argt_raise_msg(f) :- kind(f, "function_definition"), field(f, "body", b), argt_skip_doc(b, o), body_len(b, n), n = o + 2,
+    body_stmt(b, a0, o), asgstmt(a, a0), !field(a, "type", _), field(a, "left", t), kind(t, "identifier"), text(t, x),
+    field(a, "right", v0), unparen(v0, v), string_type(v, "str"), !argt_tstr(v),
+    body_stmt(b, r, o + 1), kind(r, "raise_statement"), child(r, c0, 0), unparen(c0, c),
+    call_q(c, "builtins.NotImplementedError"), call_nargs(c, 1), ruff_arg(c, 0, m), kind(m, "identifier"), text(m, x).
+.decl argt_skip_doc(b: node, o: number)
+argt_skip_doc(b, 1) :- argt_doc_first(b).
+argt_skip_doc(b, 0) :- kind(b, "block"), !argt_doc_first(b).
+.decl argt_doc_first(b: node)
+argt_doc_first(b) :- body_stmt(b, st, 0), argt_stub_str(st).
+// argt_plain_str(e): a str literal, not an f-string or t-string (Ruff's Expr::StringLiteral).
+.decl argt_plain_str(e: node)
+argt_plain_str(e) :- string_type(e, "str"), !fstring(e), !argt_tstr(e).
+.decl argt_tstr(e: node)
+argt_tstr(e) :- string_form(e, "tstr").
+argt_tstr(e) :- kind(e, "concatenated_string"), child(e, p, _), string_form(p, "tstr").
+
+// ---- unused ------------------------------------------------------------------------------------------------------
+.decl arg_dummy(x: symbol)
+arg_dummy(x) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), option("dummy-variable-rgx", re), match(re, x).
+arg_dummy(x) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), !option("dummy-variable-rgx", _),
+    match("_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?", x).
+.decl argt_fixed(k: symbol)
+argt_fixed("posonly"). argt_fixed("pos"). argt_fixed("kwonly").
+.decl argt_receiver(f: node, i: number)
+argt_receiver(f, i) :- arg_checked(f, _, 1), i = min j : { sig_param(f, _, _, j, k, _, _), argt_fixed(k) }.
+.decl arg_unused(f: node, nm: node, x: symbol, code: symbol)
+arg_unused(f, nm, x, c) :- arg_checked(f, c, _), !argt_locals(f), sig_param(f, _, nm, i, k, _, _), !argt_receiver(f, i),
+    text(nm, x), !arg_dummy(x), !argt_read(f, x), !argt_rebound(f, x),
+    (argt_fixed(k) ; !option("flake8-unused-arguments.ignore-variadic-names", "true")).
+// argt_read(f, x): a Name x somewhere resolves to f's scope and is read or deleted. A bare annotation `x: int`
+// only stores (and binds nothing in Ruff's sense), so it neither reads nor rebinds the parameter.
+.decl argt_read(f: node, x: symbol)
+argt_read(f, x) :- param(f, x, _), look(n, x, f), ast_name(n, x), !expr_ctx(n, "store").
+// argt_rebound(f, x): f binds x again: an assignment, a def or class, an import, any other target, or a
+// `global x` / `nonlocal x` (a syntax error on a parameter, which Ruff then leaves alone).
+.decl argt_rebound(f: node, x: symbol)
+argt_rebound(f, x) :- param(f, x, _), (asg(f, x, _, _) ; defn(f, x, _) ; otgt(f, x) ; ibind(f, x, _) ; decl(f, x, _)).
+// argt_locals(f): f's own scope calls the builtin locals().
+.decl argt_locals(f: node)
+argt_locals(f) :- call_q(c, "builtins.locals"), nearest(c, f, scope).

@@ -1,0 +1,30 @@
+.policy "n-no-process-env" revision 5
+.description "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-process-env: every `process.env` member expression, by name (no scope check):
+//   process.env.PORT         reported at `process.env`;  process["env"] too
+//   process[`env`]           not: only a string literal counts as a computed name
+// Option allowedVariables (a list): `process.env.NAME` and `process.env["NAME"]` pass for a listed NAME.
+//   allowedVariables ["NODE_ENV"]:   process.env.NODE_ENV  passes;  process.env  alone is still reported
+
+#include "tsx/eslint-a-common.rr"   // deparen: ESTree has no parentheses, so (process).env counts
+
+
+.violation process_env(at: node) code "n/no-process-env" "Pass this value in as configuration instead of reading process.env here."
+    suppress eslint "n/no-process-env"
+process_env(m) :- env_read(m), !env_allowed(m).
+
+// env_read(m): `process.env` or `process["env"]`, object an identifier named process.
+.decl env_read(m: node)
+env_read(m) :- kind(m, "member_expression"), field(m, "object", w), deparen(w, o), kind(o, "identifier"), text(o, "process"),
+    field(m, "property", p), text(p, "env").
+env_read(m) :- kind(m, "subscript_expression"), field(m, "object", w), deparen(w, o), kind(o, "identifier"), text(o, "process"),
+    field(m, "index", i), kind(i, "string"), value(i, "env").
+// env_allowed(m): m is the object of a member that names an allowed variable, `.NAME` or `["NAME"]`.
+.decl env_allowed(m: node)
+env_allowed(m) :- env_read(m), field(p, "object", w), deparen(w, m), kind(p, "member_expression"), field(p, "property", x), text(x, v),
+    option_item("allowedVariables", _, v).
+env_allowed(m) :- env_read(m), field(p, "object", w), deparen(w, m), kind(p, "subscript_expression"), field(p, "index", i),
+    kind(i, "string"), value(i, v), option_item("allowedVariables", _, v).

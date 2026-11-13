@@ -37,12 +37,12 @@ pub(crate) fn is_alpha(byte: u8) -> bool {
 }
 
 /// `ctype_space` of one byte: space, `\t`, `\n`, `\v`, `\f`, `\r`.
-pub(crate) fn is_space(byte: u8) -> bool {
+pub fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
 /// The bytes PHP's `trim` strips by default: " \t\n\r\0\x0B".
-pub(crate) fn is_trim(byte: u8) -> bool {
+pub fn is_trim(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0 | 0x0b)
 }
 

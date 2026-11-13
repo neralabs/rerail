@@ -1,0 +1,17 @@
+.policy "ruff-c411-unnecessary-list-call" revision 2
+.description "Remove the list call around a list comprehension; the comprehension already builds a new list."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C411 (flake8-comprehensions): `list(…)` of the builtin list, whose one argument is a list
+// comprehension. Its fix is unsafe; none here.
+//   list([f(x) for x in y])    ← C411: [f(x) for x in y]
+//   list(f(x) for x in y)      not reported here (C400)
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), c4_comp(e, k)
+
+.violation C411(at: node) code "C411"
+    "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
+    suppress ruff "C411"
+C411(c) :- c4_call(c, "list"), c4_only(c, l), c4_comp(l, "list").

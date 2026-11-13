@@ -1,0 +1,132 @@
+.policy "data-layer:function-level-imports" revision 1
+.description "Function-level imports, classified by reason."
+.language python
+.mode block                      // ratchet: a code blocks only when its count passes its budget
+.scope dirs "public"
+.scope tests false
+.budget FUNCTION_IMPORT by code { "circular-avoidance": 7615, "other": 223, "typing-only": 6, "total": 7844 }
+// Same-meaning version: scripts/lint_function_level_imports.py, unchanged in meaning, quirks included:
+//   - the dots of a relative import are dropped (`from .x import y` classifies "x");
+//   - an import in a nested def counts against the outermost def;
+//   - each alias of `import a, b` is classified on its own.
+// (An earlier port of this linter to YAML rules with SQL strings does not match it.)
+//
+// How to read this file
+//   1. imp() turns each import statement into (statement, module, name) rows, one per imported name.
+//      dotted() and from_module() are its helpers: they read the module and name text off the parse tree.
+//   2. top_def() and scope_of() find the function the import counts against and the "Class.func" label.
+//   3. names_typing() and skipped() are per-statement flags used by the classification.
+//   4. FUNCTION_IMPORT gives every import inside a function one code: the first of its tests that holds.
+//   The .budget line above caps how many findings of each code may exist before the policy blocks.
+
+// Constant sets, as facts: typing_module(m) holds for each listed m; the lists are copied from the Python linter's _classify_import.
+.decl typing_module(v: symbol)
+typing_module("typing"). typing_module("typing_extensions").
+typing_module("collections.abc").
+.decl typing_name(v: symbol)
+typing_name("TYPE_CHECKING"). typing_name("TypeVar"). typing_name("TypeAlias").
+typing_name("Protocol"). typing_name("Generic"). typing_name("ClassVar").
+typing_name("Final"). typing_name("Literal"). typing_name("Annotated").
+typing_name("Union"). typing_name("Optional"). typing_name("Any").
+// Top-level packages of this repository: an import of one of these is treated as internal.
+.decl internal_root(v: symbol)
+internal_root("api"). internal_root("impl"). internal_root("data_layer").
+internal_root("_internal").
+// Kind sets name grammar node kinds, for the tree builtins: nearest(n, a, fdef) = "a is n's closest enclosing def".
+// `async def` parses as function_definition too, so both kinds of def are covered; lambdas are not, as in the Python linter.
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+
+// imp(i, module, name): statement i imports `name` from `module`, one row per alias.
+//   import a.b as c         → (i, "a.b", "a.b")
+//   from .x import y as z   → (i, "x", "y")
+//   from . import y         → (i, "", "y")
+// Every later relation starts from imp, so it also decides which statements are considered at all.
+.decl imp(i: node, m: symbol, x: symbol)
+// `import a.b`: the name is the module itself, as in the Python linter's _classify_import(alias.name, [alias.name], …).
+imp(i, m, m)  :- kind(i, "import_statement"), field(i, "name", n), dotted(n, m).
+// `from m import x`: one row per name after `import`.
+imp(i, m, x)  :- kind(i, "import_from_statement"), from_module(i, m), field(i, "name", n), dotted(n, x).
+// `from m import *`: the wildcard is a child node, not a `name` field, so it gets its own rule.
+imp(i, m, "*") :- kind(i, "import_from_statement"), from_module(i, m), child(i, w, _), kind(w, "wildcard_import").
+
+// dotted(n, s): the imported name as written, with any `as alias` removed (the alias plays no part in classifying).
+.decl dotted(n: node, s: symbol)
+dotted(n, s) :- kind(n, "dotted_name"), text(n, s).
+dotted(n, s) :- kind(n, "aliased_import"), field(n, "name", d), text(d, s).   // `a.b as c` → "a.b"
+
+// from_module(i, m): the module of a from-import, as the Python linter's `node.module or ""` sees it.
+.decl from_module(i: node, m: symbol)
+// Absolute: `from a.b import x` → "a.b".
+from_module(i, m) :- field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m).
+// Relative with a name: `from ..a.b import x` → "a.b". The leading dots are dropped here, as in the Python linter.
+from_module(i, m) :- field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, d, _), kind(d, "dotted_name"), text(d, m).
+// Relative with dots only: `from . import x` → "". The negated group says "the relative import has no dotted name".
+from_module(i, "") :- field(i, "module_name", mn), kind(mn, "relative_import"),
+    count : { child(mn, d, _), kind(d, "dotted_name") } = 0.
+
+// Attribution: the outermost def above the import, and the innermost class above that def.
+// The Python linter's collector takes the last function in its ancestor list (the outermost) and the first class above it;
+// the message and the test-helper check both use this def, not the innermost one.
+// def_name(f, s): the name of a def or class (its `name` field).
+.decl def_name(f: node, s: symbol)
+def_name(f, s) :- field(f, "name", n), text(n, s).
+// top_def(i, f): f is a def that contains import i and is not itself inside any def. An import with no such f
+// (module level or class body) gets no row here and so is never reported.
+.decl top_def(i: node, f: node)
+top_def(i, f) :- imp(i, _, _), within(i, f), kind(f, "function_definition"), !nearest(f, _, fdef).
+// scope_of(i, fn, scope): fn is the outermost def's name; scope is "Class.fn" when a class encloses that def, else fn.
+.decl scope_of(i: node, fn: symbol, scope: symbol)
+// @dot(a, b) joins with a dot: "Class" + "fn" → "Class.fn". nearest(…, cdef) picks the closest class above the def.
+scope_of(i, fn, @dot(cn, fn)) :- top_def(i, f), def_name(f, fn), nearest(f, c, cdef), def_name(c, cn).
+// No class above the def: the scope is the def name alone.
+scope_of(i, fn, fn)            :- top_def(i, f), def_name(f, fn), !nearest(f, _, cdef).
+
+// A from-import counts as typing-only if any of its names is a typing construct.
+// This is statement-level: the Python linter passes all of a from-import's names to one _classify_import call, so
+// `from x import Any, foo` makes the whole statement typing-only, including the row for foo.
+.decl names_typing(i: node)
+names_typing(i) :- kind(i, "import_from_statement"), imp(i, _, y), typing_name(y).
+
+// The closed deferred-import registry's dispatch table is skipped.
+// Mirrors the Python linter's check on the path ending in _internal/dynamic_import.py and the function it names.
+.decl skipped(i: node)
+skipped(i) :- scope_of(i, _, "load_python_module"), docof(i, d), doc(d, "_internal/dynamic_import.py", _).
+
+// The finding: one per (import statement, code). `at` is the statement, so {at.text} prints the import as written.
+// scope is the "Class.func" label from scope_of; a statement has one, so it adds no findings.
+.violation FUNCTION_IMPORT(at: node, code: symbol, scope: symbol) "{at.text} (in {scope})"
+// The tests run in the Python linter's _classify_import order and the first that holds gives the code, so each
+// rule below also requires that every earlier test fails. The order matters: an internal typing helper is
+// typing-only, and a test function's internal import is test-helper, not circular-avoidance.
+FUNCTION_IMPORT(i, "typing-only", s)        :- local_imp(i, m, x), scope_of(i, _, s), typing_imp(i, m, x).
+FUNCTION_IMPORT(i, "test-helper", s)        :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    test_helper(i).
+FUNCTION_IMPORT(i, "circular-avoidance", s) :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    !test_helper(i), internal(m).
+// Everything else: stdlib and third-party imports.
+FUNCTION_IMPORT(i, "other", s)              :- local_imp(i, m, x), scope_of(i, _, s), !typing_imp(i, m, x),
+    !test_helper(i), !internal(m).
+
+// local_imp: the imp rows inside a def (scope_of has a row only there), without the registry (!skipped).
+.decl local_imp(i: node, m: symbol, x: symbol)
+local_imp(i, m, x) :- imp(i, m, x), scope_of(i, _, _), !skipped(i).
+// Module or name is a typing construct (or another name in the same from-import is).
+.decl typing_imp(i: node, m: symbol, x: symbol)
+typing_imp(i, m, x) :- local_imp(i, m, x), typing_module(m).
+typing_imp(i, m, x) :- local_imp(i, m, x), typing_name(x).
+typing_imp(i, m, x) :- local_imp(i, m, x), names_typing(i).
+// The outermost def is named test_….
+.decl test_helper(i: node)
+test_helper(i) :- scope_of(i, fn, _), match("test_.*", fn).
+// Internal to the repository: a top-level package, a relative import with dots only (""), a dotted module under
+// one of the internal packages, or a layered package such as l1000_schema or l9600_graphs.graph (l + 3 or 4
+// digits + _name, as the whole first segment).
+.decl internal(m: symbol)
+internal("").
+internal(m) :- local_imp(_, m, _), internal_root(m).
+internal(m) :- local_imp(_, m, _), match("(api|impl|data_layer|_internal|conform|scripts)\\..*", m).
+internal(m) :- local_imp(_, m, _), match("l\\d{3,4}_[a-z][a-z0-9_]*(\\..*)?", m).

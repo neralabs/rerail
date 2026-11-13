@@ -1,0 +1,103 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-async-executor",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer async_executor at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/sqlite/**/*.py",
+      "impl/postgres/**/*.py",
+      "impl/mariadb/**/*.py",
+      "impl/doltdb/**/*.py",
+      "impl/mongodb/**/*.py",
+      "impl/neo4j/**/*.py",
+      "impl/l1595_llm_cache/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "impl/common/**",
+      "impl/read_through/**",
+      "impl/sqlite/native_async_wrapper.py",
+      "impl/sqlite/connection.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "executor",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "run_in_executor$"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "call",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "inside": {
+                            "kind": "call",
+                            "stopBy": "neighbor",
+                            "field": "function"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "function_definition",
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "layout": {
+                    "line": "(?:#\\s*noqa:\\s*async-executor)"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "run_in_executor",
+        "anchor": "witness.span",
+        "message": "Use native async operations instead of run_in_executor() in backend implementations."
+      }
+    }
+  ]
+}

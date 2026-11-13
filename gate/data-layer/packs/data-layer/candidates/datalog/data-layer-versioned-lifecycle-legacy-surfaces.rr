@@ -1,0 +1,26 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl m12(n: node)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, name, line, syntax_error
+.output violation
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+m12(n) :- child(v3, n, _), node(_, v3, "block", _, _), field(v4, "body", v3), node(_, v4, "class_definition", _, _), field(v4, "name", v5), name(v5, v6), (suffix("LazyVersionedWriteTransactionSparse", v6) ; suffix("VersionedWriteTransaction", v6)).
+m12(n) :- child(v7, n, _), node(_, v7, "decorated_definition", _, _), child(v8, v7, _), node(_, v8, "block", _, _), field(v9, "body", v8), node(_, v9, "class_definition", _, _), field(v9, "name", v10), name(v10, v11), (suffix("LazyVersionedWriteTransactionSparse", v11) ; suffix("VersionedWriteTransaction", v11)).
+violation("data-layer-versioned-lifecycle-legacy-surfaces", "methods", "VLL001", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "commit" ; v2 = "commit_async" ; v2 = "commit_branch" ; v2 = "commit_branch_async" ; v2 = "rollback" ; v2 = "rollback_async"), m12(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

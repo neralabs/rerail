@@ -1,0 +1,51 @@
+.policy "data-layer:schema-introspection-data-paths" revision 1
+.description "Runtime read/write paths compile from Python schema definitions; they never introspect the live schema."
+.language python
+.mode block
+.scope include "l2050_transaction/**/*.py", "l2055_lazy_result/**/*.py", "l2060_query_builder/**/*.py"
+.scope include "l2070_batching/**/*.py", "l4000_permissions/**/*.py", "l7000_versioned_schema/**/*.py"
+.scope include "l7200_versioned_transactions/**/*.py", "impl/common/l2070_server_plan/**/*.py"
+.scope include "impl/common/l4100_queue/**/*.py", "impl/common/l5150_fts_polyfill/**/*.py"
+.scope include "impl/common/l5200_sql_query/**/*.py", "impl/common/l5350_hybrid_search/**/*.py"
+.scope include "impl/common/l7245_versioned_backends/**/*.py", "impl/common/l7300_sql_versioned_transactions/**/*.py"
+.scope include "impl/common/l7350_sparse_versioned_transactions/**/*.py", "impl/common/l9700_sql_graph_query/**/*.py"
+.scope tests false
+// Python linter: scripts/lint_schema_introspection_data_paths.py. In the runtime data-path packages above (less any
+// file whose "/" + path holds a schema, metadata, migration, introspector, validator, capability, bootstrap or
+// tests marker), one code, SIDP001, for:
+//   a call of a schema probe (table_exists, column_exists_async, get_table_columns, inspect, TableExistsStep, …),
+//     by bare or method name, outside schema authority; the primitives' own definitions are exempt
+//     (manager.py's execute_sync calling table_exists, …);
+//   a str constant holding introspection SQL (information_schema, sqlite_master, show tables, …, any case),
+//     outside schema authority; a string standing alone as a statement (a docstring) does not count;
+//   flush_schema_plan[_async] anywhere under impl/common/l7245_versioned_backends/, schema authority or not.
+// Schema authority: some def around the node (any depth; decorators and signature count) has bootstrap, create,
+// drop, ensure, evolve, migration, rename, reconcile, schema or verify in its lowercased name.
+// The linter's signed approval list (APPROVED_USER_SCHEMA_CHECK_CALLSITES) is empty and NEEDS_SIGNING, and its SIDP000
+// fires only for a non-empty list; there is nothing to read. The tables: schema-introspection-data-paths.tables.rr.
+
+#include "python/ast.rr"
+#include "data-layer/boot-python.rr"     // callee_name, def_walk
+#include "schema-introspection-data-paths.tables.rr"
+
+// sidp_runtime(d, p): document d, at p, is a data path: no allowed marker occurs in "/" + p.
+.decl sidp_runtime(d: number, p: symbol)
+sidp_runtime(d, p) :- doc(d, p, _), q = cat("/", p), count : { sidp_path_marker(m), contains(m, q) } = 0.
+// sidp_authority_at(n): a def around n is schema authority.
+.decl sidp_authority_at(n: node)
+sidp_authority_at(n) :- def_walk(n, f), def_name(f, x), sidp_authority(w), icontains(w, x).
+
+.violation SIDP001(at: node, x: symbol) "schema introspection {x} in runtime data path"
+// A probe call; a primitive's definition (its own file and innermost def) is not one.
+SIDP001(c, x) :- callee_name(c, x), sidp_probe(x), docof(c, d), sidp_runtime(d, p), !sidp_authority_at(c),
+    !sidp_primitive_at(c, p, x).
+// Introspection SQL in a str constant (each literal piece of an f-string is one), not a lone string statement.
+SIDP001(at, m) :- str_part(lit, _, v, at, _), sidp_sql(m), icontains(m, v), docof(lit, d), sidp_runtime(d, _),
+    !sidp_authority_at(lit), !sidp_lone(lit).
+// A schema-plan flush in a versioned backend.
+SIDP001(c, x) :- callee_name(c, x), (x = "flush_schema_plan" ; x = "flush_schema_plan_async"), docof(c, d),
+    sidp_runtime(d, p), prefix("impl/common/l7245_versioned_backends/", p).
+.decl sidp_primitive_at(c: node, p: symbol, x: symbol)
+sidp_primitive_at(c, p, x) :- sidp_primitive(p, f, x), def_frame(c, g), def_name(g, f).
+.decl sidp_lone(s: node)  // a str constant that is a whole expression statement (`ast.Expr` of a str Constant)
+sidp_lone(s) :- kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), unparen(e, s), plain_str(s, _).

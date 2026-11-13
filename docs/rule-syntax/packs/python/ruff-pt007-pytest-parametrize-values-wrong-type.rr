@@ -1,0 +1,37 @@
+.policy "ruff-pt007-pytest-parametrize-values-wrong-type" revision 2
+.description "Pass pytest.mark.parametrize values as a list, and each row of several parameters as a tuple, not the other way round."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT007 (flake8-pytest-style): the values of a `pytest.mark.parametrize(names, values)` call, against options
+// `parametrize-values-type` ("list" by default, or "tuple") and `parametrize-values-row-type` ("tuple" by
+// default, or "list").
+//   @pytest.mark.parametrize("a", (1, 2))              ← PT007 at the defaults: the values are a tuple
+//   @pytest.mark.parametrize(("a", "b"), [[1, 2]])     ← PT007 at the defaults: a row is a list
+//   @pytest.mark.parametrize("a", [[1, 2]])            not reported: one name, so [1, 2] is a value
+// Rows are read when the names are not a str literal, or name several parameters.
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), pytest_several(s), plain_str(s, v)
+
+.violation PT007(at: node, id: symbol) code "PT007" "{id}"
+    suppress ruff "PT007"
+PT007(v, cat("Pass the parametrize values as a ", t, ", not a ", k, ".")) :- values(_, v), shape(v, k),
+    values_type(t), t != k.
+PT007(r, cat("Write each row of parametrize values as a ", t, ", not a ", k, "; leave it if the names are one parameter and the row is that parameter's value.")) :-
+    values(n, v), shape(v, _), !one_name(n), child(v, r0, _), unparen(r0, r), shape(r, k), row_type(t), t != k.
+
+.decl values(n: node, v: node)  // names and values of a parametrize call
+values(n, v) :- exc_call(c, "pytest.mark.parametrize"), exc_argument(c, "argnames", 0, n),
+    exc_argument(c, "argvalues", 1, v).
+.decl one_name(n: node)  // a str literal with one name: "a" or "a,"
+one_name(n) :- values(n, _), plain_str(n, _), !pytest_several(n).
+.decl shape(e: node, k: symbol)
+shape(e, "list") :- kind(e, "list").
+shape(e, "tuple") :- kind(e, "tuple").
+.decl values_type(t: symbol)
+values_type(t) :- option("parametrize-values-type", t).
+values_type("list") :- !option("parametrize-values-type", _).
+.decl row_type(t: symbol)
+row_type(t) :- option("parametrize-values-row-type", t).
+row_type("tuple") :- !option("parametrize-values-row-type", _).

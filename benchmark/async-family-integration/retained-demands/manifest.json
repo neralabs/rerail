@@ -1,0 +1,26 @@
+{
+  "schema": "rerail-retained-demand-provenance-v1",
+  "recorded_at": "2026-11-09T14:00:47.913001+00:00",
+  "branch": "jeremy/async-family-integration-comparison",
+  "merged_baseline": "67160cee5d375e872ad70ee2896601aa1f29a1b4",
+  "merged_tips": [
+    "aa2ef00ef8cbfc1d8e1b15d9eefb57c2e30c821e",
+    "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e"
+  ],
+  "source_files_sha256": {
+    "native/src/code_rule_dsl/logic/native.rs": "152d9579fc1a68cd79655a583783e7423c45c64e4df05733ed893eaade3cb782",
+    "native/src/code_rule_dsl/logic/native/setfix.rs": "f3235afc7cf565a67368fcdef83057b6aae691e0aa82250f0405af41295be4c6",
+    "native/src/code_rule_dsl/logic/plan.rs": "64dbba6eebd8b7082117e00053e87e446384e19a32041214379d36e672bba12e",
+    "native/src/code_rule_dsl/logic/plan/native_demand.rs": "ed177cb49c662a4211719280333b6ace639b552f3a2fbcc43e6152da35c942b7",
+    "native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs": "28237fe4504ddda848794a901310188e8bf38a3a6f25b10fbc1f2a956b2d898f",
+    "native/src/code_rule_dsl/logic/rr/tests.rs": "cb7a41ac7bfb4ca889c6d8aae2bc89a463a78479950a6c8fa1ca4162b3844c2c"
+  },
+  "binary_sha256": "4f3e2012092e6b668f861961a82097dc6bfe7aefec45bd149deb411af832c284",
+  "baseline_binary_sha256": "99ae19e712604352f607da18bcfd11adab8b2449c427b8895b4a024e7c866a59",
+  "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "corpus_commit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "files": 5725,
+  "nodes": 19007630,
+  "caches": "Private SQLite backups; file and cross result memos off; one warm-up followed by three timed runs and a separate profile. Prepared programs from store.",
+  "initial_diagnostics": "First cold fixed profile and initial test failures are preserved. Final rebuild changed only test fixtures and assertions."
+}

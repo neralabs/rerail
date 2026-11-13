@@ -1,0 +1,32 @@
+.policy "eslint-no-useless-concat" revision 5
+.description "Avoid concatenating two string literals on the same line in JavaScript; write them as a single string."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-literals.rr"
+//   binop, op_token; string_like (a string or any template literal)
+
+// ESLint's no-useless-concat: `+` joining two string literals (quoted or template) that sit on one line, where
+// one literal would do. In a chain, each `+` joins the literals next to it: the left operand's right-most
+// part and the right operand's left-most part.
+//   "a" + "b"     `a` + "b"     foo + "a" + "b"  (the second +)     → reported, at the `+`
+//   "a" + 1       "a" +⏎ "b"  (a line break: kept for line length)  fine
+// No options.
+.violation no_useless_concat(at: span) code "no-useless-concat" "Unexpected string concatenation of literals."
+    suppress eslint "no-useless-concat"
+    suppress oxlint "no-useless-concat"
+    suppress biome "lint/complexity/noUselessStringConcat"
+no_useless_concat(t) :- binop(n, "+", l, r), right_end(l, a), left_end(r, b), string_like(a), string_like(b),
+    end_line(a, k), line(b, k), op_token(n, t).
+
+// right_end(e, x): ESLint's getLeft: `a + "b"` ends with "b". left_end(e, x), getRight, is the mirror:
+// `"a" + b` starts with "a". Parentheses do not count: binop strips them, as ESTree has none.
+.decl operand(e: node)
+operand(e) :- binop(_, "+", e, _) ; binop(_, "+", _, e).
+.decl right_end(e: node, x: node)
+right_end(e, e) :- operand(e), !binop(e, "+", _, _).
+right_end(e, x) :- operand(e), binop(e, "+", _, r), right_end(r, x).
+.decl left_end(e: node, x: node)
+left_end(e, e) :- operand(e), !binop(e, "+", _, _).
+left_end(e, x) :- operand(e), binop(e, "+", l, _), left_end(l, x).

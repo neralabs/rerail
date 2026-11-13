@@ -1,0 +1,52 @@
+.policy "ruff-c420-unnecessary-dict-comprehension-for-iterable" revision 2
+.description "Use dict.fromkeys(iterable, value) instead of a dict comprehension that maps each item to the same constant value; it is clearer and faster."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C420 (flake8-comprehensions): a dict comprehension with one plain `for` and no `if`, whose key is its
+// target and whose value is the same for every item. The target holds no attribute, subscript or slice; the
+// value has no call, lambda, display, comprehension, await, yield or walrus in it, and reads no name the
+// comprehension binds. Ruff's fix is safe when dict is the builtin and the comprehension has no comment:
+// then it is offered here.
+//   {x: 0 for x in xs}       ← C420: dict.fromkeys(xs, 0)
+//   {x: None for x in xs}    ← C420: dict.fromkeys(xs)
+//   {x: [] for x in xs}    {x: x for x in xs}    {x: f() for x in xs}    not reported
+#include "python/comprehensions.rr"
+//   c4_comp(e, k), c4_simple(e, fc), cmp_same(x, t) (python/compare), c4_builtin_here(n, x)
+
+.violation C420(at: node) code "C420"
+    "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
+    suppress ruff "C420"
+    fix safe fromkeys "Replace with `dict.fromkeys(iterable, value)`"
+C420(e) :- same_value(e, _, _, _).
+.decl same_value(e: node, t: node, i: node, v: node)
+same_value(e, t, i, v) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(fc, "right", i),
+    field(e, "body", p), field(p, "key", k), cmp_same(k, t), field(p, "value", v), !impure_target(t),
+    !varying(v), !reads_own(e, v).
+cmp_same_ask(k, t) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(e, "body", p),
+    field(p, "key", k).
+.decl impure_target(t: node)
+impure_target(t) :- kind(t, k), place_kind(k).
+impure_target(t) :- has(t, _, place_kind).
+.decl place_kind(k: symbol)
+place_kind("attribute"). place_kind("subscript"). place_kind("slice").
+// varying(v): v, or something in it, may give a new object or a new value each time.
+.decl varying(v: node)
+varying(v) :- kind(v, k), varying_kind(k).
+varying(v) :- has(v, _, varying_kind).
+.decl varying_kind(k: symbol)
+varying_kind("lambda"). varying_kind("list"). varying_kind("dictionary"). varying_kind("set").
+varying_kind("list_comprehension"). varying_kind("set_comprehension"). varying_kind("dictionary_comprehension").
+varying_kind("generator_expression"). varying_kind("await"). varying_kind("yield"). varying_kind("call").
+varying_kind("named_expression").
+// reads_own(e, v): v reads a name bound inside e: `{x: y for x, y in z}`.
+.decl reads_own(e: node, v: node)
+reads_own(e, v) :- c4_comp(e, "dict"), field(e, "body", p), field(p, "value", v), (n = v ; within(n, v)), ast_name(n, x), look(n, x, s),
+    binding(s, x, site, _), within(site, e).
+
+fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
+    kind(n, "none") => replace(e, `dict.fromkeys($i)`).
+fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
+    !kind(n, "none") => replace(e, `dict.fromkeys($i, $v)`).
+c4_builtin_ask(e, "dict") :- same_value(e, _, _, _).

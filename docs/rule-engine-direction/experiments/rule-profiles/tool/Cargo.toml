@@ -1,0 +1,16 @@
+[package]
+name = "ruleprof"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tree-sitter = "=0.27.1"
+tree-sitter-language = "=0.1.9"
+tree-sitter-python = "=0.25.0"
+rusqlite = { version = "=0.40.2", features = ["bundled", "series", "functions"] }
+
+
+regex = "=1.13.1"
+
+[profile.release]
+debug = 1

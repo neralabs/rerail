@@ -1,0 +1,22 @@
+.policy "sqlfluff-al09-aliasing-self-alias-column" revision 2
+.description "Don't alias a SQL column to its own name; if the alias is meant to change the name's case, quote it to make that explicit."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AL09 (aliasing.self_alias.column). A SELECT item that aliases a column to its own name; the finding
+// is at the item:
+//   select col_b as col_b from t           "Column should not be self-aliased" (same text, quotes included)
+//   select col_b as Col_B from t           ambiguous: unquoted, and the same name in another case
+//   select "col_b" as "Col_B" from t       fine: quoting says the case change is meant
+// A qualified column is compared by its last part: t.a AS a is reported too.
+
+#include "sql/syntax.rr"
+
+.violation AL09(at: node, why: symbol) code "AL09" "{why}."
+    suppress sqlfluff "AL09", "aliasing", "aliasing.self_alias.column", "all", "core"
+AL09(t, "Column should not be self-aliased") :- self_alias(t, c, a), text(c, x), text(a, x).
+AL09(t, "Ambiguous self alias. Either remove unnecessary alias, or quote alias/reference to make case change explicit") :-
+    self_alias(t, c, a), text(c, x), text(a, y), x != y, !quoted(c, _), !quoted(a, _), @lower(x) = @lower(y).
+// self_alias(t, c, a): SELECT item t is the plain column c with alias a.
+.decl self_alias(t: node, c: node, a: node)
+self_alias(t, c, a) :- select_term(_, t, _), field(t, "value", f), column_ref(f, _, c), field(t, "alias", a).

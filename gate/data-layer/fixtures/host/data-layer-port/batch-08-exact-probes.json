@@ -1,0 +1,719 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "authentication_plan_purity",
+    "lazy_adapter_ownership",
+    "lazy_architecture",
+    "lazy_sql_surface",
+    "pure_lazy_runtime_purity",
+    "readthrough_authority_architecture"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "loaded_source_files_checked": 127,
+  "events": [
+    {
+      "test": "probe:batch8:native-owner-conn-first-match",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "class C:\n    def action(self):\n        grammar_fetchall(owner=self.plan())\n        grammar_fetchall(owner=self._conn)\n        grammar_fetchall(owner=self._conn)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/example.py",
+          "line": 4,
+          "column": null,
+          "code": "LA-006",
+          "message": "C.action passes _conn to grammar_fetchall() instead of the plan owner"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-execution-context-nested",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C(ExecutionContext):\n    class Nested:\n        def execute_sync(self):\n            return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-009",
+          "message": "C.Nested.execute_sync hides eager execution behind an ExecutionContext terminal"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-compat-import",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "from l2055_lazy_result.transform import RuntimeMapStep as Alias\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 1,
+          "column": null,
+          "code": "LA-009",
+          "message": "RuntimeMapStep is forbidden in ServerPlan-sensitive files; use explicit steps/refs instead"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-sidequeue-nested-owner",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l2000_connection/bootstrap_example.py",
+          "source": "class Outer:\n    class Ddl:\n        pending_after_create_schema_ddl_statements = []\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/bootstrap_example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-018",
+          "message": "deleted cold-bootstrap surface was reintroduced"
+        },
+        {
+          "path": "l2000_connection/bootstrap_example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-016",
+          "message": "Outer.Ddl.pending_after_create_schema_ddl_statements mutates state inside bootstrap/DDL @pure_lazy code (forbidden side-queue declaration pending_after_create_schema_ddl_statements); publish a ServerPlan step/ref and make mutation occur during plan execution"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-auth-message",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "class ReadPlanStep:\n    def __init__(self, client: RemoteClient):\n        self.client = client\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/remote/example.py",
+          "line": 3,
+          "column": null,
+          "code": "APP001",
+          "message": "Semantic plan steps must not retain transport objects"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-authority-message",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "def run(self):\n    self._restore_persisted_local_overlays()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/remote/example.py",
+          "line": 2,
+          "column": null,
+          "code": "RTA001",
+          "message": "Read durable overlays inside the admitted application plan"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-adapter-message",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "@pure_lazy\ndef build_lazy(txn):\n    return txn.resolve()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2000_connection/example.py",
+          "line": 2,
+          "column": null,
+          "code": "LAO004",
+          "message": "@pure_lazy surface build_lazy reaches eager terminal resolve"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-purity-message",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "@pure_lazy\ndef build_lazy(tx):\n    return tx._conn\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/example.py",
+          "line": 3,
+          "column": null,
+          "code": "PLP-003",
+          "message": "pure-lazy functions must not return runtime-bound handles or containers",
+          "metadata": {
+            "qualname": "build_lazy"
+          }
+        }
+      ],
+      "compare_message": true,
+      "compare_fields": [
+        "qualname"
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-sql-message",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "def run():\n    plan.execute()\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "impl/example.py",
+          "line": 2,
+          "column": null,
+          "code": "ServerPlan execute() outside execution boundary",
+          "message": "ServerPlan execute() outside execution boundary"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-eager-traversal-order",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef root_lazy(): return middle_lazy()\n@pure_lazy\ndef middle_lazy():\n    z_lazy()\n    a_lazy()\n@pure_lazy\ndef z_lazy(): return helper_z_async()\n@pure_lazy\ndef a_lazy(): return helper_a_async()\nasync def helper_z_async(): return 1\nasync def helper_a_async(): return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 2,
+          "column": null,
+          "code": "LA-009",
+          "message": "root_lazy reaches eager downstream function l7450_versioned_revert.example.helper_z_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 2,
+          "column": null,
+          "code": "LA-013",
+          "message": "root_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_z_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-009",
+          "message": "middle_lazy reaches eager downstream function l7450_versioned_revert.example.helper_z_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-013",
+          "message": "middle_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_z_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 8,
+          "column": null,
+          "code": "LA-009",
+          "message": "z_lazy reaches eager downstream function l7450_versioned_revert.example.helper_z_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 8,
+          "column": null,
+          "code": "LA-013",
+          "message": "z_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_z_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 10,
+          "column": null,
+          "code": "LA-009",
+          "message": "a_lazy reaches eager downstream function l7450_versioned_revert.example.helper_a_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 10,
+          "column": null,
+          "code": "LA-013",
+          "message": "a_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_a_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-authentication_plan_purity",
+      "check": "authentication_plan_purity",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-lazy_adapter_ownership",
+      "check": "lazy_adapter_ownership",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-lazy_architecture",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l2000_connection/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-lazy_sql_surface",
+      "check": "lazy_sql_surface",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-pure_lazy_runtime_purity",
+      "check": "pure_lazy_runtime_purity",
+      "entry": "scan_source",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "compare_fields": [
+        "qualname"
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_source"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-message-clean-readthrough_authority_architecture",
+      "check": "readthrough_authority_architecture",
+      "entry": "scan_sources",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "impl/remote/example.py",
+          "source": "pass\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_sources"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-deferred-call-target",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "class C:\n    def eager(self):\n        grammar_fetchall()\n    def build_lazy(self):\n        return defer_lazy_result(sync_resolve=self.eager)\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-013",
+          "message": "defer_lazy_result is forbidden; publish a real ServerPlan step/ref instead"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-009",
+          "message": "defer_lazy_result is a forbidden lazy compatibility surface in ServerPlan-sensitive files"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 5,
+          "column": null,
+          "code": "LA-009",
+          "message": "C.build_lazy delegates lazy execution to eager method C.eager (direct eager sink)"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:native-ordered-cycle",
+      "check": "lazy_architecture",
+      "entry": "scan_files",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "source": "@pure_lazy\ndef first_lazy():\n    second_lazy()\n@pure_lazy\ndef second_lazy():\n    first_lazy()\n    helper_async()\nasync def helper_async(): return 1\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-009",
+          "message": "first_lazy reaches eager downstream function l7450_versioned_revert.example.helper_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 3,
+          "column": null,
+          "code": "LA-013",
+          "message": "first_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 7,
+          "column": null,
+          "code": "LA-009",
+          "message": "second_lazy reaches eager downstream function l7450_versioned_revert.example.helper_async (async function)"
+        },
+        {
+          "path": "l7450_versioned_revert/example.py",
+          "line": 7,
+          "column": null,
+          "code": "LA-013",
+          "message": "second_lazy reaches non-lazy helper l7450_versioned_revert.example.helper_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "scan_files"
+        }
+      }
+    }
+  ]
+}

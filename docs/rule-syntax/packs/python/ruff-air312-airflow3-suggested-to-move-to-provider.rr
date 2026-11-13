@@ -1,0 +1,25 @@
+.policy "ruff-air312-airflow3-suggested-to-move-to-provider" revision 3
+.description "Import Airflow operators, sensors, hooks and triggers from the standard provider package instead of their deprecated core modules; the core paths are due for removal after Airflow 3.0."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR312 (Airflow): a read of an Airflow operator, sensor, hook or trigger that Airflow 3 still ships but
+// deprecated in favour of the same name in the standard provider (apache-airflow-providers-standard). Each read is
+// reported, at the name or the attribute's last part; a fallback import in an `except ImportError` handler, whose
+// try imports the provider's name, is fine.
+//   from airflow.operators.bash import BashOperator
+//   BashOperator()                 ← AIR312: import it from `airflow.providers.standard.operators.bash`
+//   try:
+//       from airflow.providers.standard.triggers.file import FileTrigger
+//   except ModuleNotFoundError:
+//       from airflow.triggers.file import FileTrigger
+//   FileTrigger()                  not reported: the fallback is guarded
+#include "python/misc-airflow.rr"
+#include "../packs/python/ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr"   // air312_moved(old, m, x)
+
+.violation AIR312(at: node, q: symbol, m: symbol) code "AIR312"
+    "`{q}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from `{m}`, keeping the old import only as an `except ImportError` fallback."
+    suppress ruff "AIR312"
+AIR312(at, q, m) :- air_ref(e, at, q), air312_moved(q, m, x), !air_guarded(e, m, x).
+air_needs_guard(e, m, x) :- air_ref(e, _, q), air312_moved(q, m, x).

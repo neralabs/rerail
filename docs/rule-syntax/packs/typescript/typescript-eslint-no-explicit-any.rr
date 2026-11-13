@@ -1,0 +1,41 @@
+.policy "typescript-eslint-no-explicit-any" revision 5
+.description "Avoid the any type in TypeScript; it switches off type checking, so use unknown or a precise type instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts" exclude "**/node_modules/**" exclude "**/dist/**" exclude "**/build/**" exclude "**/out/**" exclude "**/.next/**" exclude "**/coverage/**" exclude "**/vendor/**" exclude "**/.venv/**" exclude "**/.yarn/**" exclude "**/generated/**" exclude "**/__generated__/**" exclude "**/*.generated.*" exclude "**/*.gen.*" exclude "**/*.min.js" exclude "**/*.d.ts"
+
+#include "tsx/ts-a.rr"
+//   type_parent(x, p), rest_annotation(a)
+
+// typescript-eslint's no-explicit-any: every `any` type is reported.
+//   let x: any;     function f(a: Array<any>) {}     type K = keyof any;     → each `any`
+// ignoreRestArgs skips an `any` that types a rest parameter's elements: `...a: any[]`, `...a: Array<any>`,
+// `...a: readonly any[]` (and, as the plugin counts parents, `...a: [any]`); `...a: any` is still reported.
+// The suggestions are `unknown` and `never`, or `PropertyKey` for `keyof any`; with fixToUnknown they are applied.
+.violation no_explicit_any(at: node) code "@typescript-eslint/no-explicit-any"
+    "Unexpected any. Specify a different type."
+    suppress eslint "@typescript-eslint/no-explicit-any"
+    suppress biome "lint/suspicious/noExplicitAny"
+    fix safe autofix "Use `unknown` (or `PropertyKey` for `keyof any`)"
+    fix to_unknown "Use `unknown` instead"
+    fix to_never "Use `never` instead"
+    fix to_property_key "Use `PropertyKey` instead, this is more explicit than `keyof any`"
+no_explicit_any(a) :- kind(a, "predefined_type"), text(a, "any"), !ignored_rest(a).
+
+// ignored_rest(a): the plugin's great-grandparent and great-great-grandparent tests. The parent of `any` is any
+// type node (array, tuple, type arguments); a second parent may only be `readonly` or Array/ReadonlyArray.
+.decl ignored_rest(a: node)
+ignored_rest(a) :- option("ignoreRestArgs", "true"), type_parent(a, p), type_parent(p, t), rest_annotation(t).
+ignored_rest(a) :- option("ignoreRestArgs", "true"), type_parent(a, p), type_parent(p, q), array_wrapper(q),
+    type_parent(q, t), rest_annotation(t).
+.decl array_wrapper(q: node)  // readonly T, Array<T>, ReadonlyArray<T>
+array_wrapper(q) :- kind(q, "readonly_type").
+array_wrapper(q) :- kind(q, "generic_type"), field(q, "name", n), (text(n, "Array") ; text(n, "ReadonlyArray")).
+
+.decl keyof_any(a: node, k: node)  // `keyof any`: k is the type operator
+keyof_any(a, k) :- type_parent(a, k), kind(k, "index_type_query").
+autofix(a) :- option("fixToUnknown", "true"), !keyof_any(a, _) => replace(a, `unknown`).
+autofix(a) :- option("fixToUnknown", "true"), keyof_any(a, k) => replace(k, `PropertyKey`).
+to_unknown(a) :- !option("fixToUnknown", "true"), !keyof_any(a, _) => replace(a, `unknown`).
+to_never(a) :- !option("fixToUnknown", "true"), !keyof_any(a, _) => replace(a, `never`).
+to_property_key(a) :- !option("fixToUnknown", "true"), keyof_any(a, k) => replace(k, `PropertyKey`).

@@ -1,0 +1,196 @@
+{
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "cases": [
+    {
+      "test": "graphql_plan_ownership:0",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def assemble(scope: \"1Transaction\"):\n    return scope._returns\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "GPO001",
+          "line": 2,
+          "message": "assemble reads private plan authority attribute _returns; add a typed public plan-scope contract"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "graphql_plan_ownership:1",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def assemble(scope: \"\u00c4Transaction\"):\n    return scope._returns\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "GPO001",
+          "line": 2,
+          "message": "assemble reads private plan authority attribute _returns; add a typed public plan-scope contract"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "graphql_plan_ownership:2",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def assemble(scope: \"1ServerPlan\"):\n    return scope._returns\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "GPO001",
+          "line": 2,
+          "message": "assemble reads private plan authority attribute _returns; add a typed public plan-scope contract"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "matching_architecture:3",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/app/helper.py",
+          "source": "from data_layer.matching import MatchSpec\nvalue = BackendType.SQLITE\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "MA026",
+          "line": 2,
+          "message": "Shared matching code cannot switch on backend identity"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "matching_architecture:4",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/helper.py",
+          "source": "from data_layer.matching import MatchSpec\ncompleted_database_round_trips = completed_database_round_trips = len(database_receipts)\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "MA037",
+          "line": 2,
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "plan_optimizer_v2:5",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/probe.py",
+          "source": "from \\\n    .socket import thing\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [],
+      "production": false
+    },
+    {
+      "test": "plan_optimizer_v2:6",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/probe.py",
+          "source": "from \\\n    .asyncio import thing\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [],
+      "production": false
+    },
+    {
+      "test": "conditional_architecture:7",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    def compile(self, ctx):\n        raise (TypeError(\"No direct compilation\"))\n    def require_sql_physical_conditional(self):\n        raise (TypeError(\"No physical contract\"))\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "CONDA-004",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "code": "CONDA-004",
+          "line": 1,
+          "message": "ConditionalStep.__init__ must validate both then and else branch contents."
+        },
+        {
+          "code": "CONDA-005",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "code": "CONDA-005",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "code": "CONDA-005",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        }
+      ],
+      "production": false
+    },
+    {
+      "test": "matching-default-filter",
+      "check": "matching_architecture",
+      "entry": "all",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "source": "class Transaction:\n    def \\\n        match(self):\n        pass\n",
+          "sourceSha256": ""
+        }
+      ],
+      "parameters": {},
+      "expected": [],
+      "production": true
+    }
+  ]
+}

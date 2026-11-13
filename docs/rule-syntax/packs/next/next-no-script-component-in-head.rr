@@ -1,0 +1,17 @@
+.policy "next-no-script-component-in-head" revision 3
+.description "Place next/script Script components outside Head from next/head; scripts inside Head are not loaded as intended."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-script-component-in-head. In a file that imports next/head, a <Head> element with a
+// <Script> directly among its children; the finding is at the Head:
+//   import Head from "next/head"; <Head><Script src="/a.js" /></Head>      reported
+// The plugin tests the tag names as written, not what they were imported as.
+
+#include "tsx/next.rr"
+
+.violation script_in_head(at: node) code "@next/next/no-script-component-in-head"
+    "`next/script` should not be used in `next/head` component. Move `<Script />` outside of `<Head>` instead. See: https://nextjs.org/docs/messages/no-script-component-in-head"
+    suppress eslint "@next/next/no-script-component-in-head"
+    suppress oxlint "no-script-component-in-head"
+script_in_head(e) :- opening(e, o), tag_of(o, "Head"), child_el(e, _, "Script"), docof(e, d), import_stmt(_, d, "next/head").

@@ -1,0 +1,495 @@
+{
+  "format": "rerail.rr-fresh-cases/v1",
+  "cases": [
+    {
+      "id": "separator-0",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\n\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-1",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\r\n\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-2",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\r\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-3",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u000b\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-4",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\f\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-5",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u001c\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-6",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u001d\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-7",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u001e\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-8",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u0085\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-9",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u2028\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "separator-10",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1\u2029\u00a0self._cache: dict[BranchId, RevisionId] = {}\u001f"
+      }
+    },
+    {
+      "id": "overlapping-patterns",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_cache: dict[BranchId, RevisionId] = {}"
+      }
+    },
+    {
+      "id": "repeated-pattern-once",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = 1; self._branch_tip = 2"
+      }
+    },
+    {
+      "id": "anchored-after-strip",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "   _mapping: dict[BranchId, object] = {}"
+      }
+    },
+    {
+      "id": "anchored-middle",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "x = 1; _mapping: dict[BranchId, object] = {}"
+      }
+    },
+    {
+      "id": "unicode-name",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._\u00e9branch_tip\u0661 = value"
+      }
+    },
+    {
+      "id": "unicode-space",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip\u001c=1"
+      }
+    },
+    {
+      "id": "comment",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "\u001f# self._branch_tip = 1"
+      }
+    },
+    {
+      "id": "not-python",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._branch_tip = "
+      }
+    },
+    {
+      "id": "long-line",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx self._branch_tip = 1"
+      }
+    },
+    {
+      "id": "safe-dict",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._cache: dict[str, RevisionId] = {}"
+      }
+    },
+    {
+      "id": "allow-whole-line",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/staging_bypass.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x; self._branch_tip = x"
+      }
+    },
+    {
+      "id": "path-22",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/tests/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-23",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/test/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-24",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/__pycache__/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-25",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/.pytest_cache/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-26",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/.git/cache.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-27",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "other/staging_bypass.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-28",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "other/prefixstaging_bypass.py"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "path-29",
+      "check": "connection_caches",
+      "entry": "scan_file_content",
+      "files": [],
+      "arguments": {
+        "file_path": {
+          "path": "api/cache.txt"
+        },
+        "root": {
+          "path": ""
+        },
+        "source": "self._expected_tip_revision_id = x\nself._branch_tip = 1\n"
+      }
+    },
+    {
+      "id": "allow-30",
+      "check": "connection_caches",
+      "entry": "_is_allowed",
+      "files": [],
+      "arguments": {
+        "file_rel": "staging_bypass.py",
+        "line": "self._expected_tip_revision_id =x"
+      }
+    },
+    {
+      "id": "allow-31",
+      "check": "connection_caches",
+      "entry": "_is_allowed",
+      "files": [],
+      "arguments": {
+        "file_rel": "prefixstaging_bypass.py",
+        "line": "_expected_tip_revision_id"
+      }
+    },
+    {
+      "id": "allow-32",
+      "check": "connection_caches",
+      "entry": "_is_allowed",
+      "files": [],
+      "arguments": {
+        "file_rel": "other.py",
+        "line": "_expected_tip_revision_id"
+      }
+    },
+    {
+      "id": "allow-33",
+      "check": "connection_caches",
+      "entry": "_is_allowed",
+      "files": [],
+      "arguments": {
+        "file_rel": "sql_table_hnsw.py",
+        "line": "_entry_point_cache"
+      }
+    }
+  ]
+}

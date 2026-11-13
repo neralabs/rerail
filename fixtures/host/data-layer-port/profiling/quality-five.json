@@ -1,0 +1,32 @@
+{
+  "format": "rerail.profile-selection/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "serverplan_quality"
+  ],
+  "files": [
+    {
+      "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+      "sha256": "bc621190321d665710266fdffc395d13684184090f82b063e125c89a464be8e6"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+      "sha256": "f5aa852c8d3879e8b4d6a59947e3c0ffd659fedf555f9cc9037e8a535f6d4481"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/commit_branch_steps.py",
+      "sha256": "e77cbf987025c65e8145ebecfe07a6809f652a34b32ce131e04c3b793e9f7f0f"
+    },
+    {
+      "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+      "sha256": "bf01f26b2b566ab77068f7d8191e3752d06c3bab5d9faf97f21dffcc99ea78e4"
+    },
+    {
+      "path": "l2070_batching/conditional_step.py",
+      "sha256": "95b865f2a295007d49ffeff4dfde373850a86a56099b7dc24e0eb7922f25dc65"
+    }
+  ],
+  "expectations": {
+    "serverplan_quality": []
+  }
+}

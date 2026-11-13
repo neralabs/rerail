@@ -1,0 +1,64 @@
+# `.rr`, step 1: `//` comments and `#include "…"` lines.
+#
+# The engine's parser (logic/rr/syntax.rs) is the reference: kinds and fields are its tape's
+# (logic/rr/tape.rs). What it lexes:
+#   - white space is ASCII's, without the vertical tab: space, \t, \n, \x0c, \r;
+#   - `//` runs to the line's end, the '\n' not included;
+#   - a string is '"' to the next '"' not escaped by a '\'; it may hold a newline;
+#   - `#` and the word after it ([A-Za-z0-9_]*) are one token; only `#include` parses.
+# A quote inside a comment, or `//` inside a string, is each the other's text. This step finds
+# strings first, so a quote inside a comment goes to the reference parser.
+
+lexer rr
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class u         = 'u'
+
+mask last_byte  = ~next(~empty)
+
+# --- Strings -----------------------------------------------------------------------------------
+
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask inside     = toggle(q)                     # the opening quote, not the closing one
+mask opening    = q & inside
+mask closing    = q & ~inside
+error "a string open at the end of the file" when inside & last_byte
+# `\u{…}` and `\uXXXX` are checked by the reference's lexer, which refuses some: the file goes to it.
+escape "a \\u escape in a string" when inside & ~opening & escaped & u
+
+# --- Comments and code -------------------------------------------------------------------------
+
+mask outside    = ~inside & ~closing
+mask line       = fill(outside & slash & next(slash), lf)
+mask code       = outside & ~line
+escape "a quote in a comment" when line & quote
+
+# `#` and its word.
+mask directive  = code & hash
+mask hashword   = fill(directive, ~(code & word))
+
+error "a byte no token takes" when code & ~ws & ~hashword
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+token string    = start quote & opening last closing
+token comment   = start slash & starts(line) last lasts(line)
+token hash_word = start hash & directive last hashword & ~next(hashword & ~directive)
+keywords hash_word { "#include" } required
+
+skip code & ws
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree rr {
+  node source_file whole = include*
+  node include          = '#include' path: string
+  extra comment
+}

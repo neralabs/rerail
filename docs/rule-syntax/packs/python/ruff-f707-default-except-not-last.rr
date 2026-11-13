@@ -1,0 +1,18 @@
+.policy "ruff-f707-default-except-not-last" revision 3
+.description "Put a bare except handler last in its try statement; Python rejects any handler after it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F707 (pyflakes): a bare `except:` that is not the try's last handler. It catches everything, so the
+// handlers after it never run, and CPython rejects the file.
+//   try: f()
+//   except: pass              ← F707 at `except`
+//   except ValueError: pass
+#include "python/pyflakes.rr"
+//   bare_except(x, kw)  x is an `except:` clause with no type; kw its `except` keyword
+
+.violation F707(at: loc) code "F707"
+    "Move this bare `except:` handler after all typed handlers; a bare handler must be last."
+    suppress ruff "F707"
+F707(kw) :- bare_except(x, kw), precedes(x, y), kind(y, "except_clause").

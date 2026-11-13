@@ -1,0 +1,28 @@
+.policy "ruff-pie794-duplicate-class-field-definition" revision 2
+.description "Define each class field once; a later definition silently replaces the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE794 (flake8-pie): a class body assigns the same plain name twice; the later one wins and the earlier
+// is dead. Assignments with one Name target count, annotated or not (`x: int` alone too). One whose value reads
+// the name itself (`name = name + " Bar"`) is an update, neither counted nor reported. Each repeat is reported.
+//   class Foo:
+//       name = StringField()
+//       name = StringField()        ← PIE794
+//   class TextEdit:
+//       start_line: int
+//       start_line: int             ← PIE794
+#include "python/ast.rr"
+
+.violation PIE794(at: node, x: symbol) code "PIE794" "Class field `{x}` is defined multiple times"
+    suppress ruff "PIE794"
+PIE794(st, x) :- field_def(c, st, x), field_def(c, o, x), o < st.
+// field_def(c, st, x): statement st of class c's own body defines field x.
+.decl field_def(c: node, st: node, x: symbol)
+field_def(c, st, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, st, _), asgstmt(a, st),
+    count : { assign_target(a, _) } = 1, assign_target(a, t), kind(t, "identifier"), text(t, x),
+    !reads_self(a, x).
+.decl reads_self(a: node, x: symbol)
+reads_self(a, x) :- assign_value(a, v), assign_target(a, t), text(t, x), (n = v ; within(n, v)),
+    ast_name(n, x).

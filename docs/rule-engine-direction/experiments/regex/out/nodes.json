@@ -1,0 +1,218 @@
+{
+  "distinct_bytes": 5726657,
+  "distinct_names": 231862,
+  "files": 9021,
+  "function_definition_hosted": {
+    "hits": 315205,
+    "nodes": 161553,
+    "patterns": 5,
+    "seconds": 0.3341675
+  },
+  "ident_occ_bytes": 63479272,
+  "ident_occurrences": 6018578,
+  "identifier": {
+    "bitset_table_bytes_dense": 12984272,
+    "hybrid": {
+      "build_s": 0.439792,
+      "dfa_memory_bytes": 2974828,
+      "dfa_patterns": 48,
+      "exact_patterns": 396,
+      "literals": 835,
+      "mismatch": 0,
+      "run_s": 0.112864667
+    },
+    "multi_dfa": {
+      "ascii": {
+        "build_s": 7.916682334,
+        "match_state_masks": 7647,
+        "memory_bytes": 14648784,
+        "mismatch": 0,
+        "quits_nonascii": 0,
+        "run_s": 0.177852708
+      },
+      "unicode": {
+        "build_s": 8.222627792,
+        "match_state_masks": 7647,
+        "memory_bytes": 29071824,
+        "mismatch": 0,
+        "quits_nonascii": 0,
+        "run_s": 0.123774458
+      }
+    },
+    "names_with_any_match": 231861,
+    "patterns": 444,
+    "per_distinct_one_at_a_time_s": 2.022703625,
+    "per_occurrence": {
+      "evals": 134615472,
+      "extrapolated_full_s": 32.638593358615125,
+      "hits": 912845,
+      "ns_per_eval": 12.213905909715935,
+      "sample_every": 20,
+      "seconds": 1.644180709
+    },
+    "regexset": {
+      "build_s": 0.00830625,
+      "mismatch": 0,
+      "run_parallel_s": 0.542319458,
+      "run_s": 7.107432917
+    },
+    "set_bits": 610573,
+    "top_patterns": [
+      {
+        "names": 215649,
+        "pattern": "[a-z]"
+      },
+      {
+        "names": 141710,
+        "pattern": "^[^_].*_"
+      },
+      {
+        "names": 56322,
+        "pattern": "^_"
+      },
+      {
+        "names": 52428,
+        "pattern": "^[t-z]"
+      },
+      {
+        "names": 35475,
+        "pattern": "^[A-Z]"
+      },
+      {
+        "names": 33990,
+        "pattern": "^[a-f]"
+      },
+      {
+        "names": 24729,
+        "pattern": "^[n-r]"
+      },
+      {
+        "names": 18320,
+        "pattern": "^[g-m]"
+      },
+      {
+        "names": 10597,
+        "pattern": "^s"
+      },
+      {
+        "names": 3307,
+        "pattern": "Sql"
+      }
+    ]
+  },
+  "identifier+none": {
+    "bitset_table_bytes_dense": 18548960,
+    "hybrid": {
+      "build_s": 180.028306167,
+      "dfa_memory_bytes": 191762488,
+      "dfa_patterns": 156,
+      "exact_patterns": 483,
+      "literals": 994,
+      "mismatch": 0,
+      "run_s": 0.341074375
+    },
+    "multi_dfa": {},
+    "names_with_any_match": 231862,
+    "patterns": 639,
+    "per_distinct_one_at_a_time_s": 3.488116083,
+    "per_occurrence": {
+      "evals": 193737132,
+      "extrapolated_full_s": 58.106740037789265,
+      "hits": 1697977,
+      "ns_per_eval": 15.108862172069317,
+      "sample_every": 20,
+      "seconds": 2.927147625
+    },
+    "regexset": {
+      "build_s": 0.011931375,
+      "mismatch": 0,
+      "run_parallel_s": 3.619563333,
+      "run_s": 42.402445333
+    },
+    "set_bits": 1290894,
+    "top_patterns": [
+      {
+        "names": 231862,
+        "pattern": "(?s).*"
+      },
+      {
+        "names": 231861,
+        "pattern": "(?s)."
+      },
+      {
+        "names": 215649,
+        "pattern": "[a-z]"
+      },
+      {
+        "names": 141710,
+        "pattern": "^[^_].*_"
+      },
+      {
+        "names": 56322,
+        "pattern": "^_"
+      },
+      {
+        "names": 56322,
+        "pattern": "^_"
+      },
+      {
+        "names": 52428,
+        "pattern": "^[t-z]"
+      },
+      {
+        "names": 51108,
+        "pattern": "(?i)(?:branch|commit|connection|delete|execute|fetch|graph|insert|lazy|merge|plan|query|read|revision|select|server|transaction|update|versioned|write)"
+      },
+      {
+        "names": 35475,
+        "pattern": "^[A-Z]"
+      },
+      {
+        "names": 33990,
+        "pattern": "^[a-f]"
+      }
+    ]
+  },
+  "intern_global_s": 0.22464975,
+  "large": [
+    {
+      "bytes": 137924316,
+      "kind": "module",
+      "nodes": 9021
+    },
+    {
+      "bytes": 123731343,
+      "kind": "function_definition",
+      "nodes": 161553
+    },
+    {
+      "bytes": 1667680,
+      "kind": "conditional_expression",
+      "nodes": 19118
+    },
+    {
+      "bytes": 41896585,
+      "kind": "assignment",
+      "nodes": 467079
+    },
+    {
+      "bytes": 25395042,
+      "kind": "string",
+      "nodes": 780879
+    },
+    {
+      "bytes": 6976648,
+      "kind": "dotted_name",
+      "nodes": 346371
+    }
+  ],
+  "module_hosted": {
+    "hits": 103007,
+    "hits_set": 378882,
+    "one_at_a_time_s": 1.027102334,
+    "patterns": 42,
+    "regexset_s": 7.604615917
+  },
+  "parse_s_parallel": 1.933862667,
+  "per_doc_distinct_sum": 1176578
+}

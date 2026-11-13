@@ -1,0 +1,17 @@
+.policy "ruff-b013-redundant-tuple-in-exception-handler" revision 2
+.description "Remove the one-element tuple around a single exception type in an except clause; the parentheses and comma are redundant."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B013 (flake8-bugbear): an except clause whose type is a tuple of one element, `except (ValueError,):`.
+// The tuple adds nothing: `except ValueError:` is the same. A starred element stays, since `except (*xs,)`
+// needs the tuple. Reported at the tuple; `except*` too.
+//   except (ValueError,):      ← B013
+//   except (*retriable,):      not reported
+#include "python/bugbear.rr"
+
+.violation B013(at: node) code "B013" "A length-one tuple literal is redundant in exception handlers"
+    suppress ruff "B013"
+B013(t) :- handler_type(x, t), kind(t, "tuple"), count : { handler_elt(x, _, _) } = 1, handler_elt(x, e, 0),
+    !kind(e, "list_splat").

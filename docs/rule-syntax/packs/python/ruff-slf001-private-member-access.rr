@@ -1,0 +1,50 @@
+.policy "ruff-slf001-private-member-access" revision 2
+.description "Avoid reading or writing underscore-prefixed members of other objects; they are internal to their class and may change without notice."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SLF001 (flake8-self): `obj._name` where obj is not the class's own instance or the class itself.
+// Not reported: dunders (`__x__`) and sunders (`_x_`); option `flake8-self.ignore-names` (default `_make`, `_asdict`,
+// `_replace`, `_fields`, `_field_defaults`, `_name_`, `_value_`); annotations; os._exit; inside a dunder
+// operator method (`__eq__`, `__add__`, …); `super()._x`; a receiver spelled `self`, `cls` or `mcs`; a class
+// read from inside its own body; and a name that holds the same class's instance: a method's first parameter,
+// a parameter annotated with `Self` or the enclosing class, or a variable assigned `self`, `cls()`, `mcs()`,
+// `Class()`, `Class[T]()` or `super().__new__(…)`.
+//   print(foo._private_thing)       ← SLF001
+//   self.bar._private               ← SLF001: the receiver is `self.bar`, not `self`
+//   def __eq__(self, other): return self._x == other._x     not reported
+//   def g(self, other: Self): other._x                        not reported
+#include "python/misc2-self.rr"
+//   slf_super(o), slf_receiver_name(o), slf_own_class(o), slf_same_instance(o, e)
+
+.violation SLF001(at: node, attr: symbol) code "SLF001"
+    "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
+    suppress ruff "SLF001"
+SLF001(e, a) :- attr_of(e, v, a), prefix("_", a), !glob("__*__", a), !slf_sunder(a), !slf_ignored(a),
+    !annotation(e), !sym_of(e, "os._exit"), !slf_in_operator(e), unparen(v, o), !slf_super(o),
+    !slf_receiver_name(o), !slf_own_class(o), !slf_same_instance(o, e).
+.decl slf_sunder(a: symbol)
+slf_sunder(a) :- attr_of(_, _, a), glob("_*_", a), !prefix("__", a), !suffix("__", a).
+.decl slf_ignored(a: symbol)
+slf_ignored(a) :- option_item("flake8-self.ignore-names", _, a).
+slf_ignored(a) :- !slf_names_set(), (a = "_make" ; a = "_asdict" ; a = "_replace" ; a = "_fields" ;
+    a = "_field_defaults" ; a = "_name_" ; a = "_value_").
+.decl slf_names_set()
+slf_names_set() :- option_item("flake8-self.ignore-names", _, _).
+.decl slf_in_operator(e: node)
+slf_in_operator(e) :- attr_of(e, _, _), nearest(e, f, lscope), def_name(f, x), kind(f, "function_definition"),
+    slf_operator(x).
+.decl slf_operator(x: symbol)
+slf_operator("__lt__"). slf_operator("__le__"). slf_operator("__eq__"). slf_operator("__ne__").
+slf_operator("__gt__"). slf_operator("__ge__"). slf_operator("__add__"). slf_operator("__sub__").
+slf_operator("__mul__"). slf_operator("__matmul__"). slf_operator("__truediv__"). slf_operator("__floordiv__").
+slf_operator("__mod__"). slf_operator("__divmod__"). slf_operator("__pow__"). slf_operator("__lshift__").
+slf_operator("__rshift__"). slf_operator("__and__"). slf_operator("__xor__"). slf_operator("__or__").
+slf_operator("__radd__"). slf_operator("__rsub__"). slf_operator("__rmul__"). slf_operator("__rmatmul__").
+slf_operator("__rtruediv__"). slf_operator("__rfloordiv__"). slf_operator("__rmod__"). slf_operator("__rdivmod__").
+slf_operator("__rpow__"). slf_operator("__rlshift__"). slf_operator("__rrshift__"). slf_operator("__rand__").
+slf_operator("__rxor__"). slf_operator("__ror__"). slf_operator("__iadd__"). slf_operator("__isub__").
+slf_operator("__imul__"). slf_operator("__imatmul__"). slf_operator("__itruediv__"). slf_operator("__ifloordiv__").
+slf_operator("__imod__"). slf_operator("__ipow__"). slf_operator("__ilshift__"). slf_operator("__irshift__").
+slf_operator("__iand__"). slf_operator("__ixor__"). slf_operator("__ior__").

@@ -1,0 +1,201 @@
+{
+  "format": "rerail.data-layer-public-audit/v1",
+  "auditedCommit": "8e4cede5f",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+  "evaluations": [
+    {
+      "spec": {
+        "check": "bootstrap-engine-invariants",
+        "path": "l3200_metadata/bootstrap_state.py",
+        "source": "pass\n\n# COLD_APPLICATION\n"
+      },
+      "mode": "block",
+      "inScope": true,
+      "coverage": [
+        {
+          "clauseId": "bootstrap-invariants",
+          "reasons": [],
+          "status": "complete"
+        },
+        {
+          "clauseId": "primitive-install-coverage",
+          "reasons": [],
+          "status": "complete"
+        },
+        {
+          "clauseId": "bootstrap-source-syntax",
+          "reasons": [],
+          "status": "complete"
+        }
+      ],
+      "failures": [],
+      "metrics": {
+        "files": 1,
+        "visitedNodes": 0,
+        "witnesses": 1
+      },
+      "status": "completed",
+      "violations": [
+        {
+          "captures": {},
+          "clauseId": "bootstrap-invariants",
+          "code": "BEI035",
+          "id": "sha256:157e94cea5866118ae99b846900422d6a9380c205092499e1cdf0b193113c2e7",
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced",
+          "mode": "block",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "ruleId": "data-layer-bootstrap-engine-invariants",
+          "span": {
+            "endByte": 25,
+            "endColumn": 0,
+            "endLine": 3,
+            "startByte": 0,
+            "startColumn": 0,
+            "startLine": 0
+          },
+          "variables": {
+            "row": {
+              "end_byte": 25,
+              "identity": "COLD_APPLICATION:BEI035",
+              "issue": "BEI035",
+              "line": 3,
+              "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced",
+              "ordering": 3,
+              "path": "l3200_metadata/bootstrap_state.py",
+              "phase": -1,
+              "sort_name": "",
+              "start_byte": 0,
+              "symbol": ""
+            }
+          }
+        }
+      ],
+      "original": [
+        {
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 3,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced"
+        }
+      ]
+    },
+    {
+      "spec": {
+        "check": "bootstrap-engine-invariants",
+        "path": "l3200_metadata/bootstrap_state.py",
+        "source": "\n\n# COLD_APPLICATION\npass\n"
+      },
+      "mode": "block",
+      "inScope": true,
+      "coverage": [
+        {
+          "clauseId": "bootstrap-invariants",
+          "reasons": [],
+          "status": "complete"
+        },
+        {
+          "clauseId": "primitive-install-coverage",
+          "reasons": [],
+          "status": "complete"
+        },
+        {
+          "clauseId": "bootstrap-source-syntax",
+          "reasons": [],
+          "status": "complete"
+        }
+      ],
+      "failures": [],
+      "metrics": {
+        "files": 1,
+        "visitedNodes": 0,
+        "witnesses": 1
+      },
+      "status": "completed",
+      "violations": [
+        {
+          "captures": {},
+          "clauseId": "bootstrap-invariants",
+          "code": "BEI035",
+          "id": "sha256:5d37384ae56f923502f2a6a99a91f1026cab75094031b17fdba85efae3bc7cc8",
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced",
+          "mode": "block",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "ruleId": "data-layer-bootstrap-engine-invariants",
+          "span": {
+            "endByte": 26,
+            "endColumn": 0,
+            "endLine": 4,
+            "startByte": 0,
+            "startColumn": 0,
+            "startLine": 0
+          },
+          "variables": {
+            "row": {
+              "end_byte": 26,
+              "identity": "COLD_APPLICATION:BEI035",
+              "issue": "BEI035",
+              "line": 1,
+              "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced",
+              "ordering": 3,
+              "path": "l3200_metadata/bootstrap_state.py",
+              "phase": -1,
+              "sort_name": "",
+              "start_byte": 0,
+              "symbol": ""
+            }
+          }
+        }
+      ],
+      "original": [
+        {
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 3,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced"
+        }
+      ]
+    },
+    {
+      "spec": {
+        "check": "bootstrap-cache-health",
+        "path": "conform/helpers.py",
+        "source": "def test_probe():\n    create_tables()\n"
+      },
+      "mode": "block",
+      "inScope": false,
+      "coverage": [
+        {
+          "clauseId": "bootstrap-cache",
+          "reasons": [],
+          "status": "complete"
+        },
+        {
+          "clauseId": "reported-parser-error",
+          "reasons": [],
+          "status": "complete"
+        }
+      ],
+      "failures": [],
+      "metrics": {
+        "files": 0,
+        "visitedNodes": 0,
+        "witnesses": 0
+      },
+      "status": "completed",
+      "violations": [],
+      "original": [
+        {
+          "path": "conform/helpers.py",
+          "line": 2,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    }
+  ],
+  "reportOnlyRules": {
+    "bootstrap-lazy-sql": "block",
+    "bootstrap-eager-resolve": "block"
+  }
+}

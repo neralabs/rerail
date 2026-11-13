@@ -1,0 +1,15 @@
+.policy "ruff-ytt301-sys-version0" revision 2
+.description "Read the major version from sys.version_info instead of indexing the first character of sys.version; the first digit is wrong for a two-digit major version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT301 (flake8-2020): `sys.version[0]`, the major version as one character. On Python 10 it is "1".
+//   sys.version[0]           ← YTT301
+//   sys.version_info[0]      not reported: an int
+#include "python/misc2-version.rr"
+
+.violation YTT301(at: node) code "YTT301"
+    "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[0]`, which is only the first digit of a two-digit major version."
+    suppress ruff "YTT301"
+YTT301(v) :- ytt_version_index(v, "0").

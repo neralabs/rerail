@@ -1,0 +1,63 @@
+.policy "typescript-eslint-class-methods-use-this" revision 5
+.description "Make TypeScript class methods and function-valued fields that never use this or super static or standalone functions."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   fn_holder, held_value, deparen, holder_key, private_key, is_static, member_kind, fn_words, fn_head,
+//   this_owner (which function, field value or static block a `this` belongs to)
+#include "tsx/modules.rr"
+//   fn_region
+
+// typescript-eslint's class-methods-use-this: an instance method that never uses `this` or `super`.
+//   class A { foo() { return 1; } }          → Expected 'this' to be used by class method 'foo'.
+//   class A { foo() { return this.x; } }     fine
+//   class A { static foo() {} }              fine: static, as are constructors
+// Arrow functions see their method's `this`; a nested `function` has its own. Options:
+//   exceptMethods                 names to skip ("#x" for a private one); computed names are always checked
+//   enforceForClassFields         (default true) also check fields holding a function: `foo = () => {}`
+//   ignoreOverrideMethods         skip `override` methods
+//   ignoreClassesThatImplementAnInterface   true: skip classes with `implements`; "public-fields": only their
+//                                 members without `private` or `protected` (a #private one counts as public)
+.violation class_methods_use_this(at: node, name: symbol) code "@typescript-eslint/class-methods-use-this"
+    "Expected 'this' to be used by class {name}. Make it static or move it out of the class."
+    suppress eslint "@typescript-eslint/class-methods-use-this"
+    suppress oxlint "class-methods-use-this"
+    suppress biome "lint/nursery/useThisInClassMethods"
+class_methods_use_this(at, s) :- checked(h, f), !skipped(h), count : { uses_this(h, t) } = 0,
+    fn_words(f, s), fn_head(f, at).
+
+// checked(h, f): instance member h of a class holds function f: a method (not a constructor), or, with
+// enforceForClassFields, a field whose value is a function expression or an arrow.
+.decl checked(h: node, f: node)
+checked(m, m) :- member_kind(m, k), k != "constructor", !is_static(m), class_member(m).
+checked(h, f) :- field_fn(h, f), !is_static(h), !option("enforceForClassFields", "false").
+.decl field_fn(h: node, f: node)
+field_fn(h, f) :- (kind(h, "field_definition") ; kind(h, "public_field_definition")), held_value(h, v),
+    deparen(v, f), (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")).
+
+// uses_this(h, t): `this` or `super` t belongs to member h. Each one belongs to its nearest this-scope: a
+// function other than an arrow, a field's initialiser, or a static block. So
+//   class A { m() { [1].map(x => this.f(x)); } }    uses this;    class A { m() { function g() { this; } } }  does not
+.decl uses_this(h: node, t: node)
+uses_this(h, t) :- this_owner(t, s), member_frame(h, s), !field(_, "pattern", t).  // `m(this: void)` is no use
+.decl member_frame(h: node, s: node)  // the `this` owners that are h's own: the method, or the field's value
+member_frame(h, h) :- checked(h, h).
+member_frame(h, v) :- checked(h, f), h != f, held_value(h, v).
+member_frame(h, f) :- checked(h, f), h != f.
+
+// skipped(h): the options exempt h. exceptMethods never names a computed key; the other two options do not care.
+.decl skipped(h: node)
+skipped(h) :- holder_key(h, k), !kind(k, "computed_property_name"), except_name(h, x),
+    option_item("exceptMethods", _, x).
+skipped(h) :- checked(h, _), option("ignoreOverrideMethods", "true"), child(h, o, _), kind(o, "override_modifier").
+skipped(h) :- implementing(h), option("ignoreClassesThatImplementAnInterface", "true").
+skipped(h) :- implementing(h), option("ignoreClassesThatImplementAnInterface", "public-fields"),
+    count : { child(h, a, _), kind(a, "accessibility_modifier"), !text(a, "public") } = 0.
+.decl except_name(h: node, x: symbol)  // the name exceptMethods compares: "foo", "#foo", a literal's value
+except_name(h, x) :- private_key(h, x).
+except_name(h, x) :- !private_key(h, _), static_key(h, x).
+.decl implementing(h: node)  // h is in a class with an `implements` clause
+implementing(h) :- checked(h, _), child(b, h, _), field(c, "body", b), child(c, ch, _), kind(ch, "class_heritage"),
+    child(ch, i, _), kind(i, "implements_clause").

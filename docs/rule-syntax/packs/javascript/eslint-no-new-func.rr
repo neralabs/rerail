@@ -1,0 +1,20 @@
+.policy "eslint-no-new-func" revision 2
+.description "Don't create functions with the Function constructor; it evaluates strings as code just like eval()."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-b-scope.rr"
+//   builtin_ref, called, constructed, prop
+
+// ESLint's no-new-func: the global Function, called or constructed, makes a function from strings, as eval does.
+// So do its call, apply and bind, called at once:
+//   new Function("a", "return a")   Function("return 1")   Function.call(null, "x")   Function["bind"](o)()
+//   → reported, at the call (for bind, the inner call)
+//   function f(Function) { new Function() }   foo(Function.bind)   Function.toString()   → not
+// No options.
+.violation no_new_func(at: node) code "no-new-func" "The Function constructor is eval."
+    suppress eslint "no-new-func"
+    suppress oxlint "no-new-func"
+no_new_func(c) :- builtin_ref(r, "Function"), (called(c, r) ; constructed(c, r)).
+no_new_func(c) :- builtin_ref(r, "Function"), static_prop(m, r, x), (x = "call" ; x = "apply" ; x = "bind"), called(c, m).

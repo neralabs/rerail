@@ -1,0 +1,22 @@
+// blade/values: php/values.rr over a Blade template's compiled program, with the variables Blade itself writes.
+//
+// Blade writes some variables where the compiled program shows no assignment: it leaves an empty statement (a
+// marker, written `;`) over the directive instead (native blade/view.rs, `marker`). @foreach and @forelse define
+// $loop, @error $message, @session and @context $value, @inject('name', …) $name; @props and @aware may define
+// any variable (each prop is one), and so may a directive Blade does not compile (an application's own). The
+// marker's text is `;` whatever it stands for, so this library cannot tell them apart: a scope of the compiled
+// view with any empty statement follows no variable. That is sound (it gives fewer values, never a wrong one),
+// and a `;` written in @php costs the same:
+//   @props(['open' => false])  @php $open = true; @endphp  @if($open)     no value: the prop may be passed in
+//   @foreach($xs as $x) … @endforeach  @php $n = 1; @endphp  @if($n)       no value either (the $loop marker)
+// A native blade_host(n, h) (the template node a compiled node stands for) would let it count @props and @aware
+// only (NOTES-blade.md).
+//
+// What a rule gets from this library: php/values.rr's relations (php_if_const, php_identical, …), with these
+// markers counted in php_dynamic.
+//
+// Builds on blade/syntax.rr and php/values.rr.
+#include "blade/syntax.rr"
+#include "php/values.rr"
+
+php_dynamic(s) :- kind(m, "empty_statement"), blade_code(m), nearest(m, s, php_scope_kind).

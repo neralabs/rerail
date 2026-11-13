@@ -1,0 +1,6 @@
+{"files": 1256, "level": 0, "stats": {}, "total": 8220}
+{"files": 1256, "level": 1, "stats": {"class_with_init_or_test_false": 50, "imported_test_name": 86}, "total": 8245}
+{"files": 1256, "level": 2, "stats": {"class_with_init_or_test_false": 50, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 67}, "total": 9861}
+{"files": 1256, "level": 3, "stats": {"class_with_init_or_test_false": 50, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 15}, "total": 10090}
+{"files": 1256, "level": 4, "stats": {"class_with_init_or_test_false": 50, "fixture_params_resolved": 666, "fixture_params_unresolved": 33, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 15}, "total": 14355}
+{"files": 1256, "level": 5, "stats": {"class_with_init_or_test_false": 50, "filtered_comprehension_upper": 8, "fixture_params_resolved": 699, "ifexp_max": 43, "imported_test_name": 86, "parametrize": 691, "parametrize_unresolved": 5}, "total": 14670}

@@ -1,0 +1,13 @@
+running 1 test
+test code_rule_dsl::findings::async_reference::rr_comparison::async_demand_uses_semantic_batches_without_global_name_derivations ... 
+thread 'code_rule_dsl::findings::async_reference::rr_comparison::async_demand_uses_semantic_batches_without_global_name_derivations' (106251374) panicked at native/src/code_rule_dsl/findings/tests/rr_comparison.rs:122:9:
+ruff-async210-blocking-http-call-in-async-function.rr still derives every unbound reference
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    code_rule_dsl::findings::async_reference::rr_comparison::async_demand_uses_semantic_batches_without_global_name_derivations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3145 filtered out; finished in 0.17s

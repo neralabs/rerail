@@ -1,0 +1,46 @@
+.policy "n-prefer-process-get-builtin-module" revision 3
+.description "Load Node.js built-in modules with process.getBuiltinModule() instead of require() or await import(), when the project's Node versions support it."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-process-get-builtin-module: load a Node.js built-in with
+// process.getBuiltinModule("fs") rather than require() or a dynamic import, where the configured Node.js range
+// has it (^20.16.0 || >=22.3.0):
+//   require("fs")    require(`node:test`)    await import("os")             reported: the call, the await
+//   require("lodash")    require("fs", x)    require?.("fs")    import("os")    await import("os", opts)    not
+// require is the global one (undeclared, or a global), or `const require = createRequire(…)` with createRequire
+// imported from "module" or "node:module". Nothing named process may be declared around the call. The module
+// name is a constant, as getStaticValue (with no scope) folds it: a string, a template whose ${…} are constants,
+// a + of constants, or `true ? a : b`. A variable is not one: `const n = "fs"; require(n)` is not reported.
+
+#include "tsx/node.rr"   // called, call_arg_count, node_runs_on, builtin_spec; values.rr's const_str
+
+.decl get_builtin_ok(d: number)
+get_builtin_ok(d) :- node_runs_on(d, r), @semver_subset(r, "^20.16.0 || >=22.3.0") = 1.
+
+// node_require(f): the identifier `require` is Node's: undeclared, or a const set to createRequire(…).
+.decl node_require(f: node)
+node_require(f) :- kind(f, "identifier"), text(f, "require"), !ref_site(f, _).
+node_require(f) :- kind(f, "identifier"), text(f, "require"), ref_site(f, v), kind(v, "variable_declarator"),
+    child(l, v, _), kind(l, "lexical_declaration"), op(l, "const"), field(v, "value", c),
+    kind(c, "call_expression"), field(c, "function", g), kind(g, "identifier"), ref_site(g, i), create_require(i).
+.decl create_require(i: node)  // import { createRequire } from "module" (or "node:module"), maybe renamed
+create_require(i) :- kind(i, "import_specifier"), field(i, "name", n), text(n, "createRequire"), within(i, m),
+    kind(m, "import_statement"), field(m, "source", s), (value(s, "module") ; value(s, "node:module")).
+
+// loads_builtin(c, arg): call c's argument arg is a constant built-in module name: "node:" + "fs",
+// `node:${"fs"}`, true ? "fs" : "os" (values.rr's const_str folds them as getStaticValue does).
+.decl loads_builtin(c: node, a: number)
+loads_builtin(c, a) :- call_arg(c, s, a), const_str(s, v), builtin_spec(v).
+// process_shadowed(n): a declaration of `process` is in scope at n.
+.decl process_shadowed(n: node)
+process_shadowed(n) :- decl_site(sc, "process", _, _, "value"), within(n, sc).
+
+.violation get_builtin(at: node, method: symbol) code "n/prefer-process-get-builtin-module"
+    "Prefer `process.getBuiltinModule()` over `{method}()` for Node.js built-in modules."
+    suppress eslint "n/prefer-process-get-builtin-module"
+get_builtin(c, "require") :- called(c, f), node_require(f), !field(c, "optional_chain", _), call_arg_count(c, 1),
+    loads_builtin(c, 0), !process_shadowed(c), docof(c, d), get_builtin_ok(d).
+get_builtin(w, "import") :- kind(w, "await_expression"), child(w, e, _), deparen(e, c), kind(c, "call_expression"),
+    field(c, "function", f), kind(f, "import"), call_arg_count(c, 1), loads_builtin(c, 0), !process_shadowed(w),
+    docof(w, d), get_builtin_ok(d).

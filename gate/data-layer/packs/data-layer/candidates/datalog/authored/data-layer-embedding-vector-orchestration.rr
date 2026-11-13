@@ -1,0 +1,163 @@
+// data-layer-embedding-vector-orchestration, clause embedding-orchestration (relational, partitionBy file). The
+// query is `$option: entryPoint` (option_value, the run's; default "all"): scan_source, scan_file and
+// _violations_for_files take the whole union; any other value the `default` case, the union filtered to EVO001,
+// EVO101, EVO102, EVO104, EVO105, EVO106 (so EVO107 and EVO108 only under those three).
+// `parameters` is read by no stage. requireNonemptyInput gate: a file whose module text does not match the gate
+// regex gives no rows (the cst is gated by it too); the gate regex is an alternation of literals, so it is
+// `contains` over the module's full text (node_text).
+//
+// The stages read CPython's ast (pythonAst over the cst); here over tree-sitter's tree:
+//   calls: a Call c, its func f (parentheses dropped, as ast has none) and, where f is an Attribute, its attr
+//     (`callee`) and its value (the receiver, parentheses dropped). Every issue asks callee_kind = 'Attribute'.
+//   fn (ast_function, value/python_ast/metadata.py at 40e7b6cac): the innermost FunctionDef/AsyncFunctionDef whose
+//     ast subtree holds the node, lambdas transparent; a def's decorators, defaults and annotations are its
+//     children in ast, so they are its; a class's decorators are the class's, so their fn is the class's fn.
+//   functions: function_definition (tree-sitter's async def is one too); classes: class_definition.
+//   qual_functions / embedding_calls: qualname is the enclosing classes' names joined by "." then "." and the
+//     function's name, else the name, else "<module>". It is read only against EVO001's exemption list, whose
+//     qualnames have no dot: a call is exempt exactly when its fn has no enclosing class and (path, fn name) is
+//     listed, so no string is built.
+//   conn_receivers: Name conn|connection, Attribute .conn|.connection|._conn, and (recursively) a Call of
+//     `.session` on one of them. txn_receivers: a Name or Attribute whose name ends in `txn`.
+//   query_chains: from an Attribute call o down its receivers through Attribute calls; the chain's `.query` calls.
+//     EVO101 takes the one of smallest preorder id: receivers nest, so that is the outermost one, the one of
+//     largest end offset.
+//   EVO102: the innermost function (by preorder id) whose ast subtree holds the call and whose name ends `_lazy`;
+//     the issue needs only that one exists (the key is the call). A def's ast subtree holds its decorators.
+// ast line numbers: a Call's and a FunctionDef's lineno are where tree-sitter's call / function_definition starts.
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl embedding_fn_marks(kind: symbol)
+embedding_fn_marks("function_definition"). embedding_fn_marks("decorator").
+.decl embedding_fdef(kind: symbol)
+embedding_fdef("function_definition").
+.decl embedding_decorator(kind: symbol)
+embedding_decorator("decorator").
+.decl embedding_class(kind: symbol)
+embedding_class("class_definition").
+
+// ---- the gated documents ----
+.decl embedding_gate_word(w: symbol)
+embedding_gate_word(".query"). embedding_gate_word(".read"). embedding_gate_word(".resolve"). embedding_gate_word(".write").
+embedding_gate_word("_add_server_step"). embedding_gate_word("_lazy"). embedding_gate_word("_next_ref").
+embedding_gate_word("query_lazy"). embedding_gate_word("versioned_").
+.decl embedding_doc(d: number)
+embedding_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
+    embedding_gate_word(w), contains(w, s).
+
+// ---- calls ----
+// mirrors python/ast.rr unparen
+.decl embedding_unparen(e: node, m: node)
+embedding_unparen(e, e) :- node(d, e, k, _, _), embedding_doc(d), k != "parenthesized_expression".
+embedding_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), embedding_doc(d), child(e, i, 0), embedding_unparen(i, m).
+// embedding_attr_call(c, callee, receiver): Call c whose func is an Attribute.
+.decl embedding_attr_call(c: node, callee: symbol, receiver: node)
+embedding_attr_call(c, x, r) :- node(d, c, "call", _, _), embedding_doc(d), field(c, "function", f0), embedding_unparen(f0, f),
+    node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, x), field(f, "object", o), embedding_unparen(o, r).
+
+.decl embedding_conn_name(s: symbol)
+embedding_conn_name("conn"). embedding_conn_name("connection").
+.decl embedding_conn_attr(s: symbol)
+embedding_conn_attr("conn"). embedding_conn_attr("connection"). embedding_conn_attr("_conn").
+.decl embedding_conn(r: node)
+embedding_conn(r) :- node(d, r, "identifier", _, _), embedding_doc(d), text(r, s), embedding_conn_name(s).
+embedding_conn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "attribute", a), text(a, s), embedding_conn_attr(s).
+embedding_conn(c) :- embedding_attr_call(c, "session", r), embedding_conn(r).
+.decl embedding_txn(r: node)
+embedding_txn(r) :- node(d, r, "identifier", _, _), embedding_doc(d), text(r, s), suffix("txn", s).
+embedding_txn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "attribute", a), text(a, s), suffix("txn", s).
+
+// ---- fn and the enclosing functions ----
+// python/ast.rr's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
+// fn (def_frame gives them none). embedding_fn(x, f) for x in embedding_fn_at: a call, or the decorated_definition
+// of a class whose decorator holds one, up the tree through such classes.
+.decl embedding_fn_at(x: node)
+embedding_fn_at(n) :- embedding_attr_call(n, _, _).
+embedding_fn_at(dd) :- embedding_fn_at(x), nearest(x, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
+.decl embedding_fn(n: node, f: node)
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, f, embedding_fn_marks), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), embedding_fn(dd, f).
+.decl embedding_fn_name(f: node, x: symbol)
+embedding_fn_name(f, x) :- node(d, f, "function_definition", _, _), embedding_doc(d), field(f, "name", n), text(n, x).
+.decl embedding_within(n: node, f: node)
+embedding_within(n, f) :- embedding_attr_call(n, _, _), inside(n, f, embedding_fdef).
+embedding_within(n, f) :- embedding_attr_call(n, _, _), inside(n, dc, embedding_decorator), child(dd, dc, _),
+    field(dd, "definition", f), node(_, f, "function_definition", _, _).
+
+// ---- EVO001's exemptions ----
+.decl embedding_exempt_name(path: symbol, qualname: symbol)
+embedding_exempt_name("l5200_vector_index/diagnostics.py", "get_embedding_worker_stats").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "cleanup_old_embeddings").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "cleanup_specific_model_embeddings").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "get_embedding_staleness").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "get_staleness_info").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "process_stale_embeddings").
+embedding_exempt_name("l5200_vector_index/embedding_metadata.py", "validate_embedding_consistency").
+embedding_exempt_name("l5200_vector_index/embedding_queue.py", "apply_embeddings").
+embedding_exempt_name("l5200_vector_index/index_manager.py", "get_index").
+embedding_exempt_name("l5200_vector_index/index_manager.py", "register_index").
+embedding_exempt_name("l5200_vector_index_task_payloads.py", "get_embedding_auto_queue_stats").
+.decl embedding_exempt(n: node)
+embedding_exempt(n) :- embedding_fn(n, f), !inside(f, _, embedding_class), embedding_fn_name(f, x), node(d, n, _, _, _),
+    doc(d, p, _), embedding_exempt_name(p, x).
+
+// ---- query_chains ----
+.decl embedding_chain(o: node, x: node)
+embedding_chain(o, x) :- embedding_attr_call(o, _, x).
+embedding_chain(o, y) :- embedding_chain(o, x), embedding_attr_call(x, _, y).
+.decl embedding_query_link(o: node, q: node)
+embedding_query_link(o, q) :- embedding_chain(o, q), embedding_attr_call(q, "query", _).
+.decl embedding_query_outer(o: node, q: node)
+embedding_query_outer(o, q) :- embedding_query_link(o, q), node(_, q, _, _, e), embedding_query_link(o, q2), node(_, q2, _, _, e2), e2 > e.
+
+.decl embedding_worker_path(p: symbol)
+embedding_worker_path("l5200_vector_index/embedding_worker.py").
+.decl embedding_read_write(s: symbol)
+embedding_read_write("read"). embedding_read_write("read_async"). embedding_read_write("write"). embedding_read_write("write_async").
+.decl embedding_txn_entry(s: symbol)
+embedding_txn_entry("async_read_transaction"). embedding_txn_entry("async_write_transaction").
+embedding_txn_entry("read_transaction"). embedding_txn_entry("write_transaction").
+.decl embedding_terminal(s: symbol)
+embedding_terminal("execute"). embedding_terminal("execute_async"). embedding_terminal("resolve"). embedding_terminal("resolve_async").
+.decl embedding_resolve(s: symbol)
+embedding_resolve("resolve"). embedding_resolve("resolve_async").
+
+// embedding_issue(n, issue): the union's rows, by issue.
+.decl embedding_issue(n: node, issue: symbol)
+embedding_issue(n, "EVO001") :- embedding_attr_call(n, x, r), embedding_read_write(x), embedding_conn(r), !embedding_exempt(n).
+embedding_issue(n, "EVO106") :- embedding_attr_call(n, x, r), embedding_txn_entry(x), embedding_conn(r),
+    node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
+embedding_issue(n, "EVO101") :- embedding_attr_call(n, x, _), embedding_terminal(x), node(d, n, _, _, _), doc(d, p, _),
+    embedding_worker_path(p), embedding_query_link(n, q), !embedding_query_outer(n, q), embedding_attr_call(q, "query", r),
+    embedding_txn(r).
+embedding_issue(n, "EVO105") :- embedding_attr_call(n, "query", r), embedding_txn(r), node(d, n, _, _, _), doc(d, p, _),
+    embedding_worker_path(p).
+embedding_issue(f, "EVO104") :- embedding_fn_name(f, x), node(d, f, _, _, _), doc(d, p, _), embedding_worker_path(p),
+    (suffix("_sync_lazy", x) ; suffix("_async_lazy", x) ; suffix("_lazy_async", x) ; suffix("_lazy_sync", x)).
+embedding_issue(n, "EVO102") :- embedding_attr_call(n, x, _), embedding_resolve(x), node(d, n, _, _, _), doc(d, p, _),
+    embedding_worker_path(p), embedding_within(n, f), embedding_fn_name(f, y), suffix("_lazy", y).
+// The whole union's two more (entryPoint scan_source, scan_file, _violations_for_files).
+.decl embedding_full_union(v: symbol)
+embedding_full_union("scan_source"). embedding_full_union("scan_file"). embedding_full_union("_violations_for_files").
+.decl embedding_publisher(s: symbol)
+embedding_publisher("_publish_claimed_queue_message_ref"). embedding_publisher("_publish_worker_scalar_int_ref").
+embedding_publisher("_publish_worker_scalar_string_ref").
+.decl embedding_in_publisher(n: node)
+embedding_in_publisher(n) :- embedding_fn(n, f), embedding_fn_name(f, x), embedding_publisher(x).
+embedding_issue(n, "EVO107") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_next_ref", _),
+    node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
+embedding_issue(n, "EVO108") :- option_value("entryPoint", v), embedding_full_union(v),
+    embedding_attr_call(n, "_add_server_step", _), !embedding_in_publisher(n), node(d, n, _, _, _), doc(d, p, _),
+    embedding_worker_path(p).
+
+violation("data-layer-embedding-vector-orchestration", "embedding-orchestration", i, p, l) :- embedding_issue(n, i),
+    node(d, n, _, _, _), doc(d, p, _), line(n, l).

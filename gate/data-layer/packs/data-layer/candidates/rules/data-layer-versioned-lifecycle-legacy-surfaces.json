@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-versioned-lifecycle-legacy-surfaces",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer versioned_lifecycle_legacy_surfaces at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "methods",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "function_definition",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^(?:commit|commit_async|commit_branch|commit_branch_async|rollback|rollback_async)$",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "block",
+                      "inside": {
+                        "kind": "class_definition",
+                        "has": {
+                          "field": "name",
+                          "regex": "(?:VersionedWriteTransaction|LazyVersionedWriteTransactionSparse)$",
+                          "pattern": "$CLASS"
+                        },
+                        "field": "body",
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "decorated_definition",
+                      "inside": {
+                        "kind": "block",
+                        "inside": {
+                          "kind": "class_definition",
+                          "has": {
+                            "field": "name",
+                            "regex": "(?:VersionedWriteTransaction|LazyVersionedWriteTransactionSparse)$",
+                            "pattern": "$CLASS"
+                          },
+                          "field": "body",
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "VLL001",
+        "anchor": "witness.span",
+        "message": "$CLASS.$NAME shadows the base LazyVersionedWriteTransaction @legacy lifecycle surface; move backend behavior to *_lazy methods, helpers, or ServerPlan lowering."
+      }
+    }
+  ]
+}

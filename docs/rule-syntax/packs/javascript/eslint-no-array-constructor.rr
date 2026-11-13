@@ -1,0 +1,44 @@
+.policy "eslint-no-array-constructor" revision 2
+.description "Use an array literal instead of the Array constructor in JavaScript, except to create an array of a given length."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/names.rr"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-array-constructor: `Array(…)` or `new Array(…)` of the global Array, unless it is given exactly
+// one argument (`new Array(5)` makes an array of length 5, not [5]) or type arguments (`new Array<T>()`).
+//   new Array()    Array(a, b)    new Array(...xs)      → reported; fix: []  [a, b]  [...xs]
+//   new Array(5)   new Foo.Array()   with `function Array() {}` in the file → not
+// The fix is ESLint's autofix, or only a suggestion where it may change meaning: an optional call
+// `Array?.(a, b)`, a lone spread or a single argument, or a comment outside the parentheses. At the start of
+// a statement whose previous token would run on, it is `;[…]` (semi_needed).
+.violation no_array_constructor(at: node) code "no-array-constructor" "The array literal notation [] is preferable."
+    suppress eslint "no-array-constructor"
+    suppress oxlint "no-array-constructor"
+    suppress biome "lint/style/useArrayLiterals"
+    fix to_literal "Replace with an array literal."
+    fix suggest_literal "Replace with an array literal."
+no_array_constructor(n) :- array_call(n, c), !ref_site(c, _), !field(n, "type_arguments", _),
+    !one_argument(n).
+
+// array_call(n, c): a call or `new` whose callee c is the identifier Array, parentheses aside.
+.decl array_call(n: node, c: node)
+array_call(n, c) :- (kind(n, "call_expression"), field(n, "function", f) ; kind(n, "new_expression"),
+    field(n, "constructor", f)), deparen(f, c), kind(c, "identifier"), text(c, "Array").
+.decl one_argument(n: node)  // exactly one argument, and not a spread
+one_argument(n) :- call_arg_count(n, 1), call_arg(n, x, 0), !kind(x, "spread_element").
+
+// shaky(n): ESLint's shouldSuggest. Fewer than two plain arguments here means one spread and nothing else.
+.decl shaky(n: node)
+shaky(n) :- kind(n, "call_expression"), op(n, "?.").
+shaky(n) :- call_arg_count(n, k), k > 0, field(n, "arguments", a),
+    count : { child(a, x, _), !kind(x, "comment"), !kind(x, "spread_element") } < 2.
+shaky(n) :- kind(c, "comment"), within(c, n), !in_args(c, n).  // new /* c */ Array(a, b)
+.decl in_args(c: node, n: node)
+in_args(c, n) :- field(n, "arguments", a), within(c, a).
+.decl lead(n: node, l: symbol)  // `;` where the literal would continue the statement before
+lead(n, ";") :- semi_needed(n).
+lead(n, "") :- no_array_constructor(n), !semi_needed(n).
+to_literal(n) :- !shaky(n), lead(n, l) => as_array(n, l).
+suggest_literal(n) :- shaky(n), lead(n, l) => as_array(n, l).

@@ -1,0 +1,24 @@
+.policy "ruff-pyi051-redundant-literal-union" revision 2
+.description "Don't list a literal value in a union that already includes its builtin type; the broader type already covers every value of the literal."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI051 (flake8-pyi), every file: a union (anywhere, at runtime too) with a `Literal[…]` member whose
+// value's type is also a member: `Literal["a"] | str` is `str`. The builtins are str, bytes, int, bool, float and complex
+// (`Literal[1J] | complex`). Reported at each redundant value inside the Literal.
+//   def f(x: Literal["a", "b"] | str): ...     ← PYI051 at "a" and at "b"
+#include "python/typing.rr"
+
+.violation PYI051(at: node, b: symbol) code "PYI051" "Drop `{at}` from this `Literal`: the union already includes `{b}`, which covers it. Remove the whole `Literal` if no values are left."
+    suppress ruff "PYI051"
+PYI051(e, x) :- union_top(u), union_leaf(u, l), literal_leaf(l, e), pyi_literal_type(e, x),
+    union_leaf(u, b), sym_of(b, q), split_dot(q, "builtins", x).
+// pyi_literal_type(e, x): the builtin type of literal value e (core.rr's value_type_of is W's, of every value).
+.decl pyi_literal_type(e: node, x: symbol)
+pyi_literal_type(e, "str") :- plain_str(e, _).
+pyi_literal_type(e, "bytes") :- string_form(e, "bytes").
+pyi_literal_type(e, "int") :- pyi_int(e).
+pyi_literal_type(e, "bool") :- (kind(e, "true") ; kind(e, "false")).
+pyi_literal_type(e, "float") :- kind(e, "float"), !complex_lit(e).
+pyi_literal_type(e, "complex") :- complex_lit(e).

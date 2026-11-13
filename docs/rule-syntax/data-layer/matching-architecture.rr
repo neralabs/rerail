@@ -1,0 +1,476 @@
+.policy "data-layer:matching-architecture" revision 1
+.description "Generic matching keeps its boundaries: applications declare, contracts are closed, implementations count executed work, physical choices stay below the facade."
+.language python
+.mode block
+.scope include "data_layer/**/*.py", "impl/common/**/*.py", "conform/l5250_matching/**/*.py", "l1470_matching_contracts/**/*.py", "l5250_matching/**/*.py", "l[0-9][0-9][0-9][0-9]_*/**/*.py", "data_layer_testing/matching_operator.py"
+.scope exclude "**/tests/**"
+.scope dirs option("applicationRoots")   // --application-root: consumer-owned application sources, scanned whole
+// Python linter: scripts/lint_matching_architecture.py (`lint`, the CLI; `--check` blocks). 41 codes, MA001 … MA041, each
+// tied to a kind of file. "Application" files: under --application-root, or a path whose first part is
+// applications/application/app or with an applications/ part. "Matching" files: data_layer/matching.py,
+// l1470_matching_contracts/**, any l5250_matching/ part, or a file that imports a matching module or names MatchSpec,
+// MatchResult, MatchPhysicalPlanError or MatchAccessMethodKind. "Implementation": impl/common/** and (an l5250_matching
+// part or matching). "Facade": data_layer/matching.py, l5250_matching/api.py and __init__.py. "Conformance":
+// conform/l5250_matching/**. "Contracts": l1470_matching_contracts/**. "Lower": the first lNNNN_ part, NNNN < 5250.
+//   Application   MA001 BackendType named (first line)   MA002 a static string naming a physical access method (first
+//                 line)   MA010 imports impl   MA011 match*(txn, "<static string>"), directly or through a same-file
+//                 helper that forwards its parameter to match*
+//   Matching      MA004 try whose handler catches Match*/Exception/BaseException/everything and returns a call
+//                 MA005 match* def with a parameter annotated *Connection*   MA006 import_module / __import__
+//                 MA007 an f-string starting SELECT/INSERT/…   MA017 *dispatch* def's first `str` parameter
+//                 MA018 *dispatch* def's first `….get(k, default)`   MA028 model_copy(update=…) (not conformance)
+//   Implementation MA026 BackendType (first line)   MA027 raw SQL call (first line)   MA031 synthesized counters and
+//                 planned round trips   MA032 ("working_memory_bytes", payload_bytes)   MA035 SqlBinaryOp(pair_count …
+//                 .expression_node_count)   MA037 transport counts from dependency names   MA038 polling in
+//                 *bounded_watermark*   per def, first line: MA039 _sql_canonical_identity in *expression_operation_receipt*,
+//                 MA040 SqlIsNull(…candidate_kernel…) in *candidate*, MA029 sorted/setdefault in *deduplicat*/*rank*,
+//                 MA022 a slice in *paginat*, MA023 a Match*Count(constant) counter
+//   Facade        MA019 imports impl   MA041 imports data_layer_testing   MA021 physical resolution (first line)
+//   Conformance   MA015 imports impl or a layer   MA036 imports data_layer_testing.matching_operator   MA016
+//                 nonportably_execute_sql   MA025 model_construct / model_copy   MA024 a test_* file's def that reads
+//                 execution_classes / proof_test_ids without calling match*
+//   Contracts     classes named Match*: MA012 a *Protocol base   MA013 @dataclass   MA014 a *BaseModel base without
+//                 model_config = ConfigDict(frozen=True)   MA009 a field typed str, int, Any, … (or `| None`)
+//                 MA030 a field typed by an open contract;  MatchSpec: MA020 a physical field name
+//   Lower         MA003 a class method named match/match_async/match_lazy   MA008 imports l5250_matching
+//   Repository    MA033 matching owner files (l5250_matching, not conform/) exist and none names BranchAwareIndexPolicy
+//                 MA034 data_layer_testing/matching_operator.py contains register_table_hook
+// A file is scanned only when it is a matching path, its text holds one of the seven markers, or it is in a layer and
+// its text defines `def match(`. Application roots and named application paths are scanned whole. Names are as the script reads them: a callee's
+// last name, an annotation's dotted text (`A | B` is "A|B", `X[…]` is X's), import modules as written.
+// --phase N keeps one phase's codes: option("phase", …) would filter them; the suite runs without it.
+//
+// How to read this file
+//   1. ma_doc and the file kinds.  2. Names: ma_ref, mf_call_name (a library), ma_arg, ma_import, ma_ann, ma_static.
+//   3. One section per kind of file, then the class and def checks, then the repository checks.
+
+#include "python/ast.rr"                 // unparen, str_const, fstring, assign_target, sig_param, body_stmt, …
+#include "python/calls.rr"               // call_arg
+#include "data-layer/match-frames.rr"    // mf_class, mf_def, mf_walk, mf_fn, mf_call_name
+
+// ---- 1. files ----------------------------------------------------------------------------------------------------
+.decl ma_marker(t: symbol)                       // _MATCHING_SOURCE_MARKERS
+ma_marker("data_layer.matching"). ma_marker("l1470_matching_contracts"). ma_marker("l5250_matching").
+ma_marker("MatchSpec"). ma_marker("MatchResult"). ma_marker("MatchPhysicalPlanError"). ma_marker("MatchAccessMethodKind").
+// ma_text(d, t): the file's whole text.
+.decl ma_text(d: number, t: symbol)
+ma_text(d, t) :- source(d, sp), text(sp, t).
+// ma_given_app(d): an application file the caller names: an application path, or a file under an application root.
+.decl ma_given_app(d: number)
+ma_given_app(d) :- doc(d, p, _), option_item("applicationPaths", _, p).
+ma_given_app(d) :- doc(d, p, _), option_item("applicationRoots", _, r), prefix(cat(r, "/"), p).
+// ma_top_app(d): the path starts applications/, application/ or app/. No root of `lint` does, so under `lint` such a
+// file comes only from an application root; a direct scan_sources call scans it whole too.
+.decl ma_top_app(d: number)
+ma_top_app(d) :- doc(d, p, _), glob("{applications,application,app}/**", p).
+// ma_app(d): an application file: one the caller names, a top-level application path, or one with an applications/
+// part.
+.decl ma_app(d: number)
+ma_app(d) :- ma_given_app(d).
+ma_app(d) :- ma_top_app(d).
+ma_app(d) :- path_part(d, "applications"), file_name(d, f), f != "applications".
+// ma_prod(d): data_layer/matching.py, l1470_matching_contracts/**, or an l5250_matching part.
+.decl ma_prod(d: number)
+ma_prod(d) :- doc(d, "data_layer/matching.py", _).
+ma_prod(d) :- doc(d, p, _), prefix("l1470_matching_contracts/", p).
+ma_prod(d) :- path_part(d, "l5250_matching"), file_name(d, f), f != "l5250_matching".
+// ma_layer(d, k): the first lNNNN_ part of the path.
+.decl ma_layer(d: number, k: number)
+ma_layer(d, to_number(k)) :- doc(d, p, _), match("(?:[^/]*/)*?l(?<k>[0-9]{4})_.*", p).
+// ma_doc(d): the file is scanned: an application file the caller names or a top-level one, or any other file of the
+// scope that passes the linter's gate (_source_requires_matching_scan): `impl/common/applications/x.py` must pass it. The scope holds the linter's roots; matching_operator.py is in
+// it only for MA034, which reads its text: the linter never scans it.
+.decl ma_doc(d: number)
+ma_doc(d) :- ma_given_app(d).
+ma_doc(d) :- ma_top_app(d).
+ma_doc(d) :- ma_gate(d), !doc(d, "data_layer_testing/matching_operator.py", _).
+.decl ma_gate(d: number)
+ma_gate(d) :- ma_prod(d).
+ma_gate(d) :- ma_text(d, t), ma_marker(m), contains(m, t).
+ma_gate(d) :- ma_layer(d, _), ma_text(d, t), match("(?s).*\\bdef\\s+match(?:_async|_lazy)?\\s*\\(.*", t).
+// ma_uses(d): the file imports a matching module, or names a matching contract (_tree_uses_matching_contracts).
+.decl ma_uses(d: number)
+ma_uses(d) :- ma_import(i, m), glob("{data_layer.matching,l1470_matching_contracts,l1470_matching_contracts.**,l5250_matching,l5250_matching.**}", m), docof(i, d).
+ma_uses(d) :- ma_ref(n, x), glob("{MatchSpec,MatchResult,MatchPhysicalPlanError,MatchAccessMethodKind}", x), docof(n, d).
+// The kinds of file, each a scanned file.
+.decl ma_matching(d: number)
+ma_matching(d) :- ma_doc(d), ma_prod(d).
+ma_matching(d) :- ma_doc(d), ma_uses(d).
+.decl ma_impl(d: number)
+ma_impl(d) :- ma_doc(d), doc(d, p, _), prefix("impl/common/", p), (path_part(d, "l5250_matching") ; ma_uses(d)).
+.decl ma_facade(d: number)
+ma_facade(d) :- ma_doc(d), doc(d, p, _), (p = "data_layer/matching.py" ; p = "l5250_matching/api.py" ; p = "l5250_matching/__init__.py").
+.decl ma_conf(d: number)
+ma_conf(d) :- ma_doc(d), doc(d, p, _), prefix("conform/l5250_matching/", p).
+.decl ma_contracts(d: number)
+ma_contracts(d) :- ma_doc(d), doc(d, p, _), prefix("l1470_matching_contracts/", p).
+.decl ma_lower(d: number)
+ma_lower(d) :- ma_doc(d), ma_layer(d, k), k < 5250.
+// ma_in(n, d): node n is in scanned file d, of the kind given by the caller.
+.decl ma_in(n: node, d: number)
+ma_in(n, d) :- docof(n, d), ma_doc(d).
+
+// ---- 2. names ----------------------------------------------------------------------------------------------------
+// ma_ref(n, x): an `ast.Name` with id x, or an attribute named x.
+.decl ma_ref(n: node, x: symbol)
+ma_ref(n, x) :- ast_name(n, x).
+ma_ref(n, x) :- attr_of(n, _, x).
+// mf_call_name(c, x) (data-layer/match-frames): the callee's name, or its last attribute (_call_name); mf_fn(c, x):
+// the bare-name case alone.
+.decl ma_method(c: node, x: symbol)                 // `….x(…)`
+ma_method(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, _, x).
+.decl ma_match_name(x: symbol)
+ma_match_name("match"). ma_match_name("match_async"). ma_match_name("match_lazy").
+// ma_arg(c, i, a): positional argument i of call c (`*xs` included), as `ast.Call.args` numbers them.
+.decl ma_posarg(c: node, a: node)
+ma_posarg(c, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, _),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "comment").
+.decl ma_arg(c: node, i: number, a: node)
+ma_arg(c, i, a0) :- ma_posarg(c, a0), i = count : { ma_posarg(c, b), b < a0 }.
+// ma_import(i, m): the modules the linter reads off an import: `from m import …` as written (dots dropped, "" for
+// `from . import …`), or each name of `import a, b`.
+.decl ma_import(i: node, m: symbol)
+ma_import(i, m) :- from_module_raw(i, m).
+ma_import(i, m) :- kind(i, "import_statement"), field(i, "name", a), (kind(a, "dotted_name"), text(a, m) ;
+    kind(a, "aliased_import"), field(a, "name", n), text(n, m)).
+// ma_impl_module(m): impl or impl.*.
+.decl ma_impl_module(m: symbol)
+ma_impl_module(m) :- ma_import(_, m), (m = "impl" ; prefix("impl.", m)).
+
+// ma_ann(e, s): the linter's _annotation_name: a name, a dotted attribute chain, a subscript's value (`X[…]` is X's),
+// `A | B` as "A|B"; anything else "". An attribute on something that is no chain gives its own name.
+.decl ma_ann_base(e: node, s: symbol)
+ma_ann_base(e, x) :- unparen(e, m), kind(m, "identifier"), text(m, x).
+ma_ann_base(e, s) :- unparen(e, m), kind(m, "attribute"), name(m, s).
+ma_ann_base(e, x) :- unparen(e, m), attr_of(m, _, x), !name(m, _).
+ma_ann_base(e, s) :- unparen(e, m), kind(m, "subscript"), field(m, "value", v), ma_ann_base(v, s).
+// In an annotation `X[T]` parses as a generic_type: its name, then its type parameters.
+ma_ann_base(e, s) :- unparen(e, m), kind(m, "generic_type"), child(m, v, 0), ma_ann_base(v, s).
+ma_ann_base(e, "") :- unparen(e, m), kind(m, k), k != "identifier", k != "attribute", k != "subscript",
+    k != "generic_type".
+.decl ma_bitor(m: node)
+ma_bitor(m) :- kind(m, "binary_operator"), op(m, "|").
+// ma_or_leaf(t, l): l is an operand of the `|` chain t that is not itself a `|`.
+.decl ma_or_leaf(t: node, l: node)
+ma_or_leaf(t, l) :- ma_bitor(t), (field(t, "left", x) ; field(t, "right", x)), unparen(x, l), !ma_bitor(l).
+ma_or_leaf(t, l) :- ma_bitor(t), (field(t, "left", x) ; field(t, "right", x)), unparen(x, y), ma_bitor(y), ma_or_leaf(y, l).
+.decl ma_ann(e: node, s: symbol)
+ma_ann(e, s) :- unparen(e, m), !ma_bitor(m), ma_ann_base(e, s).
+ma_ann(e, s) :- unparen(e, m), ma_bitor(m), s = join x by z sep "|" : { ma_or_leaf(m, l), ma_ann_base(l, x), node(_, l, _, z, _) }.
+// ma_type(t, e): the expression of annotation t (a `type` node).
+.decl ma_type(t: loc, e: node)
+ma_type(t, e) :- kind(t, "type"), child(t, e, 0).
+
+// ma_static(e, v): the linter's _static_string: a str constant (each f-string piece is one), an f-string without
+// interpolations, or `a + b` of static strings.
+.decl ma_static_leaf(e: node, v: symbol)
+ma_static_leaf(n, v) :- str_const(n, v).
+ma_static_leaf(n, v) :- fstring(n), !has(n, _, "interpolation"), v = join p by i sep "" : { str_part(n, i, p, _, _) }.
+.decl ma_static(e: node, v: symbol)
+ma_static(n, v) :- ma_static_leaf(n, v).
+ma_static(at, v) :- fstring(n), str_part(n, _, v, at, _).
+ma_static(t, v) :- ma_plus(t), !ma_plus_open(t), v = join x by z sep "" : { ma_plus_leaf(t, l), ma_static_leaf(l, x), node(_, l, _, z, _) }.
+// ma_plus_leaf(t, l): l is an operand of the `+` chain t that is not itself a `+`; ma_plus_open(t): one is not static.
+.decl ma_plus(t: node)
+ma_plus(t) :- kind(t, "binary_operator"), op(t, "+").
+.decl ma_plus_leaf(t: node, l: node)
+ma_plus_leaf(t, l) :- ma_plus(t), (field(t, "left", x) ; field(t, "right", x)), unparen(x, l), !ma_plus(l).
+ma_plus_leaf(t, l) :- ma_plus(t), (field(t, "left", x) ; field(t, "right", x)), unparen(x, y), ma_plus(y), ma_plus_leaf(y, l).
+.decl ma_plus_open(t: node)
+ma_plus_open(t) :- ma_plus_leaf(t, l), !ma_static_leaf(l, _).
+
+// ---- 3. application files ----------------------------------------------------------------------------------------
+.violation MA001(at: span) "Application matching behavior cannot switch on backend identity"
+MA001(@place(p, l)) :- ma_app(d), ma_doc(d), ma_backend_line(d, p, l).
+// ma_backend_line(d, p, l): the first line of file d (at path p) that names BackendType; MA001 and MA026.
+.decl ma_backend_line(d: number, p: symbol, l: number)
+ma_backend_line(d, p, l) :- ma_doc(d), doc(d, p, _), l = min k : { ma_ref(n, "BackendType"), docof(n, d), line(n, k) }.
+
+.decl ma_physical(v: symbol)
+ma_physical(v) :- ma_static(_, v), iglob("{bit_hamming_ops,halfvec,hnsw,ivfflat,pgvector,sql_table_hnsw,usearch,vector_cosine_ops}", v).
+.violation MA002(at: span) "Application matching declarations cannot name a physical access method"
+MA002(@place(p, l)) :- ma_app(d), ma_doc(d), doc(d, p, _),
+    l = min k : { ma_static(n, v), ma_physical(v), docof(n, d), line(n, k) }.
+
+.violation MA010(at: node) "Application matching code cannot import implementation modules"
+MA010(i) :- ma_import(i, m), ma_impl_module(m), ma_in(i, d), ma_app(d).
+
+// MA011: the specification argument is a static string. ma_forwards(d, x, k): def x of file d passes its k-th
+// positional parameter (counting only `posonlyargs` and `args`: no `/`, `*`, *args or keyword-only) as the second
+// argument of a match* call (the linter's _indirect_match_parameters). In `def run(txn, /, spec)` spec is 1.
+.decl ma_pos_param(f: node, nm: node)
+ma_pos_param(f, nm) :- kind(f, "function_definition"), sig_param(f, _, nm, _, pk, _, _), (pk = "posonly" ; pk = "pos").
+.decl ma_forwards(d: number, x: symbol, k: number)
+ma_forwards(d, x, k) :- def_name(f, x), kind(f, "function_definition"), ma_in(f, d), ma_app(d), mf_walk(c, f),
+    ma_spec_direct(c, a), kind(a, "identifier"), text(a, y), ma_pos_param(f, nm), text(nm, y),
+    k = count : { ma_pos_param(f, nm2), nm2 < nm }.
+// ma_spec_direct(c, a): a match* call with a second positional argument a. ma_spec_arg(c, a): that, or for another
+// call (one without it) to a forwarding def, the argument in the forwarded position.
+.decl ma_spec_direct(c: node, a: node)
+ma_spec_direct(c, a) :- mf_call_name(c, x), ma_match_name(x), ma_arg(c, 1, a).
+.decl ma_spec_arg(c: node, a: node)
+ma_spec_arg(c, a) :- ma_spec_direct(c, a).
+ma_spec_arg(c, a) :- mf_call_name(c, x), !ma_spec_direct(c, _), ma_in(c, d), ma_forwards(d, x, k), ma_arg(c, k, a).
+.violation MA011(at: node) "Matching specifications cannot use string lookup"
+MA011(c) :- ma_spec_arg(c, a0), unparen(a0, a), ma_static(a, _), ma_in(c, d), ma_app(d).
+
+// ---- 4. matching files -------------------------------------------------------------------------------------------
+// MA004: a try statement one of whose handlers catches broadly (or a Match* error) and one of whose handlers returns
+// a call somewhere inside it.
+.decl ma_handler(t: node, h: node)
+// A `try … except*` is no ast.Try, so none of its handlers counts; tree-sitter marks it with a `*` token.
+ma_handler(t, h) :- kind(t, "try_statement"), child(t, h, _), kind(h, "except_clause"), !op(h, "*").
+.decl ma_broad(h: node)
+ma_broad(h) :- ma_handler(_, h), !ma_handler_type(h, _).
+ma_broad(h) :- ma_handler_type(h, e), ma_ann(e, s), (s = "Exception" ; s = "BaseException" ; prefix("Match", s)).
+// ma_handler_type(h, e): the caught type expression, before any `as`.
+.decl ma_handler_type(h: node, e: node)
+ma_handler_type(h, e) :- ma_handler(_, h), child(h, x, 0), kind(x, "as_pattern"), child(x, e, 0).
+ma_handler_type(h, x) :- ma_handler(_, h), child(h, x, 0), !kind(x, "as_pattern"), !kind(x, "block"), !kind(x, "comment").
+.decl ma_returns_call(h: node)
+ma_returns_call(h) :- ma_handler(_, h), within(r, h), kind(r, "return_statement"), child(r, v0, 0), unparen(v0, v), kind(v, "call").
+.violation MA004(at: node) "Matching physical failure cannot continue through a runtime fallback"
+MA004(t) :- ma_handler(t, h), ma_broad(h), ma_handler(t, h2), ma_returns_call(h2), ma_in(t, d), ma_matching(d).
+
+.violation MA006(at: node) "Matching production code must use static imports"
+MA006(c) :- ma_method(c, "import_module"), ma_in(c, d), ma_matching(d).
+MA006(c) :- mf_fn(c, x), (x = "__import__" ; x = "import_module"), ma_in(c, d), ma_matching(d).
+
+// MA007: the literal pieces of an f-string, joined, start with an SQL verb once leading space is dropped.
+.violation MA007(at: node) "Matching SQL must use typed grammar classes"
+MA007(n) :- fstring(n), ma_in(n, d), ma_matching(d), s = join p by i sep "" : { str_part(n, i, p, _, 0) },
+    match("(?is)\\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER).*", s).
+
+// ---- 5. implementation files -------------------------------------------------------------------------------------
+.violation MA026(at: span) "Shared matching code cannot switch on backend identity"
+MA026(@place(p, l)) :- ma_impl(d), ma_backend_line(d, p, l).
+
+// MA027: raw SQL: nonportably_execute_sql, SqlRaw or SqlFragment, or execute / executemany on a literal.
+.decl ma_raw_sql(c: node)
+ma_raw_sql(c) :- mf_call_name(c, x), (x = "nonportably_execute_sql" ; x = "SqlRaw" ; x = "SqlFragment").
+ma_raw_sql(c) :- mf_call_name(c, x), (x = "execute" ; x = "executemany"), ma_arg(c, 0, a0), unparen(a0, a),
+    (ast_constant(a) ; fstring(a)).
+.violation MA027(at: span) "Matching implementation code must use typed SQL grammar"
+MA027(@place(p, l)) :- ma_impl(d), doc(d, p, _), l = min k : { ma_raw_sql(c), docof(c, d), line(c, k) }.
+
+// ma_assign(a, t, v): a statement-level `t = v` or `t: T = v` with a name target (each of `a = b = v`); v is unset for
+// a bare `t: T`.
+.decl ma_assign(a: node, x: symbol, v: loc)
+ma_assign(a, x, v) :- assign_target(a, t), kind(t, "identifier"), text(t, x), assign_value(a, v).
+ma_assign(a, x, u) :- assign_target(a, t), kind(t, "identifier"), text(t, x), !assign_value(a, _), unset(u).
+// ma_len_of(v, x): v holds a call len(x, …) or len(o.x, …).
+.decl ma_len_of(v: node, x: symbol)
+ma_len_of(v, x) :- mf_call_name(c, "len"), ma_arg(c, _, a0), unparen(a0, a),
+    (kind(a, "identifier"), text(a, x) ; attr_of(a, _, x)), (v = c ; within(c, v)).
+.decl ma_dep_target(x: symbol)
+ma_dep_target("completed_database_round_trips"). ma_dep_target("database_round_trips").
+ma_dep_target("database_execution_operations"). ma_dep_target("dependency_traversal_operations").
+.decl ma_dep_name(x: symbol)
+ma_dep_name("completed_preflight_receipts"). ma_dep_name("database_receipts"). ma_dep_name("executed_dependencies").
+ma_dep_name("dependency_receipts").
+.violation MA037(at: node) "Transport and stage counts require executed receipts, not resolved dependency names"
+MA037(a) :- ma_assign(a, x, v), ma_dep_target(x), ma_len_of(v, y), ma_dep_name(y), ma_in(a, d), ma_impl(d).
+// Any keyword argument `k=…`, of a call or of a class statement.
+MA037(v) :- kind(k, "keyword_argument"), field(k, "name", n), text(n, x), ma_dep_target(x), field(k, "value", v),
+    ma_len_of(v, y), ma_dep_name(y), ma_in(k, d), ma_impl(d).
+
+// MA031: a planned round-trip variable; counters built from declared stages or predicted work; len(*_SQL_STAGES).
+// ma_predicted(d, x): x is assigned arithmetic over pair_evaluations / expression_node_count.
+.decl ma_predicted(d: number, x: symbol)
+ma_predicted(d, x) :- ma_assign(a, x, v), (b = v ; within(b, v)), kind(b, "binary_operator"),
+    (n = v ; within(n, v)), ast_name(n, y), (y = "pair_evaluations" ; y = "expression_node_count"), docof(a, d).
+.decl ma_counter_bad(c: node)
+ma_counter_bad(c) :- mf_call_name(c, "MatchDatabaseRoundTripCount"), ma_arg(c, 0, a0), unparen(a0, a),
+    mf_call_name(a, "len"), ma_arg(a, 0, n0), unparen(n0, n), kind(n, "identifier"), text(n, x), !match(".*[a-z].*", x).
+ma_counter_bad(c) :- mf_call_name(c, "MatchExpressionEvaluationCount"), ma_arg(c, 0, a),
+    (n = a ; within(n, a)), ast_name(n, "pair_evaluations").
+ma_counter_bad(c) :- mf_call_name(c, "MatchExpressionEvaluationCount"), ma_arg(c, 0, a0), unparen(a0, a),
+    kind(a, "identifier"), text(a, x), docof(c, d), ma_predicted(d, x).
+ma_counter_bad(c) :- mf_call_name(c, "MatchStageOperationCount"), ma_arg(c, 0, a0), unparen(a0, a),
+    kind(a, "identifier"), text(a, "hydration_operations").
+.violation MA031(at: node) "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+MA031(a) :- ma_assign(a, "planned_database_round_trips", _), ma_in(a, d), ma_impl(d).
+MA031(c) :- ma_counter_bad(c), ma_in(c, d), ma_impl(d).
+MA031(c) :- mf_call_name(c, "len"), ma_arg(c, 0, a0), unparen(a0, a), kind(a, "identifier"), text(a, x),
+    suffix("_SQL_STAGES", x), ma_in(c, d), ma_impl(d).
+
+// MA032: an `ast.Tuple` holding the constant "working_memory_bytes" and the name payload_bytes.
+.decl ma_tuple_elt(t: node, e: node)
+ma_tuple_elt(t, e) :- (kind(t, "tuple") ; kind(t, "expression_list") ; kind(t, "pattern_list")), child(t, e0, _),
+    unparen(e0, e).
+// `d["working_memory_bytes", payload_bytes]`: ast's index is a Tuple; here the subscript holds the elements itself.
+ma_tuple_elt(s, e) :- ma_multi_index(s), field(s, "subscript", e0), unparen(e0, e).
+.violation MA032(at: node) "A native database working-memory hard limit cannot use serialized source payload bytes as physical memory evidence"
+MA032(t) :- ma_tuple_elt(t, a), str_const(a, "working_memory_bytes"), ma_tuple_elt(t, b), kind(b, "identifier"),
+    text(b, "payload_bytes"), ma_in(t, d), ma_impl(d).
+
+.violation MA035(at: node) "Expression counters must use executed expression-node receipts, not SQL pair-count arithmetic"
+MA035(c) :- mf_call_name(c, "SqlBinaryOp"), within(n, c), ast_name(n, "pair_count"), within(a, c),
+    attr_of(a, _, "expression_node_count"), ma_in(c, d), ma_impl(d).
+
+// ---- 6. facade and conformance files -----------------------------------------------------------------------------
+.violation MA019(at: node) "The public matching facade cannot select or import a physical implementation"
+MA019(i) :- ma_import(i, m), ma_impl_module(m), ma_in(i, d), ma_facade(d).
+.violation MA041(at: node) "Production matching modules cannot import the testing package"
+MA041(i) :- ma_import(i, m), glob("{data_layer_testing,data_layer_testing.**}", m), ma_in(i, d), ma_facade(d).
+// MA021: Match{AccessMethod,PhysicalStage}Kind.X, or a build_*match* call, at its first line.
+.decl ma_resolution(n: node)
+ma_resolution(n) :- attr_of(n, o, _), ma_ann(o, s), (s = "MatchAccessMethodKind" ; s = "MatchPhysicalStageKind").
+ma_resolution(c) :- mf_call_name(c, x), prefix("build_", x), contains("match", x).
+.violation MA021(at: span) "The public facade cannot resolve a physical matching method"
+MA021(@place(p, l)) :- ma_facade(d), doc(d, p, _), l = min k : { ma_resolution(n), docof(n, d), line(n, k) }.
+
+.violation MA015(at: node) "Matching conformance tests must import project APIs from data_layer"
+MA015(i) :- ma_import(i, m), (m = "impl" ; prefix("impl.", m) ; match("l[0-9]{4}_.*", m)), ma_in(i, d), ma_conf(d).
+.violation MA036(at: node) "Matching conformance must use public artifact operations from data_layer.matching"
+MA036(i) :- ma_import(i, "data_layer_testing.matching_operator"), ma_in(i, d), ma_conf(d).
+MA036(i) :- from_module_raw(i, "data_layer_testing"), field(i, "name", a), (text(a, "matching_operator") ;
+    kind(a, "aliased_import"), field(a, "name", n), text(n, "matching_operator")), ma_in(i, d), ma_conf(d).
+.violation MA016(at: node) "Matching conformance tests cannot execute SQL directly"
+MA016(c) :- mf_call_name(c, "nonportably_execute_sql"), ma_in(c, d), ma_conf(d).
+
+// ---- 7. lower layers ---------------------------------------------------------------------------------------------
+.violation MA008(at: node) "Lower layers cannot import the matching execution layer"
+MA008(i) :- ma_import(i, m), glob("{l5250_matching,l5250_matching.**}", m), ma_in(i, d), ma_lower(d).
+
+// ---- 8. contract classes -----------------------------------------------------------------------------------------
+// ma_field(k, st, x, t): a statement of class k's own body is the annotated assignment `x: t` (or `x: t = …`).
+.decl ma_field(k: node, st: node, x: symbol, t: node)
+ma_field(k, st, x, e) :- kind(k, "class_definition"), body_of(k, b), body_stmt(b, st, _), child(st, a, 0),
+    kind(a, "assignment"), field(a, "left", n), kind(n, "identifier"), text(n, x), field(a, "type", t), ma_type(t, e).
+// ma_contract(k, x): class k, named Match*, in a contracts file.
+.decl ma_contract(k: node, x: symbol)
+ma_contract(k, x) :- def_name(k, x), kind(k, "class_definition"), prefix("Match", x), ma_in(k, d), ma_contracts(d).
+// ma_base(k, s): a positional base of class k, by annotation name.
+.decl ma_base(k: node, s: symbol)
+ma_base(k, s) :- ma_contract(k, _), field(k, "superclasses", al), child(al, b, _), !kind(b, "keyword_argument"),
+    !kind(b, "comment"), ma_ann(b, s).
+
+.decl ma_open_contract(s: symbol)                // _OPEN_MATCHING_CONTRACT_ANNOTATIONS
+ma_open_contract(s) :- ma_ann(_, s), glob("Match{ArtifactState,ComplexityBound,DuplicatePairPolicySpec,ExplanationPolicy,FilterSpec,FreshnessDiagnostics,FreshnessPolicySpec,IdentitySpec,MissingRepresentationPolicySpec,PageState,PaginationSpec,PruningBound,RepresentationAvailabilitySpec,RepresentationSpec,ResultShapeSpec,ScoreExpression}", s).
+.violation MA030(at: node) "Recursive matching fields require a closed discriminated union"
+MA030(st) :- ma_contract(k, _), ma_field(k, st, _, e), ma_ann(e, s), ma_open_contract(s).
+
+.violation MA020(at: node) "Application matching specifications cannot contain physical execution state"
+MA020(st) :- ma_contract(k, "MatchSpec"), ma_field(k, st, x, _),
+    iglob("*{artifact,access_method,physical,index_generation,watermark}*", x).
+
+.violation MA012(at: node) "Public matching contracts cannot use structural Protocol types"
+MA012(k) :- ma_base(k, s), suffix("Protocol", s).
+
+.violation MA013(at: node) "Public matching data contracts require frozen Pydantic models"
+MA013(k) :- ma_contract(k, _), decorator(k, e0), unparen(e0, e), (kind(e, "call"), field(e, "function", f) ; !kind(e, "call"), f = e),
+    ma_ann(f, s), (s = "dataclass" ; s = "dataclasses.dataclass").
+
+// MA014: a *BaseModel base, and the first `model_config = ConfigDict(…)` of the body (single target) lacks frozen=True.
+.decl ma_config(k: node, i: number, c: node)
+ma_config(k, i, c) :- ma_contract(k, _), body_of(k, b), body_stmt(b, st, i), child(st, a, 0), kind(a, "assignment"),
+    !field(a, "type", _), field(a, "left", n), kind(n, "identifier"), text(n, "model_config"), field(a, "right", v0),
+    unparen(v0, c), kind(c, "call"), field(c, "function", f), ma_ann(f, "ConfigDict").
+.decl ma_frozen(k: node)
+ma_frozen(k) :- ma_config(k, i, c), i = min j : { ma_config(k, j, _) }, call_arg(c, _, "frozen", v), kind(v, "true").
+.violation MA014(at: node) "Public matching Pydantic contracts must declare frozen=True"
+MA014(k) :- ma_base(k, s), suffix("BaseModel", s), !ma_frozen(k).
+
+// MA009: a field typed by a bare semantic type, or by a union with None or with such a type.
+.decl ma_bare(s: symbol)
+ma_bare(s) :- ma_ann(_, s), glob("{Any,bool,bytes,dict,float,int,list,Mapping,object,set,str,tuple}", s).
+.decl ma_unsafe(e: node)
+ma_unsafe(e) :- unparen(e, m), (kind(m, "identifier") ; kind(m, "attribute")), ma_ann(m, s), ma_bare(s).
+ma_unsafe(e) :- unparen(e, m), ma_bitor(m), (field(m, "left", x) ; field(m, "right", x)), unparen(x, y),
+    (kind(y, "none") ; ma_unsafe(y)).
+.violation MA009(at: node) "Public matching semantic values require nominal closed types"
+MA009(st) :- ma_contract(k, _), ma_field(k, st, _, e), ma_unsafe(e).
+
+// ---- 9. defs -----------------------------------------------------------------------------------------------------
+// ma_def(f, x, d): def f (async too), named x, in scanned file d. ma_calls(f, c, x): call c named x is in ast.walk(f).
+.decl ma_def(f: node, x: symbol, d: number)
+ma_def(f, x, d) :- def_name(f, x), kind(f, "function_definition"), ma_in(f, d).
+.decl ma_calls(f: node, c: node, x: symbol)
+ma_calls(f, c, x) :- ma_def(f, _, _), mf_walk(c, f), mf_call_name(c, x).
+
+.violation MA028(at: node) "Matching production code cannot bypass validation during model replacement"
+MA028(c) :- ma_def(f, _, d), ma_matching(d), !ma_conf(d), mf_walk(c, f), ma_method(c, "model_copy"),
+    call_arg(c, _, "update", _).
+
+// First-line codes: the first offending node in ast.walk(f), for defs whose name says what they do.
+.violation MA039(at: span) "Expression receipts must evaluate expression nodes instead of endpoint identities"
+MA039(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), contains("expression_operation_receipt", x), doc(d, p, _),
+    l = min k : { ma_calls(f, c, "_sql_canonical_identity"), line(c, k) }.
+.violation MA040(at: span) "Candidate scoring requires a distinct ServerPlan stage, not a predicate"
+MA040(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), contains("candidate", x), doc(d, p, _),
+    l = min k : { ma_calls(f, c, "SqlIsNull"), within(a, c), attr_of(a, _, "candidate_kernel"), line(c, k) }.
+.violation MA029(at: span) "Candidate deduplication and ranking must execute before result hydration"
+MA029(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), (icontains("deduplicat", x) ; icontains("rank", x)), doc(d, p, _),
+    l = min k : { ma_calls(f, c, y), ma_reorders(y), line(c, k) }.
+.decl ma_reorders(x: symbol)
+ma_reorders("sorted"). ma_reorders("setdefault").
+.violation MA022(at: span) "Matching pagination must lower a cursor predicate before result hydration"
+MA022(@place(p, l)) :- ma_def(f, x, d), ma_impl(d), icontains("paginat", x), doc(d, p, _),
+    l = min k : { mf_walk(s, f), kind(s, "subscript"), field(s, "subscript", sl), kind(sl, "slice"),
+    !ma_multi_index(s), line(s, k) }.
+.decl ma_multi_index(s: node)                // `x[a:b, c]`: the index is a tuple, not a slice
+ma_multi_index(s) :- kind(s, "subscript"), field(s, "subscript", a), field(s, "subscript", b), a != b.
+// MA023: a Match*Count call with a constant positional argument, or arithmetic involving a constant.
+.decl ma_hard_counter(c: node)
+ma_hard_counter(c) :- mf_call_name(c, x), prefix("Match", x), suffix("Count", x), ma_arg(c, _, a0), unparen(a0, a),
+    ast_constant(a).
+ma_hard_counter(c) :- mf_call_name(c, x), prefix("Match", x), suffix("Count", x), ma_arg(c, _, a0), unparen(a0, a),
+    kind(a, "binary_operator"), within(k, a), ast_constant(k).
+.violation MA023(at: span) "Runtime operation counters cannot use constants or size guesses"
+MA023(@place(p, l)) :- ma_def(f, _, d), ma_impl(d), doc(d, p, _),
+    l = min k : { mf_walk(c, f), ma_hard_counter(c), line(c, k) }.
+
+.violation MA038(at: node) "Bounded freshness must inspect transaction-local state without polling"
+MA038(f) :- ma_def(f, x, d), ma_impl(d), contains("bounded_watermark", x), mf_walk(n, f),
+    (kind(n, "for_statement") ; kind(n, "while_statement") ; attr_of(n, _, "wait_limit")).
+
+.violation MA025(at: node) "Matching conformance tests cannot bypass Pydantic validation"
+MA025(c) :- ma_def(f, _, d), ma_conf(d), mf_walk(c, f), (ma_method(c, "model_construct") ; ma_method(c, "model_copy")).
+
+.violation MA024(at: node) "Matrix completion evidence must execute the public matching API"
+MA024(f) :- ma_def(f, _, d), ma_conf(d), file_name(d, fn), prefix("test_", fn), mf_walk(a, f),
+    (attr_of(a, _, "execution_classes") ; attr_of(a, _, "proof_test_ids")), !ma_calls_match(f).
+.decl ma_calls_match(f: node)
+ma_calls_match(f) :- ma_calls(f, _, x), ma_match_name(x).
+
+.violation MA003(at: node) "Lower transaction classes cannot define a matching method"
+MA003(f) :- ma_def(f, x, d), ma_match_name(x), ma_lower(d), mf_class(f, _).
+
+// ma_param(f, i, nm, t): parameter nm of def f at position i, positional or keyword-only, annotated t.
+.decl ma_param(f: node, i: number, nm: node, s: symbol)
+ma_param(f, i, nm, s) :- ma_def(f, _, _), sig_param(f, _, nm, i, k, t, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
+    ma_type(t, e), ma_ann(e, s).
+.violation MA005(at: node) "Matching data functions require transactions, not connections"
+MA005(nm) :- ma_def(f, x, d), ma_match_name(x), ma_matching(d), ma_param(f, _, nm, s), contains("Connection", s).
+.violation MA017(at: node) "Matching dispatch requires a closed nominal variant, not a string"
+MA017(nm) :- ma_def(f, x, d), contains("dispatch", x), ma_matching(d), ma_param(f, i, nm, "str"),
+    i = min j : { ma_param(f, j, _, "str") }.
+.violation MA018(at: node) "Matching dispatch cannot select a default implementation"
+MA018(c) :- ma_def(f, x, d), contains("dispatch", x), ma_matching(d), ma_dispatch_get(f, c, r, v),
+    r = min q : { ma_dispatch_get(f, _, q, _) }, v = min w : { ma_dispatch_get(f, _, r, w) }.
+// ma_dispatch_get(f, c, r, v): `….get(k, default)` in ast.walk(f), in ast's order: a FunctionDef's fields are
+// args, body, decorator_list, returns, so r is 0 for the signature and body, 1 for decorators, 2 for the return
+// annotation, and v the visit order within that.
+.decl ma_dispatch_get(f: node, c: node, r: number, v: number)
+ma_dispatch_get(f, c, r, v) :- ma_def(f, _, _), mf_walk(c, f), ma_method(c, "get"), ma_arg(c, 1, _), ma_walk_part(f, c, r),
+    visit_index(c, v).
+.decl ma_walk_part(f: node, c: node, r: number)
+ma_walk_part(f, c, 0) :- ma_def(f, _, _), within(c, f), !ma_in_returns(f, c).
+ma_walk_part(f, c, 1) :- ma_def(f, _, _), decorator(f, e), (c = e ; within(c, e)).
+ma_walk_part(f, c, 2) :- ma_in_returns(f, c).
+.decl ma_in_returns(f: node, c: node)
+ma_in_returns(f, c) :- ma_def(f, _, _), field(f, "return_type", t), within(c, t).
+
+// ---- 10. repository checks (lint only) ---------------------------------------------------------------------------
+// MA033: scanned matching-owner files exist and none of them names BranchAwareIndexPolicy.
+.decl ma_owner(d: number)
+ma_owner(d) :- ma_doc(d), path_part(d, "l5250_matching"), doc(d, p, _), !prefix("conform/", p), file_name(d, f),
+    f != "l5250_matching".
+.decl ma_branch_aware()
+ma_branch_aware() :- ma_owner(d), ma_text(d, t), contains("BranchAwareIndexPolicy", t).
+.violation MA033(at: span) "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
+MA033(@place("l5250_matching/maintenance.py", 1)) :- ma_owner(_), !ma_branch_aware().
+.violation MA034(at: span) "Testing support cannot own the authoritative process-local matching maintenance mechanism"
+MA034(@place(p, 1)) :- doc(d, p, _), p = "data_layer_testing/matching_operator.py", ma_text(d, t),
+    contains("register_table_hook", t).

@@ -1,0 +1,121 @@
+// data-layer-layer-violations: every clause hand-written (port-23); the converter gapped all six (the budget
+// stage of layer-0/1, and the `import |from ` regex on the module's text that gates every clause). No existing
+// program in native/src/code_rule_dsl/logic/programs/data_layer/ covers this rule.
+//
+// Options: `sourceGate` is read from the run's options (`option_on`): true (the default) gates on the module-text
+// regex `import\ |from\ `, false on `(?s).*` (every module). `oracleAnalyzer` reads nothing in these clauses.
+// Shared helpers are `lv_`; each clause's own are named after it.
+
+.decl option_on(name: symbol)
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared ---------------------------------------------------------------------------------------------------
+// `syntax: valid` and the policy scope.
+.decl lv_doc(d: number, p: symbol)
+lv_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+
+// The source gate: `any` of [the node is a module whose text matches, the node is inside one]. Every node the
+// clauses test is below the root module, so this is the root's text matching the `sourceGate` case's regex
+// (comments and strings included, as W's regex reads them): `import\ |from\ ` (a search: either literal occurs),
+// or `(?s).*`, which every text matches.
+.decl lv_gate(d: number)
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("import ", s).
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("from ", s).
+lv_gate(d) :- lv_doc(d, _), !option_on("sourceGate"), node(d, _, "module", _, _).
+
+// `not inside (if_statement that has, in field condition, an identifier whose text is TYPE_CHECKING)`, to the
+// end: every strict ancestor.
+.decl lv_if(kind: symbol)
+lv_if("if_statement").
+.decl lv_type_checking(a: node)
+lv_type_checking(a) :- node(_, a, "if_statement", _, _), field(a, "condition", c), node(_, c, "identifier", _, _), text(c, "TYPE_CHECKING").
+.decl lv_guarded(n: node)
+lv_guarded(n) :- lv_type_checking(a), inside(n, a, lv_if).
+
+// Clauses *-0: an import_from_statement with a module_name (MOD), outside a TYPE_CHECKING block.
+.decl lv_from_import(d: number, n: node, m: node)
+lv_from_import(d, n, m) :- lv_gate(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", m), !lv_guarded(n).
+
+// Clauses *-1: a dotted_name (MOD itself) or an aliased_import (MOD its field name) whose parent is an
+// import_statement (`inside`, stopBy neighbor), outside a TYPE_CHECKING block.
+.decl lv_import(d: number, n: node, m: node)
+lv_import(d, n, n) :- lv_gate(d), node(d, n, "dotted_name", _, _), child(p, n, _), node(d, p, "import_statement", _, _), !lv_guarded(n).
+lv_import(d, n, m) :- lv_gate(d), node(d, n, "aliased_import", _, _), field(n, "name", m), child(p, n, _), node(d, p, "import_statement", _, _), !lv_guarded(n).
+
+// The api/conform `any`: a module_name or name field child whose text matches ^impl\., or the node itself a
+// dotted_name whose text does.
+.decl lv_impl(n: node)
+lv_impl(n) :- field(n, "module_name", c), node_text(c, s), prefix("impl.", s).
+lv_impl(n) :- field(n, "name", c), node_text(c, s), prefix("impl.", s).
+lv_impl(n) :- node(_, n, "dotted_name", _, _), node_text(n, s), prefix("impl.", s).
+
+// ---- layer-0, layer-1: the budget (count lte 0 per edge path and start: every edge is a finding) ---------------
+// The file filter: path regex `(?:^|/)(?:api|impl)/` (a search) and notRegex, as written in the policy.
+.decl layer_doc(d: number, p: symbol)
+layer_doc(d, p) :- lv_doc(d, p), match("(?s)(?:.*/)?(?:api|impl)/.*", p), !match("^(?:.*/)?tests/.*$|^(?:.*/)?l0500_ts_models/.*$|^(?:.*/)?l2070_server_plan/.*$|^(?:.*/)?l3000_schema_builder/.*$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_lazy_mixin\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\.py$", p).
+
+// The 4-digit group of a match, as a number (for `lt`: UTF-16 order of two 4-digit strings is their numbers').
+.decl layer_digit(c: symbol, v: number)
+layer_digit("0", 0). layer_digit("1", 1). layer_digit("2", 2). layer_digit("3", 3). layer_digit("4", 4).
+layer_digit("5", 5). layer_digit("6", 6). layer_digit("7", 7). layer_digit("8", 8). layer_digit("9", 9).
+.decl layer_group(g: symbol)
+layer_group(g) :- layer_cand(_, g).
+layer_group(g) :- layer_seg_cand(_, g).
+.decl layer_num(g: symbol, v: number)
+layer_num(g, v) :- layer_group(g), c1 = substr(g, 0, 1), c2 = substr(g, 1, 1), c3 = substr(g, 2, 1), c4 = substr(g, 3, 1),
+  layer_digit(c1, a), layer_digit(c2, b), layer_digit(c3, c), layer_digit(c4, e), v = a * 1000 + b * 100 + c * 10 + e.
+
+// edge.from: group 1 of the leftmost match of `(?:^|/)l([0-9]{4})_` in the path; its absence makes `lt` false.
+// A match lies in one path segment (it has no `/`) and starts it, so the leftmost is the first segment starting
+// `l[0-9]{4}_`. The candidates are the path's segments that do (`path_part`); the first is the one the path
+// matches as `(?:N/)*l<group>_.*`, N a segment not starting `l[0-9]{4}_` (empty included):
+// `(?:[^l/][^/]*|l(?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:…|[0-9](?:[^_/][^/]*)?)?)?)?)?)?`.
+.decl layer_seg_cand(d: number, g: symbol)
+layer_seg_cand(d, g) :- layer_doc(d, _), lv_gate(d), path_part(d, s), match("l[0-9]{4}_.*", s), g = substr(s, 1, 4).
+.decl layer_from(d: number, g: symbol)
+layer_from(d, g) :- layer_seg_cand(d, g), layer_doc(d, p),
+  x = cat(cat("(?s)(?:(?:[^l/][^/]*|l(?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^0-9/][^/]*|[0-9](?:[^_/][^/]*)?)?)?)?)?)?/)*l", g), "_.*"),
+  match(x, p).
+
+// edge.to: group 1 of the leftmost match of `\.l([0-9]{4})_` in MOD's source text (node_text, what a capture's
+// text is). The candidates are the groups of `l([0-9]{4})_` anywhere in the file's source: its matches cannot
+// overlap, so find_iter finds every occurrence, each MOD's among them. The leftmost in MOD's text is the candidate
+// g that the text matches as `Q\.l<g>_.*`, Q a text with no match of `\.l[0-9]{4}_`: `(?:[^.]|F*B)*F*`, F a
+// dangling `\.(?:l[0-9]{0,4})?` (followed by another `.` or the end) and B a `.` whose continuation breaks off
+// at a character that is neither the next one of the pattern nor `.`. No match can start in Q and end after it,
+// as `.` is none of the pattern's later characters.
+.decl layer_cand(d: number, g: symbol)
+layer_cand(d, g) :- layer_from(d, _), source(d, sp), match_group("l(?P<v>[0-9]{4})_", sp, _, "v", gsp), text(gsp, g).
+.decl layer_mod(d: number, m: node, s: symbol)
+layer_mod(d, m, s) :- lv_from_import(d, _, m), layer_from(d, _), node_text(m, s), match("(?s).*\.l[0-9]{4}_.*", s).
+layer_mod(d, m, s) :- lv_import(d, _, m), layer_from(d, _), node_text(m, s), match("(?s).*\.l[0-9]{4}_.*", s).
+.decl layer_to(m: node, g: symbol)
+layer_to(m, g) :- layer_mod(d, m, s), layer_cand(d, g),
+  x = cat(cat("(?s)(?:[^.]|(?:\.(?:l[0-9]{0,4})?)*\.(?:[^l.]|l(?:[^0-9.]|[0-9](?:[^0-9.]|[0-9](?:[^0-9.]|[0-9](?:[^0-9.]|[0-9][^_.]))))))*(?:\.(?:l[0-9]{0,4})?)*\.l", g), "_.*"),
+  match(x, s).
+
+// where: from < to (UTF-16 order of two 4-digit strings, the same as their numbers'), and not (grammar is
+// l2100_sql_grammar, from the path's `(?:^|/)(l2100_sql_grammar)/`, and to = 2200).
+.decl layer_exempt(d: number, v: number)
+layer_exempt(d, 2200) :- layer_doc(d, p), match("(?s)(?:.*/)?l2100_sql_grammar/.*", p).
+
+violation("data-layer-layer-violations", "layer-0", "layer_dependency", p, l) :- layer_doc(d, p), lv_from_import(d, n, m), layer_from(d, gf), layer_to(m, gt),
+  layer_num(gf, f), layer_num(gt, t), f < t, !layer_exempt(d, t), line(n, l).
+violation("data-layer-layer-violations", "layer-1", "layer_dependency", p, l) :- layer_doc(d, p), lv_import(d, n, m), layer_from(d, gf), layer_to(m, gt),
+  layer_num(gf, f), layer_num(gt, t), f < t, !layer_exempt(d, t), line(n, l).
+
+// ---- api_impl-0, api_impl-1 ---------------------------------------------------------------------------------
+.decl api_impl_doc(d: number, p: symbol)
+api_impl_doc(d, p) :- lv_doc(d, p), match("^(?:.*/)?api/(?:.*/)?[^/]*\.py$", p), !match("^(?:.*/)?__init__\.py$|^(?:.*/)?l9900_ts_models/.*$|^(?:.*/)?api/(?:.*/)?tests/.*$|^(?:.*/)?l8000_admin/(?:.*/)?tools/.*$|^(?:.*/)?l2000_connection/(?:.*/)?connection_factory\.py$|^(?:.*/)?l4200_event_pipeline/(?:.*/)?bridges/.*$|^(?:.*/)?l3200_metadata/.*$|^(?:.*/)?l1500_llm/(?:.*/)?__init__\.py$|^(?:.*/)?l1400_config/(?:.*/)?bootstrap\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?cache_integration\.py$|^(?:.*/)?l1450_keys/(?:.*/)?cli\.py$|^(?:.*/)?l2000_connection/(?:.*/)?connection\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?connection\.py$|^(?:.*/)?l2090_response/(?:.*/)?cursor_pagination\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?diff_types\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?dispatcher\.py$|^(?:.*/)?_internal/(?:.*/)?dynamic_import\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_auto_queue\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_metadata\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_worker\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?enqueue\.py$|^(?:.*/)?l2070_batching/(?:.*/)?executor\.py$|^(?:.*/)?l3500_bulk_ops/(?:.*/)?export_cursor\.py$|^(?:.*/)?l1450_keys/(?:.*/)?factory\.py$|^(?:.*/)?l5100_fts/(?:.*/)?fts_search_manager\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?index_manager\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_diff_bytes\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_embedding\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_fts_search\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_infrastructure\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_query_extended\.py$|^(?:.*/)?l2070_batching/(?:.*/)?lazy_runtime\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?log_table\.py$|^(?:.*/)?logged_table\.py$|^(?:.*/)?l7800_versioned_merge/(?:.*/)?merge\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?ownership_scheme\.py$|^(?:.*/)?l2070_batching/(?:.*/)?permission_filter\.py$|^(?:.*/)?index_implementations/(?:.*/)?pgvector\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_helpers\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?plan_query_builder\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_runtime\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?processor\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?query_spec\.py$|^(?:.*/)?l4100_queue/(?:.*/)?queue_definition\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?rbac_models\.py$|^(?:.*/)?l7900_versioned_rebase/(?:.*/)?rebase\.py$|^(?:.*/)?l2070_batching/(?:.*/)?resolve_branch_steps\.py$|^(?:.*/)?l1000_schema/(?:.*/)?schema_def\.py$|^(?:.*/)?l2070_batching/(?:.*/)?server_query_builder\.py$|^(?:.*/)?l4400_scheduler/(?:.*/)?service\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?sparse_change\.py$|^(?:.*/)?l9700_graph_query/(?:.*/)?sql_graph_runtime\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?sql_query_spec\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?subscription\.py$|^(?:.*/)?testing\.py$|^(?:.*/)?l2050_transaction/(?:.*/)?transaction\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?trigger_builder\.py$|^(?:.*/)?l4100_queue/(?:.*/)?triggers\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?validation\.py$|^(?:.*/)?l4100_queue/(?:.*/)?validation\.py$|^(?:.*/)?l7000_versioned_schema/(?:.*/)?versioned_connection\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?versioned_operations\.py$|^(?:.*/)?l2070_batching/(?:.*/)?versioned_select_steps\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\.py$", p).
+violation("data-layer-layer-violations", "api_impl-0", "api_impl", p, l) :- api_impl_doc(d, p), lv_from_import(d, n, _), lv_impl(n), line(n, l).
+violation("data-layer-layer-violations", "api_impl-1", "api_impl", p, l) :- api_impl_doc(d, p), lv_import(d, n, _), lv_impl(n), line(n, l).
+
+// ---- conform_impl-0, conform_impl-1 -------------------------------------------------------------------------
+.decl conform_impl_doc(d: number, p: symbol)
+conform_impl_doc(d, p) :- lv_doc(d, p), match("^(?:.*/)?conform/(?:.*/)?[^/]*\.py$", p), !match("^(?:.*/)?conftest\.py$|^(?:.*/)?bench_all_backends\.py$|^(?:.*/)?test_bugbot_regressions\.py$|^(?:.*/)?test_bulk_loader\.py$|^(?:.*/)?test_config\.py$|^(?:.*/)?test_cross_backend_import\.py$|^(?:.*/)?test_export_import\.py$|^(?:.*/)?test_fts_basic\.py$|^(?:.*/)?test_fts_pagination\.py$|^(?:.*/)?test_fts_validation\.py$|^(?:.*/)?test_incremental_export_import\.py$|^(?:.*/)?test_log_model_registry\.py$|^(?:.*/)?test_log_table_export_import\.py$|^(?:.*/)?test_materialization\.py$|^(?:.*/)?test_materialization_jobs\.py$|^(?:.*/)?test_migration_ddl_bugs_round2\.py$|^(?:.*/)?test_neo4j_validation\.py$|^(?:.*/)?test_object_history\.py$|^(?:.*/)?test_permission_audit\.py$|^(?:.*/)?test_permission_cache\.py$|^(?:.*/)?test_permission_column_filter\.py$|^(?:.*/)?test_permission_events\.py$|^(?:.*/)?test_permission_evolution\.py$|^(?:.*/)?test_permission_introspection\.py$|^(?:.*/)?test_permission_noop\.py$|^(?:.*/)?test_permission_ownership\.py$|^(?:.*/)?test_permission_pagination\.py$|^(?:.*/)?test_permission_row_filter\.py$|^(?:.*/)?test_permission_share\.py$|^(?:.*/)?test_permission_validation\.py$|^(?:.*/)?test_pgvector_e2e\.py$|^(?:.*/)?test_pgvector_low_level\.py$|^(?:.*/)?test_pgvector_migrations\.py$|^(?:.*/)?test_pgvector_stress\.py$|^(?:.*/)?test_pgvector_vs_hnsw_comparison\.py$|^(?:.*/)?test_polymorphic_inheritance\.py$|^(?:.*/)?test_rbac_audit_integration\.py$|^(?:.*/)?test_rbac_foreign_keys\.py$|^(?:.*/)?test_rbac_integration\.py$|^(?:.*/)?test_rbac_polymorphic\.py$|^(?:.*/)?test_rbac_provider\.py$|^(?:.*/)?test_rbac_schema\.py$|^(?:.*/)?test_schema_drift_e2e\.py$|^(?:.*/)?test_security_regression\.py$|^(?:.*/)?test_sparse_backend_incremental\.py$|^(?:.*/)?test_sql_roundtrip_efficiency\.py$|^(?:.*/)?test_uuid_introspection\.py$|^(?:.*/)?test_uuid_validation\.py$|^(?:.*/)?test_vector_query_analysis\.py$|^(?:.*/)?test_versioned_operations\.py$", p).
+violation("data-layer-layer-violations", "conform_impl-0", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_from_import(d, n, _), lv_impl(n), line(n, l).
+violation("data-layer-layer-violations", "conform_impl-1", "conform_impl", p, l) :- conform_impl_doc(d, p), lv_import(d, n, _), lv_impl(n), line(n, l).

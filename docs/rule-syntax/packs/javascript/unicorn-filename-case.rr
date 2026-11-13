@@ -1,0 +1,32 @@
+.policy "unicorn-filename-case" revision 3
+.description "Name JavaScript files and the folders holding them in kebab-case, ignoring leading underscores; consistent names are easier to find and import."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+
+// eslint-plugin-unicorn's filename-case at its default, kebabCase: the file's name, and each folder on its path,
+// is lower-case words and digits joined by single dashes.
+//   src/foo/fooBar.js   src/FooBar/index.js   src/foo/foo_bar.js   src/foo/a--b.js   → reported, at line 1
+//   src/foo/foo-bar.js   src/foo/foo-bar.Test_Utils.js   src/foo/_foo-bar.js   src/$userId/page.js   [id].js
+// What is checked, as the recorded plugin (v76) does:
+//   - leading underscores are dropped first: `__init-db.js` is init-db;
+//   - in the file name only the part before the first dot: `foo-bar.test_utils.js` is foo-bar;
+//   - a name that starts with `$` (a route parameter, `$userId`) is not checked;
+//   - other punctuation is kept and allowed, but not next to a dash: `[foo-bar].js` is fine, `[-a].js` is not.
+// The folders are those of the path in the repository. No options: the policy fixes kebabCase.
+.violation filename_case(at: loc) code "unicorn/filename-case"
+    "Rename this file or folder to kebab-case, for example cart-total.js."
+filename_case(@place(f, 1)) :- doc(d, f, _), checked(d, t), not_kebab(t).
+
+// checked(d, t): the words of a folder or of the file name, as checked: leading underscores gone, the file name cut
+// at its first dot. A name that starts with `$` is skipped (after underscores it is not: `_$a` is checked).
+.decl checked(d: number, t: symbol)
+checked(d, t) :- path_part(d, s), !file_name(d, s), t = @replace_all(s, "^_+", ""), !skipped(s).
+checked(d, t) :- file_name(d, s), t = @replace_all(@replace_all(s, "^_+", ""), "\\..*$", ""), !skipped(s).
+.decl skipped(s: symbol)
+skipped(s) :- path_part(_, s), prefix("$", s).
+// not_kebab(t): an upper-case letter or `_`, a dash first or last, two dashes, or a dash beside punctuation.
+.decl not_kebab(t: symbol)
+not_kebab(t) :- checked(_, t), (prefix("-", t) ; suffix("-", t) ;
+    match("[\\s\\S]*(?:[A-Z_]|--|[^A-Za-z0-9_-]-|-[^A-Za-z0-9_-])[\\s\\S]*", t)).

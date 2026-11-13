@@ -1,0 +1,20 @@
+{
+  "cpu_seconds": 13.22099,
+  "wall_seconds": 17.893745209,
+  "peak_footprint_mb": 664.174592,
+  "local_cpu_seconds": 1.0515100000000002,
+  "executions": [
+    80,
+    80,
+    80
+  ],
+  "prepared": [
+    "store",
+    "store",
+    "store"
+  ],
+  "baseline_vm_steps": 336517,
+  "composed_vm_steps": 4965288,
+  "vm_regression_ratio": 14.75493957214643,
+  "performance_parity_demonstrated": false
+}

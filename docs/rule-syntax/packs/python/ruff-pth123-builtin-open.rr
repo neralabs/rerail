@@ -1,0 +1,27 @@
+.policy "ruff-pth123-builtin-open" revision 2
+.description "Use the open method of a Path object instead of the open builtin; pathlib reads better than passing path strings around."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH123 (flake8-use-pathlib): a call of the builtin `open` (unshadowed, or `builtins.open`), unless
+// `Path.open` cannot do it: the file is a file descriptor, `closefd` is anything but `True`, or `opener` is
+// anything but None. `closefd` and `opener` count by keyword or at positions 6 and 7.
+// Reported at the callee.
+//   open("f.txt")                        ← PTH123: `Path("f.txt").open()`
+//   open(3)                              not reported: a file descriptor
+//   def f(fd: int): open(fd)             not reported: fd is annotated int
+//   open("f", closefd=False)             not reported; `closefd=True` is reported
+//   open("f", opener=my_opener)          not reported; `opener=None` is reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
+//   arg_value(c, x, i, a)   argument x, by keyword or at position i   (python/pathlib)
+
+.violation PTH123(at: node) code "PTH123"
+    "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`."
+    suppress ruff "PTH123"
+PTH123(f) :- pth_call(c, "builtins.open", f), !fd_arg(c, "file"), !open_beyond_pathlib(c).
+// open_beyond_pathlib(c): an argument `Path.open` does not take.
+.decl open_beyond_pathlib(c: node)
+open_beyond_pathlib(c) :- arg_value(c, "closefd", 6, v), !pth_true(v).
+open_beyond_pathlib(c) :- arg_value(c, "opener", 7, v), !pth_none(v).

@@ -1,0 +1,1484 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-graph-lazy-sql-plan",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer graph_lazy_sql_plan at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l7200_versioned_transactions/versioned_lazy_mixin.py",
+      "l7200_versioned_transactions/versioned_transactions.py",
+      "l7200_versioned_transactions/graph_lazy_sql.py",
+      "impl/common/l2070_server_plan/steps/intent_graph.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "graph-plan-contracts-0",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "top_definitions",
+            "query": "SELECT n.__path,n.id,n.__start,n.__end,n.line,n.name,CASE n.kind WHEN 'ClassDef' THEN 'class' ELSE 'function' END symbol_kind FROM a n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.fn IS NULL AND n.cls IS NULL UNION ALL SELECT n.__path,n.id,n.__start,n.__end,n.line,t.name,CASE n.kind WHEN 'TypeAlias' THEN 'typealias' ELSE 'assign' END FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('targets','name') AND t.kind='Name' WHERE n.kind IN ('Assign','TypeAlias') AND n.fn IS NULL AND n.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "name",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "top_symbols",
+            "query": "SELECT n.*,(SELECT min(first.id) FROM top_definitions first WHERE first.__path=n.__path AND first.name=n.name) insertion FROM top_definitions n WHERE NOT EXISTS(SELECT 1 FROM top_definitions later WHERE later.__path=n.__path AND later.name=n.name AND later.id>n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-001' AS issue,'Banned graph lazy implementation symbol `'||n.name||'` must remain deleted' AS message,n.id||':GLSP-001:'||(n.insertion) AS identity,0 AS phase,n.insertion AS ordering,'' AS symbol,'' AS sort_name FROM top_symbols n WHERE n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND n.symbol_kind IN ('class','function') AND n.name IN ('_MappedLazyContext','_PlanBackedGraphQuery','_PlanBackedGraphTraversal','_TxnBoundGraphQueryBuilder','_add_plan_intent','_get_or_create_plan_flush_context','_lazy_result_for_plan_ref','_make_graph_query_builder','_map_lazy') AND EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='VersionedReadTransactionLazyMixin') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-002' AS issue,'VersionedReadTransactionLazyMixin class not found' AS message,n.id||':GLSP-002:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='VersionedReadTransactionLazyMixin') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-003' AS issue,'`graph_lazy` must exist as a pure lazy graph entrypoint' AS message,n.id||':GLSP-003:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND n.name='VersionedReadTransactionLazyMixin' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='graph_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-004' AS issue,'`graph_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-004:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND n.owner_name='VersionedReadTransactionLazyMixin' AND n.name='graph_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-003' AS issue,'Removed graph shortcut `graph_query_builder_lazy` must remain absent' AS message,n.id||':GLSP-003:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND n.owner_name='VersionedReadTransactionLazyMixin' AND n.name='graph_query_builder_lazy' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-003' AS issue,'Removed graph shortcut `graph_traverse_lazy` must remain absent' AS message,n.id||':GLSP-003:'||(1) AS identity,2 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_lazy_mixin.py' AND n.owner_name='VersionedReadTransactionLazyMixin' AND n.name='graph_traverse_lazy'",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-1",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'Required graph lazy SQL class `GraphLazyStepRegistrar` is missing' AS message,n.id||':GLSP-006:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='GraphLazyStepRegistrar') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'Required graph lazy SQL class `SqlGraphExecutionCtx` is missing' AS message,n.id||':GLSP-006:'||(1) AS identity,0 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='SqlGraphExecutionCtx') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'Required graph lazy SQL class `SqlPlanGraphQuery` is missing' AS message,n.id||':GLSP-006:'||(2) AS identity,0 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='SqlPlanGraphQuery') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'Required graph lazy SQL class `SqlPlanGraphQueryBuilder` is missing' AS message,n.id||':GLSP-006:'||(3) AS identity,0 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='SqlPlanGraphQueryBuilder') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'Required graph lazy SQL class `SqlPlanGraphTraversal` is missing' AS message,n.id||':GLSP-006:'||(4) AS identity,0 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='SqlPlanGraphTraversal') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,coalesce(cls.line,1) line,'GLSP-007' AS issue,'`GraphLazyStepRegistrar` must declare `__pure_lazy_surface__`' AS message,n.id||':GLSP-007:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n LEFT JOIN graph_classes cls ON cls.__path=n.__path AND cls.name='GraphLazyStepRegistrar' WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND (cls.id IS NULL OR NOT EXISTS(SELECT 1 FROM a assignment JOIN classes owner ON owner.__path=assignment.__path AND owner.id=assignment.cls JOIN a t ON t.__path=assignment.__path AND t.parent=assignment.id AND t.field='targets' AND t.kind='Name' AND t.name='__pure_lazy_surface__' WHERE assignment.__path=n.__path AND assignment.kind='Assign' AND assignment.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL AND owner.name='GraphLazyStepRegistrar'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-2",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.execute_lazy` is missing' AS message,n.id||':GLSP-008:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='execute_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.execute_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='execute_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.execute_one_lazy` is missing' AS message,n.id||':GLSP-008:'||(1) AS identity,2 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='execute_one_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.execute_one_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(1) AS identity,2 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='execute_one_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.count_lazy` is missing' AS message,n.id||':GLSP-008:'||(2) AS identity,2 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='count_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.count_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(2) AS identity,2 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='count_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-3",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.exists_lazy` is missing' AS message,n.id||':GLSP-008:'||(3) AS identity,2 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='exists_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.exists_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(3) AS identity,2 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='exists_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.execute_bindings_lazy` is missing' AS message,n.id||':GLSP-008:'||(4) AS identity,2 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='execute_bindings_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.execute_bindings_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(4) AS identity,2 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='execute_bindings_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.execute_aggregate_lazy` is missing' AS message,n.id||':GLSP-008:'||(5) AS identity,2 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='execute_aggregate_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.execute_aggregate_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(5) AS identity,2 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='execute_aggregate_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-4",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-008' AS issue,'`SqlPlanGraphQueryBuilder.execute_paths_lazy` is missing' AS message,n.id||':GLSP-008:'||(6) AS identity,2 AS phase,6 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.name='SqlPlanGraphQueryBuilder' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='execute_paths_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-009' AS issue,'`SqlPlanGraphQueryBuilder.execute_paths_lazy` must be decorated with @pure_lazy' AS message,n.id||':GLSP-009:'||(6) AS identity,2 AS phase,6 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/graph_lazy_sql.py' AND n.owner_name='SqlPlanGraphQueryBuilder' AND n.name='execute_paths_lazy' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-006' AS issue,'LazyVersionedReadTransaction class not found' AS message,n.id||':GLSP-006:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='l7200_versioned_transactions/versioned_transactions.py' AND NOT EXISTS(SELECT 1 FROM graph_classes cls WHERE cls.__path=n.__path AND cls.name='LazyVersionedReadTransaction') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'`graph` must exist as a public delegate surface' AS message,n.id||':GLSP-007:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.name='LazyVersionedReadTransaction' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='graph') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-010' AS issue,'`graph` must be decorated with @legacy_sync' AS message,n.id||':GLSP-010:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='legacy_sync' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-011' AS issue,'`graph` must remain a legacy delegate shell' AS message,n.id||':GLSP-011:'||(0.1) AS identity,1 AS phase,0.1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name IN ('_legacy_delegate_stub','_txn_legacy_delegate_body','_versioned_legacy_delegate_body')))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-5",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'`graph_async` must exist as a public delegate surface' AS message,n.id||':GLSP-007:'||(1) AS identity,1 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.name='LazyVersionedReadTransaction' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='graph_async') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-010' AS issue,'`graph_async` must be decorated with @legacy_async' AS message,n.id||':GLSP-010:'||(1) AS identity,1 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_async' AND NOT EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='legacy_async' AND d.kind IN ('Name','Attribute')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-011' AS issue,'`graph_async` must remain a legacy delegate shell' AS message,n.id||':GLSP-011:'||(1.1) AS identity,1 AS phase,1.1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_async' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name IN ('_legacy_delegate_stub','_txn_legacy_delegate_body','_versioned_legacy_delegate_body'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'Removed graph shortcut `graph_query_builder` must remain absent' AS message,n.id||':GLSP-007:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_query_builder' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'Removed graph shortcut `graph_query_builder_async` must remain absent' AS message,n.id||':GLSP-007:'||(1) AS identity,2 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_query_builder_async' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'Removed graph shortcut `graph_traverse` must remain absent' AS message,n.id||':GLSP-007:'||(2) AS identity,2 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_traverse'",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-6",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "top_definitions",
+            "query": "SELECT n.__path,n.id,n.__start,n.__end,n.line,n.name,CASE n.kind WHEN 'ClassDef' THEN 'class' ELSE 'function' END symbol_kind FROM a n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.fn IS NULL AND n.cls IS NULL UNION ALL SELECT n.__path,n.id,n.__start,n.__end,n.line,t.name,CASE n.kind WHEN 'TypeAlias' THEN 'typealias' ELSE 'assign' END FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('targets','name') AND t.kind='Name' WHERE n.kind IN ('Assign','TypeAlias') AND n.fn IS NULL AND n.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "name",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "top_symbols",
+            "query": "SELECT n.*,(SELECT min(first.id) FROM top_definitions first WHERE first.__path=n.__path AND first.name=n.name) insertion FROM top_definitions n WHERE NOT EXISTS(SELECT 1 FROM top_definitions later WHERE later.__path=n.__path AND later.name=n.name AND later.id>n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-007' AS issue,'Removed graph shortcut `graph_traverse_async` must remain absent' AS message,n.id||':GLSP-007:'||(3) AS identity,2 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='l7200_versioned_transactions/versioned_transactions.py' AND n.owner_name='LazyVersionedReadTransaction' AND n.name='graph_traverse_async' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-010' AS issue,'Banned interim graph terminal symbol `'||n.name||'` must remain deleted' AS message,n.id||':GLSP-010:'||(n.insertion) AS identity,0 AS phase,n.insertion AS ordering,'' AS symbol,'' AS sort_name FROM top_symbols n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.name IN ('GraphQueryTerminalIntent','GraphQueryTerminalStep','_GraphQueryTerminalMode','_clone_graph_pattern') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphAggregateStep` is missing' AS message,n.id||':GLSP-012:'||(0) AS identity,1 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphAggregateStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphBindingsStep` is missing' AS message,n.id||':GLSP-012:'||(1) AS identity,1 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphBindingsStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphCountStep` is missing' AS message,n.id||':GLSP-012:'||(2) AS identity,1 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphCountStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphExistsStep` is missing' AS message,n.id||':GLSP-012:'||(3) AS identity,1 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphExistsStep' AND s.symbol_kind IN ('class','function'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-7",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_classes",
+            "query": "SELECT n.* FROM classes n WHERE n.fn IS NULL AND n.cls IS NULL AND NOT EXISTS(SELECT 1 FROM classes earlier WHERE earlier.__path=n.__path AND earlier.name=n.name AND earlier.fn IS NULL AND earlier.cls IS NULL AND earlier.id<n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "top_definitions",
+            "query": "SELECT n.__path,n.id,n.__start,n.__end,n.line,n.name,CASE n.kind WHEN 'ClassDef' THEN 'class' ELSE 'function' END symbol_kind FROM a n WHERE n.kind IN ('ClassDef','FunctionDef','AsyncFunctionDef') AND n.fn IS NULL AND n.cls IS NULL UNION ALL SELECT n.__path,n.id,n.__start,n.__end,n.line,t.name,CASE n.kind WHEN 'TypeAlias' THEN 'typealias' ELSE 'assign' END FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('targets','name') AND t.kind='Name' WHERE n.kind IN ('Assign','TypeAlias') AND n.fn IS NULL AND n.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "name",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "top_symbols",
+            "query": "SELECT n.*,(SELECT min(first.id) FROM top_definitions first WHERE first.__path=n.__path AND first.name=n.name) insertion FROM top_definitions n WHERE NOT EXISTS(SELECT 1 FROM top_definitions later WHERE later.__path=n.__path AND later.name=n.name AND later.id>n.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphNodesStep` is missing' AS message,n.id||':GLSP-012:'||(4) AS identity,1 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphNodesStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphOneStep` is missing' AS message,n.id||':GLSP-012:'||(5) AS identity,1 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphOneStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `ExecuteGraphPathsStep` is missing' AS message,n.id||':GLSP-012:'||(6) AS identity,1 AS phase,6 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='ExecuteGraphPathsStep' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-012' AS issue,'Required graph intent symbol `_build_graph_execution_ctx` is missing' AS message,n.id||':GLSP-012:'||(7) AS identity,1 AS phase,7 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND NOT EXISTS(SELECT 1 FROM top_symbols s WHERE s.__path=n.__path AND s.name='_build_graph_execution_ctx' AND s.symbol_kind IN ('class','function')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-013' AS issue,'ExecuteGraphBindingsStep must declare cte_column_type_hints() for SQL-visible binding columns' AS message,n.id||':GLSP-013:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_classes n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.name='ExecuteGraphBindingsStep' AND NOT EXISTS(SELECT 1 FROM graph_methods m WHERE m.__path=n.__path AND m.owner_name=n.name AND m.name='cte_column_type_hints') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `SqlColumnTypeHints`' AS message,n.id||':GLSP-014:'||(0) AS identity,2 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='SqlColumnTypeHints'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "graph-plan-contracts-8",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "graph_method_candidates",
+            "query": "SELECT f.*,owner.name owner_name FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls WHERE f.fn IS NULL AND owner.fn IS NULL AND owner.cls IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "graph_methods",
+            "query": "SELECT m.* FROM graph_method_candidates m WHERE NOT EXISTS(SELECT 1 FROM graph_method_candidates later WHERE later.__path=m.__path AND later.owner_name=m.owner_name AND later.name=m.name AND later.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "owner_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `_binding_node_sys_id_alias`' AS message,n.id||':GLSP-014:'||(1) AS identity,2 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='_binding_node_sys_id_alias')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `_binding_edge_alias`' AS message,n.id||':GLSP-014:'||(2) AS identity,2 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='_binding_edge_alias')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `uuid_columns`' AS message,n.id||':GLSP-014:'||(3) AS identity,2 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='uuid_columns')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `text_columns`' AS message,n.id||':GLSP-014:'||(4) AS identity,2 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='text_columns')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'GLSP-014' AS issue,'ExecuteGraphBindingsStep.cte_column_type_hints() must mention `integer_columns`' AS message,n.id||':GLSP-014:'||(5) AS identity,2 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM graph_methods n WHERE n.__path='impl/common/l2070_server_plan/steps/intent_graph.py' AND n.owner_name='ExecuteGraphBindingsStep' AND n.name='cte_column_type_hints' AND NOT EXISTS(SELECT 1 FROM a mention WHERE mention.__path=n.__path AND mention.id BETWEEN n.id AND n.last AND (mention.kind IN ('Name','Attribute') AND mention.name='integer_columns'))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

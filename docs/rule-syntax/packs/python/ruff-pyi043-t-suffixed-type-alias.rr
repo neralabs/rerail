@@ -1,0 +1,15 @@
+.policy "ruff-pyi043-t-suffixed-type-alias" revision 2
+.description "Don't end a private type alias name with a T suffix; that suffix is the convention for type variables, so it misleads readers."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI043 (flake8-pyi), every file: a private type alias (`_x: TypeAlias = …` or `type _x = …`) whose name
+// ends in a lowercase letter and `T`, optionally with one digit. A `T` suffix marks a type variable.
+//   _FooT: TypeAlias = int        ← PYI043
+//   _T: TypeAlias = int           fine: no letter before the T
+#include "python/typing.rr"
+
+.violation PYI043(at: node, x: symbol) code "PYI043" "Rename private type alias `{x}` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable."
+    suppress ruff "PYI043"
+PYI043(n, x) :- alias_name(n, x), match("_.*[a-z]T[0-9]?", x).

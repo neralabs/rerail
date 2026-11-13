@@ -1,0 +1,5 @@
+{
+  "title": "else after return",
+  "rule": "ruff-ret505-superfluous-else-return",
+  "note": "RET505 flags an else (or elif) after a branch that returns: the else adds nesting and nothing else."
+}

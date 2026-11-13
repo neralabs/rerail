@@ -1,0 +1,16 @@
+.policy "ruff-pyi011-typed-argument-default-in-stub" revision 2
+.description "Use an ellipsis for annotated parameter defaults in stub files unless the default is a simple literal; type checkers ignore the value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI011 (flake8-pyi), stubs only: an annotated parameter's default that is not a simple value. A stub
+// keeps literals, `-1`, `1 + 2j`, a few math and sys constants, and small flat containers; anything else is `...`.
+//   def f(a: int = x, b: list[int] = [1]): ...     ← PYI011 at `x`; `[1]` is fine
+// PYI014 is the same test for unannotated parameters.
+#include "python/typing.rr"
+
+.violation PYI011(at: node) code "PYI011" "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping."
+    suppress ruff "PYI011"
+PYI011(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), !unset(a), !unset(d),
+    !simple_value(d, "top").

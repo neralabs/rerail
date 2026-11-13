@@ -1,0 +1,94 @@
+// `values` (decision 0083 §1, after P1): what the module-level and class-level constants of every document evaluate
+// to, keyed by symbol. A rule that checks only some documents reads a name defined in any other through this phase's
+// exports, so those documents are read at P1's depth (module and class bodies, never a function body) and never run
+// the checking rules.
+//
+// It reads struct's exports for names (how each module binds each name: a definition, an assignment, or an import of
+// a qualified name), and its own documents' assignments for values, evaluated by python/lengths. A name in a value
+// resolves in its module's bindings, then along import chains (re-exports) across modules, to the symbol defined.
+//
+// ```text
+// # pkg/enums.py                     # pkg/__init__.py               len("pkg.enums.Mode", 3).
+// class Mode(StrEnum):               from pkg.enums import Mode      len("pkg.Mode", 3).       (the re-export)
+//     A = "a"; B = "b"; C = "c"      PAIRS = [(1, 2)] * 2            len("pkg.PAIRS", 2).
+// ```
+//
+// Exports
+//   len(q, n)   symbol q (a constant, an Enum-like class, or a name a module imports one as) has n elements: the
+//               largest reading. A missing row is unknown.
+//
+// Differences from Python, all of them this phase's: every assignment of a name is a reading (the last one is not
+// picked); a class-level value reads module-level names only; an Enum's members are its body's assignments to names
+// not starting `_`, aliases (two members with one value) included; nested classes are not read.
+// Internal relations start `v_`.
+.phase values
+.export len
+
+#include "core.rr"
+#include "python/lengths.rr"
+
+.decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
+.decl struct__member(c: symbol, x: symbol, t: symbol)
+.decl struct__base(c: symbol, i: number, b: symbol)
+.decl struct__def(s: symbol, k: symbol)
+
+// ---- the constants: module-level and class-level assignments -----------------------------------------------------
+.decl v_scope(kind: symbol)
+v_scope("module"). v_scope("function_definition"). v_scope("class_definition"). v_scope("lambda").
+.decl v_modq(m: node, q: symbol)
+v_modq(m, q) :- node(d, m, "module", _, _), doc(d, _, q), q != "".
+// v_class(c, q): class c, defined at module level, is symbol q.
+.decl v_class(c: node, q: symbol)
+v_class(c, @dot(mq, x)) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), nearest(c, m, v_scope),
+    v_modq(m, mq).
+// v_asg(q, v): symbol q is assigned value v (one row per assignment).
+.decl v_asg(q: symbol, v: node)
+v_asg(@dot(sq, x), v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x),
+    field(a, "right", v), nearest(a, s, v_scope), (v_modq(s, sq) ; v_class(s, sq)).
+len_want(v) :- v_asg(_, v).
+
+// ---- names in a value -------------------------------------------------------------------------------------------
+// v_nq(e): a name whose symbol is asked for: a wanted name, and the object of a wanted attribute.
+.decl v_nq(e: node)
+v_nq(e) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
+v_nq(o) :- v_nq(e), attr_of(e, o, _).
+// v_name(e, q): name e reads symbol q, as its module binds it (before any re-export is followed).
+.decl v_name(e: node, q: symbol)
+// The name and its module first, from the document alone, then struct's bindings probed on both: struct's rows are
+// the whole workspace's, so a join that starts from them is that size in every chunk.
+.decl v_idn(e: node, mq: symbol, x: symbol)
+v_idn(e, mq, x) :- v_nq(e), kind(e, "identifier"), text(e, x), nearest(e, m0, "module"), v_modq(m0, mq).
+v_name(e, t) :- v_idn(e, mq, x), struct__binds(mq, x, how, t), how != "assign".
+v_name(e, @dot(mq, x)) :- v_idn(e, mq, x), struct__binds(mq, x, "assign", _).
+// An attribute: a symbol struct knows (a definition, or a name its module or class binds).
+v_name(e, q) :- v_nq(e), attr_of(e, o, a), v_name(o, q0), v_res(q0, r0), q = @dot(r0, a),
+    (struct__def(q, _) ; struct__binds(r0, a, _, _) ; struct__member(r0, a, _)).
+// v_res(q, r): q, then each name an import chain makes it (`from m import x` in module p: p.x is m.x).
+.decl v_ref(q: symbol)
+v_ref(q) :- v_name(_, q).
+v_ref(t) :- struct__binds(_, _, "import", t).
+.decl v_res(q: symbol, r: symbol)
+v_res(q, q) :- v_ref(q).
+v_res(q, t) :- v_res(q, q1), split_dot(q1, m, x), struct__binds(m, x, "import", t), t != q1.
+
+// ---- lengths by symbol -----------------------------------------------------------------------------------------
+// An Enum-like class: a base written `Enum`, `StrEnum`, `IntEnum`, `Flag` or `IntFlag` (bare or dotted); its members.
+.decl v_enum(q: symbol, n: number)
+v_enum(q, n) :- struct__base(q, _, b), match("([A-Za-z_][A-Za-z_0-9]*\\.)*(Str|Int)?(Enum|Flag)", b),
+    n = count : { struct__member(q, x, ""), !match("_.*", x) }, n > 0.
+.decl v_len(q: symbol, k: number)
+v_len(q, k) :- v_asg(q, v), len_of(v, k).
+v_len(q, n) :- v_enum(q, n).
+len_of(e, k) :- v_name(e, q), len_want(e), v_res(q, r), v_len(r, k).
+
+// Each name a symbol is reachable by: its own, each name a module imports it as, and, through a module imported
+// under another name (`from pkg import enums`), that name's attribute (`pkg.facade.enums.Mode`).
+.decl len(q: symbol, n: number)
+.decl v_named(q: symbol, k: number)
+v_named(q, k) :- v_len(q, k).
+v_named(a, k) :- struct__binds(m, x, "import", t), a = @dot(m, x), v_res(t, r), v_len(r, k).
+.decl v_any(q: symbol, k: number)
+v_any(q, k) :- v_named(q, k).
+v_any(@dot(a, y), k) :- struct__binds(m, x, "import", t), struct__def(t, "module"), a = @dot(m, x), v_named(q, k),
+    split_dot(q, t, y), y != "".
+len(q, k) :- v_any(q, _), k = max n : { v_any(q, n) }.

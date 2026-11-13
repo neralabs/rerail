@@ -1,0 +1,17 @@
+.policy "complexity-cyclomatic-python" revision 3
+.description "Keep Python functions at cyclomatic complexity 6 or below, counting each if, elif, loop, except, match, and/or and comprehension clause; branch-heavy functions are hard to follow and test."
+.language python
+.mode steer
+.scope include "**/*.py"
+.scope exclude "**/node_modules/**", "**/.venv/**", "**/venv/**", "**/site-packages/**", "**/dist/**", "**/build/**"
+.scope exclude "**/generated/**", "**/__generated__/**", "**/test_*.py", "**/*_test.py", "**/tests/**", "**/conftest.py"
+
+#include "complexity/python.rr"
+//   cc_report(f, msg)   def f has cyclomatic complexity over 6 (lizard's decision points; nested defs apart)
+
+// The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, elif, for, while, except, finally,
+// and/or operator, conditional expression, comprehension for/if, and match (once). Reported over the whole def:
+//   def grade(s):  if a: …  elif b and c: …  for …: …  while …: …  try: … except: …  x if y else z
+//   -> `grade` has cyclomatic complexity 8, over the ceiling of 6.
+.violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
+complexity(f, msg) :- cc_report(f, msg).

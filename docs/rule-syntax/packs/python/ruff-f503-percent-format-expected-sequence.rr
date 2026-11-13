@@ -1,0 +1,16 @@
+.policy "ruff-f503-percent-format-expected-sequence" revision 2
+.description "Pass a tuple, not a dict, to a %-format string with several positional placeholders; the call fails at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F503 (pyflakes): a format with two or more positional placeholders applied to a dict display or
+// comprehension. Python wants a tuple and raises TypeError. One placeholder takes the dict as its value.
+//   "%s %s" % {"k": "v"}          ← F503
+//   "%s" % {"k": "v"}             not reported
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_positional(v, n)
+
+.violation F503(at: node) code "F503" "`%`-format string expected sequence but got mapping"
+    suppress ruff "F503"
+F503(b) :- percent_fmt(b, _, r, v), pct_positional(v, n), n > 1, mapping_display(r).

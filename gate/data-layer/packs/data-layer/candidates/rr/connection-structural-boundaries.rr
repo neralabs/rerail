@@ -1,0 +1,158 @@
+.policy "data-layer:connection-structural-boundaries" revision 1
+.description "Acceptance gates for the connection cleanup: file sizes, residual symbols, core bases, lifecycle ownership."
+.language python
+.mode block
+.scope include "l2000_connection/connection.py", "l2000_connection/connection_lifecycle.py", "impl/common/l2200_sql_dialect/sql_connection.py", "impl/sqlite/connection.py", "impl/postgres/connection.py", "impl/mariadb/connection.py", "impl/mongodb/connection.py", "impl/neo4j/connection.py"
+// Python linter: scripts/lint_connection_structural_boundaries.py, over fixed files. By file:
+//   connection.py      CSB001 more than 900 lines; CSB002 a residual top-level symbol (WritePlanWorkflow, …);
+//                      CSB003 _DatabaseConnectionCore has a base other than the three state bases
+//   sql_connection.py  CSB010 more than 6000 lines; CSB011 more than 90 top-level defs and classes;
+//                      CSB012 a residual top-level symbol; CSB013 _SqlConnectionCore has more than 6 bases
+//   sqlite, postgres, mariadb connection.py   CSB020 more than 3000 lines; CSB021 a backend mixin bucket
+//   the lifecycle file (connection_lifecycle.py, or connection.py when it does not exist)
+//                      CSB030 _ConnectionLifecycleMixin.__enter__ / __aenter__ calls self.connect() or connect_async()
+//   the five backend connection.py files, in top-level classes named *Connection or *ConnectionCore:
+//                      CSB031 a context-manager method; CSB032 connect_async assigns self._conn, _cursor,
+//                      _introspector or _validator; CSB033 a method other than connect, connect_async,
+//                      ensure_connected_sync/async calls self.connect() or self.connect_async()
+// A method is a def directly in a top-level class body; everything inside it counts for it, nested defs and classes
+// included. Bases count only when written as a name or a dotted name: `T[x]` and `f()` are not counted.
+// When a file has two top-level classes of one name, the last one counts, as in the linter's fact mode.
+// Lines are physical lines (core line_count, Python's splitlines). Line-count findings sit at line 1.
+// Options connectionPath, lifecyclePath, sqlPath move the three l2000/l2200 files, as the linter's tests do.
+
+#include "python/names.rr"
+#include "python/ast.rr"      // unparen
+
+// The linter's symbol lists: CONNECTION_RESIDUAL_SYMBOLS, SQL_RESIDUAL_SYMBOLS, BACKEND_MIXIN_SYMBOLS.
+.decl csb_residual(role: symbol, v: symbol)
+csb_residual("connection", "WritePlanWorkflow"). csb_residual("connection", "SingleIntentPlanWorkflow").
+csb_residual("connection", "ReadPlanWorkflow"). csb_residual("connection", "execute_read_plan_workflow").
+csb_residual("connection", "execute_read_plan_workflow_async").
+csb_residual("connection", "execute_write_plan_workflow").
+csb_residual("connection", "execute_write_plan_workflow_async").
+csb_residual("connection", "execute_single_intent_plan_workflow").
+csb_residual("connection", "execute_single_intent_plan_workflow_async").
+csb_residual("connection", "_PlanScopeFetchToken"). csb_residual("connection", "_plan_scope_fetch_template").
+csb_residual("connection", "_resolve_plan_scope_fetch_template").
+csb_residual("connection", "SchemaBootstrapEvidence"). csb_residual("connection", "AsyncSchemaBootstrapEvidence").
+csb_residual("connection", "AsyncTableExistsAuthority").
+csb_residual("connection", "_resolve_bootstrap_scope_exists_in_schema_transaction_lazy").
+csb_residual("connection", "_ConnectionMetadataMixin").
+csb_residual("sql", "ContentStoreManifest"). csb_residual("sql", "_LargeColumnHydrationRuntimeStep").
+csb_residual("sql", "_PolymorphicRegistryBootstrapRead"). csb_residual("sql", "_PolymorphicCheckReconciliationPlan").
+csb_residual("sql", "_SchemaDdlTransaction"). csb_residual("sql", "_DirectGrammarExecutionPlan").
+csb_residual("sql", "_DirectGrammarExecutionRequest"). csb_residual("sql", "_SqlDirectLazyContext").
+csb_residual("sql", "PreparedTerminalExecution"). csb_residual("sql", "AttributedSqlRenderable").
+csb_residual("sql", "_annotation_is_nullable"). csb_residual("sql", "_model_field_nullable").
+csb_residual("sql", "_sql_types_compatible").
+csb_residual("sql", "_sqlexecution__replay_cached_schema_ddl_effects_lazy").
+csb_residual("sql", "_sqlcoresupport__schema_ensure_model_table_lazy").
+csb_residual("sql", "_sqlcoresupport__flush_polymorphic_metadata_batch_lazy").
+csb_residual("sql", "_sqlcoresupport_ensure_polymorphic_columns_exist_lazy").
+csb_residual("backend", "_SqliteLifecycleExecutionMixin"). csb_residual("backend", "_SqliteMetadataSchemaMixin").
+csb_residual("backend", "_SqliteExecutionSupportMixin"). csb_residual("backend", "_SqliteLargeColumnMixin").
+csb_residual("backend", "_SqliteVersioningMixin"). csb_residual("backend", "_SqliteInstrumentationSupportMixin").
+csb_residual("backend", "_SqliteCoreSupportMixin"). csb_residual("backend", "_PostgresLifecycleExecutionMixin").
+csb_residual("backend", "_PostgresMetadataSchemaMixin"). csb_residual("backend", "_PostgresExecutionSupportMixin").
+csb_residual("backend", "_PostgresBootstrapFeatureMixin"). csb_residual("backend", "_PostgresLargeColumnMixin").
+csb_residual("backend", "_PostgresVersioningMixin"). csb_residual("backend", "_PostgresCoreSupportMixin").
+csb_residual("backend", "_MariaDBLifecycleExecutionMixin"). csb_residual("backend", "_MariaDBMetadataSchemaMixin").
+csb_residual("backend", "_MariaDBExecutionSupportMixin"). csb_residual("backend", "_MariaDBVersioningMixin").
+csb_residual("backend", "_MariaDBCoreSupportMixin").
+.decl csb_state_base(v: symbol)  // ALLOWED_DATABASE_CORE_BASES
+csb_state_base("ConnectionPayloadOpaqueMarker"). csb_state_base("_ConnectionStateCore").
+csb_state_base("_LazyConnectionBase").
+.decl csb_sync_state(v: symbol)  // SYNC_STATE_ATTRS
+csb_sync_state("_conn"). csb_sync_state("_cursor"). csb_sync_state("_introspector"). csb_sync_state("_validator").
+.decl csb_connector(v: symbol)  // ALLOWED_CONNECT_CALLERS
+csb_connector("connect"). csb_connector("connect_async"). csb_connector("ensure_connected_sync").
+csb_connector("ensure_connected_async").
+
+// csb_role(d, role): document d is the connection, lifecycle or sql file, or a "backend" (sqlite, postgres,
+// mariadb) or "scan" file (those three, mongodb, neo4j). "lifecycle" is the file the lifecycle rules read.
+.decl csb_path(role: symbol, p: symbol)
+csb_path("connection", p) :- option("connectionPath", p).
+csb_path("connection", "l2000_connection/connection.py") :- !option("connectionPath", _).
+csb_path("lifecycle_file", p) :- option("lifecyclePath", p).
+csb_path("lifecycle_file", "l2000_connection/connection_lifecycle.py") :- !option("lifecyclePath", _).
+csb_path("sql", p) :- option("sqlPath", p).
+csb_path("sql", "impl/common/l2200_sql_dialect/sql_connection.py") :- !option("sqlPath", _).
+csb_path("lifecycle", p) :- csb_path("lifecycle_file", p), file(p).
+csb_path("lifecycle", p) :- csb_path("lifecycle_file", l), !file(l), csb_path("connection", p).
+csb_path("backend", p) :- glob("impl/{sqlite,postgres,mariadb}/connection.py", p), file(p).
+csb_path("scan", p) :- glob("impl/{sqlite,postgres,mariadb,mongodb,neo4j}/connection.py", p), file(p).
+.decl csb_role(d: number, role: symbol)
+csb_role(d, r) :- csb_path(r, p), doc(d, p, _).
+
+// csb_top(d, n, x): n, named x, is a top-level def or class of document d.
+.decl csb_top(d: number, n: node, x: symbol)
+csb_top(d, n, x) :- modnode(d, m), stmt(st, m), defstmt(n, st), def_name(n, x).
+// csb_class(d, c, x): c is the last top-level class named x in d (the linter's dict keeps the last).
+.decl csb_class(d: number, c: node, x: symbol)
+csb_class(d, c, x) :- csb_top(d, c, x), kind(c, "class_definition"),
+    count : { csb_top(d, c2, x), kind(c2, "class_definition"), c2 > c } = 0.
+// csb_method(c, f, x): def f, named x, is directly in class c's body.
+.decl csb_method(c: node, f: node, x: symbol)
+csb_method(c, f, x) :- csb_class(_, c, _), stmt(st, c), defstmt(f, st), kind(f, "function_definition"),
+    def_name(f, x).
+// csb_base(c, x): a base of c written as a name or a dotted name, by its last name.
+.decl csb_base(c: node, b: node, x: symbol)
+csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    kind(b, "identifier"), text(b, x).
+csb_base(c, b, x) :- csb_class(_, c, _), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    attr_of(b, _, x).
+// csb_connects(f): something inside method f (or its decorators) calls self.connect() or self.connect_async().
+.decl csb_connects(f: node)
+csb_connects(f) :- csb_method(_, f, _), defstmt(f, st), within(c, st), kind(c, "call"), field(c, "function", a),
+    kind(a, "attribute"), field(a, "object", o), kind(o, "identifier"), text(o, "self"),
+    field(a, "attribute", m), (text(m, "connect") ; text(m, "connect_async")).
+// csb_sync_write(f, x): method f assigns self.x (plain, annotated, augmented; inside tuple or list targets too).
+.decl csb_sync_write(f: node, x: symbol)
+csb_sync_write(f, x) :- csb_method(_, f, "connect_async"), within(a, f), csb_target(a, t), csb_self_attr(t, x).
+.decl csb_target(a: node, t: node)
+csb_target(a, t) :- (kind(a, "assignment") ; kind(a, "augmented_assignment")), field(a, "left", t).
+csb_target(a, t) :- csb_target(a, l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern") ; kind(l, "list_pattern")),
+    child(l, t, _).
+.decl csb_self_attr(t: node, x: symbol)
+csb_self_attr(t, x) :- kind(t, "attribute"), field(t, "object", o), kind(o, "identifier"), text(o, "self"),
+    field(t, "attribute", a), text(a, x), csb_sync_state(x).
+.decl csb_long(d: number, role: symbol, max: number)
+csb_long(d, "connection", 900) :- csb_role(d, "connection").
+csb_long(d, "sql", 6000) :- csb_role(d, "sql").
+csb_long(d, "backend", 3000) :- csb_role(d, "backend").
+
+.violation CSB001(at: loc, k: number) "connection.py has {k} lines; target is <= 900"
+CSB001(@place(p, 1), k) :- csb_long(d, "connection", m), line_count(d, k), k > m, doc(d, p, _).
+.violation CSB002(at: node, x: symbol) "residual non-state/lazy symbol {x} still lives in connection.py"
+CSB002(n, x) :- csb_role(d, "connection"), csb_top(d, n, x), csb_residual("connection", x).
+.violation CSB003(at: node, x: symbol) "_DatabaseConnectionCore still inherits non-state ownership mixins: {x}"
+CSB003(c, x) :- csb_role(d, "connection"), csb_class(d, c, "_DatabaseConnectionCore"), csb_base(c, _, x),
+    !csb_state_base(x).
+
+.violation CSB010(at: loc, k: number) "sql_connection.py has {k} lines; target is <= 6000"
+CSB010(@place(p, 1), k) :- csb_long(d, "sql", m), line_count(d, k), k > m, doc(d, p, _).
+.violation CSB011(at: loc, k: number) "sql_connection.py has {k} top-level blocks; target is <= 90"
+CSB011(@place(p, 1), k) :- csb_role(d, "sql"), doc(d, p, _), k = count : { csb_top(d, _, _) }, k > 90.
+.violation CSB012(at: node, x: symbol) "residual SQL service candidate {x} still lives in sql_connection.py"
+CSB012(n, x) :- csb_role(d, "sql"), csb_top(d, n, x), csb_residual("sql", x).
+.violation CSB013(at: node, k: number) "_SqlConnectionCore has {k} direct bases; target is <= 6"
+CSB013(c, k) :- csb_role(d, "sql"), csb_class(d, c, "_SqlConnectionCore"), k = count : { csb_base(c, _, _) }, k > 6.
+
+.violation CSB020(at: loc, k: number) "backend connection.py has {k} lines; target is <= 3000"
+CSB020(@place(p, 1), k) :- csb_long(d, "backend", m), line_count(d, k), k > m, doc(d, p, _).
+.violation CSB021(at: node, x: symbol) "backend mixin bucket {x} still lives in connection.py"
+CSB021(n, x) :- csb_role(d, "backend"), csb_top(d, n, x), csb_residual("backend", x).
+
+.violation CSB030(at: node, x: symbol) "_ConnectionLifecycleMixin.{x} auto-opens driver state"
+CSB030(f, x) :- csb_role(d, "lifecycle"), csb_class(d, c, "_ConnectionLifecycleMixin"), csb_method(c, f, x),
+    (x = "__enter__" ; x = "__aenter__"), csb_connects(f).
+// csb_owner(c, cx): a top-level *Connection / *ConnectionCore class of a backend connection file.
+.decl csb_owner(c: node, cx: symbol)
+csb_owner(c, cx) :- csb_role(d, "scan"), csb_class(d, c, cx), glob("*{Connection,ConnectionCore}", cx).
+.violation CSB031(at: node, cx: symbol, x: symbol) "{cx}.{x} overrides centralized lifecycle policy"
+CSB031(f, cx, x) :- csb_owner(c, cx), csb_method(c, f, x), glob("__{enter,exit,aenter,aexit}__", x).
+.violation CSB032(at: node, cx: symbol, x: symbol) "{cx}.connect_async mutates sync state: {x}"
+CSB032(f, cx, x) :- csb_owner(c, cx), csb_method(c, f, "connect_async"), csb_sync_write(f, x).
+.violation CSB033(at: node, cx: symbol, x: symbol) "{cx}.{x} opens driver state outside lifecycle boundary"
+CSB033(f, cx, x) :- csb_owner(c, cx), csb_method(c, f, x), !csb_connector(x), csb_connects(f).

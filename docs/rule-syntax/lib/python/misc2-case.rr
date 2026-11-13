@@ -1,0 +1,19 @@
+// python/misc2-case: names in `match` statements' case patterns, which tree-sitter writes as dotted_name nodes,
+// not as expressions, so ruff_qual and sym_of never see them.
+//
+// Interface
+//   case_value_name(e, q)   e is a dotted value pattern `a.b.c` in a case pattern, and q its qualified name: the
+//                           first name resolved through imports (ruff_qual), then the rest of the dots
+//
+// Python background: in a case pattern a bare name captures (`case x:` binds x), but a dotted name is a value
+// pattern, compared with `==`: `case six.PY3:` reads six.PY3, and `case np.int:` reads numpy.int.
+//
+//   import six
+//   match flag:
+//       case six.PY3: ...          case_value_name(<six.PY3>, "six.PY3")
+//       case x: ...                no row: a capture
+#include "python/ruff.rr"
+
+.decl case_value_name(e: node, q: symbol)
+case_value_name(e, @dot(q0, rest)) :- kind(e, "dotted_name"), inside(e, _, "case_pattern"), child(e, h, 0),
+    ruff_qual(h, q0), name(e, dn), match("[^.]+\\.(?<rest>.+)", dn).

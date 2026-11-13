@@ -1,0 +1,28 @@
+.policy "n-prefer-promises-dns" revision 8
+.description "Use the promise-based dns API instead of the callback-style dns functions and Resolver, for cleaner async code."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-promises/dns: use dns.promises (or dns/promises) instead of dns's callback API:
+//   dns.lookup(host, cb)    require("dns").resolve4(h, cb)    new dns.Resolver()        reported
+//   dns.promises.lookup(host)                                                         not
+// The functions are the plugin's list; Resolver is reported when constructed. The module is traced through
+// require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // module_use
+trace_module("dns").
+trace_member("dns", x) :- callback_fn(x).
+trace_member("dns", "Resolver").
+.decl callback_fn(x: symbol)
+callback_fn("lookup"). callback_fn("lookupService"). callback_fn("getServers"). callback_fn("resolve").
+callback_fn("resolve4"). callback_fn("resolve6"). callback_fn("resolveAny"). callback_fn("resolveCname").
+callback_fn("resolveMx"). callback_fn("resolveNaptr"). callback_fn("resolveNs"). callback_fn("resolvePtr").
+callback_fn("resolveSoa"). callback_fn("resolveSrv"). callback_fn("resolveTxt"). callback_fn("reverse").
+callback_fn("setServers").
+
+.violation prefer_promises(at: node, msg: symbol) code "n/prefer-promises/dns" "{msg}"
+    suppress eslint "n/prefer-promises/dns"
+prefer_promises(c, "Use the dns.promises version of this function and await it instead of passing a callback.") :-
+    module_use(c, "dns", x, "call"), callback_fn(x).
+prefer_promises(c, "Construct dns.promises.Resolver instead of the callback-style dns.Resolver.") :-
+    module_use(c, "dns", "Resolver", "new").

@@ -1,0 +1,24 @@
+.policy "ruff-npy201-numpy2-deprecation" revision 2
+.description "Replace NumPy members that NumPy 2.0 removes from the main namespace with their supported replacements."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff NPY201 (NumPy): a read of a member NumPy 2.0 removes from its main namespace: `np.float_`, `np.NaN`,
+// `np.in1d`, `np.ComplexWarning`, … (the table, generated from the JSON's clauses). A member with a
+// replacement is exempt in the compatibility fallback that reads the replacement first (python/misc2-numpy's
+// npy_guarded). Ruff's fix imports the replacement; it is not offered here.
+//   np.float_(1)                 ← NPY201: use `numpy.float64`
+//   np.add_newdoc_ufunc          ← NPY201: removed without replacement
+//   try:
+//       np.all([True])
+//   except AttributeError:
+//       np.alltrue([True])       not reported: a fallback for NumPy 1.x
+#include "python/misc2-numpy.rr"
+//   npy_ref(e, q), npy_guarded(e, new), npy_replacement(q, new)
+#include "../packs/python/ruff-npy201-numpy2-deprecation.members.rr"   // npy201_member(q, g), npy201_advice(g, m)
+
+.violation NPY201(at: node, msg: symbol) code "NPY201" "{msg}"
+    suppress ruff "NPY201"
+NPY201(e, @replace_all(m, "\\$NAME", x)) :- npy_ref(e, q), npy201_member(q, g), npy201_advice(g, m), text(e, x),
+    !npy_guarded(e, _).

@@ -1,0 +1,23 @@
+.policy "ruff-ruf068-duplicate-entry-in-dunder-all" revision 2
+.description "Don't list the same name twice in a module's __all__; a repeat has no effect and often hides a copy-paste mistake."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF068: a string listed again in a module's `__all__` list or tuple, given by `__all__ = …`,
+// `__all__: T = …`, `__all__ += …` or `__all__.extend(…)` (python/ruff-sorting's all_seq). Each repeat is
+// reported, at the element.
+//   __all__ = ["A", "B", "A"]      ← RUF068 at the second "A"
+//   __all__ = [A, "B", "B"]        ← RUF068: other elements need not be strings
+//   __all__ += ["A", "B"]          not reported, though "A" may already be in `__all__`
+#include "python/ruff-sorting.rr"
+
+.violation RUF068(at: node, dup: symbol) code "RUF068"
+    "{dup} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
+    suppress ruff "RUF068"
+RUF068(m, t) :- all_item(v, m, j, s), all_item(v, _, j0, s), j0 < j, text(m, t).
+
+// all_item(v, m, j, s): child j of __all__'s sequence v is the str literal m, value s.
+.decl all_item(v: node, m: node, j: number, s: symbol)
+all_item(v, m, j, s) :- all_seq(v0), unparen(v0, v), child(v, e, j), unparen(e, m), plain_str(m, s),
+    string_type(m, "str").

@@ -1,0 +1,26 @@
+.policy "react-hooks-globals" revision 2
+.description "Don't reassign variables declared outside a component or hook while it renders; React may render it any number of times, in any order."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/globals (React Compiler): rendering must not reassign a variable the component or hook does not
+// own, a module-level `let` or an undeclared global, in its render code or in a function that may run then.
+//   let count = 0;
+//   function Counter() { count = count + 1; … }                  reported
+//   const bump = () => { count += 1; }; items.map(bump);         reported: bump may run during render
+//   useEffect(() => { count = 0; });  <b onClick={() => { count = 0; }}/>   not: they run later
+// Changing a property of an outer object (`config.x = 1`) is react-hooks/immutability's.
+// `count++` is not reported by the compiler (an update expression is not a reassignment to it), nor here.
+#include "tsx/react-compiler.rr"
+
+.violation globals(at: node, name: node)
+    code "react-hooks/globals"
+    "Update `{name}` in an effect or event handler instead of during render, or keep the value in state or a ref; it is declared outside the component or hook."
+    suppress eslint "react-hooks/globals"
+    suppress oxlint "globals"
+globals(n, n) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", n),
+    kind(n, "identifier"), rc_own(a, h), (rc_render_fn(h, f) ; rc_live_fn(h, f)), !owned_by(n, f).
+// owned_by(n, f): n names a binding declared inside f.
+.decl owned_by(n: node, f: node)
+owned_by(n, f) :- ref_site(n, s), within(s, f), rc_compiled(f).

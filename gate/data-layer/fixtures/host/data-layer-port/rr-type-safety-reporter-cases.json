@@ -1,0 +1,265 @@
+{
+  "format": "rerail.rr-plugin-report-cases/v1",
+  "cases": [
+    {
+      "id": "report:type-safety:str-expression",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:str-field",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x: Field | str = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:any-any",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x: Expression[Any, Any] = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:comparison",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x = f(_lt=1)\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:filter",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x = q.filter_gt(a=1)\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:order_by",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "def order_by(column: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:where",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "def where(expression: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:select",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "def select(*columns: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:group_by",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "def group_by(*columns: str): pass\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:clean",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "x = 1\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:invalid",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/mod.py",
+          "source": "def broken(: # str|Expression\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:impl/tests/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/tests/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:impl/test/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/test/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:other/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "other/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l9999_future/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l9999_future/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:data_layer/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "data_layer/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:_internal/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "_internal/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:impl/__pycache__/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/__pycache__/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:impl/vendor/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/vendor/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:impl/tmp/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/tmp/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:allowlisted",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "impl/common/l2060_query_spec/query_spec.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l١٢٣٤_future/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l١٢٣٤_future/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l999_future/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l999_future/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l9999_/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l9999_/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l9999_x\nodd/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l9999_x\nodd/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    },
+    {
+      "id": "report:type-safety:scope:l9999_\nodd/mod.py",
+      "check": "type_safety_patterns",
+      "files": [
+        {
+          "path": "l9999_\nodd/mod.py",
+          "source": "x: str | Expression = None\n"
+        }
+      ]
+    }
+  ]
+}

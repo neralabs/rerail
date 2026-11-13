@@ -1,0 +1,48 @@
+.policy "phpcs-generic-php-no-silenced-errors" revision 3
+.description "Avoid the @ error-control operator in PHP outside race-safe directory checks and deprecation notices; it hides every warning, so handle failures explicitly."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/names.rr"
+//   php_call_written(c, x), php_arg(c, i, e), php_named_arg(c, p, e), php_first_arg(c, e), php_logical(b)
+
+// PHP_CodeSniffer's Generic.PHP.NoSilencedErrors (code Discouraged): every `@` error-control operator, reported at
+// the `@`:   if (@in_array($a, $n))   echo @$undefined;   @file_get_contents($f);
+// The pack keeps two idioms where the @ is the point (divergences.json: upstream-wrong, from Symfony):
+//   @trigger_error('…', E_USER_DEPRECATED);         a deprecation only opted-in handlers record
+//   if (!@mkdir($d) && !is_dir($d)) { … }           a race-safe create: the re-check decides whether it failed
+// An @mkdir, @rmdir or @unlink without that re-check gets its own advice.
+.violation silenced(at: node, msg: symbol) code "Generic.PHP.NoSilencedErrors" "{msg}"
+    suppress phpcs "Generic.PHP.NoSilencedErrors.Discouraged"
+silenced(s, "Remove the @ and handle the failure explicitly, by checking the return value or converting warnings with set_error_handler().") :-
+    kind(s, "error_suppression_expression"), !deprecation(s), !fs_call(s, _).
+silenced(s, "Recheck the outcome right after this silenced call, as in `!@mkdir($dir) && !is_dir($dir)`, or drop the @ and check the result.") :-
+    fs_call(s, _), !rechecked(s).
+
+// @trigger_error($message, E_USER_DEPRECATED), or user_error, the level positional or named error_level:.
+.decl deprecation(s: node)
+deprecation(s) :- child(s, c, _), php_call_written(c, x), (x = "trigger_error" ; x = "user_error"),
+    (php_arg(c, 1, l) ; php_named_arg(c, "error_level", l)), match("\\\\?E_USER_DEPRECATED", l).
+// fs_call(s, v): s is @mkdir(v, …), @rmdir(v, …) or @unlink(v, …).
+.decl fs_call(s: node, v: node)
+fs_call(s, v) :- child(s, c, _), php_call_written(c, x), (x = "mkdir" ; x = "rmdir" ; x = "unlink"),
+    php_first_arg(c, v).
+// rechecked(s): s sits in the left operand of a logical b, through parentheses, `!`, a comparison with false
+// (`false === @mkdir($d)`) and other logicals only, and
+// b's right operand is is_dir(v), is_file(v) or file_exists(v), negated or not, on the same path text.
+.decl rechecked(s: node)
+rechecked(s) :- fs_call(s, v), text(v, t), within_stop(s, b, not_logic), php_logical(b), field(b, "left", l),
+    (l = s ; within(s, l)), field(b, "right", r), (exists_check(r, t) ; kind(r, "unary_op_expression"),
+    field(r, "argument", r2), exists_check(r2, t)).
+.decl exists_check(r: node, t: symbol)  // r is is_dir($p), is_file($p) or file_exists($p), $p written t
+exists_check(r, t) :- php_call_written(r, x), (x = "is_dir" ; x = "is_file" ; x = "file_exists"),
+    php_first_arg(r, p), text(p, t).
+.decl not_logic(n: node)  // ends the climb from the @ to the logical: all but ( ), !, logicals, == false
+not_logic(n) :- node(_, n, k, _, _), k != "parenthesized_expression", !php_logical(n), !php_not(n), !false_test(n).
+.decl false_test(n: node)  // a == false, false === b, a !== false
+false_test(n) :- kind(n, "binary_expression"), (op(n, "==") ; op(n, "===") ; op(n, "!==")), child(n, f, _),
+    kind(f, "boolean"), text(f, t), iglob("false", t).
+.decl php_not(n: node)
+php_not(n) :- kind(n, "unary_op_expression"), op(n, "!").

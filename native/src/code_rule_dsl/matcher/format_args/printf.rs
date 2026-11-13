@@ -7,6 +7,7 @@
 //! the unused ones PHPStan counts. A value a numbered placeholder skips (`%2$s` with two values) is
 //! not unused: PHP and PHPStan read the count only.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Fields, Prepared, Side, key_of, positional_past};
 use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, SubTree};
 use crate::code_rule_dsl::matcher::parse::{parsed_tree, parsed_value_tree};
@@ -28,7 +29,7 @@ pub(super) fn prepare<'t, D: Doc>(
     let Some(string) = env.get_match(string) else {
         return Prepared::NoMatch;
     };
-    let tree = match format_tree(string.clone(), Grammar::Printf, reading) {
+    let tree = match format_tree(string.clone(), crate::code_rule_dsl::literal::printf::GRAMMAR, reading) {
         Ok(tree) => tree,
         Err(prepared) => return prepared,
     };
@@ -138,14 +139,13 @@ fn array_values<'t, D: Doc>(array: &Node<'t, D>) -> Option<Vec<Node<'t, D>>> {
 /// PHP's parentheses.
 pub(super) fn expression<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     if node.kind() == "argument"
-        && let Some(value) = node.children().filter(|child| child.is_named()).last()
+        && let Some(value) = node.named().last()
     {
         node = value;
     }
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -153,4 +153,28 @@ pub(super) fn expression<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
         node = expression;
     }
     node
+}
+
+/// PHP's printf-family calls (`FormatPreparer`).
+pub struct Printf;
+
+impl super::FormatPreparer for Printf {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
 }

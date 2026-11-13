@@ -1,0 +1,38 @@
+.policy "ruff-up009-utf8-encoding-declaration" revision 2
+.description "Remove UTF-8 encoding declarations; UTF-8 is already Python 3's default source encoding."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP009 (pyupgrade): a `# -*- coding: utf-8 -*-` comment on line 1 or 2. Python 3 reads source as UTF-8,
+// so it changes nothing. Ruff reads the coding comments among the file's leading comment and blank lines (the
+// first code line ends them), as PEP 263 spells them: `#`, anything, `coding:` or `coding=`, a name. It
+// reports the first one when it is on line 1 or 2 and names exactly `utf-8` or `utf8`, unless the next one
+// names another encoding (two declarations that disagree are left to the reader).
+//   #!/usr/bin/env python
+//   # -*- coding: utf-8 -*-         ← UP009
+//   # coding: utf-8                 not reported when the next line is  # coding: latin-1
+//   x = 1  # coding: utf-8          not reported: not a comment line
+#include "python/ast.rr"
+
+.violation UP009(at: node) code "UP009"
+    "Delete this UTF-8 encoding declaration comment; Python 3 reads source as UTF-8 by default. Keep it only if the file must also run on Python 2."
+    suppress ruff "UP009"
+    fix safe remove "Remove the encoding declaration"
+UP009(c) :- declared(d, l, 0, x), l <= 2, (x = "utf-8" ; x = "utf8"), (declared(d, _, 1, y), (y = "utf-8" ; y = "utf8") ; !declared(d, _, 1, _)),
+    kind(c, "comment"), docof(c, d), line(c, l).
+// Ruff deletes the whole line: here the line's span (indentation included); see NOTES for its terminator.
+remove(c) :- docof(c, d), line(c, l), src_line(d, l, sp) => delete(sp).
+
+// coding(d, l, x): line l is a comment-only line declaring encoding x. The regex is PEP 263's, greedy
+// where Python's `.*?` is lazy: they differ only on a line that says "coding" twice.
+.decl coding(d: number, l: number, x: symbol)
+coding(d, l, x) :- src_line(d, l, sp), match("[ \\t\\f]*#.*coding[:=][ \\t]*(?<x>[-\\w.]+)[\\s\\S]*", sp).
+// head(d, l): line l is in the leading block: no code line above it.
+.decl code_line(d: number, l: number)
+code_line(d, l) :- src_line(d, l, sp), !match("[ \\t\\f]*(#[\\s\\S]*)?", sp).
+.decl head(d: number, l: number)
+head(d, l) :- coding(d, l, _), count : { code_line(d, k), k < l } = 0.
+// declared(d, l, i, x): the i-th coding comment (from 0) of the leading block is on line l and names x.
+.decl declared(d: number, l: number, i: number, x: symbol)
+declared(d, l, i, x) :- head(d, l), coding(d, l, x), i = count : { head(d, k), k < l }.

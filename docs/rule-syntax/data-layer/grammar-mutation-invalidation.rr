@@ -1,0 +1,86 @@
+.policy "data-layer:grammar-mutation-invalidation" revision 1
+.description "A memoized grammar node edited in place must discard its cached rendered fragments."
+.language python
+.mode block
+.scope dirs "impl/common/l2100_sql_grammar"
+.scope tests false
+// Python linter: scripts/lint_grammar_mutation_invalidation.py. A memoizable grammar class (one of fifteen names, or any
+// class with a `render` method decorated …memoize_in_read_only_scope) caches its rendered SQL. A method of it that
+// edits a private attribute of self and does not call forget_memoized_render_fragments() leaves a stale render:
+//   def rename(self, n): self._name = n               -> MUTATION_WITHOUT_INVALIDATION at the def
+//   def add(self, c): self._cols.append(c); forget_memoized_render_fragments(self)   -> fine
+// An edit is an assignment, augmented or annotated assignment, or del whose target is self._x or self._x[…], or a
+// call of a collection mutator (append, update, …) on one. Anywhere in the method, nested defs included.
+// Not reported: __init__, __new__, __post_init__, and private helpers only construction reaches: those that
+// construction reaches through self._helper() calls and no public method does.
+// The Python linter keys methods by name, so of two defs with one name only the last is checked.
+
+.decl gmi_class(x: symbol)
+gmi_class("SqlBinaryOp"). gmi_class("SqlColumnRef"). gmi_class("SqlDiffCtePart").
+gmi_class("SqlDynamicSelectStmt"). gmi_class("SqlExecutedRowsQuery"). gmi_class("SqlLifecycleInputRowsQuery").
+gmi_class("SqlPublishedRowsQuery"). gmi_class("SqlRequestInputRowsQuery"). gmi_class("SqlSelect").
+gmi_class("SqlSelectFromCteWithOverrides"). gmi_class("SqlSelectSparseKeyset").
+gmi_class("SqlSelectSparseSingleObject"). gmi_class("SqlSelectStarSparseVersioned").
+gmi_class("SqlTypedEmptyRowsQuery"). gmi_class("SqlUnionAll").
+.decl gmi_mutator(m: symbol)
+gmi_mutator("add"). gmi_mutator("append"). gmi_mutator("clear"). gmi_mutator("discard"). gmi_mutator("extend").
+gmi_mutator("insert"). gmi_mutator("pop"). gmi_mutator("remove"). gmi_mutator("reverse"). gmi_mutator("sort").
+gmi_mutator("update").
+.decl gmi_construction(x: symbol)
+gmi_construction("__init__"). gmi_construction("__new__"). gmi_construction("__post_init__").
+
+#include "python/ast.rr"    // assign_target, del_node, leaf_name; def_name and attr_of from python/names
+
+// gmi_member(c, f, x): f is a def named x directly in class c's body, decorated or not.
+.decl gmi_member(c: node, f: node, x: symbol)
+gmi_member(c, f, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, f, _), def_name(f, x).
+gmi_member(c, f, x) :- kind(c, "class_definition"), field(c, "body", b), child(b, dd, _),
+    field(dd, "definition", f), def_name(f, x).
+// gmi_method(c, f, x): the last such def of each name (a dict keyed by name keeps the last).
+.decl gmi_method(c: node, f: node, x: symbol)
+gmi_method(c, f, x) :- gmi_member(c, f, x), !gmi_later(c, f, x).
+.decl gmi_later(c: node, f: node, x: symbol)
+gmi_later(c, f, x) :- gmi_member(c, f, x), gmi_member(c, g, x), earlier(f, g).
+
+// gmi_memo(c): c is in scope: a memoizable name, or `@….memoize_in_read_only_scope def render`.
+.decl gmi_memo(c: node)
+gmi_memo(c) :- kind(c, "class_definition"), field(c, "name", n), text(n, x), gmi_class(x).
+gmi_memo(c) :- gmi_member(c, f, "render"), field(dd, "definition", f), child(dd, dc, _), kind(dc, "decorator"),
+    child(dc, e, 0), (kind(e, "identifier") ; kind(e, "attribute")), leaf_name(e, s),
+    suffix("memoize_in_read_only_scope", s).
+
+// gmi_self_attr(e): e is self._x, or a subscript of one (self._x[k][j]).
+.decl gmi_self_attr(e: node)
+gmi_self_attr(e) :- attr_of(e, o, a), kind(o, "identifier"), text(o, "self"), prefix("_", a).
+gmi_self_attr(e) :- kind(e, "subscript"), field(e, "value", v), gmi_self_attr(v).
+// gmi_edit(n): n edits private state of self.
+.decl gmi_edit(n: node)
+gmi_edit(a) :- assign_target(a, t), gmi_self_attr(t).
+gmi_edit(a) :- kind(a, "augmented_assignment"), field(a, "left", t), gmi_self_attr(t).
+gmi_edit(t) :- del_node(t), gmi_self_attr(t).
+gmi_edit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), gmi_mutator(m), gmi_self_attr(o).
+// gmi_forgets(f): f calls forget_memoized_render_fragments, plain or as an attribute.
+.decl gmi_forgets(f: node)
+gmi_forgets(f) :- gmi_method(_, f, _), within(c, f), kind(c, "call"), field(c, "function", n),
+    leaf_name(n, "forget_memoized_render_fragments"), !kind(n, "subscript").
+// gmi_self_call(f, y): f calls self.y(…).
+.decl gmi_self_call(f: node, y: symbol)
+gmi_self_call(f, y) :- gmi_method(_, f, _), within(c, f), kind(c, "call"), field(c, "function", n), attr_of(n, o, y),
+    kind(o, "identifier"), text(o, "self").
+
+// What construction reaches (through private methods only) and what public methods reach (through any method).
+.decl gmi_cons_reach(c: node, x: symbol)
+gmi_cons_reach(c, x) :- gmi_method(c, _, x), gmi_construction(x).
+gmi_cons_reach(c, y) :- gmi_cons_reach(c, x), gmi_method(c, f, x), gmi_self_call(f, y), gmi_method(c, _, y), prefix("_", y).
+.decl gmi_run_reach(c: node, x: symbol)
+gmi_run_reach(c, y) :- gmi_method(c, f, x), !prefix("_", x), gmi_self_call(f, y), gmi_method(c, _, y).
+gmi_run_reach(c, y) :- gmi_run_reach(c, x), gmi_method(c, f, x), gmi_self_call(f, y), gmi_method(c, _, y).
+// gmi_exempt(c, x): construction itself, or a private helper only construction reaches.
+.decl gmi_exempt(c: node, x: symbol)
+gmi_exempt(c, x) :- gmi_method(c, _, x), gmi_construction(x).
+gmi_exempt(c, x) :- gmi_cons_reach(c, x), !gmi_run_reach(c, x).
+
+.violation MUTATION_WITHOUT_INVALIDATION(at: node, cls: symbol, fn: symbol)
+    "{cls}.{fn}() mutates private state without forget_memoized_render_fragments()."
+MUTATION_WITHOUT_INVALIDATION(f, k, x) :- gmi_memo(c), gmi_method(c, f, x), !gmi_exempt(c, x),
+    within(e, f), gmi_edit(e), !gmi_forgets(f), field(c, "name", n), text(n, k).

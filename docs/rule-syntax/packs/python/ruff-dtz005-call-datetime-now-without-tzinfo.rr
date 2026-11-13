@@ -1,0 +1,24 @@
+.policy "ruff-dtz005-call-datetime-now-without-tzinfo" revision 2
+.description "Pass a real timezone to datetime.now; without one, or with None, it returns a naive local time with no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ005 (flake8-datetimez): `datetime.datetime.now()` without a timezone, or with `tz=None`; the result is
+// naive local time. The timezone is the first positional argument or `tz=`. A call followed by
+// `.astimezone()` (through any `.replace(…)`) is aware and not reported. Reported at the call. Only in a file
+// that imports datetime.
+//   datetime.datetime.now()                                ← DTZ005
+//   datetime.datetime.now(tz=None)                         ← DTZ005: None
+//   datetime.datetime.now(datetime.timezone.utc)           not reported
+//   datetime.datetime.now().replace(microsecond=0).astimezone()    not reported
+#include "python/datetime.rr"
+
+.violation DTZ005(at: node) code "DTZ005"
+    "Pass `tz=` with the zone you mean, such as `datetime.now(tz=datetime.timezone.utc)`, so the result is aware. Leave `now()` bare only where a naive local time is required."
+    suppress ruff "DTZ005"
+.violation DTZ005_none(at: node) code "DTZ005"
+    "Replace `tz=None` with the zone you mean, such as `tz=datetime.timezone.utc`, so the result is aware. Keep `None` only where a naive local time is required."
+    suppress ruff "DTZ005"
+DTZ005(c) :- naive_tz(c, "datetime.datetime.now", "missing"), !then_astimezone(c).
+DTZ005_none(c) :- naive_tz(c, "datetime.datetime.now", "none"), !then_astimezone(c).

@@ -1,0 +1,53 @@
+// vue/mutation: whether an expression is mutated where it stands, as eslint-plugin-vue's utils.findMutating climbs:
+// from a start node up through member accesses (`a` → `a.b` → `a.b.c`) to an assignment's left side, an update or
+// `delete`, an array mutator called on it (`a.b.push(x)`), or Object.assign(a, …).
+//
+// Interface:
+//   vmut_ask(s)               filled by the including rule: the nodes to climb from
+//   vmut_path(s, n)           n is s or a member access whose object chain leads to s: a.b.c leads to a
+//   vmutation(s, at, how)     the climb from s ends in a mutation at node at; how is "assignment" (`a.b = 1`,
+//                             `a.b += 1`), "update" (`a.b++`, `delete a.b`) or "call" (`a.b.push(1)`,
+//                             `Object.assign(a, x)`)
+//   vmut_deep(s, at)          that mutation is of a member below s, not of s itself (findMutating's pathNodes is not
+//                             empty): `a.b = 1`, `a.b.push(1)`; not `a = 1`, `a.push(1)`
+//   vmut_first(s, m, x)       m is the first member access above s, and x its name: `b` of a.b.c, `[k]` of a[k]
+//
+//   this.list.push(1)     from `this.list`: a "call" at the call;     from `this`: the same
+//   this.n = 1            from `this.n`: an "assignment"; this.f(1) is none: f is no array mutator
+#include "tsx/eslint-a-common.rr"
+//   deparen(e, x), estree_parent(x, p), static_prop(n, o, x), call_arg(c, a, i)
+
+.decl vmut_ask(s: node)
+.decl vmut_path(s: node, n: node)
+vmut_path(s, s) :- vmut_ask(s).
+vmut_path(s, m) :- vmut_path(s, n), estree_parent(n, m), vmut_object(m, n).
+.decl vmut_object(m: node, n: node)  // n is member access m's object, through parentheses
+vmut_object(m, n) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
+    vmut_strip(w, n).
+.decl vmut_strip(w: node, n: node)  // ESTree has no parentheses; a TypeScript `!` ends the climb
+vmut_strip(w, n) :- deparen(w, n), !kind(n, "non_null_expression").
+.decl vmutation(s: node, at: node, how: symbol)
+vmutation(s, at, how) :- vmut_at(s, at, how, _).
+.decl vmut_deep(s: node, at: node)
+vmut_deep(s, at) :- vmut_at(s, at, _, n), n != s.
+// vmut_at(s, at, how, n): the mutation, and n, the node on the path whose own value it changes (for a mutator
+// call, the method's object: `a.b` of a.b.push(1)).
+.decl vmut_at(s: node, at: node, how: symbol, n: node)
+vmut_at(s, a, "assignment", n) :- vmut_path(s, n), estree_parent(n, a),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", l),
+    vmut_strip(l, n).
+vmut_at(s, u, "update", n) :- vmut_path(s, n), estree_parent(n, u), kind(u, "update_expression").
+vmut_at(s, u, "update", n) :- vmut_path(s, n), estree_parent(n, u), kind(u, "unary_expression"), op(u, "delete").
+vmut_at(s, c, "call", o) :- vmut_path(s, n), n != s, static_prop(n, o, x), vmutator(x), estree_parent(n, c),
+    kind(c, "call_expression"), field(c, "function", f), vmut_strip(f, n).
+vmut_at(s, c, "call", n) :- vmut_path(s, n), estree_parent(n, al), kind(al, "arguments"), child(al, w, 0),
+    vmut_strip(w, n), field(c, "arguments", al), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", q), kind(q, "property_identifier"), text(q, "assign"), field(f, "object", ow), deparen(ow, o),
+    kind(o, "identifier"), text(o, "Object").
+.decl vmut_first(s: node, m: node, x: symbol)
+vmut_first(s, m, x) :- vmut_path(s, m), vmut_object(m, s), static_prop(m, _, x).
+vmut_first(s, m, cat("[", t, "]")) :- vmut_path(s, m), vmut_object(m, s), !static_prop(m, _, _),
+    kind(m, "subscript_expression"), field(m, "index", i), text(i, t).
+.decl vmutator(x: symbol)
+vmutator("push"). vmutator("pop"). vmutator("shift"). vmutator("unshift"). vmutator("reverse"). vmutator("splice").
+vmutator("sort"). vmutator("copyWithin"). vmutator("fill").

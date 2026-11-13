@@ -1,0 +1,22 @@
+.policy "ruff-f524-string-dot-format-missing-arguments" revision 2
+.description "Pass an argument for every placeholder in a str.format() string; a missing one raises IndexError or KeyError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F524 (pyflakes): `S.format(…)` lacks an argument a field of S needs: an index `{i}` or an automatic `{}`
+// past the positional arguments, or a `{name}` with no such keyword. Python raises IndexError or KeyError. Not
+// checked when the call has `*args` or `**kwargs`.
+//   "{} {}".format(1)             ← F524
+//   "{bar}".format()              ← F524
+#include "python/pyflakes-format.rr"
+//   format_call(c, v), brace_auto(v, n), brace_index(v, i), brace_keyword(v, x), call_npos(c, n), call_kw(c, x, a)
+
+.violation F524(at: node) code "F524" "`.format` call is missing argument(s) for placeholder(s)"
+    suppress ruff "F524"
+F524(c) :- open_call(c, v, n), brace_auto(v, a), a > n.
+F524(c) :- open_call(c, v, n), brace_index(v, i), i >= n.
+F524(c) :- open_call(c, v, _), brace_keyword(v, x), !call_kw(c, x, _).
+// open_call(c, v, n): c formats v with n positional arguments and no `*args` or `**kwargs`.
+.decl open_call(c: node, v: symbol, n: number)
+open_call(c, v, n) :- format_call(c, v), brace_ok(v), !call_star(c), !call_kwsplat(c), call_npos(c, n).

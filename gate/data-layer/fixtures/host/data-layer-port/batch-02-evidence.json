@@ -1,0 +1,260 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "batch": 2,
+  "state": "candidate ports; recorded detection parity passed; integration not certified",
+  "oracle": {
+    "python": "3.13.12",
+    "pytest": "9.0.2",
+    "collected": 700,
+    "passed": 700,
+    "skipped": 0,
+    "root_conftest_present": true,
+    "loaded_sources_verified": 1504,
+    "source_mismatches": []
+  },
+  "corpus": {
+    "calls": 275,
+    "positive": 171,
+    "clean": 104,
+    "expected_findings": 191,
+    "retained_calls": 29,
+    "uncaptured_tests": 399,
+    "checks": [
+      {
+        "check": "dynamic_module_loading",
+        "reporting_clauses": 5,
+        "calls": 54,
+        "positive": 30,
+        "clean": 24,
+        "expected_findings": 35
+      },
+      {
+        "check": "forwardref",
+        "reporting_clauses": 3,
+        "calls": 5,
+        "positive": 2,
+        "clean": 3,
+        "expected_findings": 2
+      },
+      {
+        "check": "unresolved_forward_refs",
+        "reporting_clauses": 1,
+        "calls": 61,
+        "positive": 36,
+        "clean": 25,
+        "expected_findings": 39
+      },
+      {
+        "check": "classvar_check",
+        "reporting_clauses": 1,
+        "calls": 8,
+        "positive": 5,
+        "clean": 3,
+        "expected_findings": 5
+      },
+      {
+        "check": "type_safety_patterns",
+        "reporting_clauses": 9,
+        "calls": 46,
+        "positive": 31,
+        "clean": 15,
+        "expected_findings": 32
+      },
+      {
+        "check": "conn_or_txn_union",
+        "reporting_clauses": 2,
+        "calls": 5,
+        "positive": 2,
+        "clean": 3,
+        "expected_findings": 2
+      },
+      {
+        "check": "async_executor",
+        "reporting_clauses": 1,
+        "calls": 39,
+        "positive": 28,
+        "clean": 11,
+        "expected_findings": 34
+      },
+      {
+        "check": "async_patterns",
+        "reporting_clauses": 32,
+        "calls": 12,
+        "positive": 8,
+        "clean": 4,
+        "expected_findings": 8
+      },
+      {
+        "check": "async_sync_boundary",
+        "reporting_clauses": 63,
+        "calls": 5,
+        "positive": 3,
+        "clean": 2,
+        "expected_findings": 3
+      },
+      {
+        "check": "admin_async_purity",
+        "reporting_clauses": 3,
+        "calls": 40,
+        "positive": 26,
+        "clean": 14,
+        "expected_findings": 31
+      }
+    ],
+    "diagnostic_counts": {
+      "dynamic_module_loading/DML001/pattern-0": 17,
+      "dynamic_module_loading/DML001/pattern-1": 1,
+      "dynamic_module_loading/DML001/pattern-2": 11,
+      "dynamic_module_loading/DML001/pattern-3": 2,
+      "dynamic_module_loading/DML001/pattern-4": 4,
+      "forwardref/FWDREF001": 1,
+      "forwardref/FWDREF002": 1,
+      "unresolved_forward_refs/unresolved_forward_ref": 39,
+      "classvar_check/CLASSVAR001": 5,
+      "type_safety_patterns/TSP001/text-str_union_expression": 8,
+      "type_safety_patterns/TSP001/text-str_union_field": 3,
+      "type_safety_patterns/TSP001/text-expression_any_any": 3,
+      "type_safety_patterns/TSP001/text-deprecated_comparison_op": 3,
+      "type_safety_patterns/TSP001/text-deprecated_filter_method": 2,
+      "type_safety_patterns/TSP001/signature-order_by": 7,
+      "type_safety_patterns/TSP001/signature-select": 2,
+      "type_safety_patterns/TSP001/signature-group_by": 2,
+      "type_safety_patterns/TSP001/signature-where": 2,
+      "conn_or_txn_union/UNION": 1,
+      "conn_or_txn_union/SEPARATE_PARAMS": 1,
+      "async_executor/run_in_executor": 34,
+      "async_patterns/ASYNC006": 6,
+      "async_patterns/ASYNC007": 1,
+      "async_patterns/ASYNC008": 1,
+      "async_sync_boundary/SYNC_WRAPS_ASYNC": 1,
+      "async_sync_boundary/ASYNC_WRAPS_SYNC": 1,
+      "async_sync_boundary/EXECUTOR_ESCAPE": 1,
+      "admin_async_purity/AAP001/pattern-0": 26,
+      "admin_async_purity/AAP001/pattern-1": 4,
+      "admin_async_purity/AAP001/pattern-2": 1
+    }
+  },
+  "supplemental_oracle_probes": {
+    "original_pytest_cases": false,
+    "source_cases": 58,
+    "calls": 116,
+    "positive": 74,
+    "clean": 42,
+    "expected_findings": 84,
+    "loaded_sources_verified": 125,
+    "source_mismatches": [],
+    "entry_points": [
+      "original analyzer",
+      "actual FactEngine plugin reporter"
+    ],
+    "regeneration_matches_committed_fixture": true
+  },
+  "cumulative_corpus": {
+    "batches": [
+      1,
+      2
+    ],
+    "includes_batch_two_supplemental_probes": true,
+    "calls": 708,
+    "positive": 479,
+    "clean": 229,
+    "expected_findings": 572
+  },
+  "scoring_dimensions": [
+    "multiplicity",
+    "relative path",
+    "line",
+    "diagnostic code",
+    "backend comparison column",
+    "diagnostic category where recorded"
+  ],
+  "strict_gate": {
+    "false_positives": 0,
+    "false_negatives": 0,
+    "engine_failures": 0,
+    "stateless_workspace_differences": 0,
+    "first_batch_regression_passed": true,
+    "missing_positive_or_clean_coverage": []
+  },
+  "sentinels": {
+    "empty_detector_false_negatives": 191,
+    "always_reporting_detector_rejected": true,
+    "wrong_diagnostic_category_rejected": true
+  },
+  "repository_measurement": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 9010,
+    "bytes": 137896473,
+    "oracleMs": 23090.118041000096,
+    "oracleWorkers": 4,
+    "policyDigests": {
+      "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+      "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+      "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+      "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+      "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+      "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+      "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+      "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46"
+    },
+    "compilationMs": 249.8475420000001,
+    "coldMs": 14361.502958,
+    "unchangedFileMs": 3.9222909999989497,
+    "editedFileMs": 19.388084000000163,
+    "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+    "expected": 0,
+    "actual": 0,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "allocator": "system-allocator-shim",
+    "nativeSha256": "a5f9809f18d87e8dbba7941c9ee5126074f32532b6f3d579cc9a80bbb7a8bed6",
+    "nativeWorkers": 4
+  },
+  "worker_phase_seconds": {
+    "parseNs": 11.001,
+    "tapeEncodeNs": 3.443,
+    "tapeDecodeRestoreNs": 1.417,
+    "anchorIndexNs": 1.853,
+    "anchorSelectionNs": 0.717,
+    "regexNs": 6.411,
+    "astMatchNs": 0.934,
+    "manifestCandidateLookupNs": 2.977
+  },
+  "worker_phase_note": "Aggregate worker times for cold revisions only; concurrent phases are not wall-time components.",
+  "validation": {
+    "focused_tests_passed": 244,
+    "focused_test_files_passed": 5,
+    "focused_pack_checks_passed": 6,
+    "structure_checks_passed": 25,
+    "dsl_reference_differences": 0,
+    "rust_format": "passed",
+    "rust_clippy_all_targets": "passed with code-rule-profile and warnings denied",
+    "boundaries": "passed",
+    "licenses": "passed",
+    "windows_paths": "passed",
+    "typescript": "three errors in unchanged activation and PI integration files with the borrowed dependency installation"
+  },
+  "limits": [
+    "Detection parity does not certify message text, severity, CLI rendering, signed policy, or enforcement integration.",
+    "29 retained calls and 399 uncaptured tests are not counted as native parity passes.",
+    "Additional probes are separate from the 700 original pytest cases.",
+    "Existing first-batch decoded-string location defects remain outside its passing corpus.",
+    "Python ast and tree-sitter acceptance still require further syntax edge-case coverage.",
+    "Performance samples use a system allocator shim on a shared machine; they do not certify production jemalloc throughput."
+  ],
+  "linear_issues_created": []
+}

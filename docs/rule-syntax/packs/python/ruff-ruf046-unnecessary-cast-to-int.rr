@@ -1,0 +1,43 @@
+.policy "ruff-ruf046-unnecessary-cast-to-int" revision 1
+.description "Remove int() around a value that is already an integer, such as a length, an integer literal or arithmetic on integers."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF046: `int(x)`, one argument, where x is already an int:
+//   - an int expression by its form: `1`, `-1`, `1 + 1`, `1 if t else 2`, `v := 1` (not `1 / 1`);
+//   - a call that returns an int: len, id, ord, hash, int, math.comb, factorial, gcd, lcm, isqrt, perm;
+//   - a rounding call: math.ceil, floor, trunc, or `round(x)` / `round(x, None)`, which return an int for
+//     floats too; `round(x, n)` with an int expression n only when x is itself an int.
+//   int(len(xs))          ← RUF046  `len(xs)`
+//   int(round(f))         ← RUF046
+//   int(round(1., 0))     not reported: a float
+#include "python/ruff.rr"
+
+param_slot("builtins.round", "number", 0).
+param_slot("builtins.round", "ndigits", 1).
+
+.violation RUF046(at: node, msg: symbol) code "RUF046" "{msg}"
+    suppress ruff "RUF046"
+RUF046(c, "Drop the `int(...)` wrapper and use its argument directly; the argument is already an integer.") :-
+    int_cast(c, x), (int_expr(x) ; unparen(x, m), call_q(m, q), int_fn(q) ; int_round(x)).
+RUF046(c, "Drop the `int(...)` wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int.") :-
+    int_cast(c, x), (unparen(x, m), call_q(m, q), (q = "math.ceil" ; q = "math.floor" ; q = "math.trunc") ;
+    any_round(x), !int_round(x)).
+.decl int_cast(c: node, x: node)
+int_cast(c, x) :- call_q(c, "builtins.int"), call_only(c, x).
+.decl int_fn(q: symbol)
+int_fn("builtins.len"). int_fn("builtins.id"). int_fn("builtins.ord"). int_fn("builtins.hash"). int_fn("builtins.int").
+int_fn(cat("math.", f)) :- (f = "comb" ; f = "factorial" ; f = "gcd" ; f = "lcm" ; f = "isqrt" ; f = "perm").
+
+// any_round(x): `round(n)` or `round(n, None)`, an int whatever n is. int_round(x): an int n (an int expression,
+// or a name bound to an int), and no ndigits, None, or an int expression: `round(5, -1)` is an int too.
+.decl round_call(x: node, m: node)
+round_call(x, m) :- int_cast(_, x), unparen(x, m), call_q(m, "builtins.round"), !call_splat(m), call_nargs(m, a),
+    call_nkwargs(m, k), a + k <= 2, call_param(m, "number", _).
+.decl any_round(x: node)
+any_round(x) :- round_call(x, m), !call_param(m, "ndigits", _).
+any_round(x) :- round_call(x, m), call_param(m, "ndigits", d), unparen(d, n), kind(n, "none").
+.decl int_round(x: node)
+int_round(x) :- round_call(x, m), call_param(m, "number", v), int_typed(v),
+    (any_round(x) ; call_param(m, "ndigits", d), int_expr(d)).

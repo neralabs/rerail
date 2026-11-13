@@ -1,0 +1,32 @@
+.policy "ruff-f822-undefined-export" revision 2
+.description "List only names the module actually defines in its __all__ (outside __init__.py); an undefined entry breaks star imports."
+.language python
+.mode steer
+.scope include "**/*"
+.scope exclude "**/__init__.py", "**/__init__.pyi", "__init__.py", "__init__.pyi"
+
+// Ruff F822 (pyflakes): a name listed in `__all__` that the module never binds, so `from m import *` fails.
+// Not reported when the module has a star import (that is F405), nor in `__init__.py` (scope). In a `.pyi`
+// stub a bare annotation `b: int` binds b. A `# noqa` on the `__all__` statement's first line covers every
+// string in it, as in Ruff.
+//   a = 1
+//   __all__ = ["a", "b"]       ← F822 at "b"
+#include "python/pyflakes.rr"
+//   all_entry(s, x)   string s names x in the module's `__all__` (=, +=, extend, append, list(…), +)
+//   noqa(st, code)    the first line of statement st has `# noqa` or `# noqa: …code…`
+
+.violation F822(at: node, x: symbol) code "F822" "Undefined name `{x}` in `__all__`"
+    suppress ruff "F822"
+F822(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !star(m), !bound_in(m, x), !builtin(x),
+    !stub_annotated(d, x), !deleted(m, x), top_stmt(s, st), !noqa(st, "F822").
+// deleted(m, x): module m has `del x` at its top level. Ruff keeps a binding for a deleted name, so `__all__`
+// may list it.
+.decl deleted(m: node, x: symbol)
+deleted(m, x) :- expr_ctx(n, "del"), kind(n, "identifier"), text(n, x), nearest(n, m, scope), kind(m, "module").
+.decl top_stmt(s: node, st: node)  // the module-level statement holding s
+top_stmt(s, st) :- all_entry(s, _), docof(s, d), modnode(d, m), child(m, st, _), within(s, st).
+noqa_ask(st, "F822") :- top_stmt(_, st).
+// stub_annotated(d, x): `.pyi` stub d declares `x: T` at module level.
+.decl stub_annotated(d: number, x: symbol)
+stub_annotated(d, x) :- doc(d, p, _), suffix(".pyi", p), modnode(d, m), child(m, st, _), child(st, a, 0),
+    kind(a, "assignment"), field(a, "type", _), field(a, "left", l), text(l, x).

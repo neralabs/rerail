@@ -1,0 +1,23 @@
+.policy "typescript-eslint-default-param-last" revision 5
+.description "Put defaulted and optional parameters after required ones in TypeScript functions; callers otherwise can't omit them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   function_node, fn_param, default_param, rest_param, optional_param
+
+// typescript-eslint's default-param-last: a parameter with a default or a `?`, followed somewhere by a plain
+// one. Function bodies only: declarations, expressions, arrows and methods, not overload signatures.
+//   function f(a = 1, b) {}           → `a = 1`        function f(a?: number, b: number) {}   → `a?`
+//   class C { constructor(public a = 1, b) {} }        → `public a = 1`, the parameter property
+//   function f(a, b = 1, ...c) {}     fine: a rest parameter is not plain
+.violation default_param_last(at: node) code "@typescript-eslint/default-param-last"
+    "Default parameters should be last."
+    suppress eslint "@typescript-eslint/default-param-last"
+    suppress oxlint "default-param-last"
+    suppress biome "lint/style/useDefaultParameterLast"
+default_param_last(p) :- function_node(f), fn_param(f, p, i), (default_param(p) ; optional_param(p)),
+    fn_param(f, q, j), j > i, plain(q).
+.decl plain(p: node)
+plain(p) :- fn_param(_, p, _), !default_param(p), !rest_param(p), !optional_param(p).

@@ -1,0 +1,60 @@
+// python/flow: statement order within one body. Tree arithmetic only; no data flow.
+// Built only on lib/core.rr (within, child, kind); no other Python module. All three relations are interface.
+// Use it for rules like "a call before the `return`" or "an import inside an `if`", where source order inside a
+// single block is enough and no value needs to be followed.
+// Note: "block" is the tree-sitter kind of an indented body (of a def, if, for, try, ...). A module's top-level
+// statements are children of the "module" node, not of a block.
+
+// stmt_of(n, st, body): st is the statement directly in block `body` that contains n (or is n).
+// e.g. in `def f():\n  x = g()\n  return x`, the call g() has st = the `x = g()` statement, body = f's block.
+// A node nested in several blocks gets one row per enclosing block.
+.decl stmt_of(n: node, st: node, body: node)  // the statement of `body` that holds n
+stmt_of(n, st, b) :- within(n, st), child(b, st, _), kind(b, "block").
+stmt_of(st, st, b) :- child(b, st, _), kind(b, "block").
+// before(a, b): a and b sit in different statements of the same block, and a's statement comes first (child index
+// order). Says nothing about nodes in the same statement, or about whether a's statement is reached at all.
+.decl before(a: node, b: node)  // a's statement runs before b's in their shared body
+before(a, b) :- stmt_of(a, sa, body), stmt_of(b, sb, body), child(body, sa, i), child(body, sb, j), i < j.
+// in_branch(n, b): n runs only on some paths: it is inside block b that is the body of an if/elif/else, a try or
+// except clause, or a match case. e.g. in `if c:\n  x = 1`, the assignment is in_branch of the if's block.
+// Loop bodies (for/while) are not included.
+.decl in_branch(n: node, b: node)  // n is inside branch b of an if/try/match
+in_branch(n, b) :- within(n, b), kind(b, "block"), child(p, b, _),
+    kind(p, k), branch_kind(k).
+.decl branch_kind(kind: symbol)
+branch_kind("if_statement"). branch_kind("elif_clause"). branch_kind("else_clause").
+branch_kind("try_statement"). branch_kind("except_clause"). branch_kind("case_clause").
+
+// ---- edits --------------------------------------------------------------------------------------------------------
+// An `.edit` is an edit defined in Datalog: rules for it end in `=> …` and expand to the native edits in core
+// (replace, delete, insert_before, insert_after). Its arguments are always bound by the caller, so a library edit
+// only ever runs for the nodes a fix names.
+//
+// remove_stmt(st): delete statement st without leaving an empty body. Python needs at least one statement in a
+// block, so `def f():\n    import x` becomes `def f():\n    pass`, not a syntax error.
+.edit remove_stmt(st: node)
+remove_stmt(st) :- child(b, st, _), kind(b, "block"), child(b, o, _), o != st => delete(st).
+remove_stmt(st) :- child(b, st, _), kind(b, "block"), count : { child(b, o, _), o != st } = 0 => replace(st, `pass`).
+remove_stmt(st) :- child(m, st, _), kind(m, "module") => delete(st).    // module level: an empty module is fine
+
+// always_raises(b): every way through block b ends in a raise: some statement of b is a `raise`, or an `if`
+// whose every branch (each elif, and an else that must exist) always raises. Returns, loops and try are not
+// followed: they count as "may not raise". "Every branch" is a chain, not a count: an if raises when its body
+// does and its first alternative starts a raising tail, so the recursion is positive and plain Soufflé.
+.decl always_raises(b: node)
+always_raises(b) :- kind(b, "block"), child(b, s, _), kind(s, "raise_statement").
+always_raises(b) :- kind(b, "block"), child(b, s, _), kind(s, "if_statement"),
+    field(s, "consequence", c), always_raises(c), alt_first(s, x), tail_raises(x).
+// alt_first(s, x) / alt_next(x, y): an if's elif and else clauses in source order.
+.decl alt_first(s: node, x: node)
+alt_first(s, x) :- kind(s, "if_statement"), j = min j2 : { field(s, "alternative", y), child(s, y, j2) },
+    child(s, x, j).
+.decl alt_next(x: node, y: node)
+alt_next(x, y) :- field(s, "alternative", x), child(s, x, i),
+    j = min j2 : { field(s, "alternative", y2), child(s, y2, j2), j2 > i }, child(s, y, j).
+// tail_raises(x): clause x and every clause after it always raise, and the chain ends in an else.
+.decl tail_raises(x: node)
+tail_raises(x) :- kind(x, "else_clause"), field(x, "body", b), always_raises(b).
+tail_raises(x) :- kind(x, "elif_clause"), field(x, "consequence", b), always_raises(b), alt_next(x, y),
+    tail_raises(y).
+

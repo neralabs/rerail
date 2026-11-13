@@ -1,0 +1,22 @@
+.policy "ruff-c410-unnecessary-literal-within-list-call" revision 2
+.description "Write a list literal instead of passing a list or tuple literal to the list constructor; the call only copies the literal."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C410 (flake8-comprehensions): `list(…)` of the builtin list, whose one argument is a list or tuple
+// display. Its fix is unsafe; none here.
+//   list([1, 2])       ← C410: [1, 2], the copy of a list nothing else holds
+//   list((1, 2))       ← C410: [1, 2]
+//   list([1], [2])     not reported
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), list_like(e, k)
+
+.violation C410(at: node, id: symbol, msg: symbol) code "C410" "{msg}"
+    suppress ruff "C410"
+C410(c, "list-literal-within-list-call",
+    "Remove the outer `list()` call and keep the list literal it wraps; the call only copies a list that nothing else references.") :-
+    c4_call(c, "list"), c4_only(c, a), list_like(a, "list").
+C410(c, "tuple-literal-within-list-call",
+    "Write the elements as a list literal `[...]` instead of `list((...))`; the tuple is built only to be copied.") :-
+    c4_call(c, "list"), c4_only(c, a), list_like(a, "tuple").

@@ -1,0 +1,17 @@
+.policy "ruff-d107-undocumented-public-init" revision 2
+.description "Add a docstring to the __init__ method of each public class, describing its arguments and side effects."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D107 (pydocstyle): the `__init__` of a public class with no docstring. Not checked: `@overload`/
+// `@override` ones, defs decorated with a `pydocstyle.ignore-decorators` entry, and `.pyi` stubs.
+//   class C:
+//       """Doc."""
+//       def __init__(self): …    ← D107 at `__init__`
+#include "python/docstrings.rr"
+
+.violation D107(at: node) code "D107"
+    "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
+    suppress ruff "D107"
+D107(nm) :- doc_missing(_, "method", nm, "__init__").

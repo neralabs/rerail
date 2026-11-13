@@ -1,0 +1,98 @@
+// data-layer-execution-authority-bypass in Rerail logic: clause `authority-sites`, options at their defaults
+// (oracleAnalyzer false, entryPoint "all"; no stage reads them). Source:
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json.
+//
+// One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here; a nullable
+// column is a side relation that holds where the column is not NULL. Inputs are matcher atoms with the rule's matchers
+// verbatim; the optional WRAPPER capture (`inside` a decorated_definition, stopBy neighbor) is the frame's parent, by
+// `child` and `kind`. The clause is per file (partitionBy file): every join is within one document (`docof`).
+//
+// Builtins: @rx_replace, @replace, @qualname (tape: the `name` texts of f's function_definition/class_definition
+// ancestors-or-self, outermost first, joined by "." and by ".<locals>." before a function_definition that has a
+// function_definition ancestor), @qualdepth (the function frames among them). A builtin with no value (SQL NULL)
+// binds nothing.
+// Tape form (convention 10): `contexts`' `scopes`, a string path-fold over `parents` (E0 § 2.5 row 1), is @qualname;
+// E0's non-recursive form (ancestor frames by containment + ordered group_concat) needs an ordered string aggregate.
+// LIMIT/choice: `parents` and `sites` (ORDER BY __start DESC LIMIT 1) are max aggregates; frame starts are distinct
+// within a file, so neither chooses.
+.policy {"format": "rerail.policy/v1", "id": "data-layer-execution-authority-bypass", "revision": 1, "mode": "block", "description": "Candidate port of nera-data-layer execution_authority_bypass at 2b1504adc4291daaf080b2e932962b134da1a69a.", "scope": {"include": ["l[0-9][0-9][0-9][0-9]_*/**/*.py", "impl/**/*.py", "data_layer/**/*.py", "conform/**/*.py", "tests/**/*.py"], "exclude": ["**/.git/**", "**/.venv/**", "**/__pycache__/**", "**/tmp/**"]}, "clauses": [{"id": "shared", "define": {"options": {"oracleAnalyzer": {"type": "boolean", "default": false}, "entryPoint": {"type": "string", "default": "all"}}}}, {"id": "authority-sites", "relational": "rdl", "violation": {"code": "AUTH001", "message": "Execution authority boundary violation", "anchor": "witness.span"}}]}
+
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl raw_function(f: node, name: symbol)
+raw_function(f, name) :- ast(d, f, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "function_definition"}, {"pattern": "$DECL"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"any": [{"inside": {"all": [{"kind": "decorated_definition"}, {"pattern": "$WRAPPER"}], "stopBy": "neighbor"}}, {"pattern": "$_"}]}]}}, NAME: n), text(n, name).
+.decl raw_function_wrapper(f: node, w: node)
+raw_function_wrapper(f, w) :- raw_function(f, _), child(w, f, _), kind(w, "decorated_definition").
+.decl raw_class(c: node, name: symbol)
+raw_class(c, name) :- ast(d, c, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "class_definition"}, {"pattern": "$DECL"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"any": [{"inside": {"all": [{"kind": "decorated_definition"}, {"pattern": "$WRAPPER"}], "stopBy": "neighbor"}}, {"pattern": "$_"}]}]}}, NAME: n), text(n, name).
+.decl raw_class_wrapper(c: node, w: node)
+raw_class_wrapper(c, w) :- raw_class(c, _), child(w, c, _), kind(w, "decorated_definition").
+.decl private_symbols(r: node)
+private_symbols(r) :- ast(d, r, {"language": "python", "syntax": "valid", "rule": {"any": [{"all": [{"kind": "identifier"}, {"all": [{"kind": "identifier"}, {"regex": "^(?:_explicit_authority_var|_legacy_boundary_var)$"}]}, {"not": {"inside": {"any": [{"kind": "import_statement"}, {"kind": "import_from_statement"}], "stopBy": "end"}}}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor", "field": "attribute"}}}, {"not": {"inside": {"kind": "keyword_argument", "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"kind": "function_definition", "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"kind": "class_definition", "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"kind": "default_parameter", "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"kind": "typed_default_parameter", "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"any": [{"kind": "parameters"}, {"kind": "list_splat_pattern"}, {"kind": "dictionary_splat_pattern"}], "stopBy": "neighbor"}}}, {"not": {"all": [{"inside": {"kind": "typed_parameter", "stopBy": "neighbor"}}, {"nthChild": {"position": 1, "ofRule": {"not": {"kind": "comment"}}}}]}}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:_explicit_authority_var|_legacy_boundary_var)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}}).
+.decl explicit_calls(r: node)
+explicit_calls(r) :- ast(d, r, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:explicit_execution_authority)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:explicit_execution_authority)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}}).
+.decl monkeypatches(r: node)
+monkeypatches(r) :- ast(d, r, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "call"}, {"has": {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:setattr)$"}], "stopBy": "neighbor", "field": "attribute"}}], "stopBy": "neighbor", "field": "function"}}, {"any": [{"has": {"has": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"regex": "(?i)^[rub]*[\"']"}, {"value": {"regex": "(?:execution_boundary\\._explicit_authority_var|execution_boundary\\._legacy_boundary_var|execution_boundary\\._caller_token|execution_boundary\\.verify_callsite_authorization|l2050_transaction\\.execution_boundary\\._explicit_authority_var|l2050_transaction\\.execution_boundary\\._legacy_boundary_var|l2050_transaction\\.execution_boundary\\._caller_token|l2050_transaction\\.execution_boundary\\.verify_callsite_authorization)"}}]}, {"nthChild": {"position": 1, "ofRule": {"not": {"kind": "comment"}}}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}, {"all": [{"has": {"has": {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"regex": "(?i)^[rub]*[\"']"}, {"value": {"regex": "^(?:_caller_token|_explicit_authority_var|_legacy_boundary_var|verify_callsite_authorization)$"}}]}, {"nthChild": {"position": 2, "ofRule": {"not": {"kind": "comment"}}}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}, {"has": {"has": {"all": [{"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:execution_boundary)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:execution_boundary)$"}], "stopBy": "neighbor", "field": "attribute"}}]}]}, {"nthChild": {"position": 1, "ofRule": {"not": {"kind": "comment"}}}}], "stopBy": "neighbor"}, "stopBy": "neighbor", "field": "arguments"}}]}]}]}}).
+
+// ---- frames: lexical_start = coalesce(wrapper, __start) ----
+.decl frames(f: node, lexical_start: number, end: number, name: symbol, is_function: number)
+frames(f, ls, e, n, 1) :- raw_function(f, n), raw_function_wrapper(f, w), start(w, ls), node(_, f, _, _, e).
+frames(f, s, e, n, 1) :- raw_function(f, n), !raw_function_wrapper(f, _), node(_, f, _, s, e).
+frames(c, ls, e, n, 0) :- raw_class(c, n), raw_class_wrapper(c, w), start(w, ls), node(_, c, _, _, e).
+frames(c, s, e, n, 0) :- raw_class(c, n), !raw_class_wrapper(c, _), node(_, c, _, s, e).
+
+// ---- parents and contexts: (path, start, qualname, depth) per frame ----
+// `parents` is the frame p with p.__start < f.__start AND p.__end >= f.__end, ORDER BY p.__start DESC LIMIT 1: the
+// SQL's tree ancestry, by span. Here it is the tree's: the nearest function or class ancestor (`dl_frame_parent`).
+// `scopes` folds qualname down `parents` from the roots (parent IS NULL); depth counts the function frames on the
+// chain, the frame included. Both are one fold down the tree's frames (@qualname, @qualdepth): as spans, the frame
+// pairs of a document were a product (45.9 M rows over the repository).
+.decl contexts(f: node, qualname: symbol, depth: number)
+contexts(f, q, k) :- frames(f, _, _, _, _), q = @qualname(f), k = @qualdepth(f).
+
+// ---- sites ----
+.decl site(r: node, issue: symbol)
+site(r, "AUTH001") :- private_symbols(r).
+site(r, "AUTH002") :- explicit_calls(r).
+site(r, "AUTH003") :- monkeypatches(r).
+// The innermost frame whose lexical span (decorators included) holds the site: f.lexical_start <= r.__start AND
+// f.__end >= r.__end, ORDER BY f.__start DESC LIMIT 1 (distinct starts: no choice).
+.decl site_frame(r: node, f: node)
+site_frame(r, f) :- site(r, _), docof(r, d), node(_, r, _, rs, re), frames(f, ls, fe, _, _), docof(f, d), ls <= rs, fe >= re.
+.decl site_frame_start(r: node, s: number)
+site_frame_start(r, s) :- site_frame(r, f), start(f, s).
+.decl site_innermost_start(r: node, s: number)
+site_innermost_start(r, s) :- site_frame_start(r, _), s = max t : { site_frame_start(r, t) }.
+.decl site_context(r: node, qualname: symbol)
+site_context(r, q) :- site_frame(r, f), start(f, s), site_innermost_start(r, s), contexts(f, q, _).
+.decl has_site_context(r: node)
+has_site_context(r) :- site_context(r, _).
+.decl sites(r: node, issue: symbol, path: symbol, qualname: symbol, module: symbol)
+sites(r, i, p, q, m) :- site(r, i), site_context(r, q), docof(r, d), doc(d, p), m = @replace(@rx_replace(p, "\\.py$", ""), "/", ".").
+sites(r, i, p, "<module>", m) :- site(r, i), !has_site_context(r), docof(r, d), doc(d, p), m = @replace(@rx_replace(p, "\\.py$", ""), "/", ".").
+
+// ---- private_exceptions, explicit_exceptions, signed_callsites (json_each over literals) ----
+.decl private_exceptions(path: symbol, qualname: symbol)
+private_exceptions("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite").
+private_exceptions("l2050_transaction/tests/test_execution_boundary.py", "test_raw_explicit_authority_contextvar_value_does_not_authorize").
+.decl explicit_exceptions(path: symbol, qualname: symbol)
+explicit_exceptions("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper").
+.decl signed_callsites(module: symbol, qualname: symbol)
+signed_callsites("impl.common.l2070_server_plan.execution_context", "explicit_plan_execution_scope").
+signed_callsites("l1300_session.bootstrap", "ensure_system_session_exists.<locals>._insert_if_missing").
+signed_callsites("l2000_connection.schema_transaction", "AsyncSchemaTransaction._enter_async").
+signed_callsites("l2000_connection.schema_transaction", "LazySchemaTransaction._enter_sync").
+signed_callsites("l2050_transaction.execution_boundary", "execute_server_plan_async").
+signed_callsites("l2050_transaction.execution_boundary", "execute_server_plan_now").
+signed_callsites("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row").
+signed_callsites("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row_async").
+signed_callsites("l4170_inbound_bridge.process", "_invoke_inbound_bridge_handler_eager").
+signed_callsites("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority").
+signed_callsites("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async").
+
+// ---- the clause's query: one finding per site, keyed by its issue ----
+finding("authority-sites", "AUTH001", r) :- sites(r, "AUTH001", p, q, _), p != "l2050_transaction/execution_boundary.py", !private_exceptions(p, q).
+finding("authority-sites", "AUTH002", r) :- sites(r, "AUTH002", p, q, m), !signed_callsites(m, q), !explicit_exceptions(p, q).
+finding("authority-sites", "AUTH003", r) :- sites(r, "AUTH003", p, q, _), !private_exceptions(p, q).

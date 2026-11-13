@@ -1,0 +1,18 @@
+.policy "ruff-d403-first-word-uncapitalized" revision 2
+.description "Capitalize the first word of every function docstring."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D403 (pydocstyle): a function's docstring whose first word starts with a lowercase ASCII letter, when
+// the word is made of letters and apostrophes (trailing `.`, `!`, `?` aside). Words like `e.g.`, `iOS2` or
+// `x_1` are left alone.
+//   def f():
+//       """return the total."""     ← D403
+#include "python/docstrings.rr"
+
+.violation D403(at: node) code "D403"
+    "Capitalize the first word of this docstring, for example `Return the total.` instead of `return the total.`"
+    suppress ruff "D403"
+D403(s) :- doc_of(f, s), kind(f, "function_definition"), doc_checked(s), doc_body(s, b),
+    match("\\s*[a-z][a-zA-Z']*[.!?]*(\\s[\\s\\S]*)?", b).

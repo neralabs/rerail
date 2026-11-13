@@ -1,0 +1,130 @@
+// data-layer-grammar-mutation-invalidation: the `mutation` clause (`require_each`), hand-written (decision 0043).
+//
+// Subjects (`mutator`): methods of a memoizable class (a listed `Sql…` name, or a body holding
+// `@…memoize_in_read_only_scope def render`) other than `__init__`/`__new__`/`__post_init__`, that rewrite a private
+// attribute of `self` (assign, augmented-assign, walrus, `del`, or a collection mutator called on it, through any
+// subscripts) and never call `forget_memoized_render_fragments`. A method is the class's: a `function_definition`
+// whose parent is the class's `block`, or whose parent is a `decorated_definition` there (`inside` without `stopBy`
+// is the parent).
+// Evidence (`edge`): every `self.<callee>(…)` call anywhere in such a method, (class, caller, callee). Two name
+// closures run per class (`partition_by: [path, owner]`, the owner the class node, unique to its file):
+// `construction` from `__init__`/`__new__`/`__post_init__` along edges to private (`_…`) callees, `runtime` from
+// every public caller (a name not starting `_`) along every edge. A class with no edge has no partition.
+// A subject is satisfied by an edge into it (`edge.callee = mutator.method`) whose callee construction reaches and
+// runtime does not; both are facts of the callee, so: an edge into it, reached by construction, not by runtime.
+// Otherwise it is a violation at the method's definition.
+//
+// The decorator test is W's `regex: memoize_in_read_only_scope$` over the decorator node's full text (`@`, its
+// expression, any comment before the line's end): `node_text` ends with it (Rust regex `$` is the text's end).
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl mutation_fdef(kind: symbol)
+mutation_fdef("function_definition").
+
+.decl mutation_class_name(s: symbol)
+mutation_class_name("SqlBinaryOp").
+mutation_class_name("SqlColumnRef").
+mutation_class_name("SqlDiffCtePart").
+mutation_class_name("SqlDynamicSelectStmt").
+mutation_class_name("SqlExecutedRowsQuery").
+mutation_class_name("SqlLifecycleInputRowsQuery").
+mutation_class_name("SqlPublishedRowsQuery").
+mutation_class_name("SqlRequestInputRowsQuery").
+mutation_class_name("SqlSelect").
+mutation_class_name("SqlSelectFromCteWithOverrides").
+mutation_class_name("SqlSelectSparseKeyset").
+mutation_class_name("SqlSelectSparseSingleObject").
+mutation_class_name("SqlSelectStarSparseVersioned").
+mutation_class_name("SqlTypedEmptyRowsQuery").
+mutation_class_name("SqlUnionAll").
+
+// The decorator `@…memoize_in_read_only_scope`: its full text ends so (Rust regex `$`: the text's end).
+.decl mutation_memo_decorator(dec: node)
+mutation_memo_decorator(x) :- node(_, x, "decorator", _, _), node_text(x, s), suffix("memoize_in_read_only_scope", s).
+
+// A memoizable class: a listed name, or a body with a memoized `render`.
+.decl mutation_class(c: node)
+mutation_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, s), mutation_class_name(s).
+mutation_class(c) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"),
+    child(dd, x, _), mutation_memo_decorator(x).
+
+// A method of such a class, in a parseable in-scope file: (document, class, method node, its name).
+.decl mutation_method(d: number, c: node, f: node, x: symbol)
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b),
+    node(_, b, "block", _, _), child(b, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+mutation_method(d, c, f, x) :- mutation_class(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), field(c, "body", b),
+    node(_, b, "block", _, _), child(b, dd, _), node(_, dd, "decorated_definition", _, _), child(dd, f, _), node(_, f, "function_definition", _, _),
+    field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+
+// `private-target`: `self._x`, or a subscript of one, to any depth.
+.decl mutation_private(n: node)
+mutation_private(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), prefix("_", s),
+    field(n, "object", o), node(_, o, "identifier", _, _), text(o, "self").
+mutation_private(n) :- node(_, n, "subscript", _, _), field(n, "value", v), mutation_private(v).
+
+.decl mutation_mutator_name(s: symbol)
+mutation_mutator_name("add").
+mutation_mutator_name("append").
+mutation_mutator_name("clear").
+mutation_mutator_name("discard").
+mutation_mutator_name("extend").
+mutation_mutator_name("insert").
+mutation_mutator_name("pop").
+mutation_mutator_name("remove").
+mutation_mutator_name("reverse").
+mutation_mutator_name("sort").
+mutation_mutator_name("update").
+
+// A rewrite of a private target.
+.decl mutation_rewrite(m: node)
+mutation_rewrite(m) :- node(_, m, "named_expression", _, _), field(m, "name", t), mutation_private(t).
+mutation_rewrite(m) :- node(_, m, "assignment", _, _), field(m, "left", t), mutation_private(t).
+mutation_rewrite(m) :- node(_, m, "augmented_assignment", _, _), field(m, "left", t), mutation_private(t).
+mutation_rewrite(m) :- node(_, m, "delete_statement", _, _), child(m, t, _), mutation_private(t).
+mutation_rewrite(m) :- node(_, m, "call", _, _), field(m, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, s), mutation_mutator_name(s), field(g, "object", t), mutation_private(t).
+
+// A call of `forget_memoized_render_fragments` (bare or as an attribute).
+.decl mutation_forget(m: node)
+mutation_forget(m) :- node(_, m, "call", _, _), field(m, "function", g), node(_, g, "identifier", _, _), text(g, "forget_memoized_render_fragments").
+mutation_forget(m) :- node(_, m, "call", _, _), field(m, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, "forget_memoized_render_fragments").
+
+.decl mutation_rewrites(f: node)
+mutation_rewrites(f) :- mutation_method(_, _, f, _), mutation_rewrite(m), inside(m, f, mutation_fdef).
+.decl mutation_forgets(f: node)
+mutation_forgets(f) :- mutation_method(_, _, f, _), mutation_forget(m), inside(m, f, mutation_fdef).
+
+// The subjects.
+.decl mutation_subject(d: number, c: node, f: node, x: symbol)
+mutation_subject(d, c, f, x) :- mutation_method(d, c, f, x), x != "__init__", x != "__new__", x != "__post_init__", mutation_rewrites(f), !mutation_forgets(f).
+
+// The evidence rows: class, caller, callee (`self.<callee>(…)` anywhere in the caller).
+.decl mutation_edge(c: node, caller: symbol, callee: symbol)
+mutation_edge(c, x, y) :- mutation_method(_, c, f, x), node(_, k, "call", _, _), inside(k, f, mutation_fdef), field(k, "function", g),
+    node(_, g, "attribute", _, _), field(g, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(g, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, y).
+
+// `construction`: seeded in every class with an edge, along edges to private callees.
+.decl mutation_construction(c: node, x: symbol)
+mutation_construction(c, "__init__") :- mutation_edge(c, _, _).
+mutation_construction(c, "__new__") :- mutation_edge(c, _, _).
+mutation_construction(c, "__post_init__") :- mutation_edge(c, _, _).
+mutation_construction(c, y) :- mutation_construction(c, x), mutation_edge(c, x, y), prefix("_", y).
+
+// `runtime`: seeded by every public caller, along every edge.
+.decl mutation_runtime(c: node, x: symbol)
+mutation_runtime(c, x) :- mutation_edge(c, x, _), !prefix("_", x).
+mutation_runtime(c, y) :- mutation_runtime(c, x), mutation_edge(c, x, y).
+
+.decl mutation_satisfied(c: node, x: symbol)
+mutation_satisfied(c, x) :- mutation_edge(c, _, x), mutation_construction(c, x), !mutation_runtime(c, x).
+
+violation("data-layer-grammar-mutation-invalidation", "mutation", "MUTATION_WITHOUT_INVALIDATION", p, l) :-
+    mutation_subject(d, c, f, x), !mutation_satisfied(c, x), doc(d, p, _), line(f, l).

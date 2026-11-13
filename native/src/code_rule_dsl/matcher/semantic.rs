@@ -2,12 +2,13 @@ use super::{
     Arguments, BindingTest, Binds, EmbeddedTest, FormatArgs, HostTest, Layout, ParseTest, Resolves,
     ValueTest,
 };
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Rerail's semantic predicates: the rule terms that read a file's scopes, bindings, values,
 /// parsed literals, layout or call graph rather than its syntax alone. The structural rule
 /// language holds them as one term (`AstMatcher::Semantic`) and delegates to their families.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum Semantic {
+pub enum Semantic {
     /// `resolves`: what a name or attribute resolves to through the file's scopes.
     Resolves(Box<Resolves>),
     /// `resolves.binding`: sub-rules over the site, value and annotation of the node's binding.
@@ -33,12 +34,17 @@ pub(in crate::code_rule_dsl) enum Semantic {
     FormatArgs(Box<FormatArgs>),
     /// `layout`: the node's lines, its first byte, and the lines to a neighbour.
     Layout(Box<Layout>),
+    /// File-path condition within a rule, including a call-graph seed.
+    FilePath(std::sync::Arc<crate::code_rule_dsl::language::TextCondition>),
     /// `calls` (Python): the call's callee reaches a definition the term's inner rule matches,
     /// through the workspace call graph's closure.
     Calls(Box<crate::code_rule_dsl::calls::CallsTest>),
     /// `importTarget`: the import or require target the node's constant value names, and what
     /// eslint-plugin-n reads of it.
-    ImportTarget(Box<crate::code_rule_dsl::import_target::term::ImportTargetTest>),
+    Term(std::sync::Arc<dyn super::term::LanguageTerm>),
+    /// A relation's bare token regex, where the token is implied (t31): asked of the gaps of the
+    /// parent's stored children, through the grammar's automaton.
+    Gap(Box<super::gap::GapTest>),
 }
 
 impl Semantic {
@@ -47,8 +53,10 @@ impl Semantic {
             Self::Resolves(_)
             | Self::Value(_)
             | Self::Layout(_)
+            | Self::FilePath(_)
+            | Self::Gap(_)
             | Self::Host(_)
-            | Self::ImportTarget(_) => true,
+            | Self::Term(_) => true,
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Binds(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Arguments(arguments) => arguments.bind.is_empty(),
@@ -72,13 +80,16 @@ impl Semantic {
             | Self::Arguments(_)
             | Self::Parse(_)
             | Self::FormatArgs(_)
-            | Self::Calls(_)
-            | Self::Binds(_) => true,
+            | Self::Calls(_) => true,
+            Self::Binds(test) => {
+                !test.declaration_only()
+                    || test.sub_rules().any(|rule| super::reads_values(rule, seen))
+            }
             Self::Host(test) => super::reads_values(&test.rule, seen),
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) | Self::ImportTarget(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::Gap(_) | Self::FilePath(_) | Self::Term(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -103,7 +114,7 @@ impl Semantic {
                 }
             },
             Self::Resolves(resolves) => resolves.holds(&node).then_some(node),
-            Self::ImportTarget(test) => test.holds(&node).then_some(node),
+            Self::Term(term) => super::term::holds(&**term, &node).then_some(node),
             Self::Binding(test) => test.match_node(node, env),
             Self::Binds(test) => test.match_node(node, env),
             Self::Arguments(arguments) => arguments.match_node(node, env),
@@ -116,6 +127,10 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
+            Self::Gap(test) => test.holds(&node).then_some(node),
+            Self::FilePath(condition) => super::resolve::file_path()
+                .filter(|path| condition.holds(path))
+                .map(|_| node),
             Self::Value(test) => match test.holds(&node) {
                 Some(true) => Some(node),
                 Some(false) => None,
@@ -130,7 +145,7 @@ impl Semantic {
 
 /// Whether `language`'s family reads the file's flow, which may leave a read unknown
 /// (`ScopeRules::FLOW`).
-fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
-    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
-    with_adapter!(crate::code_rule_dsl::language::Family::of(language), A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
+pub(super) fn flow(language: crate::code_rule_dsl::language::GrammarDialect) -> bool {
+    
+    { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(language)); pack.scope_flow() }
 }

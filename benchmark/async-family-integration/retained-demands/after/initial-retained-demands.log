@@ -1,0 +1,18 @@
+
+running 4 tests
+test code_rule_dsl::logic::plan::native_demand::integration_tests::retained_fact_sets_materialize_all_unique_rows_and_do_not_adopt_next_run_inputs ... ok
+test code_rule_dsl::logic::plan::native_demand::integration_tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs ... 
+thread 'code_rule_dsl::logic::plan::native_demand::integration_tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs' (107678935) panicked at native/src/code_rule_dsl/logic/plan/native_demand.rs:223:18:
+called `Result::unwrap()` on an `Err` value: Statistics("no statistics for node.d")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::plan::native_demand::tests::same_relation_reuses_keys_and_lifetime_does_not_cross_runs ... ok
+test code_rule_dsl::logic::plan::native_demand::tests::sql_demands_are_read_once_and_cached_without_requiring_native_inputs ... ok
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::native_demand::integration_tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 3225 filtered out; finished in 1.31s
+

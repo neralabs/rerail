@@ -1,0 +1,104 @@
+.policy "eslint-func-name-matching" revision 5
+.description "Give a named function expression the same name as the variable, property or class field it is assigned to."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   deparen, fn_id, static_prop, method_call, call_arg
+
+// ESLint's func-name-matching: a named function expression stored under another name.
+//   const foo = function bar() {};     → Function name `bar` should match variable name `foo`.
+//   obj.foo = function bar() {};       → … should match property name `foo`.
+//   ({ foo: function bar() {} })       the same; class fields too: class A { foo = function bar() {} }
+// Arrows and anonymous functions have no name and are never reported. Options:
+//   `match` (the string option)  "always" (the default), or "never": the names must differ
+//   includeCommonJSModuleExports  also check `module.exports = function f() {}` (an identifier then)
+//   considerPropertyDescriptor    `Object.defineProperty(o, "foo", { value: function bar() {} })` names it foo;
+//                                 so do the keys of Object.defineProperties and Object.create descriptors
+.violation func_name_matching(at: node, msg: symbol) code "func-name-matching" "{msg}"
+    suppress eslint "func-name-matching"
+    suppress oxlint "func-name-matching"
+func_name_matching(at, cat(cat("Function name `", g), cat(cat("` ", w), cat(cat(" name `", x), "`.")))) :-
+    stored(at, x, g, p), warn(x, g), says(p, w).
+
+// stored(at, x, g, p): function g is stored under name x at `at`; p = 1 for a property, 0 for a variable.
+.decl stored(at: node, x: symbol, g: symbol, p: number)
+// const foo = function bar() {}
+stored(v, x, g, 0) :- kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), text(n, x),
+    field(v, "value", e), named_fn(e, g).
+// foo = …, obj.foo = …, obj["foo"] += …; not obj[k] = …, and not module.exports unless asked.
+stored(a, x, g, 0) :- assignment(a, l, e), kind(l, "identifier"), text(l, x), named_fn(e, g).
+stored(a, x, g, 1) :- assignment(a, l, e), static_prop(l, _, x), identifier_name(x), named_fn(e, g),
+    !computed_nonliteral(l), (option("includeCommonJSModuleExports", "true") ; !module_exports(l)).
+// ESLint names a computed key only when it is a literal: obj["foo"], not obj[`foo`].
+.decl computed_nonliteral(l: node)
+computed_nonliteral(l) :- kind(l, "subscript_expression"), field(l, "index", i), deparen(i, k),
+    !kind(k, "string"), !kind(k, "number"), !kind(k, "regex"), !kind(k, "true"), !kind(k, "false"), !kind(k, "null").
+// ({ foo: function bar() {} }), ({ "foo": … }), class A { foo = … }. A descriptor's `value` is named by the
+// descriptor's property with considerPropertyDescriptor (below).
+stored(p, x, g, 1) :- property(p, x), named_fn_of(p, g), !described(p).
+stored(p, x, g, 1) :- described(p), descriptor_name(p, x), named_fn_of(p, g).
+
+.decl named_fn(e: node, g: symbol)  // e is a function expression named g, through parentheses
+named_fn(e, g) :- deparen(e, f), (kind(f, "function_expression") ; kind(f, "generator_function")), fn_id(f, g).
+.decl named_fn_of(p: node, g: symbol)  // the value of property or field p is one
+named_fn_of(p, g) :- field(p, "value", e), named_fn(e, g).
+.decl assignment(a: node, l: node, e: node)
+assignment(a, l, e) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), field(a, "right", e).
+.decl module_exports(l: node)  // module.exports, module["exports"]
+module_exports(l) :- static_prop(l, o, "exports"), kind(o, "identifier"), text(o, "module").
+// property(p, x): an object property or class field named by an identifier, or by a string that could be one,
+// computed or not: ({ "foo": … }), ({ ["foo"]: … }).
+.decl property(p: node, x: symbol)
+property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")),
+    holder_key(p, k), kind(k, "property_identifier"), text(k, x).
+property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")),
+    estree_key(p, k), kind(k, "string"), value(k, x), identifier_name(x).
+// identifier_name(x): x could be written as a plain identifier (esutils' ES6 test, reserved words out): an ID_Start
+// character, `$` or `_`, then ID_Continue characters, `$`, ZWNJ or ZWJ. 'ᢅ' is one (ID_Start), '❤' is not.
+.decl identifier_name(x: symbol)
+identifier_name(x) :- (stored_name(x) ; property_key_name(x)),
+    match("[\\p{ID_Start}$_][\\p{ID_Continue}$\\x{200C}\\x{200D}]*", x), !reserved(x).
+.decl stored_name(x: symbol)
+stored_name(x) :- assignment(_, l, _), static_prop(l, _, x).
+.decl property_key_name(x: symbol)
+property_key_name(x) :- estree_key(p, k), kind(k, "string"), value(k, x),
+    (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")).
+.decl reserved(x: symbol)
+reserved("break"). reserved("case"). reserved("catch"). reserved("class"). reserved("const"). reserved("continue").
+reserved("debugger"). reserved("default"). reserved("delete"). reserved("do"). reserved("else"). reserved("export").
+reserved("extends"). reserved("finally"). reserved("for"). reserved("function"). reserved("if"). reserved("import").
+reserved("in"). reserved("instanceof"). reserved("new"). reserved("return"). reserved("super"). reserved("switch").
+reserved("this"). reserved("throw"). reserved("try"). reserved("typeof"). reserved("var"). reserved("void").
+reserved("while"). reserved("with"). reserved("enum"). reserved("null"). reserved("true"). reserved("false").
+
+// considerPropertyDescriptor: `value: function bar() {}` in a descriptor takes the described property's name:
+// the string second argument of Object/Reflect.defineProperty, or the key above the descriptor in the
+// object given to Object.defineProperties or Object.create.
+.decl described(p: node)
+described(p) :- option("considerPropertyDescriptor", "true"), property(p, "value"), kind(p, "pair"),
+    child(o, p, _), descriptor_call(o, _, _).
+.decl descriptor_call(o: node, c: node, how: symbol)
+descriptor_call(o, c, "define") :- call_arg(c, o, _), (method_call(c, "Object", "defineProperty") ;
+    method_call(c, "Reflect", "defineProperty")).
+descriptor_call(o, c, "keyed") :- kind(q, "pair"), field(q, "value", o), child(m, q, _), call_arg(c, m, _),
+    (method_call(c, "Object", "defineProperties") ; method_call(c, "Object", "create")).
+.decl descriptor_name(p: node, x: symbol)
+descriptor_name(p, x) :- described(p), child(o, p, _), descriptor_call(o, c, "define"), call_arg(c, s, 1),
+    kind(s, "string"), value(s, x).
+descriptor_name(p, x) :- described(p), child(o, p, _), descriptor_call(o, _, "keyed"), field(q, "value", o),
+    field(q, "key", k), kind(k, "property_identifier"), text(k, x).
+
+// warn(x, g): `match` "always" wants equal names, "never" different ones.
+.decl warn(x: symbol, g: symbol)
+warn(x, g) :- stored(_, x, g, _), !never(), x != g.
+warn(x, x) :- stored(_, x, x, _), never().
+.decl never()
+never() :- (option("match", "never") ; option("option", "never")).
+.decl says(p: number, w: symbol)
+says(1, "should match property") :- !never().
+says(0, "should match variable") :- !never().
+says(1, "should not match property") :- never().
+says(0, "should not match variable") :- never().

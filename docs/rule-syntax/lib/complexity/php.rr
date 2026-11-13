@@ -1,0 +1,37 @@
+// complexity/php: lizard's decision points in PHP (and the PHP a Blade template compiles to), on tree-sitter-php
+// 0.24, for complexity/cyclomatic.rr.
+//
+// A function is a function, a method or a closure (`function () use ($x) {}`), in classes, traits, enums and at the
+// top level; a closure is scored on its own. An arrow function (`fn ($x) => …`) is not one: its conditions count
+// toward the function around it, as lizard counts them. Decisions, in brace and alternative (`if: … endif;`)
+// syntax alike:
+//   if  elseif  else if  for  foreach  while  do…while  catch          a statement or clause each
+//   a && b   a || b   a and b   a or b   c ? x : y                     each operator
+//   switch    once if it has a `case` (only `default`: 0);   match    once, however many arms
+// Not counted: else, finally, xor, `?:` without a middle (`$a ?: $b`), `??`, `??=`, `?->`, nullable types (`?int`).
+//
+// A closure with no name of its own takes the variable it is assigned to: $format = function ($x) { … } is
+// `$format`.
+//
+//   function pick($a, $b) {          CCN 4
+//     if ($a && $b) { return 1; }    if, &&
+//     return $a ? 2 : 3;             ?:
+//   }
+#include "complexity/cyclomatic.rr"
+#include "php/names.rr"
+//   php_logical(b)   `&&`, `||`, `and`, `or`
+
+cc_boundary("function_definition"). cc_boundary("method_declaration"). cc_boundary("anonymous_function").
+
+cc_decision(n, 0) :- kind(n, k), cc_php_statement(k).
+cc_decision(n, 0) :- kind(n, "switch_statement"), field(n, "body", b), child(b, c, _), kind(c, "case_statement").
+cc_decision(n, 0) :- kind(n, "conditional_expression"), field(n, "body", _).
+cc_decision(n, 0) :- php_logical(n).
+.decl cc_php_statement(k: symbol)
+cc_php_statement("if_statement"). cc_php_statement("else_if_clause"). cc_php_statement("for_statement").
+cc_php_statement("foreach_statement"). cc_php_statement("while_statement"). cc_php_statement("do_statement").
+cc_php_statement("catch_clause"). cc_php_statement("match_expression").
+
+cc_name(f, x) :- cc_boundary(k), kind(f, k), field(f, "name", n), text(n, x).
+cc_name(f, x) :- kind(f, "anonymous_function"), field(a, "right", f), kind(a, "assignment_expression"),
+    field(a, "left", l), text(l, x).

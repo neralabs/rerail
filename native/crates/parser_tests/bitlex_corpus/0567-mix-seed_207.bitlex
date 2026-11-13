@@ -1,0 +1,18 @@
+# corpus: mix: seed 207
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = starts(alpha)
+mask m1 = (bs & ~prev(prev(digit, 38), 11))
+mask m2 = alpha
+mask m3 = prev(x, 34)
+mask m4 = escaped(quote)
+mask m5 = after(escaped(m1))

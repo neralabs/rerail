@@ -1,0 +1,17 @@
+.policy "ruff-ann003-missing-type-kwargs" revision 2
+.description "Annotate variadic keyword parameters with the type of each extra keyword argument so type checkers can verify calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN003 (flake8-annotations): a def's `**kwargs` with no annotation. The annotation gives the type of
+// each extra keyword argument's value. The implementation after an @overload is not checked. Ruff's
+// suppress-dummy-args option is not supported (its default, false, is what this rule does).
+//   def foo(**kwargs): ...          ← ANN003
+//   def foo(**kwargs: str): ...     not reported
+#include "python/annotations.rr"
+
+.violation ANN003(at: node, name: symbol) code "ANN003"
+    "Add a type annotation to `**{name}` giving the type of each extra keyword argument's value."
+    suppress ruff "ANN003"
+ANN003(nm, x) :- ann_def(f), ann_param(f, nm, x, "kwarg", a), unset(a).

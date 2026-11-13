@@ -1,0 +1,29 @@
+.policy "ruff-g101-logging-extra-attr-clash" revision 2
+.description "Avoid extra keys that clash with built-in LogRecord attributes in logging calls; the logging call raises KeyError when they collide."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G101 (flake8-logging-format): an `extra=` key of a logging call that is also a LogRecord attribute
+// (`name`, `msg`, `args`, …). The logger raises KeyError when it builds the record. Keys are read from a dict
+// display's string keys, or from the keywords of a `dict(…)` call. Reported at the key (or the keyword).
+//   logging.info("Hello", extra={"name": "foobar"})      ← G101 at "name"
+//   logging.info("Hello", extra=dict(name="foobar"))     ← G101 at name="foobar"
+//   logging.info("Hello", extra=dict(world="World"))     not reported
+#include "python/logging.rr"
+
+.violation G101(at: node, k: symbol) code "G101"
+    "Rename the `extra` key `{k}`: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record."
+    suppress ruff "G101"
+G101(s, k) :- log_kw(_, "extra", _, d), kind(d, "dictionary"), child(d, p, _), kind(p, "pair"), field(p, "key", s),
+    plain_str(s, k), log_record_attr(k).
+G101(a, k) :- log_kw(_, "extra", _, d), kind(d, "call"), call_q(d, "builtins.dict"), call_item(d, a, _),
+    field(a, "name", n), text(n, k), log_record_attr(k).
+
+.decl log_record_attr(k: symbol)
+log_record_attr("args"). log_record_attr("asctime"). log_record_attr("created"). log_record_attr("exc_info").
+log_record_attr("exc_text"). log_record_attr("filename"). log_record_attr("funcName"). log_record_attr("levelname").
+log_record_attr("levelno"). log_record_attr("lineno"). log_record_attr("module"). log_record_attr("msecs").
+log_record_attr("message"). log_record_attr("msg"). log_record_attr("name"). log_record_attr("pathname").
+log_record_attr("process"). log_record_attr("processName"). log_record_attr("relativeCreated").
+log_record_attr("stack_info"). log_record_attr("thread"). log_record_attr("threadName").

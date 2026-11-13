@@ -2,9 +2,9 @@
 //! relative paths, and the store generation.
 
 use super::{HashKey, STRING_PATH, StoreError, StoreResult};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
-pub(super) fn generation(transaction: &Transaction<'_>) -> StoreResult<i64> {
+pub(super) fn generation(transaction: &Connection) -> StoreResult<i64> {
     transaction
         .query_row(
             "SELECT generation FROM store_state WHERE singleton=1",
@@ -24,7 +24,7 @@ pub(super) fn hash_params(key: HashKey) -> [i64; 5] {
     ]
 }
 
-pub(super) fn intern_hash(transaction: &Transaction<'_>, key: HashKey) -> StoreResult<i64> {
+pub(super) fn intern_hash(transaction: &Connection, key: HashKey) -> StoreResult<i64> {
     let existing = transaction
         .prepare_cached(
             "SELECT hash_id FROM hashes INDEXED BY hashes_by_prefix \
@@ -44,7 +44,7 @@ pub(super) fn intern_hash(transaction: &Transaction<'_>, key: HashKey) -> StoreR
 }
 
 pub(super) fn intern_string(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     domain: i64,
     value: &str,
 ) -> StoreResult<i64> {
@@ -58,7 +58,7 @@ pub(super) fn intern_string(
 
 /// `intern_string` for a `value` whose SHA-256 `hash` the caller computed outside the transaction.
 pub(super) fn intern_hashed_string(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     domain: i64,
     value: &str,
     hash: HashKey,
@@ -86,7 +86,7 @@ pub(super) fn intern_hashed_string(
     Ok(transaction.last_insert_rowid())
 }
 
-pub(super) fn intern_path(transaction: &Transaction<'_>, path: &str) -> StoreResult<i64> {
+pub(super) fn intern_path(transaction: &Connection, path: &str) -> StoreResult<i64> {
     let string_id = intern_string(transaction, STRING_PATH, path)?;
     transaction
         .prepare_cached(

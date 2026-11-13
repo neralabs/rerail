@@ -1,0 +1,29 @@
+.policy "ruff-ruf019-unnecessary-key-check" revision 2
+.description "Use dict.get() instead of testing a key with in and then indexing the dictionary in the same condition; get() returns None for a missing key."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF019: `k in d and d[k]` read as a condition, which `d.get(k)` says in one lookup. Exactly two
+// operands, the same key and dict on both sides (Ruff's ComparableExpr: `d['a']` matches `"a" in d`), and no
+// side effect in either (a call, a subscript, an operator on non-literals, …), since the two evaluations could
+// then differ.
+//   if k in d and d[k]: ...           ← RUF019  `if d.get(k):`
+//   v = k in d and d[k]               not reported: the value, not a condition
+//   if f() in d and d[f()]: ...       not reported: a call
+//   if a + b in d and d[a + b]: ...   not reported: `+` may run `__add__`
+#include "python/ruff.rr"
+#include "python/compare.rr"
+
+.violation RUF019(at: node, dt: symbol, kt: symbol) code "RUF019"
+    "If `{dt}` is a dict, use `{dt}.get({kt})` instead of testing `{kt} in {dt}` before reading `{dt}[{kt}]`; leave it if `{dt}` is not a mapping."
+    suppress ruff "RUF019"
+RUF019(t, dt, kt) :- key_check(t, k1, d1, k2, d2), cmp_same(d1, d2), cmp_same(k1, k2), !side_effect(d1),
+    !side_effect(k1), text(d2, dt), text(k2, kt).
+// key_check(t, k1, d1, k2, d2): the test `k1 in d1 and d2[k2]`, two operands.
+.decl key_check(t: node, k1: node, d1: node, k2: node, d2: node)
+key_check(t, k1, d1, k2, d2) :- bool_top(t, "and"), bool_test(t), count : { bool_operand(t, _, v), !kind(v, "comment") } = 2,
+    field(t, "left", l), field(t, "right", r), unparen(l, c), cmp(c, "in", k1, d1), unparen(r, s), kind(s, "subscript"),
+    field(s, "value", d2), field(s, "subscript", k2), count : { field(s, "subscript", _) } = 1.
+cmp_same_ask(d1, d2) :- key_check(_, _, d1, _, d2).
+cmp_same_ask(k1, k2) :- key_check(_, k1, _, k2, _).

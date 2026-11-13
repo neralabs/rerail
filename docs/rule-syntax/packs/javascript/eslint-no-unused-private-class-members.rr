@@ -1,0 +1,65 @@
+.policy "eslint-no-unused-private-class-members" revision 3
+.description "Remove private class fields, methods and accessors that are never used inside the class; assignments alone don't count as use."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+//   private_key, holder_key, member_kind, class_member, unwrap_parens
+
+// ESLint's no-unused-private-class-members: a private field or method (`#x`) that the class never reads.
+// A use names #x inside the class (inner classes see it too, unless they declare their own #x). Writes are not
+// reads: `this.#x = v`, `this.#x += v;` and `this.#x++;` as statements, `for (this.#x of xs)`, and a
+// destructuring target (`[this.#x] = a`, `({ a: this.#x } = o)`, `[...this.#x] = a`, `[this.#x = 1] = a`).
+// Any use of an accessor counts.
+//   class A { #x = 1; }   class A { #x; m() { this.#x = 2; } }   class A { #m() {} }   → #x / #m reported
+//   class A { #x; m() { return this.#x; } }   class A { #x; has(o) { return #x in o; } }   fine
+// Reported at the key. No options.
+.violation unused_private(at: node, x: symbol) code "no-unused-private-class-members" "'{x}' is defined but never used."
+    suppress eslint "no-unused-private-class-members"
+    suppress oxlint "no-unused-private-class-members"
+unused_private(k, x) :- last_member(b, m, x), holder_key(m, k), !name_used(b, x).
+// ESLint keys members by name, so a getter and setter pair is one entry, and the later one is reported.
+.decl last_member(b: node, m: node, x: symbol)
+last_member(b, m, x) :- private_member(b, m, x), !later_member(b, m, x).
+.decl later_member(b: node, m: node, x: symbol)
+later_member(b, m, x) :- private_member(b, m, x), private_member(b, o, x), precedes(m, o).
+
+// private_member(b, m, x): m is a field or method of class body b with the private name x. An auto-accessor
+// (`accessor #x`) is neither in ESTree, so it is not tracked.
+.decl private_member(b: node, m: node, x: symbol)
+private_member(b, m, x) :- child(b, m, _), kind(b, "class_body"), private_key(m, x),
+    (kind(m, "method_definition") ; kind(m, "field_definition") ; kind(m, "public_field_definition")), !op(m, "accessor").
+// private_use(u, b, x): private name u, not a declaration's key, is the name x of the nearest class body b around it
+// that declares x.
+.decl private_use(u: node, b: node, x: symbol)
+private_use(u, b, x) :- kind(u, "private_property_identifier"), !holder_key(_, u), text(u, x), within(u, b),
+    private_member(b, _, x), !shadowed(u, b, x).
+.decl shadowed(u: node, b: node, x: symbol)  // a class body between u and b declares x too
+shadowed(u, b, x) :- kind(u, "private_property_identifier"), text(u, x), within(u, b), private_member(b, _, x),
+    private_member(c, _, x), within(u, c), within(c, b).
+.decl name_used(b: node, x: symbol)
+name_used(b, x) :- private_use(_, b, x), last_member(b, m, x), (member_kind(m, "get") ; member_kind(m, "set")).
+name_used(b, x) :- private_use(u, b, x), !write_only(u).
+
+// write_only(u): u's member access `this.#x` (ESTree's parent, parentheses aside) is only assigned to.
+.decl write_only(u: node)
+write_only(u) :- member_of(u, e), target_of(e, p), kind(p, "assignment_expression").
+write_only(u) :- member_of(u, e), target_of(e, p), kind(p, "augmented_assignment_expression"),
+    up(p, s), kind(s, "expression_statement").
+write_only(u) :- member_of(u, e), target_of(e, p), (kind(p, "for_in_statement") ; kind(p, "assignment_pattern") ;
+    kind(p, "object_assignment_pattern") ; kind(p, "array_pattern") ; kind(p, "rest_pattern") ; kind(p, "pair_pattern")).
+write_only(u) :- member_of(u, e), up(e, p), kind(p, "update_expression"), up(p, s),
+    kind(s, "expression_statement").
+.decl member_of(u: node, e: node)  // e is `o.#x` for the name u
+member_of(u, e) :- kind(e, "member_expression"), field(e, "property", u), kind(u, "private_property_identifier").
+// target_of(e, p): e is what p writes: an assignment's or a for-in/of head's left, a default's left, an array
+// pattern's element, a rest's argument, an object pattern's property value.
+.decl target_of(e: node, p: node)
+target_of(e, p) :- in_parens(e, w), field(p, "left", w).
+target_of(e, p) :- in_parens(e, w), child(p, w, _), (kind(p, "array_pattern") ; kind(p, "rest_pattern")).
+target_of(e, p) :- in_parens(e, w), field(p, "value", w), kind(p, "pair_pattern").
+.decl in_parens(e: node, w: node)  // w is e, or e in parentheses
+in_parens(e, w) :- deparen(w, e).
+.decl up(n: node, p: node)
+up(n, p) :- in_parens(n, w), child(p, w, _), !kind(p, "parenthesized_expression").

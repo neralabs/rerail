@@ -1,0 +1,21 @@
+.policy "clippy-allow-attributes" revision 2
+.description "Use #[expect] instead of outer #[allow] attributes in Rust; an expect warns once the lint it silences stops firing."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-attrs.rr"
+//   lint_attr(at, name, args, a)   a lint attribute name(…) in item a, direct or out of a live cfg_attr
+//   from_cfg_attr(at)   it came out of a cfg_attr;   msrv_older(a, v)   under a #[clippy::msrv] older than v
+
+// Clippy's allow_attributes (restriction): an outer #[allow(…)], where #[expect(…)] would warn once the lint
+// it silences stops firing. Reported at `allow`. Inner #![allow(…)] is left alone, and so is code under
+// #[clippy::msrv] older than 1.81, where expect is not stable.
+//   #[allow(dead_code)] struct T;   #[cfg_attr(all(), allow(dead_code))] struct T;     reported at `allow`
+//   #![allow(unused)]   #[expect(dead_code)]   #[cfg_attr(test, allow(dead_code))]    not reported
+// Clippy sees a cfg_attr's attributes only when its predicate holds; see rust/syntax-attrs.rr for the reading.
+.violation allow_attributes(at: node, msg: symbol) code "allow_attributes" "{msg}"
+    suppress clippy "clippy::allow_attributes", "clippy::restriction", "warnings"
+allow_attributes(p, msg) :- lint_attr(p, "allow", _, a), kind(a, "attribute_item"), !msrv_older(a, "1.81"),
+    (from_cfg_attr(p), msg = "Replace allow with expect in this cfg_attr so it warns once the silenced lint stops firing." ;
+     !from_cfg_attr(p), msg = "Replace this #[allow] with #[expect] so it warns once the silenced lint stops firing.").

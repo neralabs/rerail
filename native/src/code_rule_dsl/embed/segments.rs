@@ -16,7 +16,7 @@ use std::ops::Range;
 /// in file order, none touching the next, and the primary one, which holds the bytes the
 /// stretch's first segment stands for: where the stretch starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FileRanges {
+pub struct FileRanges {
     /// The first range in file order, and the rest after it.
     head: Range<usize>,
     tail: Vec<Range<usize>>,
@@ -25,7 +25,7 @@ pub(crate) struct FileRanges {
 }
 
 impl FileRanges {
-    pub(crate) fn one(range: Range<usize>) -> Self {
+    pub fn one(range: Range<usize>) -> Self {
         Self {
             head: range,
             tail: Vec::new(),
@@ -61,7 +61,7 @@ impl FileRanges {
     /// tokens and the white space between them, and so does a program's, where its tokens stand
     /// apart in the host only by white space (Blade's `echo ` over `{{`, `$x` copied, `;` over
     /// `}}`: one range, `{{ $x }}`). Anything else between them keeps them apart.
-    pub(crate) fn bridged(self, host: &str) -> Self {
+    pub fn bridged(self, host: &str) -> Self {
         if self.tail.is_empty() {
             return self;
         }
@@ -90,7 +90,7 @@ impl FileRanges {
 
     /// The range a single span reports: the one where the stretch starts. A stretch standing for
     /// several ranges reports that one, never a range holding bytes between them.
-    pub(crate) fn primary(&self) -> Range<usize> {
+    pub fn primary(&self) -> Range<usize> {
         match self.primary {
             0 => self.head.clone(),
             index => self.tail[index - 1].clone(),
@@ -98,12 +98,12 @@ impl FileRanges {
     }
 
     /// The one range the stretch stands for, where it stands for one.
-    pub(crate) fn single(&self) -> Option<Range<usize>> {
+    pub fn single(&self) -> Option<Range<usize>> {
         self.tail.is_empty().then(|| self.head.clone())
     }
 
     /// Each range, in file order.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &Range<usize>> {
+    pub fn iter(&self) -> impl Iterator<Item = &Range<usize>> {
         std::iter::once(&self.head).chain(&self.tail)
     }
 }
@@ -111,7 +111,7 @@ impl FileRanges {
 /// Whether `outer` holds `inner`, positions half-open: a zero-width `inner` at a boundary belongs
 /// to the range starting there, and `end` (the end of the text both lie in) to the range ending
 /// there.
-pub(crate) fn holds(outer: &Range<usize>, inner: &Range<usize>, end: usize) -> bool {
+pub fn holds(outer: &Range<usize>, inner: &Range<usize>, end: usize) -> bool {
     if inner.is_empty() {
         outer.start <= inner.start
             && (inner.start < outer.end || (inner.start == outer.end && inner.start == end))
@@ -123,7 +123,7 @@ pub(crate) fn holds(outer: &Range<usize>, inner: &Range<usize>, end: usize) -> b
 /// An embedded program's segments, in program order: each a stretch of the program's text and
 /// the host bytes it stands for.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct SegmentMap {
+pub struct SegmentMap {
     segments: Vec<Segment>,
     /// Over `segments`, the least anchor start and the greatest anchor end of each run of
     /// `2^level` segments from each index (`hull`): level `level` at `level * len`.
@@ -150,7 +150,7 @@ struct Segment {
 const SEGMENT_BYTES: usize = 17;
 
 impl SegmentMap {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -158,7 +158,7 @@ impl SegmentMap {
     /// the host bytes `anchor`: copied byte for byte (`copied`), or written over them; `omit` marks
     /// a placeholder the program's tree does not keep. Positions past `u32` are clamped: no tape
     /// holds a source that long (`tape` refuses it).
-    pub(crate) fn push(
+    pub fn push(
         &mut self,
         at: usize,
         end: usize,
@@ -178,12 +178,12 @@ impl SegmentMap {
     }
 
     /// Whether nothing was written: the host embeds no program.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
 
     /// Builds the hull tables `bounds` reads; segments pushed after are not covered.
-    pub(crate) fn index(&mut self) {
+    pub fn index(&mut self) {
         let len = self.segments.len();
         // A segment of no program or host bytes stands for none: it bounds nothing.
         let empty = |segment: &Segment| segment.at == segment.end || segment.from == segment.to;
@@ -258,7 +258,7 @@ impl SegmentMap {
     /// overlapped part, a written one's whole anchor, each run whose host bytes follow one another
     /// merged (`FileRanges`). An empty range stands for the position its program position maps to
     /// (half-open: the segment starting there; the program's end, the last segment's end).
-    pub(crate) fn file_ranges(&self, range: Range<usize>) -> FileRanges {
+    pub fn file_ranges(&self, range: Range<usize>) -> FileRanges {
         let narrow = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         let (start, end) = (narrow(range.start), narrow(range.end));
         let Some(first) = self.segment(start) else {
@@ -315,7 +315,7 @@ impl SegmentMap {
 
     /// Whether the program bytes `range` stand for some host byte: whether a segment they overlap
     /// gives a piece of width (`file_ranges`).
-    pub(crate) fn stands_for(&self, range: Range<usize>) -> bool {
+    pub fn stands_for(&self, range: Range<usize>) -> bool {
         let narrow = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         let (start, end) = (narrow(range.start), narrow(range.end));
         if start >= end {
@@ -340,7 +340,7 @@ impl SegmentMap {
     /// of them, which may hold host bytes they do not stand for. An interval holds every one of
     /// their bytes exactly when it holds this range, so it places them inside a host node and
     /// prunes a search; it is never the bytes they stand for (`file_ranges`).
-    pub(crate) fn bounds(&self, range: Range<usize>) -> Range<usize> {
+    pub fn bounds(&self, range: Range<usize>) -> Range<usize> {
         let narrow = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         let (start, end) = (narrow(range.start), narrow(range.end));
         let Some(first) = self.segment(start) else {
@@ -388,7 +388,7 @@ impl SegmentMap {
     /// The host bytes the program bytes `range` copy, where one copied segment holds them all. An
     /// empty range at a boundary is the segment's starting there, or, where that one is written,
     /// the copied one's ending there: an insertion right after copied text.
-    pub(crate) fn copied_span(&self, range: Range<usize>) -> Option<Range<usize>> {
+    pub fn copied_span(&self, range: Range<usize>) -> Option<Range<usize>> {
         let start = u32::try_from(range.start).ok()?;
         let end = u32::try_from(range.end).ok()?;
         let index = self.segment(start)?;
@@ -405,7 +405,7 @@ impl SegmentMap {
     }
 
     /// Whether some byte of the program bytes `range` is copied from the host.
-    pub(crate) fn copies(&self, range: Range<usize>) -> bool {
+    pub fn copies(&self, range: Range<usize>) -> bool {
         let (Ok(start), Ok(end)) = (u32::try_from(range.start), u32::try_from(range.end)) else {
             return false;
         };
@@ -420,7 +420,7 @@ impl SegmentMap {
 
     /// Whether the program bytes `range` (not empty) lie in a placeholder the program's tree does
     /// not keep.
-    pub(crate) fn omitted(&self, range: Range<usize>) -> bool {
+    pub fn omitted(&self, range: Range<usize>) -> bool {
         !range.is_empty()
             && self.segment(range.start as u32).is_some_and(|index| {
                 let segment = &self.segments[index];
@@ -439,8 +439,8 @@ impl SegmentMap {
     }
 
     /// The host ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments
             .iter()
             .filter(|segment| segment.copied)
@@ -448,8 +448,8 @@ impl SegmentMap {
     }
 
     /// Each copied stretch: its program bytes and the host bytes they copy, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied_stretches(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn copied_stretches(
         &self,
     ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
         self.segments
@@ -552,7 +552,7 @@ impl SegmentMap {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::SegmentMap;
 
     /// A copied stretch maps byte for byte; a written one stands for its whole anchor; a range

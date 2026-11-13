@@ -1,0 +1,32 @@
+.policy "ruff-icn001-unconventional-import-alias" revision 2
+.description "Import well-known libraries under their community aliases, such as pandas as pd, numpy as np and matplotlib.pyplot as plt, so readers recognize them at a glance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ICN001 (flake8-import-conventions): an import of a module that has a conventional alias, bound under any
+// other name. The module is the import's qualified name, so `from m import x` imports "m.x". Relative imports
+// are never matched. Ruff's defaults are the table (no options in the JSON).
+//   import numpy                 ← ICN001: `numpy` should be imported as `np`
+//   import pandas as pdas        ← ICN001, at `pdas`
+//   import matplotlib.pyplot     ← ICN001: it binds `matplotlib`, not `plt`
+//   from numpy import typing     ← ICN001: numpy.typing should be `npt`
+//   import numpy as np           not reported
+#include "python/names.rr"
+#include "../packs/python/ruff-icn001-unconventional-import-alias.aliases.rr"   // icn_alias(m, a)
+
+.violation ICN001(at: node, m: symbol, a: symbol) code "ICN001"
+    "Write `import {m} as {a}` and rename its uses to match; keep the current name only if `{a}` already means something else in this module."
+    suppress ruff "ICN001"
+ICN001(at, m, a) :- icn_import(at, m, local), icn_alias(m, a), local != a.
+
+// icn_import(at, m, local): an import binds `local` to module m; at is what Ruff reports, the alias or the name.
+.decl icn_import(at: node, m: symbol, local: symbol)
+icn_import(n, m, @head(m)) :- kind(i, "import_statement"), child(i, n, _), kind(n, "dotted_name"), name(n, m).
+icn_import(al, m, l) :- kind(i, "import_statement"), child(i, x, _), kind(x, "aliased_import"), field(x, "name", n),
+    name(n, m), field(x, "alias", al), text(al, l).
+icn_import(n, @dot(p, y), y) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
+    name(mn, p), field(i, "name", n), kind(n, "dotted_name"), name(n, y).
+icn_import(al, @dot(p, y), l) :- kind(i, "import_from_statement"), field(i, "module_name", mn),
+    kind(mn, "dotted_name"), name(mn, p), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n),
+    name(n, y), field(x, "alias", al), text(al, l).

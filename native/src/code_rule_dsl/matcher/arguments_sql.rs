@@ -2,6 +2,7 @@
 //! `func_arg_expr`, `extract_list`, `position_list`, `substr_list`, `overlay_list`, `trim_list`)
 //! reads them, over the DerekStride grammar's `invocation`, and the signature slots they fill.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::{Arguments, Passed};
 use crate::code_rule_dsl::value::sql;
 use ast_grep_core::{Doc, Node};
@@ -83,14 +84,25 @@ pub(crate) fn sql_arguments<'r, D: Doc>(call: &Node<'r, D>) -> Option<Vec<SqlArg
     Some(arguments)
 }
 
-impl Arguments {
+/// SQL's binding of a call's arguments to its slots (PostgreSQL's).
+pub(crate) trait SqlArguments {
     /// What a SQL call passes for each slot, as PostgreSQL binds a call's arguments to a
     /// function's parameters (`ParseFuncOrColumn`, `FuncnameGetCandidates`): positional arguments
     /// fill the slots in order, a named argument (`name => v`, `name := v`) the slot of its name
     /// (PostgreSQL's folded name, as a slot is written). Every slot is unknown where PostgreSQL
     /// refuses the call (a positional argument after a named one, a name passed twice or
     /// for a slot a position already filled) or the arguments do not read (`sql_arguments`).
-    pub(crate) fn sql<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    fn sql<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>>;
+}
+
+impl SqlArguments for Arguments {
+    /// What a SQL call passes for each slot, as PostgreSQL binds a call's arguments to a
+    /// function's parameters (`ParseFuncOrColumn`, `FuncnameGetCandidates`): positional arguments
+    /// fill the slots in order, a named argument (`name => v`, `name := v`) the slot of its name
+    /// (PostgreSQL's folded name, as a slot is written). Every slot is unknown where PostgreSQL
+    /// refuses the call (a positional argument after a named one, a name passed twice or
+    /// for a slot a position already filled) or the arguments do not read (`sql_arguments`).
+    fn sql<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let unknown = || (0..self.slots.len()).map(|_| Passed::Unknown).collect();
         let Some(arguments) = sql_arguments(call) else {
             return unknown();
@@ -161,7 +173,7 @@ fn read_operand<'r, D: Doc>(operand: &Node<'r, D>) -> Option<SqlArgument<'r, D>>
 fn all_quantified_operand<'r, D: Doc>(value: &Node<'r, D>) -> Option<Node<'r, D>> {
     (value.kind() == "unary_expression"
         && value
-            .field("operator")
+            .operator_token()
             .is_some_and(|op| op.kind() == "keyword_all"))
     .then(|| value.field("operand"))
     .flatten()
@@ -206,7 +218,7 @@ fn is_named<D: Doc>(call: &Node<'_, D>, name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;
@@ -226,7 +238,7 @@ mod tests {
 
     #[test]
     fn matches_postgres_oracle() {
-        let dir = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+        let dir = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
             .join("sql/matcher/arguments");
         let source = std::fs::read_to_string(dir.join("postgres.sql")).unwrap();
         let oracle: Json = serde_json::from_str(

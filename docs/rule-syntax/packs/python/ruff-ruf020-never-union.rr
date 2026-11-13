@@ -1,0 +1,37 @@
+.policy "ruff-ruf020-never-union" revision 2
+.description "Remove Never and NoReturn from union types; they have no values, so the union equals its other members."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF020: `Never` or `NoReturn` (typing or typing_extensions) as a member of a union. Neither has a
+// value, so `Never | T` is `T`. Each one is reported, in a `|` union (an operand of `|`) or in a
+// `Union[...]` of two or more members.
+//   x: Never | int            ← RUF020 at Never
+//   Union[NoReturn, int]      ← RUF020 at NoReturn
+//   def f() -> Never: ...     not reported
+#include "python/ruff.rr"
+
+.violation RUF020(at: node, n: symbol, msg: symbol) code "RUF020" "{msg}"
+    suppress ruff "RUF020"
+RUF020(m, x, cat(cat("Keep only the other members of this `|` union; `", x), "` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`.")) :-
+    (kind(u, "binary_operator"), op(u, "|") ; kind(u, "union_type")), child(u, c, _), member(c, m), never(m, x).
+RUF020(m, x, cat(cat("Keep only the other members of this `Union[...]`; `", x), "` has no values, so it adds nothing. If one member is left, use it directly without `Union`.")) :-
+    union_item(c), member(c, m), never(m, x).
+
+// member(c, m): m is union member c without parentheses and `type` wrappers.
+.decl member(c: node, m: node)
+member(c, m) :- unparen(c, m), !kind(m, "type").
+member(c, m) :- unparen(c, t), kind(t, "type"), child(t, x, 0), member(x, m).
+// union_item(c): an element of `Union[a, b, …]` with two or more elements: a subscript, or in an annotation
+// tree-sitter's generic_type.
+.decl union_item(c: node)
+union_item(c) :- kind(s, "subscript"), field(s, "value", h), ruff_qual(h, q), union_q(q), field(s, "subscript", c),
+    count : { field(s, "subscript", _) } > 1.
+union_item(c) :- kind(g, "generic_type"), child(g, h, 0), ruff_qual(h, q), union_q(q), child(g, tp, 1),
+    kind(tp, "type_parameter"), child(tp, c, _), !kind(c, "comment"), count : { child(tp, x, _), !kind(x, "comment") } > 1.
+.decl union_q(q: symbol)
+union_q("typing.Union"). union_q("typing_extensions.Union").
+.decl never(m: node, x: symbol)
+never(m, x) :- (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), split_dot(q, mod, x),
+    (mod = "typing" ; mod = "typing_extensions"), (x = "Never" ; x = "NoReturn").

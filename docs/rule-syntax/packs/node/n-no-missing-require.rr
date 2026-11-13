@@ -1,0 +1,20 @@
+.policy "n-no-missing-require" revision 2
+.description "Require only modules that exist: each require() target must resolve, as Node.js resolves it, to an installed package or a file in the repository."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-missing-require: every require() and require.resolve() of a module that is not a Node
+// built-in must resolve, as Node resolves it, to a file:
+//   require("./util")       reported when no ./util, ./util.js, ./util/index.js, … exists
+//   require("lodash")       reported when node_modules has no lodash
+//   require("fs")  require(name)                        not: a built-in;  not a constant
+// The require is the CommonJS global (aliases followed: `const r = require; r("x")`). Option allowModules lists
+// packages never reported. Resolution is node-resolve.rr's proposed native input; its other options
+// (tryExtensions, resolvePaths, resolverConfig, typescriptExtensionMap, tsconfigPath) belong to the resolver.
+
+#include "tsx/node-resolve.rr"   // node_target, builtin_spec, spec_failed, spec_allowed
+
+.violation missing_require(at: node) code "n/no-missing-require"
+    "This module cannot be resolved: no installed package or file in the repository provides it."
+    suppress eslint "n/no-missing-require"
+missing_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_failed(n), !spec_allowed(x).

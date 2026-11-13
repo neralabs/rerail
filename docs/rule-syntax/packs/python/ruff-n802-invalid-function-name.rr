@@ -1,0 +1,30 @@
+.policy "ruff-n802-invalid-function-name" revision 2
+.description "Name functions and methods in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N802 (pep8-naming): a function or method name with an uppercase letter. Exempt: `@override` and
+// `@overload` definitions (the name is not theirs to choose), names matching `pep8-naming.ignore-names`, and
+// the callback names frameworks dispatch on: `visit_*` in an ast.NodeVisitor/NodeTransformer subclass, and
+// `do_*` in an http.server request handler subclass (directly or through classes of this file).
+//   def BadName(): ...                  ← N802
+//   class V(ast.NodeVisitor):
+//       def visit_Constant(self, n): …  not reported
+#include "python/naming.rr"
+
+.violation N802(at: node, x: symbol) code "N802"
+    "Rename function `{x}` to lowercase snake_case and update its callers; keep the name if it overrides a method you do not control."
+    suppress ruff "N802"
+N802(nm, x) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), !lower_name(x),
+    !typing_dec(f, "override"), !typing_dec(f, "overload"), !naming_ignored(x), !dispatched(f, x).
+// dispatched(f, x): a callback by naming convention, directly in the body of a class (not under an `if` there)
+// whose bases (resolved, transitively) say so.
+.decl dispatched(f: node, x: symbol)
+dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("visit_", x), class_def(c, q),
+    subclass(q, b), (b = "ast.NodeVisitor" ; b = "ast.NodeTransformer").
+dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("do_", x), class_def(c, q),
+    subclass(q, b), http_handler(b).
+.decl http_handler(q: symbol)
+http_handler("http.server.BaseHTTPRequestHandler"). http_handler("http.server.CGIHTTPRequestHandler").
+http_handler("http.server.SimpleHTTPRequestHandler").

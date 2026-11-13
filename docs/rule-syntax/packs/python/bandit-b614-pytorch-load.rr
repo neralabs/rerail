@@ -1,0 +1,20 @@
+.policy "bandit-b614-pytorch-load" revision 2
+.description "Load PyTorch files with weights_only=True or use safetensors; a full torch.load unpickles the file and can run arbitrary code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B614 (pytorch_load): in a file that has run `import torch`, a call to torch.load or
+// torch.serialization.load without weights_only=True.
+//   import torch
+//   torch.load(path)                          B614
+//   torch.load(path, weights_only=False)      B614
+//   torch.load(path, weights_only=True)       not reported
+//   from torch import load; load(path)        not reported: Bandit asks that "torch" itself was imported
+
+#include "python/security.rr"   // imported_exact, qual_call, kw_literal
+
+.violation B614(at: node) code "B614"
+    "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
+    suppress nosec "B614"
+B614(c) :- imported_exact(c, "torch"), qual_call(c, q), (q = "torch.load" ; q = "torch.serialization.load"),
+    !kw_literal(c, "weights_only", "str", "True").

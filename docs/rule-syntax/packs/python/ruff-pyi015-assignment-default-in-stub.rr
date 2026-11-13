@@ -1,0 +1,24 @@
+.policy "ruff-pyi015-assignment-default-in-stub" revision 2
+.description "Replace complex assigned values in stub files with an ellipsis; only simple literal values belong in a stub."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI015 (flake8-pyi), stubs only: an assigned value outside functions that is not a simple value.
+//   annotated:    x: int = f()        ← PYI015    (not for `X: TypeAlias = …`, nor `x: Final = name`)
+//   unannotated:  x = 1 + 1           ← PYI015    (a name, call, subscript or `A | B` is fine: an alias)
+// Neither checks the special names (`__all__`, `__slots__`, `__match_args__`) or TypeVar-like calls; an
+// unannotated one needs one plain-name target.
+#include "python/typing.rr"
+
+.violation PYI015(at: node) code "PYI015" "Replace this assigned value with `...`; a stub only needs to show that the name has a value, and keeps literal values only when they are simple."
+    suppress ruff "PYI015"
+PYI015(v) :- stub_stmt(a), field(a, "type", t0), type_bare(t0, t), field(a, "right", v0), unparen(v0, v), field(a, "left", l),
+    !typing_sym(t, "TypeAlias"), !final_alias(t, v), checked(l, v).
+PYI015(v) :- stub_stmt(a), simple_assign(a, l, v), plain_target(l, _), !alias_value(v), checked(l, v).
+// checked(l, v): the common tests: not a special name, not a TypeVar, not a simple value.
+.decl checked(l: node, v: node)
+checked(l, v) :- field(a, "left", l), field(a, "right", v0), unparen(v0, v), !special_name(l), !typevar_like(v), !simple_value(v, "top").
+// final_alias(t, v): `x: Final = name`: a bare Final aliasing a name or an attribute.
+.decl final_alias(t: node, v: node)
+final_alias(t, v) :- typing_sym(t, "Final"), (kind(v, "identifier") ; kind(v, "attribute")).

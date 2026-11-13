@@ -1,0 +1,16 @@
+.policy "bandit-b317-xml-bad-sax" revision 2
+.description "Use defusedxml instead of xml.sax to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B317 (its B001 blacklist): a call to xml.sax's parse, parseString or make_parser.
+//   import xml.sax; xml.sax.parseString(s, handler)                 B317
+//   parser = xml.sax.make_parser()                                  B317 (inside an assignment too)
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B317(at: node) code "B317"
+    "Using xml.sax to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B317"
+B317(n) :- blacklisted(n, "B317").

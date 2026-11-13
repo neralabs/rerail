@@ -110,7 +110,7 @@ pub(super) fn placement_identity(placement: &[PlacementEntry]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::model::placed;
 

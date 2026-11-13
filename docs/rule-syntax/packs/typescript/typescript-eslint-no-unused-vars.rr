@@ -1,0 +1,220 @@
+.policy "typescript-eslint-no-unused-vars" revision 6
+.description "Remove TypeScript variables, parameters, caught errors, imports and types that are declared but never used, and don't use names marked as ignored."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   variable, first_decl, declaring_stmt, resolves, use, reads, writes, initialised, variable_scope, scope_type, definition_file,
+//   declarator_name, for_head, param_target, deparen, estree_parent, source_type, program
+#include "tsx/eslint-b-scope.rr"
+//   global_item
+
+// typescript-eslint's no-unused-vars: a variable nothing reads. Reported at its last write in its own function,
+// else at its first declaration: "'a' is defined but never used." or "… assigned a value …" once anything
+// writes it (an initialiser counts).
+//   let a = 1;   function f(x, y) { return y; }   import { B } from "b";   type T = 1;      → a, B, T (x: below)
+//   let c = 0; c++; c += 1;                 a variable that only updates itself is unused
+//   function g() { g(); }   interface I { next: I }      a use inside its own function, type, namespace or enum
+//   let d; type D = typeof d;               "only used as a type" (an import so used is fine)
+// Always used: exported declarations, enum members, parameters of type signatures and of setters, parameter
+// properties, a mapped type's key, `for (const k in o) return …` loops' names, and in a .d.ts file (or a
+// `declare module`) the top-level declarations, unless an `export { … }`, `export *`, `export =` or
+// `export default name` there says what is exported. `/* global x */` items nothing reads are reported too.
+// Options:
+//   vars ("all"; "local": a script's top-level variables are not checked)  varsIgnorePattern
+//   args ("after-used": a parameter before a used one is fine; "all"; "none")  argsIgnorePattern
+//   caughtErrors ("all"; "none")  caughtErrorsIgnorePattern     destructuredArrayIgnorePattern
+//   ignoreRestSiblings (false): `const { a, ...rest } = o` does not report a
+//   ignoreClassWithStaticInitBlock (false), ignoreUsingDeclarations (false)
+//   reportUsedIgnorePattern (false): report a used name that an ignore pattern matches
+.violation no_unused_vars(at: node, msg: symbol) code "@typescript-eslint/no-unused-vars" "{msg}"
+    suppress eslint "@typescript-eslint/no-unused-vars"
+    suppress oxlint "no-unused-vars"
+    suppress biome "lint/correctness/noUnusedVariables"
+no_unused_vars(at, msg) :- unused(s, x), place(s, x, at), (only_type(s, x), w = "only used as a type" ;
+    !only_type(s, x), w = "never used"), action(s, x, a), note(s, x, "Allowed unused ", " must match ", n),
+    msg = cat("'", cat(x, cat("' is ", cat(a, cat(" but ", cat(w, cat(n, "."))))))).
+no_unused_vars(at, msg) :- used_ignored(s, x), place(s, x, at), note(s, x, "Used ", " must not match ", n),
+    msg = cat("'", cat(x, cat("' is marked as ignored but is used", cat(n, ".")))).
+.violation unused_global(at: loc, x: symbol) code "@typescript-eslint/no-unused-vars" "Remove '{x}' from this global comment; nothing in the file uses it."
+    suppress eslint "@typescript-eslint/no-unused-vars"
+unused_global(c, x) :- global_item(c, x, v, _), v != "off", !global_read(c, x), !script_declared(c, x).
+
+// ---- variables and their declarations -----------------------------------------------------------------------
+// var(s, x): a variable the rule checks: not a function expression's own name, nor a global the file only uses.
+.decl var(s: node, x: symbol)
+var(s, x) :- variable(s, x, _, k), k != "function-name".
+
+// ---- used ------------------------------------------------------------------------------------------------------
+.decl used(s: node, x: symbol)
+used(s, x) :- marked(s, x).
+used(s, x) :- var(s, x), variable(s, x, id, _), declaring_stmt(id, n), (child(e, n, _) ; child(a, n, _), kind(a, "ambient_declaration"),
+    child(e, a, _)), kind(e, "export_statement").
+used(s, x) :- var(s, x), resolves(r, s, x), reads(r), !itself(r, s, x), !(type_query(r), !type_imports(s, x)),
+    !self_ref(r, s, x).
+// marked(s, x): the rule's visitor marks the variable used.
+.decl marked(s: node, x: symbol)
+marked(s, x) :- variable(s, x, _, k), (k = "enum-member" ; k = "signature-param" ; k = "class-name").
+marked(s, x) :- variable(s, x, _, "type-param"), scope_type(s, "mappedType").
+marked(s, x) :- variable(s, x, id, "param"), param_target(p, id), param_property(p).
+marked(s, x) :- variable(s, x, id, "param"), kind(m, "method_definition"), op(m, "set"), field(m, "parameters", ps),
+    within(id, ps).
+marked(s, x) :- kind(f, "for_in_statement"), field(f, "body", b), only_return(b), field(f, "left", l),
+    loop_first_name(f, l, id), variable(s, x, id, _).
+marked(s, x) :- kind(f, "for_in_statement"), field(f, "body", b), only_return(b), field(f, "left", l), deparen(l, r),
+    resolves(r, s, x).
+marked(s, x) :- ambient_block(b), !overriding(b), child(b, t, _), ambient_stmt(t, n), declaring_stmt(id, n), variable(s, x, id, _).
+.decl only_return(b: node)  // a return statement, or a block of one
+only_return(b) :- kind(b, "return_statement").
+only_return(b) :- kind(b, "statement_block"), count : { child(b, c, _), !kind(c, "comment") } = 1, child(b, r, _),
+    kind(r, "return_statement").
+.decl loop_first_name(f: node, l: node, id: node)  // the first name a for-in/of head declares
+loop_first_name(f, l, id) :- for_head(f, _), field(f, "left", l), target_name(l, id, _), node(_, id, _, a, _),
+    a = min b : { target_name(l, i, _), node(_, i, _, b, _) }.
+.decl overriding(b: node)  // `export { a }`, `export *`, `export =`, `export default a` in b
+overriding(b) :- ambient_block(b), child(b, e, _), kind(e, "export_statement"), !field(e, "declaration", _), !valued(e).
+.decl valued(e: node)  // `export default 1 + 2`: a value that is no plain name
+valued(e) :- kind(e, "export_statement"), field(e, "value", v), !kind(v, "identifier").
+
+// itself(r, s, x): read r only feeds x itself: `a += 1;`, `a++;`, `a = a + 1;` as statements (not in a loop or
+// another function, where the new value can be read later), unless r is in a function the right side stores.
+.decl itself(r: node, s: node, x: symbol)
+itself(r, s, x) :- resolves(r, s, x), deparen(w, r), field(a, "left", w), kind(a, "augmented_assignment_expression"),
+    !op(a, "??="), !op(a, "&&="), !op(a, "||="), dropped(a).
+itself(r, s, x) :- resolves(r, s, x), deparen(w, r), field(a, "argument", w), kind(a, "update_expression"), dropped(a).
+itself(r, s, x) :- resolves(r, s, x), (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), deparen(l, w), resolves(w, s, x), dropped(a), !later(w, s), field(a, "right", v), within(r, v),
+    !stored(r, v).
+.decl dropped(a: node)  // a's value is thrown away: a statement, or not the last of a sequence
+dropped(a) :- estree_parent(a, e), kind(e, "expression_statement").
+dropped(a) :- estree_parent(a, q), kind(q, "sequence_expression"), !last_child(q, a).
+dropped(a) :- estree_parent(a, q), kind(q, "sequence_expression"), last_child(q, a), dropped(q).
+.decl last_child(q: node, a: node)
+last_child(q, a) :- kind(q, "sequence_expression"), child(q, a, i), i = max j : { child(q, _, j) }.
+.decl later(w: node, s: node)  // the write can be read later: from another function, or in a loop
+later(w, s) :- resolves(w, s, _), scope_of(w, u), variable_scope(u, a), variable_scope(s, b), a != b.
+later(w, s) :- resolves(w, s, _), inside(w, l, loop_kind), !fn_within(w, l).
+.decl fn_within(w: node, l: node)  // a function inside loop l holds w
+fn_within(w, l) :- resolves(w, _, _), inside(w, l, loop_kind), inside(w, f, fn_owner), within(f, l).
+.decl loop_kind(k: symbol)
+loop_kind("for_statement"). loop_kind("for_in_statement"). loop_kind("while_statement"). loop_kind("do_statement").
+.decl stored(r: node, v: node)  // r is in a function inside v that v keeps (not called on the spot)
+stored(r, v) :- itself_rhs(v), within(r, v), inside(r, f, fn_owner), within(f, v), !called_here(f).
+.decl itself_rhs(v: node)
+itself_rhs(v) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "right", v).
+.decl called_here(f: node)  // `(function () {})()`
+called_here(f) :- kind(c, "call_expression"), field(c, "function", g), deparen(g, f).
+// type_query(r): r is in a `typeof r` type, maybe as `typeof r.a.b`.
+.decl type_query(r: node)
+type_query(r) :- resolves(r, _, _), up_query(r).
+.decl up_query(n: node)
+up_query(n) :- child(q, n, _), kind(q, "type_query").
+up_query(n) :- child(m, n, _), (kind(m, "member_expression") ; kind(m, "nested_identifier")), up_query(m).
+.decl type_imports(s: node, x: symbol)  // every declaration is a type-only import
+type_imports(s, x) :- var(s, x), !not_type_import(s, x).
+.decl not_type_import(s: node, x: symbol)
+not_type_import(s, x) :- variable(s, x, _, k), k != "import-type".
+// self_ref(r, s, x): r is inside x's own function (a declaration, or a function the declarator gives), interface,
+// type alias, namespace or enum.
+.decl self_ref(r: node, s: node, x: symbol)
+self_ref(r, s, x) :- resolves(r, s, x), variable(s, x, id, _), own_body(id, n), within(r, n).
+.decl own_body(id: node, n: node)
+own_body(id, n) :- variable(_, _, id, k), (k = "function" ; k = "interface" ; k = "type" ; k = "enum" ; k = "namespace"),
+    declaring_stmt(id, n).
+own_body(id, f) :- variable(_, _, id, k), (k = "var" ; k = "let" ; k = "const" ; k = "using"), declarator_name(d, id, _),
+    field(d, "name", id), field(d, "value", v), deparen(v, f), (kind(f, "function_expression") ; kind(f, "arrow_function")).
+.decl only_type(s: node, x: symbol)  // read in a `typeof` type, and nowhere else
+only_type(s, x) :- var(s, x), resolves(r, s, x), type_query(r).
+
+// ---- what is reported ---------------------------------------------------------------------------------------------
+// unused(s, x): not used, and no option exempts it. A type-only use of an import is no report.
+.decl unused(s: node, x: symbol)
+unused(s, x) :- var(s, x), !used(s, x), !exempt(s, x), !(only_type(s, x), imported(s, x)).
+.decl imported(s: node, x: symbol)
+imported(s, x) :- variable(s, x, _, k), (k = "import" ; k = "import-type").
+// used_ignored(s, x): reportUsedIgnorePattern, and a used variable an ignore pattern matches.
+.decl used_ignored(s: node, x: symbol)
+used_ignored(s, x) :- option("reportUsedIgnorePattern", "true"), var(s, x), used(s, x), ignored(s, x),
+    !first_decl(s, x, _, "enum-member").
+.decl exempt(s: node, x: symbol)
+exempt(s, x) :- var(s, x), option("vars", "local"), program(d, s), source_type(d, "script").
+exempt(s, x) :- var(s, x), option("option", "local"), program(d, s), source_type(d, "script").
+exempt(s, x) :- ignored(s, x).
+exempt(s, x) :- first_decl(s, x, id, k), (k = "class" ; k = "class-name"), option("ignoreClassWithStaticInitBlock", "true"),
+    field(c, "name", id), field(c, "body", b), child(b, k2, _), kind(k2, "class_static_block").
+exempt(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrors", "none").
+exempt(s, x) :- first_decl(s, x, _, "param"), option("args", "none").
+exempt(s, x) :- first_decl(s, x, id, "param"), !option("args", "all"), !option("args", "none"), bare_param(id, f),
+    later_param_used(id, f).
+exempt(s, x) :- first_decl(s, x, _, "using"), option("ignoreUsingDeclarations", "true").
+exempt(s, x) :- option("ignoreRestSiblings", "true"), variable(s, x, id, _), rest_sibling(id).
+exempt(s, x) :- option("ignoreRestSiblings", "true"), resolves(r, s, x), rest_sibling(r).
+// ignored(s, x): an ignore pattern matches the name, by the first declaration's kind.
+.decl ignored(s: node, x: symbol)
+ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p), finds(p, x).
+ignored(s, x) :- var(s, x), resolves(r, s, x), estree_parent(r, a), kind(a, "array_pattern"), first_decl(s, x, id, _),
+    kind(id, "identifier"), option("destructuredArrayIgnorePattern", p), finds(p, x).
+ignored(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrorsIgnorePattern", p), finds(p, x).
+ignored(s, x) :- first_decl(s, x, id, k), arg_kind(k), kind(id, "identifier"), option("argsIgnorePattern", p), finds(p, x).
+ignored(s, x) :- first_decl(s, x, id, k), k != "catch", !arg_kind(k), kind(id, "identifier"), option("varsIgnorePattern", p),
+    finds(p, x).
+.decl arg_kind(k: symbol)  // the kinds the rule calls args: a parameter, in a body or in a type signature
+arg_kind("param"). arg_kind("signature-param").
+.decl finds(p: symbol, x: symbol)  // RegExp p finds a match in x (test: anywhere)
+finds(p, x) :- option(o, p), (o = "varsIgnorePattern" ; o = "argsIgnorePattern" ; o = "caughtErrorsIgnorePattern" ;
+    o = "destructuredArrayIgnorePattern"), var(_, x), match(cat(".*(?:", cat(p, ").*")), x).
+.decl array_name(id: node)  // id is an element of an array pattern
+array_name(id) :- variable(_, _, id, _), estree_parent(id, a), kind(a, "array_pattern").
+// bare_param(id, f): parameter id of function f is a plain name (no default, no destructuring).
+.decl bare_param(id: node, f: node)
+bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameters", ps), child(ps, p, _), param_target(p, id),
+    !kind(p, "assignment_pattern"), !field(p, "value", _).
+bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameter", id).
+// later_param_used(id, f): a parameter after id has a reference (a default is a write reference), or is marked used.
+.decl later_param_used(id: node, f: node)
+later_param_used(id, f) :- bare_param(id, f), variable(f, y, j, "param"), earlier(id, j),
+    (resolves(_, f, y) ; marked(f, y) ; initialised(j)).
+.decl rest_sibling(id: node)  // id is a property of an object pattern that ends in `...rest`
+rest_sibling(id) :- (kind(id, "shorthand_property_identifier_pattern") ; estree_parent(id, pp), kind(pp, "pair_pattern"),
+    field(pp, "value", id) ; kind(id, "identifier"), estree_parent(id, ap), kind(ap, "object_assignment_pattern")),
+    inside(id, o, "object_pattern"), last_child_of(o, r), kind(r, "rest_pattern").
+.decl last_child_of(o: node, c: node)
+last_child_of(o, c) :- kind(o, "object_pattern"), child(o, c, i), i = max j : { child(o, _, j), !kind_at(o, j, "comment") }.
+.decl kind_at(o: node, j: number, k: symbol)
+kind_at(o, j, k) :- kind(o, "object_pattern"), child(o, c, j), kind(c, k).
+
+// ---- the report ---------------------------------------------------------------------------------------------------
+// place(s, x, at): the last write in x's own function scope (an initialiser too), else the first declaration.
+.decl write_at(s: node, x: symbol, w: node)
+write_at(s, x, w) :- var(s, x), resolves(w, s, x), writes(w), scope_of(w, u), variable_scope(u, a), variable_scope(s, a).
+write_at(s, x, id) :- var(s, x), variable(s, x, id, _), initialised(id).
+.decl place(s: node, x: symbol, at: node)
+place(s, x, w) :- write_at(s, x, w), node(_, w, _, a, _), a = max b : { write_at(s, x, v), node(_, v, _, b, _) }.
+place(s, x, id) :- first_decl(s, x, id, _), !write_at(s, x, _).
+.decl action(s: node, x: symbol, a: symbol)  // "assigned a value" once anything writes x
+action(s, x, "assigned a value") :- written(s, x).
+action(s, x, "defined") :- var(s, x), !written(s, x).
+.decl written(s: node, x: symbol)
+written(s, x) :- var(s, x), resolves(w, s, x), writes(w).
+written(s, x) :- var(s, x), variable(s, x, id, _), initialised(id).
+// note(s, x, pre, mid, n): ". Allowed unused args must match /^_/u", from the first declaration's kind and the
+// pattern options; "" when that option is unset.
+.decl note(s: node, x: symbol, pre: symbol, mid: symbol, n: symbol)
+note(s, x, pre, mid, n) :- var(s, x), (pre = "Allowed unused ", mid = " must match " ; pre = "Used ", mid = " must not match "),
+    described(s, x, what, o), (option(o, p), n = cat(". ", cat(pre, cat(what, cat(mid, cat("/", cat(p, "/u")))))) ;
+    !option(o, _), n = "").
+.decl described(s: node, x: symbol, what: symbol, o: symbol)
+described(s, x, "elements of array destructuring", "destructuredArrayIgnorePattern") :- first_decl(s, x, id, _), array_name(id),
+    option("destructuredArrayIgnorePattern", _).
+described(s, x, "caught errors", "caughtErrorsIgnorePattern") :- first_decl(s, x, id, "catch"), !array_cue(id).
+described(s, x, "args", "argsIgnorePattern") :- first_decl(s, x, id, k), arg_kind(k), !array_cue(id).
+described(s, x, "vars", "varsIgnorePattern") :- first_decl(s, x, id, k), k != "catch", !arg_kind(k), !array_cue(id).
+.decl array_cue(id: node)
+array_cue(id) :- array_name(id), option("destructuredArrayIgnorePattern", _).
+
+// ---- `/* global */` items ------------------------------------------------------------------------------------------
+.decl global_read(c: node, x: symbol)  // the file reads the global x somewhere nothing declares it
+global_read(c, x) :- global_item(c, x, _, _), docof(c, d), unresolved(r, x), docof(r, d), reads(r).
+.decl script_declared(c: node, x: symbol)  // a script's top level declares x: that is the global's definition
+script_declared(c, x) :- global_item(c, x, _, _), docof(c, d), program(d, p), source_type(d, "script"), variable(p, x, _, _).

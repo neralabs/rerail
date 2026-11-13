@@ -1,0 +1,181 @@
+// data-layer-grammar-callable-constructors: the `constructor-arg` clause (a `budget` over evidence with a name
+// closure), hand-written (decision 0043), and `untyped-called-field`/`any-called-field` over the converter's (at the
+// end: its forms approximate the parameter's type test). The other five clauses are the converter's.
+//
+// The evidence has two kinds of rows, over every in-scope parseable file:
+// - seeds: a top-level class (its parent the module, or a decorated_definition whose parent is the module) whose
+//   body holds `def render` (directly, or decorated), its name the seed;
+// - candidates: a `lambda`, or an identifier naming a function its scope defines (`symbol-scope`, below), that is an
+//   argument of a call of a constructor-shaped callee (`constructor-name`): its parent an `argument_list`, or a
+//   `keyword_argument` in one, inside a `call`. The constructor is the callee's last name: through attributes,
+//   subscripts' values and calls' functions to an identifier.
+// The closure `renderables` has no `partition_by`: one partition over every file, seeded by every seed. So the join
+// of a candidate's constructor with the seeds is genuinely cross-file. A candidate whose constructor is a seed
+// (`known`) is a group of its own (`group_by: [path, position]`) over the budget of 0: a violation at the candidate.
+//
+// `symbol-scope(NAME)`, read at the candidate's scope: the nearest ancestor that is a non-async `def` or the module
+// (`inside … stopBy`, inclusive; nothing between can match). It holds for a module with a top-level `def NAME`; for
+// a `def` whose body defines `NAME` (directly, or decorated); and for a `def` with no parameter at all, no store of
+// `NAME` anywhere in it (`stored-name`), whose own scope holds it. "No parameter at all" is W's reading: `$PARAM`
+// is not one of `symbol-scope`'s params, so the call's frame holds only `NAME`, and the negated pattern's `$PARAM` is
+// a fresh capture (captures.rs, `reads`): the `not` fails on any non-splat parameter, whatever its name.
+// The `^def\s` regex on a function_definition is `!op(f, "async")`, as the converter writes it.
+// Options: none of the policy's (`oracleAnalyzer`, `sourceGate`) is read by this clause.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl constructor_scope_kinds(kind: symbol)
+constructor_scope_kinds("function_definition").
+constructor_scope_kinds("module").
+.decl constructor_fdef(kind: symbol)
+constructor_fdef("function_definition").
+
+// A non-async `def` named x.
+.decl constructor_def(f: node, x: symbol)
+constructor_def(f, x) :- node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), text(i, x).
+
+// A body that defines x, directly or decorated.
+.decl constructor_defines(b: node, x: symbol)
+constructor_defines(b, x) :- child(b, g, _), constructor_def(g, x).
+constructor_defines(b, x) :- child(b, g, _), node(_, g, "decorated_definition", _, _), field(g, "definition", f), constructor_def(f, x).
+
+// Seeds: top-level classes with a `render` method.
+.decl constructor_seed(x: symbol)
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), child(m, c, _), node(_, m, "module", _, _),
+    field(c, "name", i), text(i, x), field(c, "body", b), constructor_defines(b, "render").
+constructor_seed(x) :- node(d, c, "class_definition", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), child(dd, c, _),
+    node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _), field(c, "name", i), text(i, x),
+    field(c, "body", b), constructor_defines(b, "render").
+
+// `constructor-name`, top-down from call functions: the callee's last name.
+.decl constructor_callee(f: node)
+constructor_callee(f) :- node(_, k, "call", _, _), field(k, "function", f).
+constructor_callee(a) :- constructor_callee(f), node(_, f, "attribute", _, _), field(f, "attribute", a).
+constructor_callee(v) :- constructor_callee(f), node(_, f, "subscript", _, _), field(f, "value", v).
+constructor_callee(g) :- constructor_callee(f), node(_, f, "call", _, _), field(f, "function", g).
+.decl constructor_name(f: node, x: symbol)
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "identifier", _, _), text(f, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "attribute", _, _), field(f, "attribute", a), constructor_name(a, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "subscript", _, _), field(f, "value", v), constructor_name(v, x).
+constructor_name(f, x) :- constructor_callee(f), node(_, f, "call", _, _), field(f, "function", g), constructor_name(g, x).
+
+// An argument position of a constructor call: (node, constructor).
+.decl constructor_arg(n: node, x: symbol)
+constructor_arg(n, x) :- child(a, n, _), node(_, a, "argument_list", _, _), child(k, a, _), node(_, k, "call", _, _), field(k, "function", f), constructor_name(f, x).
+constructor_arg(n, x) :- child(w, n, _), node(_, w, "keyword_argument", _, _), child(a, w, _), node(_, a, "argument_list", _, _),
+    child(k, a, _), node(_, k, "call", _, _), field(k, "function", f), constructor_name(f, x).
+
+// The scope a node is read in: the nearest non-async `def` or the module, climbing past async ones.
+.decl constructor_need(n: node)
+.decl constructor_climb(n: node, s: node)
+constructor_climb(n, s) :- constructor_need(n), nearest(n, s, constructor_scope_kinds), node(_, s, "module", _, _).
+constructor_climb(n, s) :- constructor_need(n), nearest(n, s, constructor_scope_kinds), node(_, s, "function_definition", _, _), !op(s, "async").
+constructor_climb(n, s) :- constructor_need(n), nearest(n, a, constructor_scope_kinds), op(a, "async"), constructor_climb(a, s).
+constructor_need(a) :- constructor_need(n), nearest(n, a, constructor_scope_kinds), op(a, "async").
+
+// `stored-name`: a node in the `left` of an assignment, augmented assignment or `for`, through target patterns.
+.decl constructor_stored(n: node)
+constructor_stored(n) :- field(p, "left", n), node(_, p, "assignment", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "augmented_assignment", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "for_statement", _, _).
+constructor_stored(n) :- field(p, "left", n), node(_, p, "for_in_clause", _, _).
+constructor_stored(n) :- child(q, n, _), node(_, q, "pattern_list", _, _), constructor_stored(q).
+constructor_stored(n) :- child(q, n, _), node(_, q, "tuple_pattern", _, _), constructor_stored(q).
+constructor_stored(n) :- child(q, n, _), node(_, q, "list_pattern", _, _), constructor_stored(q).
+
+// A `def` with a non-splat parameter, any name (`$PARAM` is fresh in `symbol-scope`'s frame, above). A typed
+// splat (`*a: T`) has no identifier child, so it is not one; an untyped splat is a splat pattern, not an identifier.
+.decl constructor_param(p: node)
+constructor_param(p) :- node(_, p, "identifier", _, _).
+constructor_param(p) :- node(_, p, "default_parameter", _, _).
+constructor_param(p) :- node(_, p, "typed_default_parameter", _, _).
+constructor_param(p) :- node(_, p, "typed_parameter", _, _), child(p, i, _), node(_, i, "identifier", _, _).
+.decl constructor_has_param(f: node)
+constructor_has_param(f) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, p, _), constructor_param(p).
+
+// `symbol-scope(NAME)` at scope s, for the (scope, name) pairs asked.
+.decl constructor_want(s: node, x: symbol)
+.decl constructor_stores(s: node, x: symbol)
+// Every store in every `def` (not by demand: `passes` negates it, so it must not depend on `want`).
+constructor_stores(s, x) :- node(_, s, "function_definition", _, _), constructor_stored(i), node(_, i, "identifier", _, _), inside(i, s, constructor_fdef), text(i, x).
+.decl constructor_passes(s: node, x: symbol)
+constructor_passes(s, x) :- constructor_want(s, x), node(_, s, "function_definition", _, _), !constructor_has_param(s), !constructor_stores(s, x).
+constructor_need(s) :- constructor_passes(s, _).
+constructor_want(t, x) :- constructor_passes(s, x), constructor_climb(s, t).
+.decl constructor_resolves(s: node, x: symbol)
+// The module: a top-level `def NAME`, not a decorated one (the policy's first branch has no decorated form).
+constructor_resolves(s, x) :- constructor_want(s, x), node(_, s, "module", _, _), child(s, f, _), constructor_def(f, x).
+constructor_resolves(s, x) :- constructor_want(s, x), node(_, s, "function_definition", _, _), field(s, "body", b), constructor_defines(b, x).
+constructor_resolves(s, x) :- constructor_passes(s, x), constructor_climb(s, t), constructor_resolves(t, x).
+
+// The candidates: (node, constructor).
+.decl constructor_ident(n: node, x: symbol)
+constructor_ident(n, x) :- constructor_arg(n, x), node(_, n, "identifier", _, _).
+constructor_need(n) :- constructor_ident(n, _).
+constructor_want(s, y) :- constructor_ident(n, _), text(n, y), constructor_climb(n, s).
+.decl constructor_candidate(n: node, x: symbol)
+constructor_candidate(n, x) :- constructor_arg(n, x), node(_, n, "lambda", _, _).
+constructor_candidate(n, x) :- constructor_ident(n, x), text(n, y), constructor_climb(n, s), constructor_resolves(s, y).
+
+violation("data-layer-grammar-callable-constructors", "constructor-arg", "CALLABLE_CONSTRUCTOR_ARG", p, l) :-
+    constructor_candidate(n, x), constructor_seed(x), node(d, n, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(n, l).
+
+// ---- untyped-called-field and any-called-field ----
+// Authored over the converter's: its form tests "no type" as `name(type, s), glob("*?*", s)` (its "a regex on a
+// node of any kind as a name" approximation of `regex: "(?s)."` on the `type` field), and its "no parameter named
+// PARAM" rule ranges over every (node, node) pair (`node(_, v122, …), node(_, n, …), !m146(n, v122)`). Here a
+// parameter is typed when it has a `type` field (a valid parse's `type` node is never empty, so `(?s).` matches it).
+// Both clauses: a non-async `__init__` whose nearest class has a non-async `render` (direct or decorated) that calls
+// `self.FIELD(…)` somewhere, and which assigns `self.FIELD = PARAM` somewhere; then `untyped`: a parameter named
+// PARAM with no type, or no parameter named PARAM at all; `any`: a parameter named PARAM typed `Any` (`Any` or
+// `….Any`, directly in the `type`). `each: FIELD` gives one finding per FIELD, all at the `__init__`: one
+// (path, line) row.
+.decl untyped_param_kinds(kind: symbol)
+untyped_param_kinds("typed_parameter").
+untyped_param_kinds("typed_default_parameter").
+untyped_param_kinds("default_parameter").
+// A parameter named p, as the clauses shape `$PARAM` (an identifier, a name field, an identifier child).
+.decl untyped_param_named(q: node, p: symbol)
+untyped_param_named(q, p) :- node(_, q, "identifier", _, _), text(q, p).
+untyped_param_named(q, p) :- node(_, q, k, _, _), untyped_param_kinds(k), field(q, "name", n), text(n, p).
+untyped_param_named(q, p) :- node(_, q, k, _, _), untyped_param_kinds(k), child(q, i, _), node(_, i, "identifier", _, _), text(i, p).
+.decl untyped_has_param(f: node, p: symbol)
+untyped_has_param(f, p) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p).
+.decl untyped_typed(q: node)
+untyped_typed(q) :- field(q, "type", _).
+
+// A non-async render in a class body (direct or decorated): (class, the render function).
+.decl untyped_render(c: node, m: node)
+untyped_render(c, m) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, m, _), constructor_def(m, "render").
+untyped_render(c, m) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, g, _), node(_, g, "decorated_definition", _, _),
+    field(g, "definition", m), constructor_def(m, "render").
+// The class's render calls `self.x(…)`.
+.decl untyped_render_calls(c: node, x: symbol)
+untyped_render_calls(c, x) :- untyped_render(c, m), node(_, k, "call", _, _), inside(k, m, constructor_fdef), field(k, "function", g),
+    node(_, g, "attribute", _, _), field(g, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(g, "attribute", a),
+    node(_, a, "identifier", _, _), text(a, x).
+// An `__init__` storing parameter-ish name p in a field its class's render calls: (document, __init__, p).
+.decl untyped_stores(d: number, f: node, p: symbol)
+untyped_stores(d, f, p) :- constructor_def(f, "__init__"), node(d, f, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
+    nearest(f, c, untyped_class_kinds), untyped_render(c, _), node(_, s, "assignment", _, _), inside(s, f, constructor_fdef),
+    field(s, "left", l), node(_, l, "attribute", _, _), field(l, "object", o), node(_, o, "identifier", _, _), text(o, "self"),
+    field(l, "attribute", a), node(_, a, "identifier", _, _), text(a, x), field(s, "right", r), node(_, r, "identifier", _, _), text(r, p),
+    untyped_render_calls(c, x).
+.decl untyped_class_kinds(kind: symbol)
+untyped_class_kinds("class_definition").
+
+violation("data-layer-grammar-callable-constructors", "untyped-called-field", "UNTYPED_CALLED_CONSTRUCTOR_FIELD", path, l) :-
+    untyped_stores(d, f, p), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p), !untyped_typed(q), doc(d, path, _), line(f, l).
+violation("data-layer-grammar-callable-constructors", "untyped-called-field", "UNTYPED_CALLED_CONSTRUCTOR_FIELD", path, l) :-
+    untyped_stores(d, f, p), !untyped_has_param(f, p), doc(d, path, _), line(f, l).
+
+.decl any_type(t: node)
+any_type(t) :- node(_, t, "type", _, _), child(t, i, _), node(_, i, "identifier", _, _), text(i, "Any").
+any_type(t) :- node(_, t, "type", _, _), child(t, i, _), node(_, i, "attribute", _, _), field(i, "attribute", a), node(_, a, "identifier", _, _), text(a, "Any").
+violation("data-layer-grammar-callable-constructors", "any-called-field", "ANY_CALLED_CONSTRUCTOR_FIELD", path, l) :-
+    untyped_stores(d, f, p), field(f, "parameters", ps), child(ps, q, _), untyped_param_named(q, p), field(q, "type", t), any_type(t),
+    doc(d, path, _), line(f, l).

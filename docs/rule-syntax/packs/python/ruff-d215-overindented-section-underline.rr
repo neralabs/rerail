@@ -1,0 +1,21 @@
+.policy "ruff-d215-overindented-section-underline" revision 2
+.description "Align a docstring section's dashed underline with the docstring's own indentation, not deeper than it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D215 (pydocstyle): a section's dashed underline indented deeper than the docstring itself (the column of
+// its opening quotes). Reported at the underline.
+//   def f():
+//       """Sum.
+//
+//       Returns
+//           -------          ← D215
+//       """
+#include "python/docstrings-sections.rr"
+
+.violation D215(at: span, k: symbol) code "D215"
+    "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
+    suppress ruff "D215"
+D215(at, v) :- doc_section(s, i, v, _, _, _), doc_after(s, i, f, _), doc_dashes(s, f, _), doc_lead(s, f, k),
+    doc_indent(s, c), k > c, doc_at(s, f, at).

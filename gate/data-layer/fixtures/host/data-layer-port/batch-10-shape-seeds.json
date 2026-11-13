@@ -1,0 +1,2450 @@
+{
+  "records": [
+    {
+      "test": "bounded_composed_graph_paths-BCGP002",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "e5ea2b161e4b646ad7f8ccd6789450707a045349d5cb8953684ef11c0713c0b6"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP005",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "043474f43d0ea32e3949ade3b3a3e46fba104eea5604ded1d4bbf0afd090389b"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP006",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "251311f5407e08e57dd947feadf03ab3f73d46a904d6f97ecdc9b2b4a37ede78"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP008",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "a0ed2b043850cb2d36c32959602f5596eb1c056ac3c632690ada2092e98670d7"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP009",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "cae09c9ae26325d6ef81a7e2ce5ffd5f9df93037e320bc9b37e304aeaeba75a8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP010",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "ed466eb08d9cba0ed32d48690e3a8633c619af72754cd33f37404ddf6ecb4b78"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP012",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "1a845d8f81bfd918e11c6445ee6fd7f58b0d950f2fbe7de4306482c9509e854c"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-BCGP014",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "a04c0af5746850339630296c58900cd4a76a02bfe71f44414116c628dd7c6285"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "bounded_composed_graph_paths-clean",
+      "check": "bounded_composed_graph_paths",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "sourceSha256": "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "sourceSha256": "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "sourceSha256": "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "sourceSha256": "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "sourceSha256": "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "sourceSha256": "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "sourceSha256": "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "sourceSha256": "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "sourceSha256": "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "sourceSha256": "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "sourceSha256": "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "sourceSha256": "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "sourceSha256": "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "sourceSha256": "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "sourceSha256": "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "conditional_architecture-CONDA-001",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "sourceSha256": "7aebc7c1010b2ab168a68c24c0275d293f0b6d0b5bffa0773a8740ce10c0e1a6"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "conditional_architecture-CONDA-003",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py",
+          "sourceSha256": "5368d3ce82c0fb66cb199c9fcb66245b800af768c9470192c4303041beb439af"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "conditional_architecture-CONDA-004",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "sourceSha256": "7aebc7c1010b2ab168a68c24c0275d293f0b6d0b5bffa0773a8740ce10c0e1a6"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "conditional_architecture-CONDA-005",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "sourceSha256": "7aebc7c1010b2ab168a68c24c0275d293f0b6d0b5bffa0773a8740ce10c0e1a6"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "conditional_architecture-clean",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py",
+          "sourceSha256": "821cdb5e03b3fcac6c17870d0cc96743297e0af12008c2f403fcda4b445682b2"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO001",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/new_file.py",
+          "sourceSha256": "72463568a97bcbd7a7b6fd4a3016020c365612ba94ad9380d5545e60e830746f"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO101",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "67d204d65582818bd0c3551cfed0e7539b5cfa83c98fdc83b248e13b85257556"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO102",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "64a1962abcf8aeb9081cf540c02db717e38f08b5d17c4ec689f633bddbf58dc0"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO104",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "e8b3cf0dec4725240a3dd71eb16f0fba7e8bd605f3dc5a1e2d67cc9896cb1b21"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO105",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "67d204d65582818bd0c3551cfed0e7539b5cfa83c98fdc83b248e13b85257556"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO106",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "6bb61f078c326c32a07b539003cbb3630ea6c63e323ffcc4b0108f837980924a"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO107",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "c139b87906c0cbad3d14948da606b71ff01f362d492c3e77aa338bd4cc6b8840"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-EVO108",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "sourceSha256": "745b311b15865572f59461659d50a2559f16b2ec9e7fd97a52562c13d93161e8"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "embedding_vector_orchestration-clean",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l5200_vector_index/index_manager.py",
+          "sourceSha256": "f573bf4ed230317908cb3d294da89627db3005dad925d4c8768bc3e14a62aa42"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "generated_index_sources-clean",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "generic_sparse.py",
+          "sourceSha256": "5bbb8160506db81bc20adae0fc4cedc515eb929ddf53f8311fcae0f0f76e394b"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "generated_index_sources-positive",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "files": [
+        {
+          "path": "generic_sparse.py",
+          "sourceSha256": "d2be4d8ff67b33cd08dd831d1c9892be9f65d132e2046e0370518660be562108"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-001",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-002",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "f566e40c9183ec54c7a0fde040f1b0afa86a8a12e6b09e322526a12fb412560f"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-003",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-004",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "2815355f4c470af24b43966b062c57af8ca3837ab9b4ad19aa73a95051a74870"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-006",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "e9c3a4ca72513fb316845b577574db797ccf2ec03f6cfe2ac1b458bb3cecc58d"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "16f05ac919e3e98c3ffc5f76f8bfcf04677accbfccb8aab603cddab53220508b"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-007",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-008",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-009",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "e9c3a4ca72513fb316845b577574db797ccf2ec03f6cfe2ac1b458bb3cecc58d"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "cd70cf2e68e83d1fdfce9a26ea8cb4d697147d14b732bbc8c2297c5bafec89e2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-010",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "e9c3a4ca72513fb316845b577574db797ccf2ec03f6cfe2ac1b458bb3cecc58d"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "0ccb542b1f0b14caf2b5dbc92293862342f56dcef6743a7b75d8bd5bb83ba5aa"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-011",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "e9c3a4ca72513fb316845b577574db797ccf2ec03f6cfe2ac1b458bb3cecc58d"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "4d9b652631bec80f80ea4b23bcc3dd0bc9dd8aa13d52e086457077a6d718ba92"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-012",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-GLSP-013",
+      "check": "graph_lazy_sql_plan",
+      "entry": "run_checks",
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "sourceSha256": "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "sourceSha256": "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "sourceSha256": "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graph_lazy_sql_plan-clean",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_scan_intent_graph",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "sourceSha256": "4138c69d8fa6662bcc731a0499ee85b0a5ba2c230d791cedf6fe6d3b7c01e346"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-GPO000",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "sourceSha256": "e9dd492fb73cfae77fa092f47dd6cd0294a05aad9e0847915a01c2fa193f2b70"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-GPO001",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "graphql_consumer.py",
+          "sourceSha256": "c8354f5073c0b3b5557e217e377dd22e761eda3ba0be2a776e0781063261eb93"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-GPO002",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "graphql_consumer.py",
+          "sourceSha256": "6f0b1df6b1fe08a4a215054c741b986fb18e8a9791afd73a5a9e4e97695be1da"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-GPO003",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "graphql_consumer.py",
+          "sourceSha256": "6f0b1df6b1fe08a4a215054c741b986fb18e8a9791afd73a5a9e4e97695be1da"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-GPO004",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "graphql_consumer.py",
+          "sourceSha256": "e6690d6a0d2fd8d4fa42581472f0e0a36a66979dfa1645c036e915dfe478a286"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "graphql_plan_ownership-clean",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "graphql_consumer.py",
+          "sourceSha256": "b900937d8e611a9fc272defd03c74272ab7a1c7a78995b7aafd2d2b58b0adef2"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW001",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "forbidden_hnsw.py",
+          "sourceSha256": "b523c621c3724543b3ee15c6a25d37d2ab941944b6eeba3e238d14e55cc9bb2c"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW002",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/state.py",
+          "sourceSha256": "32832d53c57f973469408dc1a8e4bca715c3db43c6ad499612913dd9c9f22296"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW003",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "sourceSha256": "ae8b877e500d6b4efade3343441871d6565ed362420278760848271c9f090270"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW004",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "algorithm.py",
+          "sourceSha256": "ae8b877e500d6b4efade3343441871d6565ed362420278760848271c9f090270"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW006",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+          "sourceSha256": "4702b5bea432b989a8b8bc9656740283b23441df8b5caea0f9afa2dca4a5634e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-HNSW007",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/state.py",
+          "sourceSha256": "45e6741e44986f2bbfc472774492ec70713794ef092bd06421621351bce7f520"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "hnsw_architecture-clean",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "files": [
+        {
+          "path": "sql_table_hnsw/state.py",
+          "sourceSha256": "29d2098fbac53be6ad7dcec309b8afb7cdc1bd62de646cf4766619669d04e87e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "matching_architecture-MA001",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "files": [
+        {
+          "path": "applications/search.py",
+          "sourceSha256": "a79da5be8bef2f4656088248749643892867e1e5fed0a91d7073a8cc6f56cccc"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA002",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "applications/search.py",
+          "sourceSha256": "ebee4a4893da9bb66a0d1b420a6f1f5e3449f87870327748d28528208deedebd"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA003",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l2050_transaction/transaction.py",
+          "sourceSha256": "1868487634e36b72a3614e5084c9a45451e3cca0f759d404872d2826ffe4a357"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA004",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/execution.py",
+          "sourceSha256": "7a8d5407389bfad097313125673e61dfd7ef45c34f84aa773554e61499e74848"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA005",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/execution.py",
+          "sourceSha256": "901eb9c466e9bd71aa0d36e4306bd58e100506b7d8730801110b989a8926ed61"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA006",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/execution.py",
+          "sourceSha256": "c78c13d10712755f2b7093fb31f6978071dfbde78cae3630eea487c35e038ec5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA007",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/execution.py",
+          "sourceSha256": "c78c13d10712755f2b7093fb31f6978071dfbde78cae3630eea487c35e038ec5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA008",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l2050_transaction/lazy_mixin.py",
+          "sourceSha256": "b1b9a29d0ecd5ee69edc0e6f816275c1268e1a67bbb3106e12d483d2c422ade1"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA009",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/contracts.py",
+          "sourceSha256": "7d8490c48b847724f26af44ac3d9f43f9f0a77a9d3f7fd95e058a367c0d4dc87"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA010",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "applications/search.py",
+          "sourceSha256": "f117fdb0d7b1f19f44dbc488be11771e2cf16728084a52bf6f55d45f4eed82cb"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA011",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "applications/search.py",
+          "sourceSha256": "f117fdb0d7b1f19f44dbc488be11771e2cf16728084a52bf6f55d45f4eed82cb"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA012",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/bad_contracts.py",
+          "sourceSha256": "85432d9b1189aa41f461f4c8f5c51c577ebdc7e172a490f3e62e9b27e957eea5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA013",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/bad_contracts.py",
+          "sourceSha256": "85432d9b1189aa41f461f4c8f5c51c577ebdc7e172a490f3e62e9b27e957eea5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA014",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/contracts.py",
+          "sourceSha256": "7d8490c48b847724f26af44ac3d9f43f9f0a77a9d3f7fd95e058a367c0d4dc87"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA015",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "conform/l5250_matching/test_bad.py",
+          "sourceSha256": "dfe45c380fce8a01d22753de910a23b30dbad00530ac7e8eef020f73b0493ab0"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA016",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "conform/l5250_matching/test_bad.py",
+          "sourceSha256": "dfe45c380fce8a01d22753de910a23b30dbad00530ac7e8eef020f73b0493ab0"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA017",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/dispatch.py",
+          "sourceSha256": "5e5a88c3a0bfe4a5fc140a9ff16c0a218596d6660dc9e6eeb78d16475803a9f5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA018",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/dispatch.py",
+          "sourceSha256": "5e5a88c3a0bfe4a5fc140a9ff16c0a218596d6660dc9e6eeb78d16475803a9f5"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA019",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/api.py",
+          "sourceSha256": "762925c2b6833a514b628c71710c1d0b37a15f2009adcd9c03601eeec27aefa3"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA020",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/models.py",
+          "sourceSha256": "a396cda2c3b9fecc14dc98a03d2b454df39245a7d5e7147bdd9df5b7123747cb"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA021",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l5250_matching/api.py",
+          "sourceSha256": "762925c2b6833a514b628c71710c1d0b37a15f2009adcd9c03601eeec27aefa3"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA022",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/pagination.py",
+          "sourceSha256": "dfa4b078c4a2d79698aafb50a19e2e2a61402853e9201df65ca53e430e2ef4f3"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA023",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/decoding.py",
+          "sourceSha256": "36f3f2c83662f89bcd07c2ce95992232fdad28a5840195e2f0be1197a46177bf"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA024",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "conform/l5250_matching/test_phase_matrix.py",
+          "sourceSha256": "af88aa595f9a2d8b665ed950b49dd22937914d6c6b2ee3e09fc70e7e79638636"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA025",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "conform/l5250_matching/test_policy.py",
+          "sourceSha256": "4dcaec6ed90ef48460636e6ea1a6e16eefa940d422c167c682cf851cb748cfa9"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA026",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/planner.py",
+          "sourceSha256": "bac46aee9f064f45378e06ee6a691cdfaed8e38a3e2b5629b597d206df102253"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA027",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/scoring.py",
+          "sourceSha256": "3cceb9b1d10991e9b581ced706e7ad40e98ba544362cebe693f7a7c024686dd2"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA028",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/result_policy.py",
+          "sourceSha256": "67e43a4f8b9026e2ae333f76a9c36d2177a3e63264ebf4f256d02e2c888b6e3d"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA029",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/result_policy.py",
+          "sourceSha256": "2dd5f9480c845d53c9633c96848f27452ca7eb8160ad6af12d8a78c8cbafcdde"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA030",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/models.py",
+          "sourceSha256": "a396cda2c3b9fecc14dc98a03d2b454df39245a7d5e7147bdd9df5b7123747cb"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA031",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/execution.py",
+          "sourceSha256": "ab3e1700f519c3937917c3614dec00c79e345dc230f78e5c9a6d64b5f804dd52"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA036",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "conform/l5250_matching/test_artifacts.py",
+          "sourceSha256": "5700b74942b83ab46e221e578636725bbe09713630a7be81936c136803f1789a"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA037",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/counters.py",
+          "sourceSha256": "72f0357856d18153d506e4e24ff041808414cf5d942474c60c3c7e9ffbb50c5b"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA038",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/freshness.py",
+          "sourceSha256": "88e450c6bc0d32b35c4a91e4475b0e1ca1ad9ab8ff4420e181ab7dde57be8e4b"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA039",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/expression_receipts.py",
+          "sourceSha256": "b4ddd61c7d91f9269f54a40b1912012cc691370ded14a41fec90108adf4715a3"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA040",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/candidate.py",
+          "sourceSha256": "d51be180a2ffda5eacddc48452325ed0c2f23eb15f61e6e213612c0cebf1d618"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-MA041",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "sourceSha256": "6ed69a08f3fcec6d919d7850705ddaacc620c2c83fccdd6932adfd799c00af73"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "matching_architecture-clean",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "files": [
+        {
+          "path": "applications/search.py",
+          "sourceSha256": "aecf4e01837330a423207697bcae210b85d5fafd84ea61666f9015e1140c951f"
+        }
+      ],
+      "parameters": {
+        "applicationPaths": []
+      }
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-001",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "463c91f978872b1fca29c26ced25889f263486b9186c4654129dd2f9ddb8c6b3"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-002",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "1312f27e878671241c313842ac2cbd8e9cfbe7579ec43830b29b8b06ee76d2ab"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-003",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2066_plan_optimizer/node.py",
+          "sourceSha256": "40b84dbbf6c3f05ec0c57ec0727d110d615b17f54eaeb277e3792dced31891fc"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-010",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "c1322012bd8235c4ee3496320e4580577c6e8108b9f1804ce6b521b1fadcd059"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-011",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "bce77f91c29f869741cef76eb6c0b99a90d957cafa45ff9779fcaf877fe918b4"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-012",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "13505d94f6fc82cc80a495acc0d05517f3dc4aa7423630cd45b4612357f08530"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-020",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "e3a4a8aaa5f6e5eb36273644882e12f465b73b158d830d93bf09eda785bd4ace"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-021",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "2699b1b9e87028c77e46e5369efd54bc4e3bfc5668ba2606c9bc8a0c40043f94"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-022",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "25ef406badd5b15aa49c36ac236c18d731f6ec75064ca7672d90f265e93ec4a2"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-023",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "a8dbc3541b70948e2f9268556ecd1d01a83550410843ed65bd17a563976d501c"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-030",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "9838aa2d15cfcbf4c9bf84741df6c42f33f693ec478e8481740b2a454465ff12"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-031",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "e29a9f62efca8dd21e34b7e429d9e1665da0b85ebb7b5bb82f198a7a1fb1bac6"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-040",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "sourceSha256": "fd3623d54d19473ceb75601a3137c8df0abefa3cb6da682b9c0a12bbc9b9b26f"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-041",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "sourceSha256": "6ea5afef326edda7c02766c73be5c6deae8eb84825eec883a1f11cea103710d7"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-042",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "9baf9d2b722a4b18696fb5f02c7f76a6de42dfd493a43210d53e30c491a21ea1"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-043",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "sourceSha256": "3fae6e045f118c5eb4d7f10c31be0c68bdca8344702f7f1b8ca8eafe35fade56"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-044",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "7954c46c10b43b6a627a99174dae4382d4847dfca9b1f72139bbdafdc5268e2e"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-050",
+      "check": "plan_optimizer_v2",
+      "entry": "find_violations",
+      "files": [],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-051",
+      "check": "plan_optimizer_v2",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "sourceSha256": "43afec85f2cb31ce66a887c6c15eb60cd7bcf0b029113483fad3ee8436653251"
+        },
+        {
+          "path": "impl/common/l2065_plan_core/verifier.py",
+          "sourceSha256": "38e882ea3bdcd6c44ab1d37befc890f30043bc432d406e80fcb27389064b8e59"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-052",
+      "check": "plan_optimizer_v2",
+      "entry": "find_violations",
+      "files": [
+        {
+          "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+          "sourceSha256": "43afec85f2cb31ce66a887c6c15eb60cd7bcf0b029113483fad3ee8436653251"
+        },
+        {
+          "path": "impl/common/l2065_plan_core/verifier.py",
+          "sourceSha256": "38e882ea3bdcd6c44ab1d37befc890f30043bc432d406e80fcb27389064b8e59"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-PV2-060",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "sourceSha256": "4d5a3e9d17404fe7cda6856765824d2d3de39428e7004491b4bc6d00f3a2deb5"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "plan_optimizer_v2-clean",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/scope.py",
+          "sourceSha256": "85d888d4414681d1f5a22f082a851b4cf3c6f34b01ccda2ae4823b4ece0039e9"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-TableExistsStep",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/write.py",
+          "sourceSha256": "adcc2e59182c023e09f279f656c98446b0573825a76d211da7d8d18df75a9c74"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-clean",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/write.py",
+          "sourceSha256": "453ff8958728abc0adfd3bd9d125922a4941266a0137e733555ea8fc56ea50d0"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-flush_schema_plan",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "sourceSha256": "5cab908ee374aaf67347f35af13b1083382ab5cbd16b0d65fdda3cb8f7791f7f"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-flush_schema_plan_async",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "sourceSha256": "0ba58233e2459e8aa043a1269d77080940a20580806260af17bc1b080df8d4ab"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-information_schema",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/write.py",
+          "sourceSha256": "8242b8fab9f3db50397db68052acd5bced399f612481ee8998e666d61d79d9b9"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-table_exists",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/write.py",
+          "sourceSha256": "e9b12b1d5f1e7c7b55901ee1f04f3b5ec69996ee4c3db9e94ea2b3e93711f84b"
+        }
+      ],
+      "parameters": {}
+    },
+    {
+      "test": "schema_introspection_data_paths-table_exists_lazy",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/steps/write.py",
+          "sourceSha256": "d12450a84fb0b0cf211ec2709bb46308a4c06173d5c927cef61b33a6e2447c25"
+        }
+      ],
+      "parameters": {}
+    }
+  ],
+  "sources": {
+    "3dae07ad98502788bcac0bf7c4e72b2cc9b936948abfe4e97c71719edf1b0c60": "def test_contract(): pass\n",
+    "416c505c1f4a2ed02f82a509bf91c1ab14f4c959d4b1ce3f58ed6537de062e81": "Design\n======\n",
+    "25195a68b8cef0671170eb11f076baf13fa111000be7561fbacd2abef89ae1d6": "Plan\n====\n",
+    "6ab478b6c858eeea7cbc0e46892f12f49b47163c3f1d80e5c2465780b2d3db56": "# bounded_composed_graph_paths\n",
+    "c80a61a363178982a0d8ad4c949c00ff94d73b0dbe30ce92df639f808b4c84c6": "Use graph_lazy.\n",
+    "6bf78b4245e750c42e75e44332cfa1fb5e6d97d30e23ed7078ab98518e628ce5": "SPARQL paths use PathExpression.\n",
+    "ad882544da88bfcf4c1948e6968db88e3d3c0372fef0d1427d1a46b62923159d": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n",
+    "738326570424018429c521906ce8c1386b507f239fb49c8cbb61d31759f5021b": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n",
+    "5b58737114415b6a84a58dee8efb4b301568ee4d751f35abdf3a7f620209177e": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n",
+    "8de4b79302cf3ba352e28cf3c3c82f6312b8a74624a589c9bdc08d540e857ce6": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n",
+    "c07515e4f28f4ed00baa21e3b986196915eaf80fce40ddb10f8213a24f991cc1": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n",
+    "e5ea2b161e4b646ad7f8ccd6789450707a045349d5cb8953684ef11c0713c0b6": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\ndef graph_query_builder_lazy(): ...\n",
+    "267a070d2228a40e41163344abd04293fc9a030648deeb33afbde3608d7e14f1": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n",
+    "a4d5e1bdabf1807bcd6717eadf8efe9b1b2078de1fac01a1d44465f162f626da": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n",
+    "ff883cb38d19ed4cd0537525b0f6e1d42a711d3b086e5da7d7dd8752186351b7": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n",
+    "b7d541a5e48304dbae64559a14cab790c67fe812351ea4e5d1bd008532f334a2": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n",
+    "b0f7fc02037b20106f29e37c98001846388543f093c5cd60f8ff61dc95d95eb9": "from x import PathExpression\n",
+    "aadb0a06866f007a7c206a44d252991773b3086c3a8f4ef5efb784d2f9f5c051": "def execute(txn): return txn.graph_lazy().query_builder()\n",
+    "2d4a438f95a92d3b6b48a4fde73c8ec86545b4c6065094150aa7f45ae5db4d42": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n",
+    "30bc65e0a2d34c3aa336955899460b882ec043bbc33d978aa612118a0634bc4a": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n",
+    "043474f43d0ea32e3949ade3b3a3e46fba104eea5604ded1d4bbf0afd090389b": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    edge: object\n",
+    "251311f5407e08e57dd947feadf03ab3f73d46a904d6f97ecdc9b2b4a37ede78": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def missing_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n",
+    "a0ed2b043850cb2d36c32959602f5596eb1c056ac3c632690ada2092e98670d7": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return custom_sql_wrapper()\n",
+    "cae09c9ae26325d6ef81a7e2ce5ffd5f9df93037e320bc9b37e304aeaeba75a8": "\nclass SqlGraphExecutionCtx:\n    graph_type: type | None\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n",
+    "ed466eb08d9cba0ed32d48690e3a8633c619af72754cd33f37404ddf6ecb4b78": "def execute(txn): return txn.graph_query_builder()\n",
+    "1a845d8f81bfd918e11c6445ee6fd7f58b0d950f2fbe7de4306482c9509e854c": "LINTERS = []\n",
+    "a04c0af5746850339630296c58900cd4a76a02bfe71f44414116c628dd7c6285": "class SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n    def _try_build_sparse_union_recursive_bindings_grammar(self): ...\n",
+    "7aebc7c1010b2ab168a68c24c0275d293f0b6d0b5bffa0773a8740ce10c0e1a6": "\nclass ConditionalStep:\n    def compile(self, ctx):\n        from impl.common.l2100_sql_grammar.tree.cte import SqlCte\n        return CompiledStep(grammar=SqlSelectStmt())\n",
+    "5368d3ce82c0fb66cb199c9fcb66245b800af768c9470192c4303041beb439af": "\ndef test_dialect_smoke():\n    cs = make_conditional()\n    compiled = cs.compile(ctx)\n    assert compiled.grammar is not None\n",
+    "821cdb5e03b3fcac6c17870d0cc96743297e0af12008c2f403fcda4b445682b2": "\nfrom impl.common.l2070_server_plan.steps._conditional_compile import compile_conditional_step\n\ndef test_dialect_smoke():\n    cs = make_conditional()\n    compiled = compile_conditional_step(cs, ctx)\n    assert compiled.grammar is not None\n",
+    "72463568a97bcbd7a7b6fd4a3016020c365612ba94ad9380d5545e60e830746f": "\nasync def helper(conn, session_id, fn):\n    return await conn.session(session_id).write_async(fn=fn)\n",
+    "67d204d65582818bd0c3551cfed0e7539b5cfa83c98fdc83b248e13b85257556": "\nasync def worker(txn):\n    rows = await txn.query(Model).filter(flag=True).lazy().resolve_async()\n    return rows\n",
+    "64a1962abcf8aeb9081cf540c02db717e38f08b5d17c4ec689f633bddbf58dc0": "\ndef outer_lazy():\n    def inner():\n        pass\n    return process_embedding_task_lazy(conn, sid).resolve()\n",
+    "e8b3cf0dec4725240a3dd71eb16f0fba7e8bd605f3dc5a1e2d67cc9896cb1b21": "\ndef process_embedding_batch_sync_lazy():\n    return None\n",
+    "6bb61f078c326c32a07b539003cbb3630ea6c63e323ffcc4b0108f837980924a": "\nasync def bad(conn, session_id):\n    async with conn.async_read_transaction(session_id) as txn:\n        await txn.query(Model).execute_async()\n",
+    "c139b87906c0cbad3d14948da606b71ff01f362d492c3e77aa338bd4cc6b8840": "\ndef plan(txn):\n    plan = txn._get_transaction_plan_lazy()\n    return plan._next_ref()\n",
+    "745b311b15865572f59461659d50a2559f16b2ec9e7fd97a52562c13d93161e8": "\ndef plan(txn):\n    plan = txn._get_transaction_plan_lazy()\n    plan._add_server_step(step, str, variant=\"scalar\")\n",
+    "f573bf4ed230317908cb3d294da89627db3005dad925d4c8768bc3e14a62aa42": "\ndef get_index(conn, session_id):\n    return conn.session(session_id).read(fn=_get_index)\n",
+    "5bbb8160506db81bc20adae0fc4cedc515eb929ddf53f8311fcae0f0f76e394b": "def _generated_index(*, source: IndexSource):\n    return Index(name='idx', columns=['x'], source=source)\n",
+    "d2be4d8ff67b33cd08dd831d1c9892be9f65d132e2046e0370518660be562108": "def build():\n    return Index(name='idx', columns=['x'])\n",
+    "cf196741c189e5f0961010e065f36388de813e03dc094d8908e5ef6f53897cf8": "\nfrom l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\n    @pure_lazy\n    def graph_query_builder_lazy(self, graph_id, result_node_type=None):\n        return make_graph_builder_handle(graph_id, result_node_type)\n\nclass _PlanBackedGraphQuery:\n    pass\n",
+    "40460b92ea5077346707eaa7be99ac23fbe494a9fb34ada96fe9e84e7139cd5d": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_sync\n    def graph_query_builder(self, graph_id, result_node_type=None):\n        del graph_id, result_node_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_query_builder_async(self, graph_id, result_node_type=None):\n        del graph_id, result_node_type\n        _legacy_delegate_stub()\n",
+    "185de8a62ce11f775562c0df8ea12ceb1e5dba116ef7f1f73ccb63f3bc3b44a2": "\nclass GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\n\nclass SqlGraphExecutionCtx:\n    pass\n\nclass SqlPlanGraphQuery:\n    pass\n\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_one_lazy(self):\n        return None\n\n    @pure_lazy\n    def count_lazy(self):\n        return None\n\n    @pure_lazy\n    def exists_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_bindings_lazy(self):\n        return None\n\n    @pure_lazy\n    def execute_aggregate_lazy(self):\n        return None\n\nclass SqlPlanGraphTraversal:\n    pass\n",
+    "7dbe07cade2ec4c11e605956081908af2a387f404b83072c95ceacef1a124e5e": "\ndef _build_graph_execution_ctx(ctx, **kwargs):\n    del ctx, kwargs\n    return None\nclass ExecuteGraphNodesStep:\n    pass\nclass ExecuteGraphOneStep:\n    pass\nclass ExecuteGraphCountStep:\n    pass\nclass ExecuteGraphExistsStep:\n    pass\nclass ExecuteGraphBindingsStep:\n    pass\nclass ExecuteGraphAggregateStep:\n    pass\n",
+    "f566e40c9183ec54c7a0fde040f1b0afa86a8a12e6b09e322526a12fb412560f": "# no classes here\n",
+    "2815355f4c470af24b43966b062c57af8ca3837ab9b4ad19aa73a95051a74870": "\nclass VersionedReadTransactionLazyMixin:\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\n    def graph_query_builder_lazy(self, graph_id, result_node_type=None):\n        return make_graph_builder_handle(graph_id, result_node_type)\n",
+    "e9c3a4ca72513fb316845b577574db797ccf2ec03f6cfe2ac1b458bb3cecc58d": "\nfrom l2055_lazy_result.purity import pure_lazy\n\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self, graph_id, graph_type):\n        return make_graph_handle(graph_id, graph_type)\n\n    @pure_lazy\n    def graph_query_builder_lazy(self, graph_id, result_node_type=None):\n        return make_graph_builder_handle(graph_id, result_node_type)\n",
+    "16f05ac919e3e98c3ffc5f76f8bfcf04677accbfccb8aab603cddab53220508b": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\nclass SqlGraphExecutionCtx: pass\nclass SqlPlanGraphQuery: pass\nclass SqlPlanGraphQueryBuilder: pass\n",
+    "cd70cf2e68e83d1fdfce9a26ea8cb4d697147d14b732bbc8c2297c5bafec89e2": "class GraphLazyStepRegistrar:\n    __pure_lazy_surface__ = True\nclass SqlGraphExecutionCtx: pass\nclass SqlPlanGraphQuery: pass\nclass SqlPlanGraphQueryBuilder:\n    def execute_lazy(self): return None\n    def execute_one_lazy(self): return None\n    def count_lazy(self): return None\n    def exists_lazy(self): return None\n    def execute_bindings_lazy(self): return None\n    def execute_aggregate_lazy(self): return None\nclass SqlPlanGraphTraversal: pass\n",
+    "0ccb542b1f0b14caf2b5dbc92293862342f56dcef6743a7b75d8bd5bb83ba5aa": "\nclass GraphQueryTerminalIntent:\n    pass\n",
+    "4d9b652631bec80f80ea4b23bcc3dd0bc9dd8aa13d52e086457077a6d718ba92": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self, graph_id, graph_type):\n        return direct_graph(graph_id, graph_type)\n\n    @legacy_async\n    async def graph_async(self, graph_id, graph_type):\n        del graph_id, graph_type\n        _legacy_delegate_stub()\n\n    @legacy_sync\n    def graph_query_builder(self, graph_id, result_node_type=None):\n        del graph_id, result_node_type\n        _legacy_delegate_stub()\n\n    @legacy_async\n    async def graph_query_builder_async(self, graph_id, result_node_type=None):\n        del graph_id, result_node_type\n        _legacy_delegate_stub()\n",
+    "4138c69d8fa6662bcc731a0499ee85b0a5ba2c230d791cedf6fe6d3b7c01e346": "\ndef _build_graph_execution_ctx():\n    pass\n\nclass ExecuteGraphNodesStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass ExecuteGraphOneStep:\n    pass\n\nclass ExecuteGraphCountStep:\n    pass\n\nclass ExecuteGraphExistsStep:\n    pass\n\nclass ExecuteGraphAggregateStep:\n    pass\n\nclass ExecuteGraphPathsStep:\n    pass\n\nclass ExecuteGraphBindingsStep:\n    def cte_output_columns(self):\n        return (\"__bind_edge_sys_id\",)\n\n    def cte_column_type_hints(self):\n        uuid_columns = {_binding_node_sys_id_alias(\"node\"), _binding_edge_alias(\"edge\", \"sys_id\")}\n        text_columns = {_binding_edge_alias(\"edge\", \"type_name\")}\n        integer_columns = {\"depth\"}\n        return SqlColumnTypeHints(\n            uuid_columns=frozenset(uuid_columns),\n            text_columns=frozenset(text_columns),\n            integer_columns=frozenset(integer_columns),\n        )\n",
+    "e9dd492fb73cfae77fa092f47dd6cd0294a05aad9e0847915a01c2fa193f2b70": "def f(scope: PlanScope):\n    return (\n",
+    "c8354f5073c0b3b5557e217e377dd22e761eda3ba0be2a776e0781063261eb93": "\ndef assemble(scope: AutoApiPlanScope[object]):\n    return scope._returns\n",
+    "6f0b1df6b1fe08a4a215054c741b986fb18e8a9791afd73a5a9e4e97695be1da": "\ndef assemble(scope: AutoApiPlanScope[object], txn: LazyWriteTransaction):\n    plan = getattr(scope, \"plan\")\n    return object.__getattribute__(txn, \"_get_lazy_plan\")()\n",
+    "e6690d6a0d2fd8d4fa42581472f0e0a36a66979dfa1645c036e915dfe478a286": "\n@reusable_template\n@dataclass(frozen=True)\nclass ReusableTemplate:\n    transaction: LazyWriteTransaction\n    result: LazyResult[object]\n",
+    "b900937d8e611a9fc272defd03c74272ab7a1c7a78995b7aafd2d2b58b0adef2": "\ndef assemble(scope: AutoApiPlanScope[object], compiled: CompiledGraphQLOperation):\n    scope.install_runtime_bindings(compiled.runtime_bindings)\n    scope.register_result(\"result\", compiled.result_ref)\n    return scope.bind_prepared_template(compiled.physical_template)\n",
+    "b523c621c3724543b3ee15c6a25d37d2ab941944b6eeba3e238d14e55cc9bb2c": "class SqlTableHnswScopedRebuild:\n    pass\n\ndef build():\n    scored_pairs_query = object()\n    return scored_pairs_query\n",
+    "32832d53c57f973469408dc1a8e4bca715c3db43c6ad499612913dd9c9f22296": "\"json route_partition\"\njsonb_set(state)\n",
+    "ae8b877e500d6b4efade3343441871d6565ed362420278760848271c9f090270": "from impl.sqlite.connection import SyncSqliteConnection\n\ndef render():\n    return None\n",
+    "4702b5bea432b989a8b8bc9656740283b23441df8b5caea0f9afa2dca4a5634e": "invalid=(\n",
+    "45e6741e44986f2bbfc472774492ec70713794ef092bd06421621351bce7f520": "from grammar import SqlJsonIndexSet as mutate\nmutate(state, key, value)\n",
+    "29d2098fbac53be6ad7dcec309b8afb7cdc1bd62de646cf4766619669d04e87e": "# JSON state is forbidden. Use indexed rows.\nSqlInsert(table, source=SqlSelect(columns, from_=visited))\n",
+    "a79da5be8bef2f4656088248749643892867e1e5fed0a91d7073a8cc6f56cccc": "def choose(backend: BackendType):\n    return backend\n",
+    "ebee4a4893da9bb66a0d1b420a6f1f5e3449f87870327748d28528208deedebd": "\nfrom data_layer.connection import BackendType\nfrom data_layer.matching import MatchSpec\n\ndef choose(spec: MatchSpec, backend: BackendType):\n    if backend is BackendType.POSTGRES:\n        return \"hnsw\"\n    return \"exact\"\n",
+    "1868487634e36b72a3614e5084c9a45451e3cca0f759d404872d2826ffe4a357": "\nclass SyncReadTransaction:\n    def match(self, spec):\n        return build_match(spec)\n    def match_lazy(self, spec):\n        return build_match(spec)\n    async def match_async(self, spec):\n        return build_match(spec)\n",
+    "7a8d5407389bfad097313125673e61dfd7ef45c34f84aa773554e61499e74848": "\ndef execute(plan):\n    try:\n        return execute_physical_plan(plan)\n    except MatchPhysicalPlanError:\n        return exact_scan(plan)\n",
+    "901eb9c466e9bd71aa0d36e4306bd58e100506b7d8730801110b989a8926ed61": "\ndef match(conn: SyncDatabaseConnection, spec: MatchSpec):\n    return conn.read_transaction()\n",
+    "c78c13d10712755f2b7093fb31f6978071dfbde78cae3630eea487c35e038ec5": "\nimport importlib\n\ndef execute(txn, table_name):\n    module = importlib.import_module(\"impl.postgres.matching\")\n    return txn.execute(f\"SELECT * FROM {table_name}\")\n",
+    "b1b9a29d0ecd5ee69edc0e6f816275c1268e1a67bbb3106e12d483d2c422ade1": "from l5250_matching import match_lazy\n",
+    "7d8490c48b847724f26af44ac3d9f43f9f0a77a9d3f7fd95e058a367c0d4dc87": "\nfrom pydantic import BaseModel\nclass MatchSpec(BaseModel):\n    name: str\n    limit: int\n",
+    "f117fdb0d7b1f19f44dbc488be11771e2cf16728084a52bf6f55d45f4eed82cb": "\nfrom impl.common.l5250_matching import execute_match\n\ndef run(txn):\n    return match(txn, \"question_to_document\")\n",
+    "85432d9b1189aa41f461f4c8f5c51c577ebdc7e172a490f3e62e9b27e957eea5": "\nfrom dataclasses import dataclass\nfrom typing import Any, Protocol\nfrom pydantic import BaseModel\n\nclass MatchBroadContract(BaseModel):\n    payload: object\n    metadata: Any\n    values: list\n    optional_name: str | None\n\nclass MatchStructuralContract(Protocol):\n    def execute(self) -> str: ...\n\nclass MatchMutableContract(BaseModel):\n    token: MatchToken\n\n@dataclass\nclass MatchDataclassContract:\n    name: str\n",
+    "dfe45c380fce8a01d22753de910a23b30dbad00530ac7e8eef020f73b0493ab0": "\nfrom impl.postgres.connection import SyncPostgresConnection\nfrom l5250_matching import MatchSpec\n\ndef test_bad(conn):\n    conn.nonportably_execute_sql(\"SELECT protected FROM hidden\")\n",
+    "5e5a88c3a0bfe4a5fc140a9ff16c0a218596d6660dc9e6eeb78d16475803a9f5": "\ndef dispatch_match_stage(stage_kind: str, handlers):\n    return handlers.get(stage_kind, default_handler)\n",
+    "762925c2b6833a514b628c71710c1d0b37a15f2009adcd9c03601eeec27aefa3": "\nfrom impl.common.l5250_matching import build_exact_dense_match_intent\nfrom l1470_matching_contracts import MatchAccessMethodKind\n\ndef match_lazy(txn, spec):\n    method = MatchAccessMethodKind.EXACT_DENSE_SCAN\n    return build_exact_dense_match_intent(txn, spec, method)\n",
+    "a396cda2c3b9fecc14dc98a03d2b454df39245a7d5e7147bdd9df5b7123747cb": "\nfrom pydantic import BaseModel, ConfigDict\n\nclass MatchSpec(BaseModel):\n    model_config = ConfigDict(frozen=True)\n    spec_ref_id: MatchSpecRefId\n    artifact_state: MatchArtifactState\n    selected_access_method: MatchAccessMethodKind\n",
+    "dfa4b078c4a2d79698aafb50a19e2e2a61402853e9201df65ca53e430e2ef4f3": "\ndef paginate_hydrated_edges(edges, start, stop):\n    positions = [index for index, edge in enumerate(edges) if edge.rank == start]\n    return edges[positions[0] + 1:stop]\n",
+    "36f3f2c83662f89bcd07c2ce95992232fdad28a5840195e2f0be1197a46177bf": "\ndef decode(rows):\n    return MatchWorkCounters(\n        database_round_trips=MatchDatabaseRoundTripCount(2),\n        working_memory_bytes=MatchWorkingMemoryByteCount(len(rows) * 256),\n    )\n",
+    "af88aa595f9a2d8b665ed950b49dd22937914d6c6b2ee3e09fc70e7e79638636": "\ndef test_complete_matrix():\n    assert MATRIX.total_cell_count == 22_680\n    assert len(MATRIX.execution_classes) == 3_780\n    assert all(len(case.proof_test_ids) == 4 for case in MATRIX.execution_classes)\n",
+    "4dcaec6ed90ef48460636e6ea1a6e16eefa940d422c167c682cf851cb748cfa9": "\ndef test_policy(base_spec):\n    spec = base_spec.model_copy(update={\"artifact_state\": fake_artifact()})\n    unsafe = MatchSpec.model_construct(spec_ref_id=\"unchecked\")\n    return match(spec, unsafe)\n",
+    "bac46aee9f064f45378e06ee6a691cdfaed8e38a3e2b5629b597d206df102253": "\ndef plan(backend: BackendType, spec):\n    if backend is BackendType.POSTGRES:\n        return postgres_match(spec)\n    return sqlite_match(spec)\n",
+    "3cceb9b1d10991e9b581ced706e7ad40e98ba544362cebe693f7a7c024686dd2": "\ndef score(txn, sql):\n    first = txn.execute(\"SELECT score FROM candidates\")\n    second = txn.nonportably_execute_sql(sql)\n    return SqlRaw(\"score DESC\"), first, second\n",
+    "67e43a4f8b9026e2ae333f76a9c36d2177a3e63264ebf4f256d02e2c888b6e3d": "\ndef rerank(edge):\n    return edge.model_copy(update={\"left_rank\": MatchRank(1)})\n",
+    "2dd5f9480c845d53c9633c96848f27452ca7eb8160ad6af12d8a78c8cbafcdde": "\ndef deduplicate_and_rank(edges):\n    grouped = {}\n    for edge in edges:\n        grouped.setdefault(edge.identity, []).append(edge)\n    return sorted(grouped.values(), key=lambda edge: edge.score)\n",
+    "ab3e1700f519c3937917c3614dec00c79e345dc230f78e5c9a6d64b5f804dd52": "\nfrom l1470_matching_contracts import MatchDatabaseRoundTripCount, MatchExpressionEvaluationCount\n\nSQL_STAGES = (\"preflight\", \"score\")\n\ndef counters(pair_evaluations, expression_node_count):\n    expression_operations = pair_evaluations * expression_node_count\n    return (\n        MatchDatabaseRoundTripCount(len(SQL_STAGES)),\n        MatchExpressionEvaluationCount(pair_evaluations),\n        MatchExpressionEvaluationCount(expression_operations),\n    )\n",
+    "5700b74942b83ab46e221e578636725bbe09713630a7be81936c136803f1789a": "\nfrom data_layer_testing.matching_operator import publish_matching_artifact\n",
+    "72f0357856d18153d506e4e24ff041808414cf5d942474c60c3c7e9ffbb50c5b": "\ndef decode(database_receipts):\n    database_round_trips = len(database_receipts)\n    return database_round_trips\n",
+    "88e450c6bc0d32b35c4a91e4475b0e1ca1ad9ab8ff4420e181ab7dde57be8e4b": "\ndef require_bounded_watermark(state, policy):\n    for _attempt in range(int(policy.wait_limit)):\n        if state.artifact_watermark >= policy.required_watermark:\n            return True\n    return False\n",
+    "b4ddd61c7d91f9269f54a40b1912012cc691370ded14a41fec90108adf4715a3": "\ndef expression_operation_receipt(spec, expression_nodes):\n    return tuple(SqlFuncCall(\"COUNT\", (_sql_canonical_identity(spec.left),)) for _node in expression_nodes)\n",
+    "d51be180a2ffda5eacddc48452325ed0c2f23eb15f61e6e213612c0cebf1d618": "\ndef candidates(spec):\n    return SqlIsNull(_typed_score_expression(spec.kernel.candidate_kernel.expression), negated=True)\n",
+    "6ed69a08f3fcec6d919d7850705ddaacc620c2c83fccdd6932adfd799c00af73": "\nfrom data_layer_testing.matching_operator import rebuild_matching_artifact\n",
+    "aecf4e01837330a423207697bcae210b85d5fafd84ea61666f9015e1140c951f": "\nfrom data_layer.matching import MatchSpec, match\nfrom data_layer.transaction import SyncReadTransaction\n\ndef run(txn: SyncReadTransaction, spec: MatchSpec):\n    return match(txn, spec)\n",
+    "463c91f978872b1fca29c26ced25889f263486b9186c4654129dd2f9ddb8c6b3": "import socket\n",
+    "1312f27e878671241c313842ac2cbd8e9cfbe7579ec43830b29b8b06ee76d2ab": "import impl.common.l2066_plan_optimizer\n",
+    "40b84dbbf6c3f05ec0c57ec0727d110d615b17f54eaeb277e3792dced31891fc": "import l2070_batching\n",
+    "c1322012bd8235c4ee3496320e4580577c6e8108b9f1804ce6b521b1fadcd059": "x = scope._bindings\n",
+    "bce77f91c29f869741cef76eb6c0b99a90d957cafa45ff9779fcaf877fe918b4": "x = value.split('.')\n",
+    "13505d94f6fc82cc80a495acc0d05517f3dc4aa7423630cd45b4612357f08530": "binding_by_table = {}\n",
+    "e3a4a8aaa5f6e5eb36273644882e12f465b73b158d830d93bf09eda785bd4ace": "if x == 'count': pass\n",
+    "2699b1b9e87028c77e46e5369efd54bc4e3bfc5668ba2606c9bc8a0c40043f94": "x = 'foo_count'\n",
+    "25ef406badd5b15aa49c36ac236c18d731f6ec75064ca7672d90f265e93ec4a2": "x = set(a) & b\n",
+    "a8dbc3541b70948e2f9268556ecd1d01a83550410843ed65bd17a563976d501c": "x = ColumnSchema('key')\n",
+    "9838aa2d15cfcbf4c9bf84741df6c42f33f693ec478e8481740b2a454465ff12": "x = M.model_fields\n",
+    "e29a9f62efca8dd21e34b7e429d9e1665da0b85ebb7b5bb82f198a7a1fb1bac6": "def broken():\n    raise ValueError('broken')\n",
+    "fd3623d54d19473ceb75601a3137c8df0abefa3cb6da682b9c0a12bbc9b9b26f": "class BrokenPass:\n    pass\n",
+    "6ea5afef326edda7c02766c73be5c6deae8eb84825eec883a1f11cea103710d7": "class PhysicalPass:\n    phase: object = OptimizerPhase.PHYSICAL\n    name: str = \"physical\"\n    def run(self): pass\nclass NormalizePass:\n    phase: object = OptimizerPhase.NORMALIZE\n    name: str = \"normalize\"\n    def run(self): pass\nDEFAULT_V2_PASSES = (PhysicalPass(), NormalizePass())\n",
+    "9baf9d2b722a4b18696fb5f02c7f76a6de42dfd493a43210d53e30c491a21ea1": "def mutate(x):\n    x.value = 1\n",
+    "3fae6e045f118c5eb4d7f10c31be0c68bdca8344702f7f1b8ca8eafe35fade56": "def run_verified_passes():\n    pass\n",
+    "7954c46c10b43b6a627a99174dae4382d4847dfca9b1f72139bbdafdc5268e2e": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+    "43afec85f2cb31ce66a887c6c15eb60cd7bcf0b029113483fad3ee8436653251": "`schema.stale`\n",
+    "38e882ea3bdcd6c44ab1d37befc890f30043bc432d406e80fcb27389064b8e59": "OptimizerInvariant(code='scope.new')\n",
+    "4d5a3e9d17404fe7cda6856765824d2d3de39428e7004491b4bc6d00f3a2deb5": "def placement_after():\n    pass\n",
+    "85d888d4414681d1f5a22f082a851b4cf3c6f34b01ccda2ae4823b4ece0039e9": "x=scope._bindings\nx=value.split('.')\n",
+    "adcc2e59182c023e09f279f656c98446b0573825a76d211da7d8d18df75a9c74": "\ndef read_path(ref):\n    return TableExistsStep(ref, \"users\")\n",
+    "453ff8958728abc0adfd3bd9d125922a4941266a0137e733555ea8fc56ea50d0": "\ndef ensure_tables(conn):\n    return conn.table_exists(\"users\")\n",
+    "5cab908ee374aaf67347f35af13b1083382ab5cbd16b0d65fdda3cb8f7791f7f": "\ndef ensure_auxiliary_tables(schema_txn):\n    schema_txn.create_table_from_schema_lazy(Model)\n    schema_txn.flush_schema_plan(run_callbacks=False)\n",
+    "0ba58233e2459e8aa043a1269d77080940a20580806260af17bc1b080df8d4ab": "\nasync def ensure_auxiliary_tables_async(schema_txn):\n    schema_txn.create_table_from_schema_lazy(Model)\n    await schema_txn.flush_schema_plan_async(run_callbacks=False)\n",
+    "8242b8fab9f3db50397db68052acd5bced399f612481ee8998e666d61d79d9b9": "\nQUERY = \"SELECT column_name FROM information_schema.columns\"\n",
+    "e9b12b1d5f1e7c7b55901ee1f04f3b5ec69996ee4c3db9e94ea2b3e93711f84b": "\ndef compile(ctx):\n    return ctx.sql_connection.table_exists(\"users\")\n",
+    "d12450a84fb0b0cf211ec2709bb46308a4c06173d5c927cef61b33a6e2447c25": "\ndef read_path(txn):\n    return txn.table_exists_lazy(\"users\")\n"
+  }
+}

@@ -1,0 +1,144 @@
+// python/docstrings-sections: docstring sections as Ruff's pydocstyle finds them (D214-D417): a header line such
+// as `Args:` or `Returns`, in the Google or NumPy convention, and the lines that follow it.
+//
+// Interface
+//   doc_section(s, i, v, k, ind, suf)  body line i of docstring s heads a section in the docstring's convention:
+//                                      v the name as written ("returns"), k its canonical form ("Returns"),
+//                                      ind its indentation in bytes, suf the rest of the line after the name
+//                                      (":" for `Returns:`, "" for `Returns`, "  " with trailing spaces)
+//   doc_style(s, st)                   the convention s is read in: "google" or "numpy"
+//   doc_section_end(s, i, e)           the section at i runs to line e (exclusive): the next section, or the end
+//   doc_after(s, i, f, k)              f is the first non-blank line after header i in its section, after k blank
+//                                      lines (no row: the section has nothing but blank lines)
+//   doc_dashes(s, j, n)                line j is a run of n dashes, with spaces around it only
+//   doc_sphinx(s, j)                   line j starts (after spaces) with `.. `, an RST directive
+//
+// The convention is the `pydocstyle.convention` option: "google", "numpy", or unset / "pep257", in which case
+// each docstring decides, as Ruff does: NumPy if it has a `Parameters` section, Google if it has an `Args`-like
+// one, else whichever reads more sections, else (a tie) the first Google section that is followed by a dashed
+// underline (NumPy) or has a colon (Google); NumPy by default.
+//
+// A header is a line of its own, a section name (any case) then optionally `:` and spaces, that is not the
+// summary line and not inside an RST directive (`.. note::` and the more indented or blank lines after it). It
+// counts when the next line is an underline of `-` or `=`, or the line before is blank or ends a sentence
+// (`,;.-\/]})`). After an earlier section, a more indented header counts only when it is spelled exactly as the
+// canonical name and the function has no parameter of that name, and a lowercase one only after a blank line
+// or above an underline. An underlined header always counts. Ruff reads that "earlier section" sequentially;
+// here it is computed without recursion (strong / clean below), with the same result.
+//
+//   def f(x):
+//       """Sum.
+//
+//       Returns
+//       -------                      doc_section(s, 3, "Returns", "Returns", 4, ""), doc_dashes(s, 4, 7)
+//       int
+//       """
+#include "python/docstrings.rr"
+
+// ---- section names -----------------------------------------------------------------------------------------------
+// sec_word(lower, canonical): Ruff's SectionKind names; sec_style(canonical, convention): where each is a section.
+.decl sec_word(w: symbol, k: symbol)
+sec_word(w, k) :- sec_style(k, _), w = @lower(k).
+.decl sec_style(k: symbol, st: symbol)
+sec_style(k, "google") :- sec_common(k).
+sec_style(k, "numpy") :- sec_common(k).
+sec_style("Args", "google"). sec_style("Arguments", "google"). sec_style("Attention", "google").
+sec_style("Caution", "google"). sec_style("Danger", "google"). sec_style("Error", "google").
+sec_style("Example", "google"). sec_style("Hint", "google"). sec_style("Important", "google").
+sec_style("Keyword Args", "google"). sec_style("Keyword Arguments", "google"). sec_style("Note", "google").
+sec_style("Other Args", "google"). sec_style("Other Arguments", "google"). sec_style("Return", "google").
+sec_style("Tip", "google"). sec_style("Todo", "google"). sec_style("Warning", "google"). sec_style("Yield", "google").
+sec_style("Extended Summary", "numpy"). sec_style("Other Params", "numpy"). sec_style("Other Parameters", "numpy").
+sec_style("Parameters", "numpy"). sec_style("Receives", "numpy"). sec_style("Short Summary", "numpy").
+.decl sec_common(k: symbol)
+sec_common("Attributes"). sec_common("Examples"). sec_common("Methods"). sec_common("Notes"). sec_common("Raises").
+sec_common("References"). sec_common("Returns"). sec_common("See Also"). sec_common("Warnings"). sec_common("Warns").
+sec_common("Yields").
+
+// ---- candidate headers -------------------------------------------------------------------------------------------
+// doc_sphinx(s, j) / skipped(s, j): RST directives. A directive's body is the blank lines and the lines indented
+// more than its `.. ` line, up to the first that is not; nested directives sit inside the outer one's body.
+.decl doc_sphinx(s: node, j: number)
+doc_sphinx(s, j) :- doc_line(s, j, t), match("\\s*\\.\\. [\\s\\S]*", t).
+.decl skipped(s: node, j: number)
+skipped(s, j) :- doc_sphinx(s, j), j > 0.
+skipped(s, j) :- doc_sphinx(s, a), a > 0, doc_lead(s, a, ka), doc_line(s, j, _), j > a, (doc_blank(s, j) ;
+    doc_lead(s, j, kj), kj > ka), count : { doc_lead(s, m, km), m > a, m < j, !doc_blank(s, m), km <= ka } = 0.
+// head_line(s, i, v, k, ind, suf): line i looks like a header: its leading words are v, a section name.
+.decl head_line(s: node, i: number, v: symbol, k: symbol, ind: number, suf: symbol)
+head_line(s, i, v, k, ind, suf) :- doc_checked(s), doc_line(s, i, t), i > 0, !skipped(s, i),
+    match("(?<w>\\s*)(?<r>\\S[\\s\\S]*)", t), v = @replace_all(@replace_all(r, "\\s+$", ""), "[!-/:-@\\[-`{-~][\\s\\S]*", ""),
+    sec_word(@lower(v), k), ind = strlen(w), suf = @replace_all(r, cat("^", v), ""), match("\\s*:?\\s*", suf).
+.decl under_next(s: node, i: number)  // the next line is all `-` or `=`
+under_next(s, i) :- head_line(s, i, _, _, _, _), doc_line(s, i + 1, t), match("\\s*[-=]+\\s*", t).
+.decl ends_par(s: node, i: number)  // the line before is blank or ends with , ; . - \ / ] } )
+ends_par(s, i) :- head_line(s, i, _, _, _, _), doc_line(s, i - 1, t), match("[\\s\\S]*[,;.\\-\\\\/\\]})]\\s*", t).
+ends_par(s, i) :- head_line(s, i, _, _, _, _), doc_blank(s, i - 1).
+// cand(s, st, i): a header of convention st by everything that does not look at earlier sections.
+.decl cand(s: node, st: symbol, i: number)
+cand(s, st, i) :- head_line(s, i, _, k, _, _), sec_style(k, st), (under_next(s, i) ; ends_par(s, i)).
+// Ruff reads headers in order, each against the last section before it ("last"); a candidate is a section when:
+//   - it is underlined, or it is the first, or
+//   - it is not refused by "lowercase, no blank line before it" (c2_refused), and either it is no more indented
+//     than last, or it is spelled exactly as the canonical name and the function has no parameter of that name.
+// strong(s, st, i): a section whatever last is. A weak candidate (clean, not strong) is a section exactly when its
+// indent is at most every clean candidate's since the last strong one, that one included: sections after it only
+// get shallower, and a clean candidate deeper than the last section is not one.
+.decl c2_refused(s: node, st: symbol, i: number)
+c2_refused(s, st, i) :- cand(s, st, i), cand(s, st, j), j < i, !doc_blank(s, i - 1), !under_next(s, i),
+    head_line(s, i, v, _, _, _), match("[a-z][\\s\\S]*", v).
+.decl clean(s: node, st: symbol, i: number, ind: number)
+clean(s, st, i, ind) :- cand(s, st, i), !c2_refused(s, st, i), head_line(s, i, _, _, ind, _).
+.decl strong(s: node, st: symbol, i: number)
+strong(s, st, i) :- clean(s, st, i, _), (under_next(s, i) ; count : { cand(s, st, p), p < i } = 0).
+strong(s, st, i) :- clean(s, st, i, _), head_line(s, i, k, k, _, _), !param_section(s, k).
+.decl param_section(s: node, k: symbol)  // the documented function has a parameter named k
+param_section(s, k) :- head_line(s, _, _, k, _, _), doc_of(f, s), param_named(f, k, _).
+.decl doc_sec(s: node, st: symbol, i: number)
+doc_sec(s, st, i) :- strong(s, st, i).
+doc_sec(s, st, i) :- clean(s, st, i, ind), !strong(s, st, i), l = max p : { strong(s, st, p), p < i }, clean(s, st, l, li),
+    ind <= li, count : { clean(s, st, p, q), p > l, p < i, q < ind } = 0.
+
+// ---- the convention ----------------------------------------------------------------------------------------------
+.decl doc_style(s: node, st: symbol)
+doc_style(s, st) :- doc_checked(s), option("pydocstyle.convention", st), (st = "google" ; st = "numpy").
+doc_style(s, st) :- doc_checked(s), !option("pydocstyle.convention", "google"), !option("pydocstyle.convention", "numpy"),
+    guess(s, st).
+.decl guess(s: node, st: symbol)
+guess(s, "numpy") :- numpy_params(s).
+guess(s, "google") :- !numpy_params(s), google_args(s).
+guess(s, st) :- doc_checked(s), !numpy_params(s), !google_args(s), g = count : { doc_sec(s, "google", _) },
+    n = count : { doc_sec(s, "numpy", _) }, (g > n, st = "google" ; g < n, st = "numpy" ; g = 0, n = 0, st = "numpy").
+guess(s, st) :- tie(s), (tie_by(s, st) ; !tie_by(s, _), st = "numpy").
+.decl numpy_params(s: node)
+numpy_params(s) :- doc_sec(s, "numpy", i), head_line(s, i, _, k, _, _),
+    (k = "Parameters" ; k = "Other Params" ; k = "Other Parameters").
+.decl google_args(s: node)
+google_args(s) :- doc_sec(s, "google", i), head_line(s, i, _, k, _, _), glob("{Args,Arguments,Keyword Args,Keyword Arguments,Other Args,Other Arguments}", k).
+.decl tie(s: node)
+tie(s) :- doc_checked(s), !numpy_params(s), !google_args(s), g = count : { doc_sec(s, "google", _) },
+    g = count : { doc_sec(s, "numpy", _) }, g > 0.
+// tie_by(s, st): the first Google section that says either way: an underline below it, or a colon after it.
+.decl tie_hint(s: node, i: number, st: symbol)
+tie_hint(s, i, "numpy") :- tie_under(s, i).
+tie_hint(s, i, "google") :- tie(s), doc_sec(s, "google", i), !tie_under(s, i), head_line(s, i, _, _, _, suf),
+    prefix(":", suf).
+.decl tie_under(s: node, i: number)
+tie_under(s, i) :- tie(s), doc_sec(s, "google", i), sec_bound(s, "google", i, e), i + 1 < e, doc_dashes(s, i + 1, _).
+.decl tie_by(s: node, st: symbol)
+tie_by(s, st) :- tie_hint(s, i, st), i = min j : { tie_hint(s, j, _) }.
+// sec_bound(s, st, i, e): in convention st, the section at i ends where the next one starts, or at the end.
+.decl sec_bound(s: node, st: symbol, i: number, e: number)
+sec_bound(s, st, i, e) :- doc_sec(s, st, i), e = min j : { doc_sec(s, st, j), j > i }.
+sec_bound(s, st, i, n) :- doc_sec(s, st, i), count : { doc_sec(s, st, j), j > i } = 0, doc_nlines(s, n).
+
+// ---- sections ----------------------------------------------------------------------------------------------------
+.decl doc_section(s: node, i: number, v: symbol, k: symbol, ind: number, suf: symbol)
+doc_section(s, i, v, k, ind, suf) :- doc_style(s, st), doc_sec(s, st, i), head_line(s, i, v, k, ind, suf).
+.decl doc_section_end(s: node, i: number, e: number)
+doc_section_end(s, i, e) :- doc_style(s, st), doc_sec(s, st, i), sec_bound(s, st, i, e).
+.decl doc_after(s: node, i: number, f: number, k: number)
+doc_after(s, i, f, k) :- doc_section_end(s, i, e), f = min j : { doc_line(s, j, _), j > i, j < e, !doc_blank(s, j) },
+    k = f - i - 1.
+.decl doc_dashes(s: node, j: number, n: number)
+doc_dashes(s, j, n) :- doc_line(s, j, t), match("\\s*(?<d>-+)\\s*", t), n = strlen(d).

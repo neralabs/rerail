@@ -1,0 +1,29 @@
+.policy "ruff-f507-percent-format-positional-count-mismatch" revision 2
+.description "Match the number of %-format placeholders to the number of values supplied; a mismatch raises TypeError at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F507 (pyflakes): a format with positional placeholders only gets a different number of values. Python
+// raises TypeError. The number of values is known for a tuple display without `*x` (its length), and for any
+// operand whose type is known not to be a tuple (one value: `42`, `"a"`, `[1, 2]`, `not x`). A format with no
+// placeholder at all is reported for every operand but a tuple: `"done" % x` is almost never meant.
+//   "%s %s" % (1,)                ← F507: 2 placeholders, 1 value
+//   "%s %s" % 42                  ← F507
+//   "%s %s" % pair                not reported: pair may be a 2-tuple
+//   "hello" % name                ← F507
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n), known_non_tuple(e)
+
+.violation F507(at: node) code "F507"
+    "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError."
+    suppress ruff "F507"
+F507(b) :- positional_fmt(b, r, n), kind(r, "tuple"), !starred(r), k = count : { child(r, e, _), !kind(e, "comment") },
+    k != n.
+F507(b) :- positional_fmt(b, r, n), !kind(r, "tuple"), known_non_tuple(r), n != 1.
+F507(b) :- positional_fmt(b, r, 0), !kind(r, "tuple").
+// positional_fmt(b, r, n): b is `s % r` and s's n placeholders are all positional.
+.decl positional_fmt(b: node, r: node, n: number)
+positional_fmt(b, r, n) :- percent_fmt(b, _, r, v), pct_positional(v, n), !pct_key(v, _).
+.decl starred(t: node)
+starred(t) :- kind(t, "tuple"), child(t, s, _), kind(s, "list_splat").

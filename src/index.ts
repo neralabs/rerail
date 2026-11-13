@@ -301,6 +301,8 @@ export {
   type NativeHealth,
   type NativeCodeRuleDslRuntimeConstructor,
   type NativeCodeRuleDslEditor,
+  type NativeCodeRuleSqlExecutor,
+  type NativeCodeRuleSqlExecutorConstructor,
   type NativeSample as ConversationSample,
   type CodeRuleDslEvaluationMode,
   type CodeRuleDslSourceFormat,

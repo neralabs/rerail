@@ -1,0 +1,473 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-history-serverplan-projection",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer history_serverplan_projection at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "l7200_versioned_transactions/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "from-imports",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl|l7200_versioned_transactions)/"
+                    }
+                  },
+                  {
+                    "filePath": {
+                      "notRegex": "(?:^|/)tests/|(?:^|/)test_[^/]*$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "import_from_statement"
+              },
+              {
+                "has": {
+                  "field": "module_name",
+                  "regex": "^impl\\.common\\.l2070_server_plan\\.steps\\.history_runtime_projection$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HSP-001",
+        "anchor": "witness.span",
+        "message": "HSP-001"
+      }
+    },
+    {
+      "id": "imports",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl|l7200_versioned_transactions)/"
+                    }
+                  },
+                  {
+                    "filePath": {
+                      "notRegex": "(?:^|/)tests/|(?:^|/)test_[^/]*$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "import_statement"
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "dotted_name",
+                          "regex": "history_runtime_projection$",
+                          "pattern": "$IMPORTED"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "aliased_import"
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "all": [
+                              {
+                                "kind": "dotted_name",
+                                "regex": "history_runtime_projection$",
+                                "pattern": "$IMPORTED"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HSP-001",
+        "anchor": "witness.span",
+        "message": "HSP-001",
+        "each": "IMPORTED"
+      }
+    },
+    {
+      "id": "history-runtime",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl|l7200_versioned_transactions)/"
+                    }
+                  },
+                  {
+                    "filePath": {
+                      "notRegex": "(?:^|/)tests/|(?:^|/)test_[^/]*$"
+                    }
+                  }
+                ]
+              },
+              {
+                "filePath": {
+                  "regex": "^impl/common/l2070_server_plan/steps/(?:.*/)?[^/]*history[^/]*\\.py$"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "return_statement"
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "kind": "string"
+                        }
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "set"
+                            },
+                            {
+                              "kind": "tuple"
+                            },
+                            {
+                              "kind": "list"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "call"
+                                },
+                                {
+                                  "has": {
+                                    "field": "function",
+                                    "any": [
+                                      {
+                                        "kind": "identifier",
+                                        "regex": "^frozenset$"
+                                      },
+                                      {
+                                        "kind": "attribute",
+                                        "has": {
+                                          "field": "attribute",
+                                          "kind": "identifier",
+                                          "regex": "^frozenset$"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "value": {
+                        "regex": "^(?:history)$"
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "value": {
+                        "regex": "^(?:runtime)$"
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HSP-002",
+        "anchor": "witness.span",
+        "message": "HSP-002"
+      }
+    },
+    {
+      "id": "sentinel",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl|l7200_versioned_transactions)/"
+                    }
+                  },
+                  {
+                    "filePath": {
+                      "notRegex": "(?:^|/)tests/|(?:^|/)test_[^/]*$"
+                    }
+                  }
+                ]
+              },
+              {
+                "filePath": {
+                  "regex": "^impl/common/l2070_server_plan/steps/(?:.*/)?[^/]*history[^/]*\\.py$"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "return_statement"
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "kind": "string"
+                        }
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "set"
+                            },
+                            {
+                              "kind": "tuple"
+                            },
+                            {
+                              "kind": "list"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "call"
+                                },
+                                {
+                                  "has": {
+                                    "field": "function",
+                                    "any": [
+                                      {
+                                        "kind": "identifier",
+                                        "regex": "^frozenset$"
+                                      },
+                                      {
+                                        "kind": "attribute",
+                                        "has": {
+                                          "field": "attribute",
+                                          "kind": "identifier",
+                                          "regex": "^frozenset$"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "has": {
+                                "field": "function",
+                                "kind": "identifier"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "all": [
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "value": {
+                        "regex": "^(?:__history_runtime__)$"
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HSP-003",
+        "anchor": "witness.span",
+        "message": "HSP-003"
+      }
+    },
+    {
+      "id": "post-op-refs",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl|l7200_versioned_transactions)/"
+                    }
+                  },
+                  {
+                    "filePath": {
+                      "notRegex": "(?:^|/)tests/|(?:^|/)test_[^/]*$"
+                    }
+                  }
+                ]
+              },
+              {
+                "filePath": {
+                  "regex": "^impl/common/l2070_server_plan/steps/(?:.*/)?[^/]*history[^/]*\\.py$"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "any": [
+                        {
+                          "kind": "identifier",
+                          "regex": "^CompiledStep$"
+                        },
+                        {
+                          "kind": "attribute",
+                          "has": {
+                            "field": "attribute",
+                            "kind": "identifier",
+                            "regex": "^CompiledStep$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^post_op_with_refs$"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "HSP-004",
+        "anchor": "witness.span",
+        "message": "HSP-004"
+      }
+    }
+  ]
+}

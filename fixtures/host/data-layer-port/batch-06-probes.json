@@ -1,0 +1,770 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "legacy_execution_surfaces",
+    "serverplan_dispatch_architecture",
+    "serverplan_quality",
+    "serverplan_state_tripwires"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "events": [
+    {
+      "test": "batch-06:bare-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nfrom typing import Callable\nclass Example(ConditionalStep):\n    callback: Callable[[], None]\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": [
+        {
+          "path": "conditional.py",
+          "line": 4,
+          "column": null,
+          "code": "SPQ-029",
+          "message": "conditional class 'Example' owns runtime callback field 'callback'"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:qualified-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nimport typing\nclass Example(ConditionalStep):\n    callback: typing.Callable[[], None]\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "batch-06:repeated-callable-field",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nfrom typing import Callable\nclass Example(ConditionalStep):\n    callbacks: tuple[Callable[[], None], Callable[[int], str]]\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": [
+        {
+          "path": "conditional.py",
+          "line": 4,
+          "column": null,
+          "code": "SPQ-029",
+          "message": "conditional class 'Example' owns runtime callback field 'callbacks'"
+        },
+        {
+          "path": "conditional.py",
+          "line": 4,
+          "column": null,
+          "code": "SPQ-029",
+          "message": "conditional class 'Example' owns runtime callback field 'callbacks'"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:qualified-callable-constructor",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nimport typing\nclass Example(ConditionalStep):\n    def __init__(self, callback: typing.Callable[[], None]):\n        self.callback = callback\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "batch-06:augmented-instance-store",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nclass Example(ConditionalStep):\n    def run(self):\n        self.value += 1\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": [
+        {
+          "path": "conditional.py",
+          "line": 4,
+          "column": null,
+          "code": "SPQ-029",
+          "message": "conditional method Example.run stores runtime instance state in 'value'"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:annotation-only-instance-store",
+      "entry": "conditional_architecture_findings",
+      "files": [
+        {
+          "path": "conditional.py",
+          "source": "from l2070_batching.conditional_step import ConditionalStep\nclass Example(ConditionalStep):\n    def run(self):\n        self.value: object\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "conditional_architecture_findings"
+        }
+      },
+      "findings": [
+        {
+          "path": "conditional.py",
+          "line": 4,
+          "column": null,
+          "code": "SPQ-029",
+          "message": "conditional method Example.run stores runtime instance state in 'value'"
+        }
+      ]
+    },
+    {
+      "test": "batch-06:strategy-1500-lines",
+      "entry": "_check_serverplan_quality_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/strategies/example.py",
+          "source": "# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_check_serverplan_quality_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "batch-06:strategy-1501-lines",
+      "entry": "_check_serverplan_quality_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/strategies/example.py",
+          "source": "# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n# line\n"
+        }
+      ],
+      "check": "serverplan_quality",
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "_check_serverplan_quality_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/strategies/example.py",
+          "line": 1501,
+          "column": null,
+          "code": "SPQ-010",
+          "message": "strategy file exceeds 1500 lines"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-tuple-return",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def factory(self) -> tuple[BackendExecutor, str]: pass\n def run(self):\n  value = self.factory()\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-list-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: list[BackendExecutor]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-optional-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Optional[BackendExecutor]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "line": 3,
+          "column": null,
+          "code": "SPD005",
+          "message": "BaseServerPlan may use only the closed public executor-owned execution scope and orchestration contract; connection state, transport capabilities, and undeclared executor surfaces belong to the executor"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-optional-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Optional[tuple[BackendExecutor]]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-union-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: BackendExecutor | None):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "line": 3,
+          "column": null,
+          "code": "SPD005",
+          "message": "BaseServerPlan may use only the closed public executor-owned execution scope and orchestration contract; connection state, transport capabilities, and undeclared executor surfaces belong to the executor"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-quoted-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: \"tuple[BackendExecutor]\"):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-annotated-metadata",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Annotated[BackendExecutor, \"meta\"]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-awaitable-annotation",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Awaitable[BackendExecutor]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "line": 3,
+          "column": null,
+          "code": "SPD005",
+          "message": "BaseServerPlan may use only the closed public executor-owned execution scope and orchestration contract; connection state, transport capabilities, and undeclared executor surfaces belong to the executor"
+        }
+      ]
+    },
+    {
+      "test": "dispatch-coroutine-tuple",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: Coroutine[None, None, BackendExecutor]):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "dispatch-qualified-quoted",
+      "check": "serverplan_dispatch_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "source": "class BaseServerPlan:\n def run(self, value: \"mod.BackendExecutor\"):\n  return value.transport\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "impl/common/l2070_server_plan/base_server_plan.py",
+          "line": 3,
+          "column": null,
+          "code": "SPD005",
+          "message": "BaseServerPlan may use only the closed public executor-owned execution scope and orchestration contract; connection state, transport capabilities, and undeclared executor surfaces belong to the executor"
+        }
+      ]
+    },
+    {
+      "test": "state-metaclass-is-not-base",
+      "check": "serverplan_state_tripwires",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2070_batching/step.py",
+          "source": "class StepBase(ABC, metaclass=ServerPlanStepMeta):\n def compile(self, name: str): return name\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "state-direct-step-base",
+      "check": "serverplan_state_tripwires",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2070_batching/step.py",
+          "source": "class StepImpl(ServerPlanStep):\n def compile(self, name: str): return name\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "production_scope": false,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "scan_source"
+        }
+      },
+      "findings": [
+        {
+          "path": "l2070_batching/step.py",
+          "line": 2,
+          "column": null,
+          "code": "SPT-015",
+          "message": "step-signature raw-type tripwire: ServerPlan step and intent method parameters must not use raw builtin scalar types such as str/int/float/bool/bytes. Introduce branded or domain-specific types instead."
+        }
+      ]
+    },
+    {
+      "test": "legacy-no-trigger",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/example.py",
+          "source": "query.select()\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "all"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "legacy-trigger-positive",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/example.py",
+          "source": "query.execute()\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "all"
+        }
+      },
+      "findings": [
+        {
+          "path": "l9900_auto_api/example.py",
+          "line": 1,
+          "column": null,
+          "code": "LEG-080",
+          "message": "Legacy eager transaction call execute() is forbidden from internal data-layer execution paths (direct). Use a *_lazy surface, SQL relation, or ServerPlan intent instead."
+        }
+      ]
+    },
+    {
+      "test": "legacy-outside-plugin",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l6500_evidence/example.py",
+          "source": "query.execute()\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "all"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "legacy-test-directory",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/tests/example.py",
+          "source": "query.execute()\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "all"
+        }
+      },
+      "findings": []
+    },
+    {
+      "test": "legacy-test-basename",
+      "check": "legacy_execution_surfaces",
+      "entry": "all",
+      "production_scope": true,
+      "files": [
+        {
+          "path": "l9900_auto_api/test_example.py",
+          "source": "query.execute()\n"
+        }
+      ],
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "oracle_config": {
+        "options": {
+          "entryPoint": "all"
+        }
+      },
+      "findings": [
+        {
+          "path": "l9900_auto_api/test_example.py",
+          "line": 1,
+          "column": null,
+          "code": "LEG-080",
+          "message": "Legacy eager transaction call execute() is forbidden from internal data-layer execution paths (direct). Use a *_lazy surface, SQL relation, or ServerPlan intent instead."
+        }
+      ]
+    }
+  ],
+  "loaded_source_files_checked": 128
+}

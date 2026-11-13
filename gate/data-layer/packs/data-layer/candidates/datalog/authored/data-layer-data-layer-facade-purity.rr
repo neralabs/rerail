@@ -1,0 +1,155 @@
+// data-layer-data-layer-facade-purity: every clause, by hand (decision 0043). The policy is
+// candidates/rules-ast/data-layer-data-layer-facade-purity.json. Options as the run resolves them: sourceGate
+// (`option_on`); oracleAnalyzer is read by no clause.
+//
+// Notes against W:
+// - impl-import: W reports one finding per `$IMPORT` binding, all at the import statement's line; findings are a
+//   set of keys (contract J1), so they count once.
+// - expression: W's `value: {type: str}` is value_type_of(c, "str").
+// - statement: the rule names no kind, so W tests anonymous tokens too (compile/ast_rule.rs,
+//   kindless_rules_are_accepted_and_test_anonymous_tokens): a top-level `;` is a FAC002 statement. It is a token
+//   row of the module that is no named child and no comment; its line is the end line of the named child before
+//   it (only spaces and line continuations, which are named children, can lie between a statement and its `;`).
+//   A top-level decorated definition's decorators are its children at the module, so each is a FAC002
+//   statement, as the policy says.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- the source gate: with sourceGate on (the default), the module's text (comments and strings in it) matches
+// `def\ |class\ |impl\.|=|\(`; off, the regex is `(?s).*`, which every module matches ----
+.decl facade_gate(d: number)
+facade_gate(d) :- node(d, m, "module", _, _), option_on("sourceGate"), node_text(m, s),
+  (contains("def ", s) ; contains("class ", s) ; contains("impl.", s) ; contains("=", s) ; contains("(", s)).
+facade_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+
+// ---- shared: a node at the top level (the module's child, or a decorated definition's at the module) ----
+.decl facade_top(n: node)
+facade_top(n) :- child(m, n, _), node(_, m, "module", _, _).
+facade_top(n) :- child(w, n, _), node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+
+// ---- shared: the policy's `simple-value` and `simple-assignment` utils, through their complements ----
+// facade_nsv(n): n is not a simple value. Every rule is positive and goes to a child, so the recursion is along
+// the tree with no negation through it.
+.decl facade_sv_node(n: node)
+facade_sv_node(n) :- node(_, n, "integer", _, _).
+facade_sv_node(n) :- node(_, n, "float", _, _).
+facade_sv_node(n) :- node(_, n, "true", _, _).
+facade_sv_node(n) :- node(_, n, "false", _, _).
+facade_sv_node(n) :- node(_, n, "none", _, _).
+facade_sv_node(n) :- node(_, n, "ellipsis", _, _).
+facade_sv_node(n) :- node(_, n, "string", _, _).
+facade_sv_node(n) :- node(_, n, "concatenated_string", _, _).
+facade_sv_node(n) :- node(_, n, "identifier", _, _).
+facade_sv_node(n) :- node(_, n, "attribute", _, _).
+facade_sv_node(n) :- node(_, n, "parenthesized_expression", _, _).
+facade_sv_node(n) :- node(_, n, "list", _, _).
+facade_sv_node(n) :- node(_, n, "tuple", _, _).
+facade_sv_node(n) :- node(_, n, "set", _, _).
+facade_sv_node(n) :- node(_, n, "dictionary", _, _).
+// `(?i)^[rub]*f` on a string's (or a concatenation's) text.
+.decl facade_fstring(n: node)
+facade_fstring(n) :- node(_, n, "string", _, _), node_text(n, s), match("(?is)[rub]*f.*", s).
+facade_fstring(n) :- node(_, n, "concatenated_string", _, _), node_text(n, s), match("(?is)[rub]*f.*", s).
+.decl facade_nsv(n: node)
+facade_nsv(n) :- node(_, n, _, _, _), !facade_sv_node(n).
+facade_nsv(n) :- facade_fstring(n).
+// A concatenation with an f-string child.
+facade_nsv(n) :- node(_, n, "concatenated_string", _, _), child(n, c, _), node(_, c, "string", _, _), facade_fstring(c).
+facade_nsv(n) :- node(_, n, "attribute", _, _), field(n, "object", o), facade_nsv(o).
+// A parenthesized expression holds one expression: "has a simple child" is "its child is simple".
+facade_nsv(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "list", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "tuple", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "set", _, _), child(n, c, _), facade_nsv(c).
+facade_nsv(n) :- node(_, n, "dictionary", _, _), child(n, c, _), facade_bad_entry(c).
+.decl facade_entry(c: node)
+facade_entry(c) :- node(_, c, "pair", _, _).
+facade_entry(c) :- node(_, c, "dictionary_splat", _, _).
+.decl facade_bad_entry(c: node)
+facade_bad_entry(c) :- node(_, c, _, _, _), !facade_entry(c).
+facade_bad_entry(c) :- node(_, c, "pair", _, _), field(c, "key", x), facade_nsv(x).
+facade_bad_entry(c) :- node(_, c, "pair", _, _), field(c, "value", x), facade_nsv(x).
+facade_bad_entry(c) :- node(_, c, "dictionary_splat", _, _), child(c, x, _), facade_nsv(x).
+// facade_nsa(n): an assignment that is not a simple assignment: its target is no identifier, or its value is
+// neither a simple value nor a simple assignment.
+.decl facade_nsa(n: node)
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "left", x), !node(_, x, "identifier", _, _).
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "right", r), facade_nsv(r), !node(_, r, "assignment", _, _).
+facade_nsa(n) :- node(_, n, "assignment", _, _), field(n, "right", r), facade_nsa(r).
+
+// ---- definition (FAC001): a top-level function or class ----
+.decl facade_definition(n: node)
+facade_definition(n) :- node(_, n, "function_definition", _, _).
+facade_definition(n) :- node(_, n, "class_definition", _, _).
+violation("data-layer-data-layer-facade-purity", "definition", "FAC001", p, l) :-
+  facade_definition(n), facade_top(n), node(d, n, _, _, _), facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- impl-from (FAC003): `from impl.… import …` at the top level ----
+violation("data-layer-data-layer-facade-purity", "impl-from", "FAC003", p, l) :-
+  node(d, n, "import_from_statement", _, _), field(n, "module_name", m), node_text(m, s), prefix("impl.", s),
+  facade_top(n), facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- impl-import (FAC003): `import impl.…` (or `import impl.… as x`) at the top level ----
+.decl facade_impl_import(n: node)
+facade_impl_import(n) :- child(n, c, _), node(_, c, "dotted_name", _, _), node_text(c, s), prefix("impl.", s).
+facade_impl_import(n) :- child(n, c, _), node(_, c, "aliased_import", _, _), field(c, "name", x), node_text(x, s),
+  prefix("impl.", s).
+violation("data-layer-data-layer-facade-purity", "impl-import", "FAC003", p, l) :-
+  node(d, n, "import_statement", _, _), facade_top(n), facade_impl_import(n), facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- assignment (FAC004): a top-level statement assigning other than simple aliases and literals ----
+.decl facade_bad_assignment(n: node)
+facade_bad_assignment(n) :- child(n, c, _), node(_, c, "augmented_assignment", _, _).
+facade_bad_assignment(n) :- child(n, c, _), facade_nsa(c).
+violation("data-layer-data-layer-facade-purity", "assignment", "FAC004", p, l) :-
+  node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), facade_bad_assignment(n),
+  facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- expression (FAC002): a top-level expression statement other than an assignment or a `str` literal ----
+.decl facade_expression_ok(n: node)
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "assignment", _, _).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "augmented_assignment", _, _).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "string", _, _), value_type_of(c, "str").
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "concatenated_string", _, _), value_type_of(c, "str").
+violation("data-layer-data-layer-facade-purity", "expression", "FAC002", p, l) :-
+  node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), !facade_expression_ok(n),
+  facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- statement (FAC002): any other top-level statement (comments are no nodes, as the policy excludes them) ----
+.decl facade_statement_allowed(n: node)
+facade_statement_allowed(n) :- node(_, n, "expression_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "import_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "import_from_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "future_import_statement", _, _).
+facade_statement_allowed(n) :- node(_, n, "function_definition", _, _).
+facade_statement_allowed(n) :- node(_, n, "class_definition", _, _).
+facade_statement_allowed(n) :- node(_, n, "decorated_definition", _, _).
+violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
+  facade_top(n), !facade_statement_allowed(n), node(d, n, _, _, _), facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+// An anonymous token at the top level (`;`): a token row of the module (or of a top-level decorated definition,
+// which has none in the grammar) that is no named child and no comment, at the end line of the named child
+// before it.
+.decl facade_top_parent(p: node)
+facade_top_parent(m) :- node(_, m, "module", _, _).
+facade_top_parent(w) :- node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+.decl facade_named_at(p: node, st: number, en: number)
+facade_named_at(p, st, en) :- facade_top_parent(p), child(p, c, _), node(_, c, _, st, en).
+.decl facade_anon(p: node, st: number)
+facade_anon(p, st) :- facade_top_parent(p), token(p, _, s, st, en), !match("#(?s:.*)", s), !facade_named_at(p, st, en).
+.decl facade_anon_line(p: node, st: number, l: number)
+facade_anon_line(p, st, l) :- facade_anon(p, st), e = max x : { facade_named_at(p, _, x), x <= st },
+  child(p, c, _), node(_, c, _, _, e), end_line(c, l).
+violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
+  facade_anon_line(t, _, l), node(d, t, _, _, _), facade_gate(d),
+  in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

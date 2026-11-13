@@ -1,0 +1,31 @@
+.policy "vitest-no-disabled-tests" revision 3
+.description "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`."
+.language typescript
+.mode steer
+.scope include "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+
+#include "tsx/ts-b-vitest.rr"
+//   vitest_call, vitest_member, mode_option, unresolved
+
+// @vitest/eslint-plugin's no-disabled-tests: a test or suite that will not run.
+//   describe.skip("s", fn)   test("t", { skip: true }, fn)      → at skip
+//   xit("t", fn)   xdescribe("s", fn)                          → at the call
+//   it("has a title but no function")                          → at the call (`it.todo("…")` is fine)
+//   pending()                                                  → at the call, when pending is the global
+// The plugin also takes `.skip` on vi and on an expect modifier chain (`expect.not.skip(…)`); so does this.
+.violation disabled_test(at: node) code "vitest/no-disabled-tests" "This test is disabled. Fix it or delete it."
+    suppress eslint "vitest/no-disabled-tests"
+    suppress oxlint "no-disabled-tests"
+disabled_test(m) :- vitest_call(c, _, _), vitest_member(c, m, "skip", _).
+disabled_test(k) :- mode_option(_, "skip", k).
+disabled_test(c) :- vitest_call(c, g, _), (g = "xtest" ; g = "xdescribe").
+disabled_test(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "pending"),
+    unresolved(f, "pending").
+.violation missing_function(at: node) code "vitest/no-disabled-tests" "This test has no function, so it never runs."
+    suppress eslint "vitest/no-disabled-tests"
+    suppress oxlint "no-disabled-tests"
+missing_function(c) :- vitest_call(c, g, _), (g = "test" ; g = "xtest"), !fixture_call(c),
+    field(c, "arguments", a), count : { child(a, e, _), !kind(e, "comment") } < 2.
+.decl fixture_call(c: node)  // `it.todo("t")`, and `it.extend({…})`, `it.scoped({…})`, which make no test
+fixture_call(c) :- vitest_member(c, _, x, _), (x = "todo" ; x = "extend" ; x = "scoped").

@@ -1,0 +1,19 @@
+.policy "ruff-b014-duplicate-handler-exception" revision 2
+.description "Remove duplicate exception types from an except clause's tuple; naming one twice adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B014 (flake8-bugbear): an except clause's tuple names the same exception twice, by its spelling (a Name
+// or an attribute chain, not resolved): `except (OSError, OSError):`. One finding per tuple, listing the
+// repeated names in sorted order. Subclasses and aliases (`IOError` of `OSError`) are not looked at.
+//   except (re.error, re.error):        ← B014 "… duplicate exception: `re.error`"
+//   except (ValueError, binascii.Error) not reported: different spellings
+#include "python/bugbear.rr"
+
+.violation B014(at: node, names: symbol) code "B014" "Exception handler with duplicate exception: {names}"
+    suppress ruff "B014"
+B014(t, s) :- handler_type(h, t), b014_dup(h, _),
+    s = join q by n sep ", " : { b014_dup(h, n), q = cat("`", n, "`") }.
+.decl b014_dup(x: node, n: symbol)
+b014_dup(x, n) :- handler_elt(x, a, i), exc_name(a, n), handler_elt(x, b, j), exc_name(b, n), i < j.

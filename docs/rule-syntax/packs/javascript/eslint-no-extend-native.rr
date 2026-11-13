@@ -1,0 +1,30 @@
+.policy "eslint-no-extend-native" revision 5
+.description "Don't add properties to built-in prototypes such as Array or Object; it can clash with other code and future language features."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-globals.rr"
+//   es_builtin(x), global_ref_to(r, x), static_prop(m, o, x), estree_parent(n, p), callee(c, f), call_arg(c, a, i), capital(x)
+
+// ESLint's no-extend-native: writing to the prototype of a capitalised ECMAScript built-in.
+//   Array.prototype.last = f;                         an assignment to a member of the prototype
+//   Object.defineProperty(String.prototype, "x", d);  Object.defineProperties(Number.prototype, ds)
+//   Array.prototype = {};  Array.prototype.x;         not reported: not adding a property
+// exceptions (a list of names, default none): built-ins that may be extended, e.g. ["Object"].
+.violation no_extend_native(at: node, g: symbol) code "no-extend-native"
+    "Move this addition to {g}.prototype into a standalone helper function or a subclass."
+    suppress eslint "no-extend-native"
+    suppress oxlint "no-extend-native"
+    suppress biome "lint/nursery/noExtendNative"
+// Array.prototype.last = f   (also Array.prototype["last"] = f, and `+=`: ESLint checks AssignmentExpression)
+no_extend_native(a, g) :- proto(p, g), estree_parent(p, m), field(m, "object", w), deparen(w, p),
+    (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(a, "left", m),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")).
+// Object.defineProperty(Array.prototype, …), Object.defineProperties(Array.prototype, …)
+no_extend_native(c, g) :- proto(p, g), call_arg(c, w, 0), deparen(w, p), callee(c, f), static_prop(f, o, x),
+    (x = "defineProperty" ; x = "defineProperties"), kind(o, "identifier"), text(o, "Object").
+
+// proto(p, g): p is `G.prototype` for a built-in G that is not an exception.
+.decl proto(p: node, g: symbol)
+proto(p, g) :- static_prop(p, o, "prototype"), kind(o, "identifier"), global_ref_to(o, g), es_builtin(g), capital(g),
+    !option_item("exceptions", _, g).

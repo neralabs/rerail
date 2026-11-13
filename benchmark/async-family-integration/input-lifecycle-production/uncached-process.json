@@ -1,0 +1,25 @@
+{
+  "processCpu": 13.760225000000002,
+  "processWall": 13.339035624987446,
+  "command": [
+    "nice",
+    "-n",
+    "19",
+    "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+    "complete_async_family_authored_rr_corpus_profile",
+    "--nocapture",
+    "--test-threads=1",
+    "--ignored"
+  ],
+  "environment": {
+    "RUST_MIN_STACK": "67108864",
+    "RERAIL_THREADS": "4",
+    "RERAIL_CORPUS_MEMO": "off",
+    "RERAIL_CROSS_MEMO": "off",
+    "RERAIL_TAPE_CACHE": "off",
+    "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+    "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-uncached",
+    "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-uncached.json",
+    "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-uncached/profile"
+  }
+}

@@ -1,0 +1,1376 @@
+[
+  {
+    "processCpu": 0.10238799999999859,
+    "processWall": 0.1657524590846151,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "edge-1f85485a7075",
+    "profile": false,
+    "cpu": 0.059943,
+    "wall": 0.068554458,
+    "flattenCpu": 0.023567,
+    "files": 24,
+    "keys": 120,
+    "sql": 9,
+    "phases": [
+      [
+        "combine",
+        0.0025779999999999987,
+        0.0005509999999999994,
+        30.490624,
+        0
+      ],
+      [
+        "parse (worker)",
+        0.0026929999999999996,
+        0.0027319999999999996,
+        74.38336,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.0002940000000000001,
+        0.00012100000000000001,
+        74.38336,
+        0
+      ],
+      [
+        "constants",
+        0.00015199999999999936,
+        2.700000000000098e-05,
+        30.752768,
+        0
+      ],
+      [
+        "stats",
+        0.018059000000000002,
+        0.006669000000000001,
+        74.38336,
+        7
+      ],
+      [
+        "wait",
+        0.00019000000000000267,
+        0.0005500000000000019,
+        64.978944,
+        0
+      ],
+      [
+        "local",
+        0.016689999999999997,
+        0.0016969999999999971,
+        73.777152,
+        1
+      ],
+      [
+        "cross",
+        0.001011999999999999,
+        6.699999999999762e-05,
+        74.38336,
+        1
+      ],
+      [
+        "write",
+        0.0001280000000000031,
+        0.001008000000000002,
+        74.38336,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/1f85485a7075",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-1f85485a7075",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-1f85485a7075.json"
+    }
+  },
+  {
+    "processCpu": 0.09135900000000063,
+    "processWall": 0.18795433302875608,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "edge-38094aa6ac7e",
+    "profile": false,
+    "cpu": 0.050344,
+    "wall": 0.051730375,
+    "flattenCpu": 0.02344,
+    "files": 1,
+    "keys": 2,
+    "sql": 9,
+    "phases": [
+      [
+        "combine",
+        0.0023609999999999985,
+        0.0006359999999999994,
+        30.55616,
+        0
+      ],
+      [
+        "parse (worker)",
+        0.000704,
+        0.000511,
+        72.794112,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.00018099999999999995,
+        7.099999999999999e-05,
+        72.794112,
+        0
+      ],
+      [
+        "constants",
+        0.00013000000000000164,
+        2.5000000000000716e-05,
+        30.818304,
+        0
+      ],
+      [
+        "stats",
+        0.017609999999999997,
+        0.007445,
+        72.794112,
+        7
+      ],
+      [
+        "wait",
+        0.00016000000000000042,
+        0.0005170000000000001,
+        63.946752,
+        0
+      ],
+      [
+        "local",
+        0.012325000000000003,
+        0.0016970000000000006,
+        72.237056,
+        1
+      ],
+      [
+        "cross",
+        0.0006260000000000016,
+        5.199999999999996e-05,
+        72.794112,
+        1
+      ],
+      [
+        "write",
+        2.4999999999997247e-05,
+        0.0006149999999999975,
+        72.794112,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/38094aa6ac7e",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-38094aa6ac7e",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-38094aa6ac7e.json"
+    }
+  },
+  {
+    "processCpu": 0.09854099999999999,
+    "processWall": 0.1300248330226168,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "edge-483985bd330e",
+    "profile": false,
+    "cpu": 0.055244,
+    "wall": 0.067842208,
+    "flattenCpu": 0.02385,
+    "files": 2,
+    "keys": 24,
+    "sql": 9,
+    "phases": [
+      [
+        "combine",
+        0.002471000000000001,
+        0.0005159999999999991,
+        30.490624,
+        0
+      ],
+      [
+        "parse (worker)",
+        0.001466,
+        0.000991,
+        74.153984,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.000196,
+        9.400000000000001e-05,
+        74.153984,
+        0
+      ],
+      [
+        "constants",
+        0.00015099999999999836,
+        2.400000000000145e-05,
+        30.752768,
+        0
+      ],
+      [
+        "stats",
+        0.017960999999999994,
+        0.006458000000000002,
+        74.153984,
+        7
+      ],
+      [
+        "wait",
+        0.0001789999999999986,
+        0.000508999999999999,
+        64.520192,
+        0
+      ],
+      [
+        "local",
+        0.016005000000000005,
+        0.002097999999999999,
+        73.596928,
+        1
+      ],
+      [
+        "cross",
+        0.0007030000000000022,
+        6.600000000000009e-05,
+        74.153984,
+        1
+      ],
+      [
+        "write",
+        4.699999999999843e-05,
+        0.0007189999999999974,
+        74.153984,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/483985bd330e",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-483985bd330e",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-483985bd330e.json"
+    }
+  },
+  {
+    "processCpu": 0.10818899999999942,
+    "processWall": 0.41730533307418227,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "edge-c6d2d16e3195",
+    "profile": false,
+    "cpu": 0.060685,
+    "wall": 0.061973959,
+    "flattenCpu": 0.02942,
+    "files": 1,
+    "keys": 32,
+    "sql": 9,
+    "phases": [
+      [
+        "combine",
+        0.0024430000000000007,
+        0.0007230000000000014,
+        30.539776,
+        0
+      ],
+      [
+        "parse (worker)",
+        0.000785,
+        0.00045200000000000004,
+        73.875456,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.00018499999999999994,
+        6.900000000000005e-05,
+        73.875456,
+        0
+      ],
+      [
+        "constants",
+        0.0001559999999999999,
+        2.6000000000001716e-05,
+        30.80192,
+        0
+      ],
+      [
+        "stats",
+        0.018031,
+        0.007706999999999999,
+        73.875456,
+        7
+      ],
+      [
+        "wait",
+        0.00016599999999999948,
+        0.0004839999999999983,
+        63.946752,
+        0
+      ],
+      [
+        "local",
+        0.021677000000000002,
+        0.0018370000000000018,
+        73.3184,
+        1
+      ],
+      [
+        "cross",
+        0.0007380000000000025,
+        5.6000000000000494e-05,
+        73.875456,
+        1
+      ],
+      [
+        "write",
+        5.2999999999997494e-05,
+        0.0007939999999999996,
+        73.875456,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/retained-after/edge-fixtures/c6d2d16e3195",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-c6d2d16e3195",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-edge-c6d2d16e3195.json"
+    }
+  },
+  {
+    "processCpu": 4.100690000000001,
+    "processWall": 5.7759656249545515,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "label": "warmup",
+    "profile": false,
+    "cpu": 3.935041,
+    "wall": 5.308023167,
+    "flattenCpu": 0.040507,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.0027050000000000025,
+        0.0020020000000000038,
+        32.391168,
+        0
+      ],
+      [
+        "parse (worker)",
+        2.3919889999999997,
+        0.5059970000000001,
+        238.927872,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.40085200000000043,
+        0.03569199999999987,
+        238.927872,
+        0
+      ],
+      [
+        "constants",
+        0.00017199999999999854,
+        0.00033199999999999896,
+        32.636928,
+        0
+      ],
+      [
+        "stats",
+        0.04743800000000002,
+        0.03736400000000001,
+        238.927872,
+        7
+      ],
+      [
+        "wait",
+        0.011386999999999994,
+        0.059565000000000035,
+        238.927872,
+        0
+      ],
+      [
+        "local",
+        0.36231399999999997,
+        0.03696699999999997,
+        238.927872,
+        73
+      ],
+      [
+        "cross",
+        0.0007590000000000097,
+        9.299999999998199e-05,
+        238.927872,
+        1
+      ],
+      [
+        "write",
+        1.799999999996249e-05,
+        0.0003690000000000082,
+        238.927872,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-warmup",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-warmup.json"
+    }
+  },
+  {
+    "processCpu": 3.113553999999998,
+    "processWall": 4.523479750030674,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "warmup",
+    "profile": false,
+    "cpu": 3.024151,
+    "wall": 4.421393541,
+    "flattenCpu": 0.02171,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002623999999999998,
+        0.0006619999999999959,
+        32.571392,
+        0
+      ],
+      [
+        "parse (worker)",
+        1.669437,
+        0.36626200000000014,
+        223.80544,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.11441200000000001,
+        0.006019999999999915,
+        223.80544,
+        0
+      ],
+      [
+        "constants",
+        0.00015500000000000236,
+        2.8000000000000247e-05,
+        32.833536,
+        0
+      ],
+      [
+        "stats",
+        0.04661800000000001,
+        0.03381299999999998,
+        223.80544,
+        7
+      ],
+      [
+        "wait",
+        0.00929300000000037,
+        0.044897000000000006,
+        223.80544,
+        0
+      ],
+      [
+        "local",
+        0.5305049999999996,
+        0.032918,
+        223.80544,
+        73
+      ],
+      [
+        "cross",
+        0.0006909999999999972,
+        4.500000000001725e-05,
+        223.80544,
+        1
+      ],
+      [
+        "write",
+        1.4999999999987246e-05,
+        0.00027800000000000047,
+        223.80544,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-warmup",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-warmup.json"
+    }
+  },
+  {
+    "processCpu": 3.979122000000002,
+    "processWall": 7.750789167010225,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "label": "paired0",
+    "profile": false,
+    "cpu": 3.889965,
+    "wall": 7.580742167,
+    "flattenCpu": 0.023172,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002685,
+        0.0008779999999999968,
+        32.489472,
+        0
+      ],
+      [
+        "parse (worker)",
+        2.438552999999999,
+        0.4158109999999999,
+        239.2064,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.4071310000000008,
+        0.03642900000000011,
+        239.2064,
+        0
+      ],
+      [
+        "constants",
+        0.00014999999999999736,
+        2.8000000000000247e-05,
+        32.735232,
+        0
+      ],
+      [
+        "stats",
+        0.04841400000000001,
+        0.036791000000000004,
+        239.2064,
+        7
+      ],
+      [
+        "wait",
+        0.011470999999999995,
+        0.054491000000000095,
+        239.2064,
+        0
+      ],
+      [
+        "local",
+        0.37001999999999996,
+        0.029686999999999908,
+        239.2064,
+        73
+      ],
+      [
+        "cross",
+        0.0007119999999999904,
+        4.999999999999449e-05,
+        239.2064,
+        1
+      ],
+      [
+        "write",
+        1.2999999999985246e-05,
+        0.00028900000000001147,
+        239.2064,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired0",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired0.json"
+    }
+  },
+  {
+    "processCpu": 3.186849000000003,
+    "processWall": 6.443034415948205,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "paired0",
+    "profile": false,
+    "cpu": 3.097346,
+    "wall": 6.337136209,
+    "flattenCpu": 0.023158,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.0026370000000000005,
+        0.0007759999999999989,
+        32.620544,
+        0
+      ],
+      [
+        "parse (worker)",
+        1.730937,
+        0.4393989999999999,
+        217.513984,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.11843499999999987,
+        0.014225000000000099,
+        217.513984,
+        0
+      ],
+      [
+        "constants",
+        0.00015199999999999936,
+        3.0000000000002247e-05,
+        32.882688,
+        0
+      ],
+      [
+        "stats",
+        0.047366000000000026,
+        0.034559,
+        217.513984,
+        7
+      ],
+      [
+        "wait",
+        0.010176999999999672,
+        0.05524899999999995,
+        217.513984,
+        0
+      ],
+      [
+        "local",
+        0.5502360000000004,
+        0.05616400000000005,
+        217.513984,
+        73
+      ],
+      [
+        "cross",
+        0.0006739999999999524,
+        5.6000000000000494e-05,
+        217.513984,
+        1
+      ],
+      [
+        "write",
+        1.4999999999987246e-05,
+        0.0003140000000000087,
+        217.513984,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired0",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired0.json"
+    }
+  },
+  {
+    "processCpu": 3.0347150000000003,
+    "processWall": 6.894653374911286,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "paired1",
+    "profile": false,
+    "cpu": 2.934172,
+    "wall": 6.70358125,
+    "flattenCpu": 0.022411,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.0027110000000000016,
+        0.0007220000000000004,
+        32.620544,
+        0
+      ],
+      [
+        "parse (worker)",
+        1.7116240000000005,
+        0.42290299999999986,
+        220.823552,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.11786699999999972,
+        0.012545000000000056,
+        220.823552,
+        0
+      ],
+      [
+        "constants",
+        0.0001539999999999979,
+        3.099999999999631e-05,
+        32.882688,
+        0
+      ],
+      [
+        "stats",
+        0.047262000000000054,
+        0.03251199999999999,
+        220.823552,
+        7
+      ],
+      [
+        "wait",
+        0.010450999999999641,
+        0.05367100000000012,
+        220.823552,
+        0
+      ],
+      [
+        "local",
+        0.44013400000000036,
+        0.04574399999999988,
+        220.823552,
+        73
+      ],
+      [
+        "cross",
+        0.0007019999999999804,
+        5.099999999999549e-05,
+        220.823552,
+        1
+      ],
+      [
+        "write",
+        1.399999999995849e-05,
+        0.00028300000000000547,
+        220.823552,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired1",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired1.json"
+    }
+  },
+  {
+    "processCpu": 4.133069999999998,
+    "processWall": 11.51405066694133,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "label": "paired1",
+    "profile": false,
+    "cpu": 4.038691,
+    "wall": 11.155574917,
+    "flattenCpu": 0.024367,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002957999999999999,
+        0.0009909999999999988,
+        32.473088,
+        0
+      ],
+      [
+        "parse (worker)",
+        2.497918999999999,
+        0.4464159999999998,
+        236.306432,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.41737800000000075,
+        0.05685700000000016,
+        236.306432,
+        0
+      ],
+      [
+        "constants",
+        0.0001810000000000006,
+        3.700000000000231e-05,
+        32.718848,
+        0
+      ],
+      [
+        "stats",
+        0.04909100000000001,
+        0.03351000000000002,
+        236.306432,
+        7
+      ],
+      [
+        "wait",
+        0.012628999999999863,
+        0.0695099999999999,
+        236.306432,
+        0
+      ],
+      [
+        "local",
+        0.3747450000000001,
+        0.03833300000000009,
+        236.306432,
+        73
+      ],
+      [
+        "cross",
+        0.0007030000000000092,
+        6.299999999997974e-05,
+        236.306432,
+        1
+      ],
+      [
+        "write",
+        1.4999999999987246e-05,
+        0.00028400000000000647,
+        236.306432,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired1",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired1.json"
+    }
+  },
+  {
+    "processCpu": 4.013559000000006,
+    "processWall": 5.878378416993655,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "label": "paired2",
+    "profile": false,
+    "cpu": 3.926312,
+    "wall": 5.756990584,
+    "flattenCpu": 0.023959,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002703999999999998,
+        0.0006899999999999962,
+        32.44032,
+        0
+      ],
+      [
+        "parse (worker)",
+        2.468536,
+        0.41272000000000003,
+        233.488384,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.4143619999999997,
+        0.038066999999999976,
+        233.488384,
+        0
+      ],
+      [
+        "constants",
+        0.00015000000000000083,
+        2.6999999999999247e-05,
+        32.68608,
+        0
+      ],
+      [
+        "stats",
+        0.04833200000000003,
+        0.032730999999999996,
+        233.488384,
+        7
+      ],
+      [
+        "wait",
+        0.0122369999999999,
+        0.06330600000000002,
+        233.488384,
+        0
+      ],
+      [
+        "local",
+        0.37131900000000007,
+        0.031360999999999986,
+        233.488384,
+        73
+      ],
+      [
+        "cross",
+        0.0006899999999999684,
+        4.999999999999449e-05,
+        233.488384,
+        1
+      ],
+      [
+        "write",
+        1.8000000000018e-05,
+        0.00041100000000002246,
+        233.488384,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired2",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-paired2.json"
+    }
+  },
+  {
+    "processCpu": 2.8927470000000035,
+    "processWall": 2.4093608330003917,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "paired2",
+    "profile": false,
+    "cpu": 2.802679,
+    "wall": 2.2427275,
+    "flattenCpu": 0.024024,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002642000000000002,
+        0.000671999999999999,
+        32.571392,
+        0
+      ],
+      [
+        "parse (worker)",
+        1.676288,
+        0.36973199999999995,
+        225.656832,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.11471999999999992,
+        0.005758000000000029,
+        225.656832,
+        0
+      ],
+      [
+        "constants",
+        0.00015199999999999936,
+        2.3999999999996247e-05,
+        32.833536,
+        0
+      ],
+      [
+        "stats",
+        0.047614,
+        0.032070999999999995,
+        225.656832,
+        7
+      ],
+      [
+        "wait",
+        0.009854000000000293,
+        0.046198,
+        225.656832,
+        0
+      ],
+      [
+        "local",
+        0.4338129999999997,
+        0.031375,
+        225.656832,
+        73
+      ],
+      [
+        "cross",
+        0.0006889999999999397,
+        4.599999999999049e-05,
+        225.656832,
+        1
+      ],
+      [
+        "write",
+        1.6000000000016e-05,
+        0.00034800000000001496,
+        225.656832,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired2",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-paired2.json"
+    }
+  },
+  {
+    "processCpu": 4.973448999999999,
+    "processWall": 4.688648000010289,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "label": "profile",
+    "profile": true,
+    "cpu": 4.881555,
+    "wall": 4.35281,
+    "flattenCpu": 0.023591,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002602,
+        0.0008620000000000017,
+        34.57024,
+        0
+      ],
+      [
+        "parse (worker)",
+        2.543232000000001,
+        0.8641649999999998,
+        240.566272,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.46410899999999944,
+        0.30045000000000016,
+        240.566272,
+        0
+      ],
+      [
+        "constants",
+        0.00014199999999999977,
+        2.6999999999999247e-05,
+        34.816,
+        0
+      ],
+      [
+        "stats",
+        0.048148,
+        0.03398300000000001,
+        240.566272,
+        7
+      ],
+      [
+        "wait",
+        0.012324000000000265,
+        0.0630860000000001,
+        240.566272,
+        0
+      ],
+      [
+        "local",
+        0.3953229999999997,
+        0.0427489999999999,
+        240.566272,
+        73
+      ],
+      [
+        "cross",
+        0.0009109999999999951,
+        0.00018799999999999373,
+        240.566272,
+        1
+      ],
+      [
+        "write",
+        1.7000000000044757e-05,
+        0.00027499999999999747,
+        240.566272,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-profile",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-profile.json",
+      "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-profile/profile"
+    }
+  },
+  {
+    "processCpu": 4.246794000000003,
+    "processWall": 4.783891292056069,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "complete_async_family_authored_rr_corpus_profile",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "label": "profile",
+    "profile": true,
+    "cpu": 4.146291,
+    "wall": 4.511299125,
+    "flattenCpu": 0.026251,
+    "files": 5725,
+    "keys": 0,
+    "sql": 81,
+    "phases": [
+      [
+        "combine",
+        0.002877000000000001,
+        0.0009569999999999995,
+        34.717696,
+        0
+      ],
+      [
+        "parse (worker)",
+        1.7691590000000001,
+        0.815307,
+        220.889088,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.15309399999999995,
+        0.15922800000000004,
+        220.889088,
+        0
+      ],
+      [
+        "constants",
+        0.00013799999999999923,
+        2.9000000000001247e-05,
+        34.97984,
+        0
+      ],
+      [
+        "stats",
+        0.04934799999999999,
+        0.034743,
+        220.889088,
+        7
+      ],
+      [
+        "wait",
+        0.010525000000000034,
+        0.049804999999999974,
+        220.889088,
+        0
+      ],
+      [
+        "local",
+        0.465927,
+        0.08825100000000002,
+        220.889088,
+        73
+      ],
+      [
+        "cross",
+        0.0008949999999999791,
+        0.00015999999999999348,
+        220.889088,
+        1
+      ],
+      [
+        "write",
+        1.8000000000073513e-05,
+        0.00029700000000001947,
+        220.889088,
+        0
+      ]
+    ],
+    "environment": {
+      "RUST_MIN_STACK": "67108864",
+      "RERAIL_THREADS": "4",
+      "RERAIL_CORPUS_MEMO": "off",
+      "RERAIL_CROSS_MEMO": "off",
+      "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/early-demands/production/early-cache.sqlite",
+      "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+      "RERAIL_RR_OUT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-profile",
+      "RERAIL_RR_REPORT": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-profile.json",
+      "RERAIL_PROFILE": "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/production-profile/profile"
+    }
+  }
+]

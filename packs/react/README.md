@@ -410,4 +410,3 @@ It leaves alone, as not reactive reads: callees of calls (`load()`, `api.post(â€
 **Sources:**
 - react.dev, [Reusing Logic with Custom Hooks](https://react.dev/learn/reusing-logic-with-custom-hooks#keep-your-custom-hooks-focused-on-concrete-high-level-use-cases): "Avoid creating and using custom 'lifecycle' Hooks â€¦ the linter won't warn you about it because the linter only checks direct `useEffect` calls."
 - adamalston, [carbon#18886](https://github.com/carbon-design-system/carbon/pull/18886), "refactor: delete useEffectOnce hook", with [carbon#18885](https://github.com/carbon-design-system/carbon/issues/18885): "behavior can be replicated by using a plain `useEffect` with an empty dependency array."
-

@@ -1,0 +1,35 @@
+.policy "ruff-pgh005-invalid-mock-access" revision 2
+.description "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PGH005 (pygrep-hooks): mock assertions that check nothing.
+//   my_mock.assert_called_once_with        ← PGH005: an expression statement that only reads the method
+//   assert my_mock.called_once_with()      ← PGH005: no such method; a Mock makes one up, which is truthy
+//   assert my_mock.not_called              ← PGH005
+//   my_mock.assert_called_once_with()      not reported
+//   assert my_mock.called                  not reported: a real attribute
+// Ruff reports the misspelt names in a bare expression statement (`my_mock.not_called()`) only in preview.
+#include "python/ast.rr"
+
+.violation PGH005(at: node, msg: symbol) code "PGH005" "{msg}"
+    suppress ruff "PGH005"
+PGH005(e, cat(cat("Call `", m), "(...)` with the expected arguments; written as a bare attribute it only reads the method and asserts nothing.")) :-
+    kind(st, "expression_statement"), child(st, v, 0), !child(st, _, 1), unparen(v, e), attr_of(e, _, m),
+    pgh005_assert_method(m).
+PGH005(t, cat(cat(cat(cat("`", m), "` is not a mock method, so on a mock this assert always passes; call `assert_"), m), "(...)` as a plain statement. Leave it if the object is not a mock and defines it.")) :-
+    kind(a, "assert_statement"), child(a, x, 0), unparen(x, t), pgh005_attr(t, m), pgh005_missing(m).
+.decl pgh005_attr(t: node, m: symbol)
+pgh005_attr(t, m) :- attr_of(t, _, m).
+pgh005_attr(t, m) :- kind(t, "call"), field(t, "function", f), attr_of(f, _, m).
+// The real assertion methods of Mock and AsyncMock, and the names people write for them without `assert_`.
+.decl pgh005_assert_method(m: symbol)
+pgh005_assert_method(cat("assert_", m)) :- pgh005_missing(m).
+pgh005_assert_method("assert_called"). pgh005_assert_method("assert_awaited").
+.decl pgh005_missing(m: symbol)
+pgh005_missing("any_call"). pgh005_missing("called_once"). pgh005_missing("called_once_with").
+pgh005_missing("called_with"). pgh005_missing("has_calls"). pgh005_missing("not_called").
+pgh005_missing("awaited"). pgh005_missing("awaited_once"). pgh005_missing("awaited_with").
+pgh005_missing("awaited_once_with"). pgh005_missing("any_await"). pgh005_missing("has_awaits").
+pgh005_missing("not_awaited").

@@ -1,0 +1,18 @@
+.policy "ruff-log004-log-exception-outside-except-handler" revision 2
+.description "Use error instead of exception for logging calls made outside an except handler; there is no active exception to record there."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG004 (flake8-logging): `exception(…)` on a logger, or `logging.exception`, outside every `except`
+// clause. There is no active exception to log, so the call logs a `NoneType: None` traceback; `error` is meant.
+// A def inside an except clause counts as inside it. Reported at the call. (Ruff's fix is unsafe; none here.)
+//   logger.exception("")                          ← LOG004
+//   def _(): logging.exception("")                ← LOG004
+//   except ...: logging.exception("")             not reported
+#include "python/logging.rr"
+
+.violation LOG004(at: node) code "LOG004"
+    "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+    suppress ruff "LOG004"
+LOG004(c) :- log_call(c, "exception", _, _), !log_in_handler(c).

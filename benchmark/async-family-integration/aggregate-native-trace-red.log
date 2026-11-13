@@ -1,0 +1,29 @@
+
+running 6 tests
+test code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups ... 
+thread 'code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups' (106556464) panicked at native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs:109:5:
+missing native helper measurements: span	work	steps_in_out	plan
+stratum rr_agg1/native	205	1:201,201:3,3:3	seed rr_agg1($p, $s, $v, $w, $x): binding($w, $p, $x, $v) , rr_demand_agg_rr_agg1($s, $w, $x) , ancestor($w, $s, $p)
+stratum rr_agg2/native	205	1:201,201:3,3:3	seed rr_agg2($p, $s, $v, $w, $x): binding($w, $p, $x, $v) , rr_demand_agg_rr_agg2($s, $w, $x) , ancestor($w, $s, $p)
+stratum rr_agg4/native	205	1:201,201:3,3:3	seed rr_agg4($p, $s, $v, $w, $x): binding($w, $p, $x, $v) , rr_demand_agg_rr_agg4($s, $w, $x) , ancestor($w, $s, $p)
+stratum absent/native	4	1:3,3:1	seed absent($w, $s, $x): wanted($w, $s, $x) , !rr_agg4(_, $s, _, $w, $x)
+stratum counts/native	4	1:3,3:3	seed counts($w, $s, $x, $k): wanted($w, $s, $x) , $k = count { rr_agg1(_, $s, _, $w, $x) }
+stratum rr_demand_agg_rr_agg1/native	1	1:3	seed rr_demand_agg_rr_agg1($s, $w, $x): wanted($w, $s, $x)
+stratum rr_demand_agg_rr_agg2/native	1	1:3	seed rr_demand_agg_rr_agg2($s, $w, $x): wanted($w, $s, $x)
+stratum rr_demand_agg_rr_agg4/native	1	1:3	seed rr_demand_agg_rr_agg4($s, $w, $x): wanted($w, $s, $x)
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::rr::aggregate_demand::tests::already_restricted_helpers_are_stable_and_recursive_only_guards_are_refused ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::multiple_consumers_union_their_safe_demands ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle ... ok
+test code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name ... ok
+
+failures:
+
+failures:
+    code_rule_dsl::logic::rr::aggregate_demand::tests::aggregate_demand_executes_only_requested_groups_and_keeps_empty_groups
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 3143 filtered out; finished in 5.55s
+

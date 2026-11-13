@@ -1,0 +1,14 @@
+[package]
+name = "rerail-rr-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Tier 2 for .rr built ahead of time: the JIT's Cranelift IR as Rust (rerail-rr-aot-gen), compiled by rustc, run on the JIT's harness, to compare the two compilers' code."
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-rr-parser = { path = "../rr_parser" }
+rerail-rr-syntax = { path = "../rr_syntax" }
+
+[dev-dependencies]
+libc = "0.2.189"

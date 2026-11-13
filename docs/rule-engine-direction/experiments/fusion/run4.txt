@@ -1,0 +1,8 @@
+### eager
+== has/inside batch: per-program walks vs one shared mask pass ==
+   123 has-programs over 42 target kinds; 87 inside-programs over 30 target kinds
+   per-program walks: 441.75 ns/node; shared mask passes + bit tests: 17.30 ns/node (25.5x); outputs 1644558
+### LAZY=1 PEEP=1
+== has/inside batch: per-program walks vs one shared mask pass ==
+   123 has-programs over 42 target kinds; 87 inside-programs over 30 target kinds
+   per-program walks: 348.30 ns/node; shared mask passes + bit tests: 6.40 ns/node (54.4x); outputs 1644558

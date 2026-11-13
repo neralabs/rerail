@@ -1,0 +1,164 @@
+// python/upgrade: the vocabulary Ruff's pyupgrade (UP) rules share: the Python version the code targets, stubs
+// and `from __future__ import annotations`, and names of the typing modules. The import tables (UP026, UP035)
+// are in python/upgrade-imports.rr; format strings (UP030-UP032) in python/upgrade-format.rr.
+//
+// Interface
+//   target_minor(m), targets(m)   the target Python version (python/version)
+//   stub_file(d)             document d is a stub (`.pyi`; python/ast)
+//   future_annotations(d)    d has `from __future__ import annotations`: its annotations are never evaluated
+//   typing_ref(e, x)         e names member x of `typing` or `typing_extensions` (by sym_at), through imports:
+//                            `typing.List`, `List` after `from typing import List`, `t.List` after `import typing as t`
+//   typing_only(n)           n is in an annotation, or a string read as one (names' `annotation`)
+//   builtin_at(e, x)         e reads the builtin x at that point of the module: `type`, or `builtins.type`
+//   sym_at(e, q)             sym_of in Ruff's order: e names q through the bindings visible where it runs
+//   runs_at_import(n)        n runs while the module is imported: module code and the class bodies in it
+//   up_arg(c, i, a)          a is call c's i-th positional argument, parentheses off (`*xs` not counted)
+//   up_kwarg(c, k, ka)       `k=v` is one of c's keywords, ka the whole `k=v`
+//   up_argc(c, n)            c has n arguments of every kind
+//   (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_splat, call_kwsplat)
+//   identifier(x)            (python/pyflakes) x is a Python identifier that is not a keyword
+//   functional_def(s, x, c, what)  statement s is `x = what(…)`, c the call, what a typing member by typing_ref
+//
+// Python background
+//   - A stub is never run, so every rule that rewrites to newer syntax applies in a `.pyi` at any target.
+//   - Under `from __future__ import annotations` (PEP 563) an annotation is a string, never evaluated, so newer
+//     syntax there is fine from Python 3.7 on; a runtime use (`cast(List[int], x)`) is still evaluated. From
+//     Python 3.14 (PEP 649) every annotation is deferred.
+//
+//   # pythonVersion "3.8"
+//   from __future__ import annotations
+//   def f(x: List[int]): ...         typing_only(<List[int]>), future_annotations(d), !targets(9)
+#include "python/ruff.rr"   // call_nargs, call_kw, …; python/pyflakes (run_scope), python/ast, python/version
+
+// ---- documents ---------------------------------------------------------------------------------------------------
+// future_annotations(d): `from __future__ import annotations` in the module's leading run: only a docstring and
+// other `__future__` imports come before it, as CPython requires (later, it is a SyntaxError, and Ruff ignores it).
+.decl future_annotations(d: number)
+future_annotations(d) :- leading_future(i), child(i, n, _), text(n, "annotations"), docof(i, d).
+future_annotations(d) :- leading_future(i), child(i, a, _), kind(a, "aliased_import"), field(a, "name", n),
+    text(n, "annotations"), docof(i, d).
+.decl leading_future(i: node)
+leading_future(i) :- kind(i, "future_import_statement"), child(m, i, k), kind(m, "module"),
+    count : { child(m, st, j), j < k, !kind(st, "future_import_statement"), !kind(st, "comment"), !docstring(m, st),
+        !docstring_stmt(m, st) } = 0.
+.decl docstring_stmt(m: node, st: node)  // the statement holding the module docstring
+docstring_stmt(m, st) :- body_of(m, b), body_stmt(b, st, 0), doc_stmt(st, _).
+
+// ---- typing names ------------------------------------------------------------------------------------------------
+// typing_ref(e, x): Ruff's match_typing_expr: e resolves to typing.x or typing_extensions.x.
+.decl typing_ref(e: node, x: symbol)
+typing_ref(e, x) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_at(e, q), split_dot(q, m, x),
+    typing_mod(m).
+.decl typing_only(n: node)
+typing_only(n) :- annotation(n).
+
+// ---- names, in Ruff's order --------------------------------------------------------------------------------------
+// Ruff resolves a name while it walks the file, so what a name means depends on where it is read:
+//   - At import time (module code, and the class bodies in it), each scope on the lookup chain offers its latest
+//     binding above the read. A scope with none above is passed over, a class's included.
+//   - A function or lambda body is walked after the module (deferred). Its own scope (and any class in it) is
+//     still read in walk order; every scope outside it is finished and offers its last binding.
+//   - Annotations that are never evaluated are deferred to the very end: in a stub, under
+//     `from __future__ import annotations`, and from Python 3.14 (PEP 649) everywhere.
+// The first scope that offers a binding wins; with none, the name is the builtin of that name (a star import does
+// not change that). python/names' sym_of instead reads every binding of the first scope that binds the name.
+//   from functools import lru_cache
+//   @lru_cache()          sym_at(<lru_cache>, "functools.lru_cache")
+//   def f(): ...
+//   def lru_cache(): ...
+//   @lru_cache()          no functools row: the def above rebinds it
+//   def g(): return List[int]()     with `List = list` anywhere at module level after the import: not typing's
+.decl runs_at_import(n: node)
+runs_at_import(n) :- run_scope(n, _, "module"), !late_annotation(n).
+runs_at_import(n) :- run_scope(n, s, k), k != "module", k != "function", k != "lambda", runs_at_import(s),
+    !late_annotation(n).
+.decl late_annotation(n: node)
+late_annotation(n) :- typing_only(n), docof(n, d), (stub_file(d) ; future_annotations(d)).
+late_annotation(n) :- typing_only(n), targets(14).
+// head_ref(e, h, x): h is the name x read at the head of the Name/Attribute chain e (e itself for a name).
+// A store target is not a read.
+.decl head_ref(e: node, h: node, x: symbol)
+head_ref(e, e, x) :- ast_name(e, x), expr_ctx(e, "load").
+head_ref(e, h, x) :- attr_of(e, o, _), head_ref(o, h, x).
+// up_fn_of(n, f): f is the innermost function or lambda whose body n runs in (classes and comprehensions passed).
+.decl up_fn_of(n: node, f: node)
+up_fn_of(n, f) :- run_scope(n, f, k), (k = "function" ; k = "lambda").
+up_fn_of(n, f) :- run_scope(n, s, k), k != "function", k != "lambda", k != "module", up_fn_of(s, f).
+// Most names are bound once, above every read: names' look gives the answer (up_once). The rest walk the
+// chain: up_chain(h, s, d), scope s at depth d from h's own scope (0), class bodies passed over as Python does.
+.decl up_once(h: node, site: node)
+up_once(h, site) :- head_ref(_, h, x), look(h, x, s), count : { binding(s, x, _, _) } = 1, binding(s, x, site, _),
+    earlier(site, h), !within(h, site).
+.decl up_walk(h: node)
+up_walk(h) :- head_ref(_, h, x), !up_once(h, _), !miss(h, x).
+.decl up_chain(h: node, s: node, d: number)
+up_chain(h, s, 0) :- up_walk(h), nearest(h, s, scope).
+up_chain(h, p, d + 1) :- up_chain(h, s, d), nearest(s, p, fscope).
+// up_done(h, s): scope s is finished when h is read: h is deferred past it.
+.decl up_done(h: node, s: node)
+up_done(h, s) :- up_chain(h, s, _), late_annotation(h).
+up_done(h, s) :- up_chain(h, s, d), d > 0, up_fn_of(h, f), within(f, s).
+// up_offer(h, s, site, i): scope s offers binding site (visit index i) to h.
+.decl up_offer(h: node, s: node, site: node, i: number)
+up_offer(h, s, site, i) :- up_chain(h, s, _), head_ref(_, h, x), binding(s, x, site, _), visit_index(site, i),
+    (up_done(h, s) ; earlier(site, h), !within(h, site)).
+// up_site(h, site): the binding h reads. up_unbound(h): none: h reads the builtin.
+.decl up_site(h: node, site: node)
+up_site(h, site) :- up_once(h, site).
+up_site(h, site) :- up_walk(h), d = min d2 : { up_chain(h, s2, d2), up_offer(h, s2, _, _) }, up_chain(h, s, d),
+    k = max i : { up_offer(h, s, _, i) }, up_offer(h, s, site, k).
+.decl up_unbound(h: node)
+up_unbound(h) :- head_ref(_, h, x), miss(h, x).
+up_unbound(h) :- up_walk(h), count : { up_offer(h, _, _, _) } = 0.
+// site_root(site, r, how): the qualified name a binding site gives its name: an import's target, a def's qualname.
+// Other bindings (`List = list`) give none.
+.decl site_root(site: node, r: symbol, how: symbol)
+site_root(a, @dot(m, x), "import") :- import_alias(_, a, m, x, _), x != "".
+site_root(a, m, "import") :- import_alias(_, a, m, "", _), kind(a, "aliased_import").
+site_root(a, @head(m), "import") :- import_alias(_, a, m, "", _), kind(a, "dotted_name").
+site_root(f, q, "def") :- binding(_, _, f, form), (form = "def" ; form = "class"), qualname(f, q).
+// sym_at(e, q): the head's binding, then e's attributes. An import's target is followed through workspace
+// re-exports; a local def or class is itself (resolve_export would mix in the module's other bindings of it).
+.decl sym_at(e: node, q: symbol)
+sym_at(e, q) :- up_chain_name(e, q0, "import"), resolve_export(q0, q).
+sym_at(e, q0) :- up_chain_name(e, q0, "import"), !resolve_export(q0, _).
+sym_at(e, q) :- up_chain_name(e, q, "def").
+sym_at(e, @dot("builtins", x)) :- ast_name(e, x), up_unbound(e), builtin(x).
+.decl up_chain_name(e: node, q: symbol, how: symbol)
+up_chain_name(e, cat(r, @slice(de, strlen(x), strlen(de))), how) :- head_ref(e, h, x), up_site(h, site),
+    site_root(site, r, how), dotted_expr(e, de).
+
+// builtin_at(e, x): Ruff's match_builtin_expr: e is the builtin x, or `builtins.x`, where it runs.
+//   class A(metaclass=type): ...      builtin_at(<type>, "type")
+//   type = str
+//   class B(metaclass=type): ...      no row: `type` is str from here on
+.decl builtin_at(e: node, x: symbol)
+builtin_at(e, x) :- sym_at(e, q), split_dot(q, "builtins", x).
+
+// ---- call arguments ----------------------------------------------------------------------------------------------
+// Ruff's Arguments: `args` (positional, `*xs` included) and `keywords` (`x=v` and `**kw`), comments ignored.
+//   f(a, *b, c=1, **d)     up_arg(f, 0, a); up_kwarg(f, "c", <c=1>); up_argc 4
+.decl up_arglist(c: node, a: node, j: number)
+up_arglist(c, a, j) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a, j),
+    !kind(a, "comment").
+// `f(x for x in y)`: a lone generator is the arguments node itself.
+up_arglist(c, g, 0) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").
+.decl up_keyword(a: node)
+up_keyword(a) :- up_arglist(_, a, _), (kind(a, "keyword_argument") ; kind(a, "dictionary_splat")).
+.decl up_positional(a: node)
+up_positional(a) :- up_arglist(_, a, _), !up_keyword(a), !kind(a, "list_splat").
+.decl up_arg(c: node, i: number, a: node)
+up_arg(c, i, a) :- up_arglist(c, a0, j), up_positional(a0), unparen(a0, a),
+    i = count : { up_arglist(c, b, k), k < j, up_positional(b) }.
+.decl up_kwarg(c: node, k: symbol, ka: node)
+up_kwarg(c, k, ka) :- up_arglist(c, ka, _), kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k).
+.decl up_argc(c: node, n: number)
+up_argc(c, n) :- kind(c, "call"), n = count : { up_arglist(c, _, _) }.
+
+// ---- identifiers and functional definitions ------------------------------------------------------------------
+// functional_def(s, x, c, what): `X = NamedTuple("X", …)` as a statement with one target, a plain name (UP013,
+// UP014): the functional forms that a class statement can replace.
+.decl functional_def(s: node, x: symbol, c: node, what: symbol)
+functional_def(s, x, c, w) :- assign_value(s, c), !assign_ann(s, _), count : { assign_target(s, _) } = 1,
+    assign_target(s, t),
+    kind(t, "identifier"), text(t, x), kind(c, "call"), field(c, "function", f), typing_ref(f, w).

@@ -1,0 +1,47 @@
+.policy "ruff-perf403-manual-dict-comprehension" revision 2
+.description "Use a dictionary comprehension or update instead of filling a dict key by key inside a for loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF403 (perflint): a for loop whose body is only `d[k] = v`, or only `if test: d[k] = v`, where d is a
+// dict (its only binding is one, python/misc2-perf) and the key and the value are each the loop target or one of
+// its elements: `for k, v in pairs: d[k] = v`. Not when the test reads d, or the target is read after the loop.
+// Reported at the assignment.
+//   result = {}
+//   for k, v in pairs:
+//       if v: result[k] = v            ← PERF403: `result = {k: v for k, v in pairs if v}`
+//   for k, v in pairs: result[k] = v + 1   not reported: the value is computed
+#include "python/misc2-perf.rr"
+//   perf_for, perf_body, perf_mentions, perf_only_binding, perf_dict_site, perf_used_after
+
+.violation PERF403(at: node, l: node) code "PERF403"
+    "Build the dict with a comprehension (`{{k: v for ...}}`); if `{l}` is not a fresh empty dict assigned just before the loop, pass that comprehension to `{l}.update(...)` instead."
+    suppress ruff "PERF403"
+PERF403(a, o) :- perf_for(f, t, _), perf_body(f, st, test), store(st, a, o, key, value), from_target(t, key),
+    from_target(t, value), kind(o, "identifier"), text(o, l), !perf_mentions(test, l),
+    perf_only_binding(o, site), perf_dict_site(site), !perf_used_after(f, t).
+// store(st, a, o, key, value): statement st is the plain assignment a, `o[…] = value`, with one target; key is
+// the subscript (`d[x,]` and `d[a, b]` have a tuple key with no node of its own: flat reads it off the text).
+.decl store(st: node, a: node, o: node, key: node, value: node)
+store(st, a, o, k, v) :- kind(st, "expression_statement"), child(st, a, 0), kind(a, "assignment"), !field(a, "type", _),
+    field(a, "left", l0), unparen(l0, l), kind(l, "subscript"), field(l, "value", o0), unparen(o0, o),
+    k = l, field(a, "right", v0), !kind(v0, "assignment"), unparen(v0, v).
+// from_target(t, e): e is written as the target itself or as one of its elements (Ruff's ComparableExpr,
+// approximated by the text without comments, whitespace and parentheses: `(x,)` is `x,`, `(o, p)` is `o, p`).
+.decl from_target(t: node, e: node)
+from_target(t, e) :- loop_store(t, e, _), kind(t, "identifier"), flat(t, x), flat(e, x).
+from_target(t, e) :- loop_store(t, e, _), (kind(t, "pattern_list") ; kind(t, "tuple_pattern")), child(t, c, _),
+    !kind(c, "comment"), flat(c, x), flat(e, x).
+.decl loop_store(t: node, e: node, role: symbol)  // e is the key or the value loop t's body stores
+loop_store(t, k, "key") :- perf_for(f, t, _), perf_body(f, st, _), store(st, _, _, k, _), !odd_target(t).
+loop_store(t, v, "value") :- perf_for(f, t, _), perf_body(f, st, _), store(st, _, _, _, v), !odd_target(t).
+// `for a.k, a.v in …`: a target that is not all names binds something Ruff does not track; it skips the loop.
+.decl odd_target(t: node)
+odd_target(t) :- perf_for(_, t, _), (has(t, _, "attribute") ; has(t, _, "subscript")).
+.decl flat(e: node, x: symbol)
+flat(e, x) :- loop_store(_, e, "value"), text(e, y), x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
+flat(e, x) :- loop_store(_, e, "key"), match("[^\\[]*\\[(?<y>[\\s\\S]*)\\]", e),
+    x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
+flat(c, x) :- loop_store(t, _, _), child(t, c, _), text(c, y), x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
+flat(t, y) :- loop_store(t, _, _), kind(t, "identifier"), text(t, y).

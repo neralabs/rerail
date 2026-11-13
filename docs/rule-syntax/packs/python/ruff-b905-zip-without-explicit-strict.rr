@@ -1,0 +1,29 @@
+.policy "ruff-b905-zip-without-explicit-strict" revision 2
+.description "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B905 (flake8-bugbear): `zip()` over two or more iterables (or a `*xs`) without `strict=`. On Python
+// 3.10+ zip can check that the lengths match; without the keyword a short iterable truncates the rest silently.
+// An infinite argument (`itertools.count()`, `cycle(…)`, `repeat(x)` without a count) makes truncation the
+// intent, so the call is left alone. Off below Python 3.10 (option `pythonVersion`, default "3.10").
+//   zip("a", "b")                     ← B905
+//   zip(*iterators)                   ← B905
+//   zip([1, 2], repeat(1))            not reported: infinite
+//   zip("a", "b", strict=False)       not reported
+#include "python/bugbear.rr"
+#include "python/version.rr"   // targets
+
+.violation B905(at: node) code "B905"
+    "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
+    suppress ruff "B905"
+B905(c) :- bb_builtin_call(c, "zip"), !call_kw(c, "strict", _), many(c), !infinite_arg(c), targets(10).
+.decl many(c: node)
+many(c) :- call_nargs(c, k), k >= 2.
+many(c) :- call_star(c).
+.decl infinite_arg(c: node)
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, q), (q = "itertools.cycle" ; q = "itertools.count").
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 1), call_nkwargs(a, 0).
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 2), bb_pos(a, 1, n), kind(n, "none").
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_kw(a, "times", n), kind(n, "none").

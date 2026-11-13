@@ -1,0 +1,30 @@
+.policy "eslint-no-dupe-keys" revision 8
+.description "Don't repeat a key in a JavaScript object literal; the later value silently overwrites the earlier one."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-dupe-keys: a key that an earlier property of the same object literal already defined. Keys
+// compare by their static name, so `a`, "a", ['a'] and `a` are one key, and 1, 0x1 and "1" are one too.
+// A getter and a setter of one name pair up; a value and an accessor do not.
+//   ({ a: 1, a: 2 })    ({ 1: x, "1": y })    ({ a: 1, get a() {} })    → reported at the second key
+//   ({ get a() {}, set a(v) {} })    ({ __proto__: x, "__proto__": y })   → not
+// `__proto__: v` sets the prototype rather than a property, so ESLint skips that form (not as a shorthand,
+// method or computed key).
+.violation no_dupe_keys(at: node, name: symbol) code "no-dupe-keys"
+    "Remove or rename one of the duplicate '{name}' keys; the later value silently overwrites the earlier one."
+    suppress eslint "no-dupe-keys"
+    suppress oxlint "no-dupe-keys"
+    suppress biome "lint/suspicious/noDuplicateObjectKeys"
+no_dupe_keys(key, x) :- defines(o, p, k, x, key), defines(o, q, j, x, _), precedes(q, p), clash(j, k).
+// An init counts as both a getter and a setter: ESLint's GET_KIND /^(?:init|get)$/, SET_KIND /^(?:init|set)$/.
+.decl clash(j: symbol, k: symbol)
+clash("init", "init"). clash("init", "get"). clash("init", "set"). clash("get", "init"). clash("set", "init").
+clash("get", "get"). clash("set", "set").
+
+.decl defines(o: node, p: node, k: symbol, x: symbol, key: node)
+defines(o, p, k, x, key) :- object_prop(o, p, k, x, key), !proto_setter(p).
+.decl proto_setter(p: node)  // { __proto__: v } and { "__proto__": v }
+proto_setter(p) :- kind(p, "pair"), field(p, "key", key), !kind(key, "computed_property_name"),
+    key_static(key, "__proto__").

@@ -1,0 +1,26 @@
+.policy "sqlfluff-am09-ambiguous-order-by-limit" revision 2
+.description "Add ORDER BY to any SQL query that uses LIMIT or OFFSET; without it, which rows come back is not deterministic."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AM09 (ambiguous.order_by_limit). A SELECT with LIMIT or OFFSET and no ORDER BY; the finding is at
+// LIMIT (or at OFFSET when there is no LIMIT):
+//   SELECT * FROM t LIMIT 10                         reported
+//   SELECT * FROM t ORDER BY id LIMIT 10 OFFSET 5    fine
+//   SELECT a FROM t UNION SELECT a FROM u LIMIT 1    fine: the LIMIT belongs to the set operation, which
+//                                                    sqlfluff does not check
+// An ORDER BY inside a subquery does not order the outer query.
+
+#include "sql/syntax.rr"
+
+.violation AM09(at: node) code "AM09" "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results."
+    suppress sqlfluff "AM09", "all", "ambiguous", "ambiguous.order_by_limit"
+AM09(x) :- paging(x, p), count : { child(p, o, _), kind(o, "order_by") } = 0, !set_tail(p).
+// paging(x, p): x is a LIMIT, or an OFFSET with no LIMIT around it, among the clauses of p (the FROM clause, or
+// the statement when the query has no FROM).
+.decl paging(x: node, p: node)
+paging(x, p) :- kind(x, "limit"), child(p, x, _).
+paging(x, p) :- kind(x, "offset"), child(p, x, _), !kind(p, "limit").
+// set_tail(f): f is the last FROM clause of a set operation, whose trailing LIMIT applies to the whole.
+.decl set_tail(f: node)
+set_tail(f) :- kind(f, "from"), child(s, f, _), kind(s, "set_operation"), !next_sibling(f, _).

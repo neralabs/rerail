@@ -1,0 +1,37 @@
+// Shared demand boundaries for blocking async APIs. Native operators return facts; rules compose them.
+#include "core.rr"
+#include "python/async-candidate-targets.rr"
+.decl py_call_site(d: number, report: node, call: node, ref: node)
+.input py_call_site
+.decl async_documents(d:number)
+async_documents(d) :- doc(d,_,_).
+.decl async_candidates(c:node,f:node,r:node,o:node)
+async_candidates(c,f,r,o) :- python_candidates(c,f,r,o,async_documents,async_candidate_target,"async_function","open").
+
+.decl async_api_target(q: symbol)
+.decl async_site(c: node, f: node, r: node)
+async_site(c,f,r) :- async_candidates(c,f,r,_).
+.decl async_reference(n: node)
+async_reference(n) :- async_site(_,_,n), n >= 0.
+.decl async_qualified(n: node,q: symbol)
+async_qualified(n,q) :- python_qualified(n,q,async_reference,async_api_target).
+.decl async_blocking(c: node,f: node,q: symbol)
+async_blocking(c,f,q) :- async_site(c,f,r), async_qualified(r,q).
+
+// Receiver demands follow the structural .open test, before binding resolution.
+.decl async_open_receiver(f: node,o: node)
+async_open_receiver(f,o) :- async_candidates(_,f,_,o), o >= 0.
+.decl async_receiver_demand(o: node)
+async_receiver_demand(o) :- async_open_receiver(_,o).
+.decl async_receiver_value(o: node,v: node)
+async_receiver_value(o,v) :- python_origins(o,v,async_receiver_demand).
+.decl async_constructor(v: node,f: node)
+async_constructor(v,f) :- async_receiver_value(_,v), py_call_site(_,f,v,_).
+.decl async_constructor_demand(f: node)
+async_constructor_demand(f) :- async_constructor(_,f).
+.decl async_path_target(q: symbol)
+async_path_target("pathlib.Path").
+.decl async_constructor_qualified(f: node,q: symbol)
+async_constructor_qualified(f,q) :- python_qualified(f,q,async_constructor_demand,async_path_target).
+.decl async_path_value(o: node)
+async_path_value(o) :- async_receiver_value(o,v), async_constructor(v,f), async_constructor_qualified(f,"pathlib.Path").

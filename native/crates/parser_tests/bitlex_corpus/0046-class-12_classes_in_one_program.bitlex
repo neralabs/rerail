@@ -1,0 +1,36 @@
+# corpus: class: 12 classes in one program
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+class c0 = ')'..'0' 'a'
+mask m0 = c0
+class c1 = 0xcf..0xe7 0xc8
+mask m1 = c1
+class c2 = 'C'..'\\' 0x12
+mask m2 = c2
+class c3 = 0x0e..0x10 0x93
+mask m3 = c3
+class c4 = 0x0e..',' 0xad
+mask m4 = c4
+class c5 = 0xa8..0xc9 0x9e
+mask m5 = c5
+class c6 = 0x9d..0xa1 0x17
+mask m6 = c6
+class c7 = 0x13..':' 'h'
+mask m7 = c7
+class c8 = 0xc8..0xdd 'g'
+mask m8 = c8
+class c9 = 0x1d..'.' 0xe3
+mask m9 = c9
+class c10 = 0x06..'&' '.'
+mask m10 = c10
+class c11 = 0x0c..0x14 0xce
+mask m11 = c11

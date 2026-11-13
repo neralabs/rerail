@@ -1,0 +1,27 @@
+.policy "eslint-max-classes-per-file" revision 3
+.description "Keep to one class per file, counting class expressions too."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   limit
+#include "tsx/modules.rr"
+//   program, scope_stmt
+
+// ESLint's max-classes-per-file: a file with more than `max` classes (default 1; `max`, or the number form).
+// Class declarations count, abstract ones too, and so do class expressions unless `ignoreExpressions`:
+//   class A {} class B {}            → File has too many classes (2). Maximum allowed is 1.
+//   class A {} const B = class {};   the same; with ignoreExpressions it is fine
+// ESLint reports the Program, which starts at the file's first token: here its first statement.
+.violation max_classes_per_file(at: node, k: number, m: number) code "max-classes-per-file"
+    "File has too many classes ({k}). Maximum allowed is {m}."
+    suppress eslint "max-classes-per-file"
+    suppress oxlint "max-classes-per-file"
+    suppress biome "lint/style/noExcessiveClassesPerFile"
+limit_rule("max", 1).
+max_classes_per_file(st, k, m) :- program(d, p), scope_stmt(p, st, 0), limit("max", 1, m0),
+    m = max(m0, 1), k = count : { counted(c), docof(c, d) }, k > m.
+.decl counted(c: node)
+counted(c) :- (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")).
+counted(c) :- kind(c, "class"), !option("ignoreExpressions", "true").

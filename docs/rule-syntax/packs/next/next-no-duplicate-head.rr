@@ -1,0 +1,31 @@
+.policy "next-no-duplicate-head" revision 3
+.description "Keep a single Head element in a custom Next.js Document's render output; duplicate heads produce unexpected markup."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-duplicate-head. In a class that extends the default import of next/document, a
+// returned element with more than one <Head> directly among its children; every Head after the first is
+// reported:
+//   class MyDocument extends Document {
+//     render() { return (<Html><Head /><Head /></Html>) }      the second Head
+//   }
+
+#include "tsx/next.rr"
+
+.violation duplicate(at: node) code "@next/next/no-duplicate-head"
+    "Do not include multiple instances of `<Head/>`. See: https://nextjs.org/docs/messages/no-duplicate-head"
+    suppress eslint "@next/next/no-duplicate-head"
+    suppress oxlint "no-duplicate-head"
+duplicate(h) :- kind(r, "return_statement"), document_class_above(r), child(r, x, 0), unparen_jsx(x, e),
+    child_el(e, h, "Head"), child_el(e, first, "Head"), earlier(first, h).
+
+// document_class_above(r): some class around r extends Document, the name next/document's default import
+// binds. ESTree calls `export default class extends Document {}` a ClassDeclaration too.
+.decl document_class_above(r: node)
+document_class_above(r) :- kind(r, "return_statement"), within(r, c), doc_class(c).
+.decl doc_class(c: node)
+doc_class(c) :- (kind(c, "class_declaration") ; kind(c, "class"), child(p, c, _), kind(p, "export_statement")),
+    superclass(c, x), docof(c, d), default_import(d, "next/document", x).
+.decl unparen_jsx(x: node, e: node)  // ESTree has no node for parentheses: return (<Html>…</Html>)
+unparen_jsx(x, x) :- kind(x, "jsx_element").
+unparen_jsx(x, e) :- kind(x, "parenthesized_expression"), child(x, y, 0), unparen_jsx(y, e).

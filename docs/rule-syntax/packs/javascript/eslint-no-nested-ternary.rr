@@ -1,0 +1,21 @@
+.policy "eslint-no-nested-ternary" revision 4
+.description "Avoid nesting ternary expressions inside each other; use if-else or intermediate variables for readability."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen
+
+// ESLint's no-nested-ternary: a conditional expression whose `then` or `else` is another one, with or
+// without parentheses. The condition may be one.
+//   a ? b : c ? d : e         → reported at the outer `a ? …`
+//   a ? (b ? c : d) : e       → reported
+//   (a ? b : c) ? d : e       fine
+// No options.
+.violation no_nested_ternary(at: node) code "no-nested-ternary" "Do not nest ternary expressions."
+    suppress eslint "no-nested-ternary"
+    suppress oxlint "no-nested-ternary"
+    suppress biome "lint/style/noNestedTernary"
+no_nested_ternary(t) :- kind(t, "ternary_expression"), (field(t, "consequence", c) ; field(t, "alternative", c)),
+    deparen(c, x), kind(x, "ternary_expression").

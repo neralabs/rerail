@@ -1,0 +1,122 @@
+{
+  "lines": {
+    "pairs": [
+      {
+        "baselineCpu": 2.960212,
+        "spikeCpu": 2.982829,
+        "cpuSaved": -0.02261700000000033,
+        "baselineWall": 1.459805584,
+        "spikeWall": 1.477149334,
+        "wallSaved": -0.01734374999999999
+      },
+      {
+        "baselineCpu": 2.868354,
+        "spikeCpu": 2.847508,
+        "cpuSaved": 0.020846000000000142,
+        "baselineWall": 1.410484958,
+        "spikeWall": 1.3975385,
+        "wallSaved": 0.01294645800000005
+      },
+      {
+        "baselineCpu": 2.34381,
+        "spikeCpu": 2.187949,
+        "cpuSaved": 0.1558609999999998,
+        "baselineWall": 1.135331417,
+        "spikeWall": 1.062069917,
+        "wallSaved": 0.07326149999999987
+      }
+    ],
+    "medianCpuSaved": 0.020846000000000142,
+    "medianWallSaved": 0.01294645800000005
+  },
+  "postings": {
+    "pairs": [
+      {
+        "baselineCpu": 3.098045,
+        "spikeCpu": 2.745198,
+        "cpuSaved": 0.35284700000000013,
+        "baselineWall": 1.540870917,
+        "spikeWall": 1.346075584,
+        "wallSaved": 0.19479533299999985
+      },
+      {
+        "baselineCpu": 2.415389,
+        "spikeCpu": 2.668603,
+        "cpuSaved": -0.25321400000000027,
+        "baselineWall": 1.173233458,
+        "spikeWall": 1.308934,
+        "wallSaved": -0.13570054200000015
+      },
+      {
+        "baselineCpu": 2.304745,
+        "spikeCpu": 2.169634,
+        "cpuSaved": 0.1351110000000002,
+        "baselineWall": 1.116629958,
+        "spikeWall": 1.056809708,
+        "wallSaved": 0.05982025000000002
+      }
+    ],
+    "medianCpuSaved": 0.1351110000000002,
+    "medianWallSaved": 0.05982025000000002
+  },
+  "reserve": {
+    "pairs": [
+      {
+        "baselineCpu": 2.991522,
+        "spikeCpu": 3.016221,
+        "cpuSaved": -0.024699000000000026,
+        "baselineWall": 1.475117667,
+        "spikeWall": 1.491838708,
+        "wallSaved": -0.016721041000000048
+      },
+      {
+        "baselineCpu": 2.738025,
+        "spikeCpu": 2.390704,
+        "cpuSaved": 0.347321,
+        "baselineWall": 1.402901,
+        "spikeWall": 1.185323833,
+        "wallSaved": 0.21757716699999996
+      },
+      {
+        "baselineCpu": 2.263562,
+        "spikeCpu": 2.525474,
+        "cpuSaved": -0.26191200000000014,
+        "baselineWall": 1.100779917,
+        "spikeWall": 1.25415025,
+        "wallSaved": -0.1533703329999998
+      }
+    ],
+    "medianCpuSaved": -0.024699000000000026,
+    "medianWallSaved": -0.016721041000000048
+  },
+  "combined": {
+    "pairs": [
+      {
+        "baselineCpu": 2.998196,
+        "spikeCpu": 2.672047,
+        "cpuSaved": 0.326149,
+        "baselineWall": 1.478905375,
+        "spikeWall": 1.312157,
+        "wallSaved": 0.16674837500000006
+      },
+      {
+        "baselineCpu": 2.397365,
+        "spikeCpu": 2.134623,
+        "cpuSaved": 0.26274200000000025,
+        "baselineWall": 1.15969325,
+        "spikeWall": 1.0266305,
+        "wallSaved": 0.1330627499999999
+      },
+      {
+        "baselineCpu": 2.446378,
+        "spikeCpu": 2.467743,
+        "cpuSaved": -0.021364999999999856,
+        "baselineWall": 1.184060167,
+        "spikeWall": 1.211757292,
+        "wallSaved": -0.02769712499999999
+      }
+    ],
+    "medianCpuSaved": 0.26274200000000025,
+    "medianWallSaved": 0.1330627499999999
+  }
+}

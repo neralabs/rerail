@@ -1,0 +1,19 @@
+.policy "ruff-d301-escape-sequence-in-docstring" revision 2
+.description "Make docstrings that contain backslashes raw strings; a backslash in a plain string starts an escape sequence and can change the text."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D301 (pydocstyle): a non-raw docstring with a backslash escape other than a line continuation or
+// `\u`, `\U`, `\N` (which a raw string would break). An escaped run of quotes (`\"""`, `\"\"\"`) is allowed,
+// and a backslash at the very end of the body is ignored.
+//   """Match \d+."""         ← D301
+//   r"""Match \d+."""        not reported
+//   """Snowman: ☃."""   not reported
+#include "python/docstrings.rr"
+
+.violation D301(at: node) code "D301"
+    "Add an `r` prefix (replacing any `u`) so backslashes stay literal, writing each `\\\\` as one `\\`; keep the plain string if an escape like `\\t` or `\\x41` must take effect."
+    suppress ruff "D301"
+D301(s) :- doc_checked(s), !doc_raw(s), doc_body(s, b), contains("\\", b),
+    t = @replace_all(b, "\\\\(\"\"\"|'''|\"\\\\\"\\\\\"|'\\\\'\\\\')", ""), match("[\\s\\S]*\\\\[^\\r\\nuUN][\\s\\S]*", t).

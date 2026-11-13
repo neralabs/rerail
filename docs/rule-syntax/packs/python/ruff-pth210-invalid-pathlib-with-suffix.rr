@@ -1,0 +1,29 @@
+.policy "ruff-pth210-invalid-pathlib-with-suffix" revision 2
+.description "Pass a suffix that starts with a dot to Path.with_suffix(); a suffix without one raises an error at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH210 (flake8-use-pathlib): `p.with_suffix(s)` on a pathlib path p, where s is a str literal that is
+// not empty and has no leading dot, or is "." alone. A path is a call of one of pathlib's six classes, or a
+// name whose only binding is one: `p = Path(…)`, `p: PurePath` as a parameter, a def returning a Path.
+// `with_suffix(".")` raises before Python 3.14 only, so that case needs a `pythonVersion` below 3.14
+// (default 3.10). The finding is at the call.
+//   Path("a").with_suffix("py")          ← PTH210: write ".py"
+//   def f(p: Path): p.with_suffix(".")   ← PTH210, the single-dot message
+//   p.with_suffix(".py"), p.with_suffix(""), x.with_suffix("py") with x unknown    not reported
+#include "python/pathlib.rr"
+#include "python/upgrade.rr"
+//   path_obj(e)   e is a pathlib path (python/pathlib)   targets(m)   the target is 3.m or later (python/upgrade)
+//   plain_str(e, v)   a str literal's value (python/pyflakes)
+
+.violation PTH210(at: node, msg: symbol) code "PTH210" "{msg}"
+    suppress ruff "PTH210"
+PTH210(c, cat(cat("Add a leading dot to the suffix ", t), ", such as `\".py\"`; `with_suffix` raises ValueError for a non-empty suffix that does not start with a dot.")) :-
+    with_suffix_arg(c, s, v), v != "", v != ".", !prefix(".", v), text(s, t).
+PTH210(c, "Pass a suffix such as `\".py\"`, or `\"\"` to drop it: before Python 3.14, `with_suffix(\".\")` raises ValueError.") :-
+    with_suffix_arg(c, _, "."), !targets(14).
+// with_suffix_arg(c, s, v): c is `p.with_suffix(s)` on a path p, s a str literal with value v, c's only argument.
+.decl with_suffix_arg(c: node, s: node, v: symbol)
+with_suffix_arg(c, s, v) :- kind(c, "call"), field(c, "function", g), unparen(g, fa), attr_of(fa, o, "with_suffix"),
+    path_obj(o), call_len(c, n), n <= 1, arg_value(c, "suffix", 0, s), plain_str(s, v).

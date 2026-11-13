@@ -1,0 +1,20 @@
+.policy "ruff-up006-non-pep585-annotation" revision 2
+.description "Use built-in and collections generics such as list[int] instead of typing aliases such as List[int]; the aliases are deprecated since Python 3.9."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP006 (pyupgrade): `typing.List` and its kin where the builtin generic works: `list[int]` (PEP 585).
+// Every use counts, subscripted or not, in annotations and at runtime: from Python 3.9 on, in a stub always,
+// and from 3.7 in annotations under `from __future__ import annotations` (python/upgrade-typing's rewritable).
+// The table: List, Dict, Set, FrozenSet, Tuple, Type, and Deque and DefaultDict (to collections).
+//   def f(x: List[str]): ...         ← UP006 at List (3.9+)
+//   x: typing.DefaultDict[str, int]  ← UP006 at typing.DefaultDict
+//   def f(x: "List[str]"): ...       ← UP006 inside the string, through `parsed`
+#include "python/upgrade-typing.rr"
+//   typing_ref(e, x), rewritable(n, m), pep585(x, b)
+
+.violation UP006(at: node, b: symbol) code "UP006"
+    "Replace `{at}` with the builtin generic `{b}`, and drop the typing import if unused."
+    suppress ruff "UP006"
+UP006(e, b) :- typing_ref(e, x), pep585(x, b), (ast_name(e, _) ; kind(e, "attribute")), rewritable(e, 9).

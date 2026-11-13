@@ -1,0 +1,22 @@
+.policy "ruff-ruf048-map-int-version-parsing" revision 1
+.description "Parse a version string with a real version parser, not by mapping int over its dot-separated parts; versions can contain non-numeric parts."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF048: `map(int, v.split("."))` where v is `__version__` or `x.__version__`, split on "." alone
+// (positionally or as `sep=`, nothing else). A version like "1.2.post1" has a part int cannot read.
+//   tuple(map(int, __version__.split(".")))           ← RUF048 at the map call
+//   tuple(map(int, __version__.split(".", 1)))        not reported: a maxsplit
+#include "python/ruff.rr"
+
+.violation RUF048(at: node) code "RUF048"
+    "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
+    suppress ruff "RUF048"
+RUF048(c) :- call_q(c, "builtins.map"), call_nargs(c, 2), call_nkwargs(c, 0), ruff_arg(c, 0, f),
+    ruff_qual(f, "builtins.int"), ruff_arg(c, 1, s), unparen(s, sc), kind(sc, "call"), field(sc, "function", m),
+    attr_of(m, o, "split"), version_name(o), call_nargs(sc, a), call_nkwargs(sc, k), a + k = 1,
+    (ruff_arg(sc, 0, d) ; call_kwarg(sc, "sep", d)), unparen(d, ds), plain_str(ds, ".").
+.decl version_name(o: node)
+version_name(o) :- unparen(o, m), kind(m, "identifier"), text(m, "__version__").
+version_name(o) :- attr_of(o, _, "__version__").

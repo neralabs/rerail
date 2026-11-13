@@ -1,0 +1,81 @@
+// lib/data-layer/boot-python.rr: how the data layer's schema and bootstrap scripts read Python, by spelling.
+// Their ast visitors name a callee by its Name id or Attribute attr, walk a def with ast.walk, and collect an
+// annotation's words with an _annotation_names helper. Nothing is resolved: these are the words as written.
+//
+// Interface
+//   callee_name(c, x)  call c's callee is the Name x or an Attribute `….x`: `f(…)` and `a.b.f(…)` give f;
+//                      `f()()`, `t[0]()` give nothing (call_name, python/ast, also takes a subscript's leaf)
+//   deco_word(f, x)    def or class f carries a decorator named x: its Name id or Attribute attr, through a
+//                      call and parentheses (`@pure_lazy`, `@lazy.pure_lazy()`, `@(pure_lazy)` give pure_lazy)
+//   def_walk(n, f)     n is in def f as ast.walk(f) or a def-stack visitor sees it: body, parameters,
+//                      defaults, annotations, decorators, nested defs and lambdas included
+//   ann_word(a, x)     x is the id of a Name or the attr of an Attribute at or under annotation a (ast.walk):
+//                      `Optional[db.SyncSchemaTransaction]` gives Optional, db and SyncSchemaTransaction.
+//                      A string inside is not entered: `list["Foo"]` gives list only.
+//   ann_word_s(a, x)   the same, except that an annotation that is a whole string is read as the code inside it
+//                      (`"Foo[int]"` gives Foo and int); a string that does not parse is its own word.
+//   ann_top(a, e)      e is annotation a's expression: the `type` wrapper and parentheses taken off.
+//   ann_slice_word(a, x)  a's expression is a subscript `V[S]`, and x is ann_word_s of S (all its parts).
+//   ann_value_word(a, x)  the same for V.
+// a ranges over ann_root (python/names: parameters, returns, annotated assignments), the trees parsed from
+// whole-string annotations, and the value and slice of each subscript among them.
+//
+//   @cached(ttl=f(1))
+//   def g(txn: "LazySchemaTransaction", rows: Sequence[Row], k: Annotated[int, Field(gt=0)]):
+//       return lambda: h()
+//     callee_name(<cached(…)>, "cached"), deco_word(<g>, "cached"); def_walk(<f(1)>, <g>), def_walk(<h()>, <g>)
+//     ann_word_s(<"LazySchemaTransaction">, "LazySchemaTransaction"); ann_word(<…>, "LazySchemaTransaction")
+//     has no row (the string is not entered); ann_value_word(<Sequence[Row]>, "Sequence"),
+//     ann_slice_word(<Sequence[Row]>, "Row"); ann_word(<Annotated[…]>, x) for Annotated, int, Field (not gt).
+
+#include "python/ast.rr"
+
+.decl callee_name(c: node, x: symbol)
+callee_name(c, x) :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, x).
+callee_name(c, x) :- kind(c, "call"), field(c, "function", g), attr_of(g, _, x).
+.decl deco_word(f: node, x: symbol)
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), kind(e, "identifier"), text(e, x).
+deco_word(f, x) :- decorator(f, d0), unparen(d0, d), (e0 = d ; kind(d, "call"), field(d, "function", e0)),
+    unparen(e0, e), attr_of(e, _, x).
+// def_walk: tree-sitter puts a def's decorators beside it (in a decorated_definition), so they are added.
+.decl def_walk(n: node, f: node)
+def_walk(n, f) :- inside(n, f, "function_definition").
+def_walk(n, f) :- inside(n, dc, "decorator"), child(dd, dc, _), field(dd, "definition", f).
+
+
+.decl ann_top(a: node, e: node)
+ann_top(a, e) :- ann_word_at(a), kind(a, "type"), child(a, x, 0), unparen(x, e).
+ann_top(a, e) :- ann_word_at(a), !kind(a, "type"), unparen(a, e).
+// ann_word_at(a): the annotations words are collected for, and the value and slice of each subscript one.
+.decl ann_word_at(a: node)
+ann_word_at(a) :- ann_root(a).
+ann_word_at(r) :- ann_whole_str(_, s), parsed(s, "annotation", r).
+ann_word_at(v) :- ann_top(_, e), ann_subscript(e, v, _).
+ann_word_at(s) :- ann_top(_, e), ann_subscript(e, _, s).
+// ann_subscript(e, v, s): e is `V[S]`, with value v and slice part s (one row per part of `V[A, B]`). In an
+// annotation tree-sitter writes a bare-name subscript `Sequence[A]` as a generic_type, `a.b.C[int]` as a subscript.
+.decl ann_subscript(e: node, v: node, s: node)
+ann_subscript(e, v, s) :- kind(e, "subscript"), field(e, "value", v), field(e, "subscript", s).
+ann_subscript(e, v, s) :- kind(e, "generic_type"), child(e, v, 0), child(e, tp, _), kind(tp, "type_parameter"),
+    child(tp, s, _).
+// ann_whole_str(a, s): annotation a is the string s (adjacent literals joined, no f-string).
+.decl ann_whole_str(a: node, s: node)
+ann_whole_str(a, s) :- ann_top(a, s), plain_str(s, _).
+
+// ann_word(a, x): identifiers at or under a, less keyword names (`gt=` above).
+.decl ann_word(a: node, x: symbol)
+ann_word(e, x) :- ann_word_at(e), (n = e ; has(e, n, "identifier")), kind(n, "identifier"),
+    !ann_kwname(n), text(n, x).
+.decl ann_kwname(n: node)
+ann_kwname(n) :- kind(k, "keyword_argument"), field(k, "name", n).
+
+.decl ann_word_s(a: node, x: symbol)
+ann_word_s(a, x) :- ann_word(a, x), !ann_whole_str(a, _).
+ann_word_s(a, x) :- ann_whole_str(a, s), parsed(s, "annotation", r), ann_word_s(r, x).
+ann_word_s(a, v) :- ann_whole_str(a, s), !parsed(s, "annotation", _), plain_str(s, v).
+
+.decl ann_value_word(a: node, x: symbol)
+ann_value_word(a, x) :- ann_top(a, e), ann_subscript(e, v, _), ann_word_s(v, x).
+.decl ann_slice_word(a: node, x: symbol)
+ann_slice_word(a, x) :- ann_top(a, e), ann_subscript(e, _, s), ann_word_s(s, x).

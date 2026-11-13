@@ -1,0 +1,1197 @@
+// data-layer-lazy-architecture, hand-written (decision 0043): every clause of
+// gate/data-layer/packs/data-layer/rules/data-layer-lazy-architecture.json, for every value of its one option,
+// entryPoint (read from option_value): "_scan_deleted_cold_bootstrap_surfaces" empties the relational clause's
+// syntax gate (no LA-001..LA-017); the query's cases "collector-extra" and "analyzed-functions" keep only, or drop,
+// the origins defer, compat and compat_import; under "scan_files.ast-component", "collector-extra" and
+// "analyzed-functions" the deleted-* patterns are `\b\B`. Any other value is the default ("scan_files").
+//
+// ==== lazy-architecture (relational) ====
+// One relation per SQL stage, named lazy_<stage>, over the stage's own columns; the syntax table `nodes` is the
+// tape of an in-scope document without a syntax error (syntax: valid, the gate `(?s).*` at the default), less the
+// syntax spec's excludeKinds. A SQL `x.text`/`*_source` column is `node_text` (the node's exact source);
+// `ordinal` is the child index among named children (it differs from W's only under a string, where W also drops
+// string_start/string_content/string_end; the order of siblings is the same, which is all the program reads of it,
+// besides ordinal 0 = the first child, taken as the first non-excluded child). `ownership.fn` is the nearest
+// function_definition at or above the node. Stage columns no later stage reads are left out, and so are the
+// `detail`/`message` texts: the findings are keys (path, line, code), so only the details that decide a finding
+// are kept (as flags: lazy.resolve, a *_async detail, the native_cursor. prefix).
+//
+// Order: W's visit_key (a string of zero-padded child ordinals, compared as text) is built the same way, a node's
+// key its parent's and its own piece (lazy_vk: a pair's children keyed (child ordinal, pair ordinal), a
+// dictionary's pairs keyed as the dictionary, an argument_list's children (keyword?, ordinal), a conditional_expression's
+// test first), each component written as an order-preserving prefix-free code, so keys order and tie as W's. "The
+// first row by (visit_key, channel)" is the first 12 characters of a `join` of the rows' 12-digit locations ordered
+// by (visit_key, channel) (lazy_apick, lazy_bpick); rows tied in both, which W takes in SQLite's row order, are taken
+// by location. An event's visit_key is the owned node with the event's span (the topmost such node, W's first
+// owned_nodes row), '' when none.
+//
+// Reachability (graph_*, "memoized-first", ordered_first.rs): one graph per file (the edges' __path), nodes the
+// path-derived symbols, sinks shared. A root's result is its first edge, in visit order, into a sink or into a
+// node that reaches a sink without passing through the root; the location is that edge's call. That is the
+// search with a fresh memo per root, and the same as the shared memo on a graph without cycles.
+// BLOCKED (dfs_first_memo, which is not available: lowered but not executed): on a call-graph cycle the shared
+// memo can remember a node as reaching nothing (finished while the cycle was open) and a later root can miss a
+// sink; that poisoning is not modelled, so cycles can give more findings than W.
+//
+// Other approximations, each named where it is used:
+// - SQL LIMIT 1 without ORDER BY (module_aliases' from-import of the token): SQLite's first row, which this
+//   program takes as the earliest import (the imports table's insertion order, read through its (__path, local)
+//   index); SQLite does not promise that order.
+// Findings are a set of keys: rows of one code on one line collapse (the SQL key is (issue, identity)).
+//
+// ==== deleted-cold-<k>, deleted-sidecar-<k> (forbid regex over file.content) ====
+// `\A[\s\S]*?(?<SURFACE>literal)`: the first occurrence of the literal in the file; the finding is on the line of
+// capture.SURFACE. No literal holds a line terminator, so that is the first line holding the literal, in the tape's
+// numbering (`tape_line`: \r\n, \r, \n), which is W's capture line. Exact. (The upstream linter counts \n only: the
+// two differ after a lone \r.)
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- the syntax table ----
+.decl lazy_doc(d: number, p: symbol)
+lazy_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+.decl lazy_excluded(k: symbol)
+lazy_excluded("comment"). lazy_excluded("string_start"). lazy_excluded("string_content"). lazy_excluded("string_end").
+lazy_excluded("escape_sequence"). lazy_excluded("line_continuation").
+.decl lazy_n(d: number, n: node, k: symbol, s: number, e: number)
+lazy_n(d, n, k, s, e) :- lazy_doc(d, _), node(d, n, k, s, e), !lazy_excluded(k).
+.decl lazy_kind(n: node, k: symbol)
+lazy_kind(n, k) :- lazy_n(_, n, k, _, _).
+.decl lazy_nd(n: node, d: number)
+lazy_nd(n, d) :- lazy_n(d, n, _, _, _).
+.decl lazy_span(n: node, s: number, e: number)
+lazy_span(n, s, e) :- lazy_n(_, n, _, s, e).
+// parent: c's parent p, c's index (`ordinal`).
+.decl lazy_par(c: node, p: node, i: number)
+lazy_par(c, p, i) :- lazy_n(_, c, _, _, _), child(p, c, i).
+.decl lazy_haskid(p: node)
+lazy_haskid(p) :- lazy_par(_, p, _).
+// `child.ordinal = 0`: the first child.
+.decl lazy_first(p: node, c: node)
+lazy_first(p, c) :- lazy_haskid(p), i = min j : { lazy_par(_, p, j) }, lazy_par(c, p, i).
+.decl lazy_ntext(n: node, s: symbol)
+lazy_ntext(n, s) :- lazy_n(_, n, _, _, _), node_text(n, s).
+.decl lazy_fnset(k: symbol)
+lazy_fnset("function_definition").
+.decl lazy_clsset(k: symbol)
+lazy_clsset("class_definition").
+.decl lazy_defset(k: symbol)
+lazy_defset("function_definition"). lazy_defset("class_definition").
+.decl lazy_defk(k: symbol)
+lazy_defk("function_definition"). lazy_defk("class_definition").
+// ownership.fn: the node itself if a function_definition, else the nearest one above it.
+.decl lazy_ownfn(n: node, f: node)
+lazy_ownfn(n, n) :- lazy_kind(n, "function_definition").
+lazy_ownfn(n, f) :- lazy_n(_, n, _, _, _), !lazy_kind(n, "function_definition"), nearest(n, f, lazy_fnset).
+.decl lazy_hasownfn(n: node)
+lazy_hasownfn(n) :- lazy_ownfn(n, _).
+
+// ---- attributes, calls, arguments, keywords ----
+.decl lazy_attr(a: node, attr: symbol)
+lazy_attr(a, s) :- lazy_kind(a, "attribute"), field(a, "attribute", x), lazy_ntext(x, s).
+.decl lazy_isattr(a: node)
+lazy_isattr(a) :- lazy_attr(a, _).
+.decl lazy_object(a: node, o: node)
+lazy_object(a, o) :- lazy_kind(a, "attribute"), field(a, "object", o), lazy_kind(o, _).
+// calls: callee_id f and its kind; callee = coalesce(attr, f.text); receiver = the attribute's object.
+.decl lazy_call(c: node, f: node, fk: symbol)
+lazy_call(c, f, fk) :- lazy_kind(c, "call"), field(c, "function", f), lazy_kind(f, fk).
+.decl lazy_callee(c: node, s: symbol)
+lazy_callee(c, s) :- lazy_call(c, f, _), lazy_attr(f, s).
+lazy_callee(c, s) :- lazy_call(c, f, _), !lazy_isattr(f), lazy_ntext(f, s).
+.decl lazy_recv(c: node, r: node)
+lazy_recv(c, r) :- lazy_call(c, f, _), lazy_object(f, r).
+.decl lazy_args(c: node, g: node, gk: symbol)
+lazy_args(c, g, gk) :- lazy_call(c, _, _), field(c, "arguments", g), lazy_kind(g, gk).
+.decl lazy_argx(k: symbol)
+lazy_argx("keyword_argument"). lazy_argx("list_splat"). lazy_argx("dictionary_splat").
+.decl lazy_argc(c: node, n: node, s: number)
+lazy_argc(c, n, s) :- lazy_args(c, g, _), !lazy_kind(g, "generator_expression"), lazy_par(n, g, _), lazy_n(_, n, k, s, _), !lazy_argx(k).
+.decl lazy_argbefore(c: node, n: node, m: node)
+lazy_argbefore(c, n, m) :- lazy_argc(c, n, s), lazy_argc(c, m, s2), s2 < s.
+// arguments: (call, argument node, position).
+.decl lazy_arg(c: node, n: node, pos: number)
+lazy_arg(c, g, 0) :- lazy_args(c, g, "generator_expression").
+lazy_arg(c, n, pos) :- lazy_argc(c, n, _), pos = count : { lazy_argbefore(c, n, _) }.
+// keywords: (call, name, value node); the value's span is the keyword row's span.
+.decl lazy_kw(c: node, name: symbol, v: node)
+lazy_kw(c, name, v) :- lazy_args(c, g, _), lazy_par(k, g, _), lazy_kind(k, "keyword_argument"), field(k, "name", kn),
+    lazy_ntext(kn, name), field(k, "value", v), lazy_kind(v, _).
+.decl lazy_haskw(c: node, name: symbol)
+lazy_haskw(c, name) :- lazy_kw(c, name, _).
+// strings (raw_strings): a string or concatenated_string inside a function_definition whose text starts [ru]*["']
+// (case-insensitive; W's regex over the node's text); its row is (doc, node, start, end). DECODED is the
+// substring from 0 of the node's value (`value`, escapes decoded, parts joined), the empty text where the value is
+// not known (a concatenated_string with an interpolating f-string part: W's transform gives '' then). W's transform
+// also de-indents a multi-line value; no test here reads leading whitespace of a later line.
+.decl lazy_strk(k: symbol)
+lazy_strk("string"). lazy_strk("concatenated_string").
+.decl lazy_strn(d: number, n: node, s: number, e: number)
+lazy_strn(d, n, s, e) :- lazy_n(d, n, k, s, e), lazy_strk(k), inside(n, _, lazy_fnset), lazy_ntext(n, t), match("(?i:[ru]*[\"'])(?s:.*)", t).
+.decl lazy_hasval(n: node)
+lazy_hasval(n) :- lazy_strn(_, n, _, _), value(n, _).
+.decl lazy_strval(n: node, v: symbol)
+lazy_strval(n, v) :- lazy_strn(_, n, _, _), value(n, v).
+lazy_strval(n, "") :- lazy_strn(_, n, _, _), !lazy_hasval(n).
+// strings: (doc, __start, value); a concatenated_string and its first part share a start (two rows, as in W).
+.decl lazy_strv(d: number, s: number, v: symbol)
+lazy_strv(d, s, v) :- lazy_strn(d, n, s, _), lazy_strval(n, v).
+.decl lazy_hasstr(d: number, s: number)
+lazy_hasstr(d, s) :- lazy_strn(d, _, s, _).
+// an argument's string value (strings joined on __start).
+.decl lazy_argstr(c: node, pos: number, v: symbol)
+lazy_argstr(c, pos, v) :- lazy_arg(c, a, pos), lazy_n(d, a, _, s, _), lazy_strv(d, s, v).
+
+// ---- returns, assignments, parameters ----
+.decl lazy_ret(r: node, v: node)
+lazy_ret(r, v) :- lazy_kind(r, "return_statement"), lazy_par(v, r, _).
+.decl lazy_asg(a: node, l: node, lk: symbol)
+lazy_asg(a, l, lk) :- lazy_kind(a, "assignment"), field(a, "left", l), lazy_kind(l, lk).
+.decl lazy_asgtext(a: node, t: symbol)
+lazy_asgtext(a, t) :- lazy_asg(a, l, _), lazy_ntext(l, t).
+.decl lazy_asgr(a: node, r: node)
+lazy_asgr(a, r) :- lazy_asg(a, _, _), field(a, "right", r), lazy_kind(r, _).
+.decl lazy_typed(a: node)
+lazy_typed(a) :- lazy_asg(a, _, _), field(a, "type", _).
+// an untyped `name = …` and the statement holding it (the assignment's parent).
+.decl lazy_asgname(a: node, name: symbol, stmt: node)
+lazy_asgname(a, name, stmt) :- lazy_asg(a, _, "identifier"), !lazy_typed(a), lazy_asgtext(a, name), lazy_par(a, stmt, _).
+.decl lazy_asgtarget(l: node)
+lazy_asgtarget(l) :- lazy_asg(_, l, _).
+// parameters: (function, name, annotation).
+.decl lazy_paramk(k: symbol)
+lazy_paramk("identifier"). lazy_paramk("typed_parameter"). lazy_paramk("default_parameter"). lazy_paramk("typed_default_parameter").
+.decl lazy_param(f: node, p: node, name: symbol)
+lazy_param(f, p, name) :- lazy_kind(f, "function_definition"), field(f, "parameters", ps), lazy_par(p, ps, _), lazy_kind(p, "identifier"), lazy_ntext(p, name).
+lazy_param(f, p, name) :- lazy_kind(f, "function_definition"), field(f, "parameters", ps), lazy_par(p, ps, _), lazy_kind(p, k), !lazy_kind(p, "identifier"),
+    lazy_paramk(k), lazy_first(p, x), lazy_kind(x, "identifier"), lazy_ntext(x, name).
+.decl lazy_annot(f: node, name: symbol, t: node)
+lazy_annot(f, name, t) :- lazy_param(f, p, name), field(p, "type", t), lazy_kind(t, _).
+
+// ---- declarations and their contexts ----
+.decl lazy_decl(n: node, k: symbol, name: symbol)
+lazy_decl(n, k, name) :- lazy_n(_, n, k, _, _), lazy_defk(k), field(n, "name", x), lazy_ntext(x, name).
+.decl lazy_decorated(n: node, w: node)
+lazy_decorated(n, w) :- lazy_decl(n, _, _), lazy_par(n, w, _), lazy_kind(w, "decorated_definition").
+.decl lazy_isdecorated(n: node)
+lazy_isdecorated(n) :- lazy_decorated(n, _).
+.decl lazy_region(n: node, r: number)
+lazy_region(n, r) :- lazy_decorated(n, w), lazy_span(w, r, _).
+lazy_region(n, r) :- lazy_decl(n, _, _), !lazy_isdecorated(n), lazy_span(n, r, _).
+// declaration_links: the nearest function or class above.
+.decl lazy_lex(n: node, p: node)
+lazy_lex(n, p) :- lazy_decl(n, _, _), nearest(n, p, lazy_defset).
+.decl lazy_haslex(n: node)
+lazy_haslex(n) :- lazy_lex(n, _).
+.decl lazy_qual(n: node, q: symbol)
+lazy_qual(n, q) :- lazy_decl(n, _, q), !lazy_haslex(n).
+lazy_qual(n, q) :- lazy_lex(n, p), lazy_qual(p, pq), lazy_decl(n, _, name), q = cat(cat(pq, "."), name).
+// a class body.
+.decl lazy_clsbody(c: node, b: node)
+lazy_clsbody(c, b) :- lazy_decl(c, "class_definition", _), field(c, "body", b).
+
+// ---- decorator names ----
+.decl lazy_dwalk(f: node, x: node)
+lazy_dwalk(f, x) :- lazy_decorated(f, w), lazy_par(d, w, _), lazy_kind(d, "decorator"), lazy_par(x, d, _).
+lazy_dwalk(f, y) :- lazy_dwalk(f, x), lazy_call(x, y, _).
+.decl lazy_decname(f: node, x: node, name: symbol)
+lazy_decname(f, x, name) :- lazy_dwalk(f, x), lazy_kind(x, "identifier"), lazy_ntext(x, name).
+lazy_decname(f, x, name) :- lazy_dwalk(f, x), lazy_attr(x, name).
+
+// ---- expression roots (demanded: call receivers and attribute/subscript assignment targets) ----
+.decl lazy_rootwalk(x: node, y: node)
+lazy_rootwalk(r, r) :- lazy_recv(_, r).
+lazy_rootwalk(l, l) :- lazy_asg(_, l, "attribute").
+lazy_rootwalk(l, l) :- lazy_asg(_, l, "subscript").
+lazy_rootwalk(x, z) :- lazy_rootwalk(x, y), lazy_kind(y, "attribute"), field(y, "object", z), lazy_kind(z, _).
+lazy_rootwalk(x, z) :- lazy_rootwalk(x, y), lazy_kind(y, "subscript"), field(y, "value", z), lazy_kind(z, _).
+lazy_rootwalk(x, z) :- lazy_rootwalk(x, y), lazy_call(y, z, _).
+lazy_rootwalk(x, z) :- lazy_rootwalk(x, y), lazy_kind(y, "parenthesized_expression"), lazy_first(y, z).
+lazy_rootwalk(x, z) :- lazy_rootwalk(x, y), lazy_kind(y, "type"), lazy_first(y, z).
+// expression x is rooted at self or cls.
+.decl lazy_selfrooted(x: node)
+lazy_selfrooted(x) :- lazy_rootwalk(x, y), lazy_kind(y, "identifier"), lazy_ntext(y, n), (n = "self" ; n = "cls").
+
+// ---- imports ----
+.decl lazy_impk(k: symbol, nk: symbol)
+lazy_impk("import_statement", "import_statement"). lazy_impk("import_from_statement", "import_from_statement").
+lazy_impk("future_import_statement", "import_from_statement").
+.decl lazy_impxk(k: symbol)
+lazy_impxk("dotted_name"). lazy_impxk("aliased_import").
+.decl lazy_isimpmod(x: node)
+lazy_isimpmod(x) :- lazy_impk(k, _), lazy_kind(i, k), field(i, "module_name", x).
+.decl lazy_impx(i: node, x: node, k: symbol)
+lazy_impx(i, x, nk) :- lazy_kind(i, k), lazy_impk(k, nk), lazy_par(x, i, _), lazy_kind(x, xk), lazy_impxk(xk), !lazy_isimpmod(x).
+.decl lazy_hasfield(x: node, f: symbol)
+lazy_hasfield(x, f) :- lazy_impx(_, x, _), field(x, f, _).
+// name = coalesce(name_source, text); local = coalesce(alias_source, name_source, text).
+.decl lazy_impname(x: node, s: symbol)
+lazy_impname(x, s) :- lazy_impx(_, x, _), field(x, "name", y), lazy_ntext(y, s).
+lazy_impname(x, s) :- lazy_impx(_, x, _), !lazy_hasfield(x, "name"), lazy_ntext(x, s).
+.decl lazy_implocal(x: node, s: symbol)
+lazy_implocal(x, s) :- lazy_impx(_, x, _), field(x, "alias", y), lazy_ntext(y, s).
+lazy_implocal(x, s) :- lazy_impx(_, x, _), !lazy_hasfield(x, "alias"), lazy_impname(x, s).
+.decl lazy_impmodule(i: node, m: symbol)
+lazy_impmodule(i, "__future__") :- lazy_kind(i, "future_import_statement").
+lazy_impmodule(i, m) :- lazy_kind(i, "import_from_statement"), field(i, "module_name", y), lazy_ntext(y, m).
+// imports: (doc, statement, x, normalized kind, local, name, start); fn: lazy_impfn, none: lazy_imptop.
+.decl lazy_imp(d: number, i: node, x: node, k: symbol, local: symbol, name: symbol, s: number)
+lazy_imp(d, i, x, k, local, name, s) :- lazy_impx(i, x, k), lazy_implocal(x, local), lazy_impname(x, name), lazy_n(d, i, _, s, _).
+.decl lazy_imptop(i: node)
+lazy_imptop(i) :- lazy_imp(_, i, _, _, _, _, _), !lazy_hasownfn(i).
+.decl lazy_impfn(i: node, f: node)
+lazy_impfn(i, f) :- lazy_imp(_, i, _, _, _, _, _), lazy_ownfn(i, f).
+// module.name of a from-import.
+.decl lazy_impfull(i: node, x: node, full: symbol)
+lazy_impfull(i, x, full) :- lazy_imp(_, i, x, "import_from_statement", _, name, _), lazy_impmodule(i, m), full = cat(cat(m, "."), name).
+// the module-level from-imports of a local name.
+.decl lazy_topfrom(d: number, local: symbol, s: number, full: symbol)
+lazy_topfrom(d, local, s, full) :- lazy_imp(d, i, x, "import_from_statement", local, _, s), lazy_imptop(i), lazy_impfull(i, x, full).
+.decl lazy_hastopfrom(d: number, local: symbol)
+lazy_hastopfrom(d, local) :- lazy_topfrom(d, local, _, _).
+// the latest one (ORDER BY __start DESC LIMIT 1).
+.decl lazy_lasttopfrom(d: number, local: symbol, full: symbol)
+lazy_lasttopfrom(d, local, full) :- lazy_hastopfrom(d, local), s = max s2 : { lazy_topfrom(d, local, s2, _) }, lazy_topfrom(d, local, s, full).
+// the earliest one (LIMIT 1 without ORDER BY; see the header).
+.decl lazy_firsttopfrom(d: number, local: symbol, full: symbol)
+lazy_firsttopfrom(d, local, full) :- lazy_hastopfrom(d, local), s = min s2 : { lazy_topfrom(d, local, s2, _) }, lazy_topfrom(d, local, s, full).
+// from-imports inside a function (fn = that function).
+.decl lazy_fnfrom(f: node, local: symbol, s: number, full: symbol)
+lazy_fnfrom(f, local, s, full) :- lazy_imp(_, i, x, "import_from_statement", local, _, s), lazy_impfn(i, f), lazy_impfull(i, x, full).
+// module-level `import m` names.
+.decl lazy_topimport(d: number, local: symbol, s: number, name: symbol)
+lazy_topimport(d, local, s, name) :- lazy_imp(d, i, _, "import_statement", local, name, s), lazy_imptop(i).
+
+// ---- analyzer functions: top-level and class-level defs, not inside another def ----
+.decl lazy_modsym(d: number, m: symbol)
+lazy_modsym(d, m2) :- lazy_doc(d, p), doc(d, p, m), suffix("/__init__.py", p), m2 = cat(m, ".__init__").
+lazy_modsym(d, m) :- lazy_doc(d, p), doc(d, p, m), !suffix("/__init__.py", p).
+.decl lazy_placed(f: node)
+lazy_placed(f) :- lazy_par(f, p, _), lazy_kind(p, "module").
+lazy_placed(f) :- lazy_par(f, p, _), lazy_kind(p, "decorated_definition"), lazy_par(p, g, _), lazy_kind(g, "module").
+lazy_placed(f) :- lazy_par(f, p, _), lazy_kind(p, "block"), lazy_par(p, g, _), lazy_kind(g, "class_definition").
+lazy_placed(f) :- lazy_par(f, p, _), lazy_kind(p, "decorated_definition"), lazy_par(p, g, _), lazy_kind(g, "block"),
+    lazy_par(g, h, _), lazy_kind(h, "class_definition").
+.decl lazy_af(f: node)
+lazy_af(f) :- lazy_decl(f, "function_definition", _), !nearest(f, _, lazy_fnset), lazy_placed(f).
+.decl lazy_fname(f: node, name: symbol)
+lazy_fname(f, name) :- lazy_af(f), lazy_decl(f, _, name).
+.decl lazy_fqual(f: node, q: symbol)
+lazy_fqual(f, q) :- lazy_af(f), lazy_qual(f, q).
+.decl lazy_fpath(f: node, d: number, p: symbol)
+lazy_fpath(f, d, p) :- lazy_af(f), lazy_nd(f, d), lazy_doc(d, p).
+.decl lazy_sym(f: node, s: symbol)
+lazy_sym(f, s) :- lazy_fpath(f, d, _), lazy_modsym(d, m), lazy_fqual(f, q), s = cat(cat(m, "."), q).
+.decl lazy_fstart(f: node, s: number)
+lazy_fstart(f, s) :- lazy_af(f), lazy_span(f, s, _).
+.decl lazy_body(f: node, b: node, bs: number)
+lazy_body(f, b, bs) :- lazy_af(f), field(f, "body", b), lazy_span(b, bs, _).
+.decl lazy_sensitive(f: node)
+lazy_sensitive(f) :- lazy_fpath(f, _, p), lazy_sensitive_path(p).
+.decl lazy_sensitive_path(p: symbol)
+lazy_sensitive_path(p) :- lazy_doc(_, p), (prefix("l7450_versioned_revert/", p) ; prefix("l8100_ops_analytics/", p) ;
+    prefix("l7200_versioned_transactions/_lint_", p) ; prefix("impl/common/l7300_revision_history/_lint_", p)).
+lazy_sensitive_path(p) :- lazy_doc(_, p), (p = "impl/common/l7300_revision_history/revision_history_query_impl.py" ; p = "l7200_versioned_transactions/versioned_lazy_mixin.py").
+// lower(path || ' ' || qualname) ~ 'bootstrap|ddl' (neither word holds a space, so path or qualname).
+.decl lazy_bootstrap(f: node)
+lazy_bootstrap(f) :- lazy_fpath(f, _, p), (icontains("bootstrap", p) ; icontains("ddl", p)).
+lazy_bootstrap(f) :- lazy_fqual(f, q), (icontains("bootstrap", q) ; icontains("ddl", q)).
+// lower(path || ' ' || qualname) ~ 'reconcile|reconciliation|schema_ensure'.
+.decl lazy_reconname(f: node)
+lazy_reconname(f) :- lazy_fpath(f, _, p), (icontains("reconcile", p) ; icontains("reconciliation", p) ; icontains("schema_ensure", p)).
+lazy_reconname(f) :- lazy_fqual(f, q), (icontains("reconcile", q) ; icontains("reconciliation", q) ; icontains("schema_ensure", q)).
+.decl lazy_reconciliation(f: node)
+lazy_reconciliation(f) :- lazy_reconname(f).
+lazy_reconciliation(f) :- lazy_fpath(f, _, p), (p = "l2000_connection/schema_transaction.py" ; p = "l2000_connection/table_existence_authority.py" ;
+    p = "impl/common/l2200_sql_dialect/schema_ensure.py" ; p = "impl/common/l2200_sql_dialect/sql_schema_services.py" ;
+    p = "impl/common/l2200_sql_dialect/sql_core_support_free_functions.py" ; p = "impl/common/l2200_sql_dialect/sql_core_support_mixin.py").
+
+// ---- pruned functions (route handlers), owned nodes ----
+.decl lazy_route(s: symbol)
+lazy_route("delete"). lazy_route("get"). lazy_route("patch"). lazy_route("post"). lazy_route("put").
+.decl lazy_pruned(f: node)
+lazy_pruned(f) :- lazy_decl(f, "function_definition", _), lazy_decname(f, x, name), lazy_kind(x, "attribute"), lazy_route(name).
+.decl lazy_owned(f: node, n: node)
+lazy_owned(f, b) :- lazy_body(f, b, _).
+lazy_owned(f, n) :- lazy_owned(f, o), lazy_par(n, o, _), !lazy_kind(n, "class_definition"), !lazy_asgtarget(n), !lazy_pruned(n).
+.decl lazy_ownedk(f: node, n: node, k: symbol)
+lazy_ownedk(f, n, k) :- lazy_owned(f, n), lazy_kind(n, k).
+
+// ---- visit order (visit_key) ----
+// W's visit_key, component for component (owned_nodes): a node's key is its parent's and the node's piece. Where W
+// writes a component c as printf('%020d/', c), this writes its digit count, then its digits:
+// cat(to_string(strlen(to_string(c))), to_string(c)). Both codes are prefix-free and order as the numbers do (for
+// c < 10^9), so two keys compare alike as text (by code point, as SQLite's ORDER BY and `join … by` order them) and
+// are equal together; a key that is another's prefix comes first in both.
+.decl lazy_vpiece(p: node, n: node, x: symbol)
+lazy_vpiece(p, n, "") :- lazy_par(n, p, _), lazy_kind(p, "dictionary"), lazy_kind(n, "pair").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "dictionary"), !lazy_kind(n, "pair"), x = cat(to_string(strlen(to_string(i))), to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "pair"), lazy_par(p, _, j),
+    x = cat(cat(to_string(strlen(to_string(i))), to_string(i)), cat(to_string(strlen(to_string(j))), to_string(j))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), lazy_kind(n, "keyword_argument"),
+    x = cat("11", cat(to_string(strlen(to_string(i))), to_string(i))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), !lazy_kind(n, "keyword_argument"),
+    x = cat("10", cat(to_string(strlen(to_string(i))), to_string(i))).
+lazy_vpiece(p, n, "11") :- lazy_par(n, p, 0), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, "10") :- lazy_par(n, p, 1), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "conditional_expression"), i > 1, x = cat(to_string(strlen(to_string(i))), to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), !lazy_kind(p, "dictionary"), !lazy_kind(p, "pair"), !lazy_kind(p, "argument_list"),
+    !lazy_kind(p, "conditional_expression"), x = cat(to_string(strlen(to_string(i))), to_string(i)).
+// keys are made only for the nodes a pick reads (A's marked nodes, B's edge calls) and their owned ancestors.
+.decl lazy_vneed(f: node, n: node)
+lazy_vneed(f, x) :- lazy_amark0(f, x, _, _, _).
+lazy_vneed(f, c) :- lazy_gedge(f, _, c, _).
+lazy_vneed(f, p) :- lazy_vneed(f, n), lazy_par(n, p, _), lazy_owned(f, p).
+.decl lazy_vk(f: node, n: node, k: symbol)
+lazy_vk(f, b, "") :- lazy_body(f, b, _), lazy_vneed(f, b).
+lazy_vk(f, n, k) :- lazy_vk(f, p, kp), lazy_vpiece(p, n, x), lazy_vneed(f, n), lazy_owned(f, n), k = cat(kp, x).
+// ---- "first by (visit_key, channel)" over events and other marks (A) ----
+// the topmost owned node with a span (W's LIMIT 1 over owned_nodes, in the recursion's breadth-first order).
+.decl lazy_spanned(f: node, x: node, s: number, e: number)
+lazy_spanned(f, x, s, e) :- lazy_owned(f, x), lazy_span(x, s, e).
+.decl lazy_spanunder(f: node, x: node)
+lazy_spanunder(f, x) :- lazy_spanned(f, x, s, e), lazy_par(x, p, _), lazy_spanned(f, p, s, e).
+.decl lazy_spantop(f: node, s: number, e: number, x: node)
+lazy_spantop(f, s, e, x) :- lazy_spanned(f, x, s, e), !lazy_spanunder(f, x).
+// marks: (function, node, tag, channel, location); free: a mark with no owned node (visit_key '').
+.decl lazy_amark0(f: node, x: node, tag: symbol, ch: number, loc: number)
+.decl lazy_afree(f: node, tag: symbol, ch: number, loc: number)
+// rows: (function, tag, visit_key, channel, location as 12 digits, location): the digits make the first row of a
+// `join` its first 12 characters.
+.decl lazy_arow(f: node, tag: symbol, k: symbol, ch: number, x: symbol, loc: number)
+lazy_arow(f, tag, k, ch, x, loc) :- lazy_amark0(f, n, tag, ch, loc), lazy_vk(f, n, k),
+    x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+lazy_arow(f, tag, "", ch, x, loc) :- lazy_afree(f, tag, ch, loc), x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+.decl lazy_atag(f: node, tag: symbol)
+lazy_atag(f, tag) :- lazy_arow(f, tag, _, _, _, _).
+// the first row by (visit_key, channel); rows tied in both (W: SQLite's first) by location.
+.decl lazy_apick(f: node, tag: symbol, loc: number)
+lazy_apick(f, tag, loc) :- lazy_atag(f, tag), s = join x by (k, ch) : { lazy_arow(f, tag, k, ch, x, _) }, lazy_arow(f, tag, _, _, x, loc),
+    x = substr(s, 0, 12).
+.decl lazy_hasapick(f: node, tag: symbol)
+lazy_hasapick(f, tag) :- lazy_apick(f, tag, _).
+
+// ---- alias regions, scoped assignments, visible bindings ----
+.decl lazy_regionk(k: symbol)
+lazy_regionk("if_statement"). lazy_regionk("elif_clause"). lazy_regionk("else_clause"). lazy_regionk("for_statement").
+lazy_regionk("while_statement"). lazy_regionk("try_statement"). lazy_regionk("except_clause"). lazy_regionk("finally_clause").
+lazy_regionk("case_clause"). lazy_regionk("function_definition").
+.decl lazy_aregion(d: number, s: number, e: number)
+lazy_aregion(d, s, e) :- lazy_n(d, b, "block", s, e), lazy_par(b, p, _), lazy_kind(p, k), lazy_regionk(k).
+// identifier-target assignments: (doc, assignment, name, start, end).
+.decl lazy_idasg(d: number, a: node, name: symbol, s: number, e: number)
+lazy_idasg(d, a, name, s, e) :- lazy_asg(a, _, "identifier"), lazy_asgtext(a, name), lazy_n(d, a, _, s, e).
+.decl lazy_asgin(a: node, rs: number)
+lazy_asgin(a, rs) :- lazy_idasg(d, a, _, s, e), lazy_aregion(d, rs, re), rs <= s, re >= e.
+.decl lazy_inregion(a: node)
+lazy_inregion(a) :- lazy_asgin(a, _).
+.decl lazy_scope(a: node, ss: number, se: number)
+lazy_scope(a, ss, se) :- lazy_inregion(a), ss = max r : { lazy_asgin(a, r) }, lazy_idasg(d, a, _, s, e), lazy_aregion(d, ss, se), se >= e, ss <= s.
+lazy_scope(a, 0, 2147483647) :- lazy_idasg(_, a, _, _, _), !lazy_inregion(a).
+// visible_bindings: for an owned identifier r, the latest assignment to its name that ends before it, starts in
+// the function's body, and whose innermost region holds r.
+.decl lazy_vbc(f: node, r: node, ax: number)
+lazy_vbc(f, r, ax) :- lazy_ownedk(f, r, "identifier"), lazy_ntext(r, name), lazy_n(d, r, _, rs, re), lazy_body(f, _, bs),
+    lazy_idasg(d, a, name, ax, ae), ae < rs, ax >= bs, lazy_scope(a, ss, se), ss <= rs, se >= re.
+.decl lazy_hasvb(f: node, r: node)
+lazy_hasvb(f, r) :- lazy_vbc(f, r, _).
+.decl lazy_vb(f: node, r: node, a: node)
+lazy_vb(f, r, a) :- lazy_hasvb(f, r), ax = max s : { lazy_vbc(f, r, s) }, lazy_nd(r, d), lazy_idasg(d, a, _, ax, _).
+// its value (NULL when the assignment has no right side).
+.decl lazy_vbv(f: node, r: node, v: node)
+lazy_vbv(f, r, v) :- lazy_vb(f, r, a), lazy_asgr(a, v).
+
+// ---- class method aliases, module alias bindings, module aliases ----
+.decl lazy_cmac(c: node, name: symbol, target: symbol, s: number)
+lazy_cmac(c, name, target, s) :- lazy_asgname(a, name, stmt), lazy_par(stmt, b, _), lazy_clsbody(c, b), lazy_asgr(a, r),
+    lazy_kind(r, "identifier"), lazy_ntext(r, target), lazy_span(a, s, _).
+.decl lazy_hascma(c: node, name: symbol)
+lazy_hascma(c, name) :- lazy_cmac(c, name, _, _).
+.decl lazy_cma(c: node, name: symbol, target: symbol)
+lazy_cma(c, name, target) :- lazy_hascma(c, name), s = max s2 : { lazy_cmac(c, name, _, s2) }, lazy_cmac(c, name, target, s).
+// module-level `name = …`: the last one per name.
+.decl lazy_mabc(d: number, name: symbol, a: node, s: number)
+lazy_mabc(d, name, a, s) :- lazy_asgname(a, name, stmt), lazy_par(stmt, m, _), lazy_kind(m, "module"), lazy_n(d, a, _, s, _).
+.decl lazy_hasmab(d: number, name: symbol)
+lazy_hasmab(d, name) :- lazy_mabc(d, name, _, _).
+.decl lazy_mab(d: number, name: symbol, a: node)
+lazy_mab(d, name, a) :- lazy_hasmab(d, name), s = max s2 : { lazy_mabc(d, name, _, s2) }, lazy_mabc(d, name, a, s).
+// its target: an identifier's text, an attribute's attr, an identifier callee's name.
+.decl lazy_mabt(d: number, name: symbol, t: symbol)
+lazy_mabt(d, name, t) :- lazy_mab(d, name, a), lazy_asgr(a, r), lazy_kind(r, "identifier"), lazy_ntext(r, t).
+lazy_mabt(d, name, t) :- lazy_mab(d, name, a), lazy_asgr(a, r), lazy_attr(r, t).
+lazy_mabt(d, name, t) :- lazy_mab(d, name, a), lazy_asgr(a, r), lazy_call(r, _, "identifier"), lazy_callee(r, t).
+.decl lazy_hasmabt(d: number, name: symbol)
+lazy_hasmabt(d, name) :- lazy_mabt(d, name, _).
+// the chain from a bound name; a name on a cycle of bindings.
+.decl lazy_mareach(d: number, root: symbol, t: symbol)
+lazy_mareach(d, r, r) :- lazy_hasmab(d, r).
+lazy_mareach(d, r, t2) :- lazy_mareach(d, r, t), lazy_mabt(d, t, t2).
+.decl lazy_macyc(d: number, t: symbol, t2: symbol)
+lazy_macyc(d, t, t2) :- lazy_mabt(d, t, t2).
+lazy_macyc(d, t, t3) :- lazy_macyc(d, t, t2), lazy_mabt(d, t2, t3).
+.decl lazy_oncyc(d: number, t: symbol)
+lazy_oncyc(d, t) :- lazy_macyc(d, t, t).
+// the token the walk ends on: the chain's end, or where it enters a cycle.
+.decl lazy_matoken(d: number, root: symbol, t: symbol)
+lazy_matoken(d, r, t) :- lazy_mareach(d, r, t), !lazy_hasmabt(d, t).
+lazy_matoken(d, r, r) :- lazy_hasmab(d, r), lazy_oncyc(d, r).
+lazy_matoken(d, r, c) :- lazy_mareach(d, r, p), !lazy_oncyc(d, p), lazy_mabt(d, p, c), lazy_oncyc(d, c).
+// module_aliases: resolved through a module-level from-import of the token (the earliest; see the header).
+.decl lazy_ma(d: number, name: symbol, resolved: symbol)
+lazy_ma(d, r, full) :- lazy_matoken(d, r, t), lazy_firsttopfrom(d, t, full).
+lazy_ma(d, r, t) :- lazy_matoken(d, r, t), !lazy_hastopfrom(d, t).
+.decl lazy_hasma(d: number, name: symbol)
+lazy_hasma(d, name) :- lazy_ma(d, name, _).
+
+// ---- native cursor parameters ----
+.decl lazy_annwalk(f: node, name: symbol, n: node)
+lazy_annwalk(f, name, t) :- lazy_annot(f, name, t).
+lazy_annwalk(f, name, c) :- lazy_annwalk(f, name, n), lazy_kind(n, "subscript"), field(n, "value", c), lazy_kind(c, _).
+lazy_annwalk(f, name, c) :- lazy_annwalk(f, name, n), lazy_kind(n, "type"), lazy_first(n, c).
+lazy_annwalk(f, name, c) :- lazy_annwalk(f, name, n), lazy_kind(n, "generic_type"), lazy_first(n, c).
+.decl lazy_cursor(s: symbol)
+lazy_cursor("psycopg.Cursor"). lazy_cursor("psycopg.AsyncCursor"). lazy_cursor("sqlite3.Cursor").
+.decl lazy_nativecursor(f: node, name: symbol)
+lazy_nativecursor(f, name) :- lazy_annwalk(f, name, n), lazy_kind(n, "identifier"), lazy_ntext(n, t), lazy_nd(n, d),
+    lazy_topfrom(d, t, _, full), lazy_cursor(full).
+lazy_nativecursor(f, name) :- lazy_annwalk(f, name, n), lazy_attr(n, at), lazy_object(n, o), lazy_ntext(o, ot), lazy_nd(n, d),
+    lazy_topimport(d, ot, _, iname), lazy_cursor(full), full = cat(cat(iname, "."), at).
+
+// ---- terminal values ----
+// The walk from an owned identifier, attribute, call or parenthesized expression: an identifier to its visible
+// binding's value, a call to its callee, parentheses to the first child, at most 64 steps (the SQL's `t.depth<64`).
+// A node within 64 steps is one within 64 steps along a simple path (a shortest path), so the SQL's cycle guard
+// (`seen`) cuts nothing this misses. The cap without a counter: lazy_ts<k>(f, n, m) holds where m is within k
+// steps of n, squared from one step (ts1) to 32 (ts32), and lazy_tw is ts32 twice, over the nodes any walk visits
+// (lazy_tdom).
+.decl lazy_twroot(k: symbol)
+lazy_twroot("identifier"). lazy_twroot("attribute"). lazy_twroot("call"). lazy_twroot("parenthesized_expression").
+.decl lazy_tdom(f: node, n: node)
+lazy_tdom(f, r) :- lazy_ownedk(f, r, k), lazy_twroot(k).
+lazy_tdom(f, m) :- lazy_tdom(f, n), lazy_tstep(f, n, m).
+.decl lazy_tstep(f: node, n: node, m: node)
+lazy_tstep(f, n, v) :- lazy_tdom(f, n), lazy_kind(n, "identifier"), lazy_vbv(f, n, v).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_call(n, c, _).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_kind(n, "parenthesized_expression"), lazy_first(n, c).
+.decl lazy_ts1(f: node, n: node, m: node)
+lazy_ts1(f, n, n) :- lazy_tdom(f, n).
+lazy_ts1(f, n, m) :- lazy_tstep(f, n, m).
+.decl lazy_ts2(f: node, n: node, m: node)
+lazy_ts2(f, n, m) :- lazy_ts1(f, n, x), lazy_ts1(f, x, m).
+.decl lazy_ts4(f: node, n: node, m: node)
+lazy_ts4(f, n, m) :- lazy_ts2(f, n, x), lazy_ts2(f, x, m).
+.decl lazy_ts8(f: node, n: node, m: node)
+lazy_ts8(f, n, m) :- lazy_ts4(f, n, x), lazy_ts4(f, x, m).
+.decl lazy_ts16(f: node, n: node, m: node)
+lazy_ts16(f, n, m) :- lazy_ts8(f, n, x), lazy_ts8(f, x, m).
+.decl lazy_ts32(f: node, n: node, m: node)
+lazy_ts32(f, n, m) :- lazy_ts16(f, n, x), lazy_ts16(f, x, m).
+.decl lazy_tw(f: node, root: node, n: node)
+lazy_tw(f, r, n) :- lazy_ownedk(f, r, k), lazy_twroot(k), lazy_ts32(f, r, x), lazy_ts32(f, x, n).
+// an identifier's value at its end: the module alias, else the latest from-import (module-level or in f), else its text.
+.decl lazy_fromof(f: node, d: number, local: symbol, s: number, full: symbol)
+lazy_fromof(f, d, local, s, full) :- lazy_af(f), lazy_nd(f, d), lazy_topfrom(d, local, s, full).
+lazy_fromof(f, d, local, s, full) :- lazy_fnfrom(f, local, s, full), lazy_nd(f, d).
+.decl lazy_hasfromof(f: node, local: symbol)
+lazy_hasfromof(f, local) :- lazy_fromof(f, _, local, _, _).
+.decl lazy_lastfromof(f: node, local: symbol, full: symbol)
+lazy_lastfromof(f, local, full) :- lazy_hasfromof(f, local), s = max s2 : { lazy_fromof(f, _, local, s2, _) }, lazy_fromof(f, _, local, s, full).
+.decl lazy_tv(f: node, root: node, v: symbol)
+lazy_tv(f, r, v) :- lazy_tw(f, r, n), lazy_attr(n, v).
+lazy_tv(f, r, v) :- lazy_tw(f, r, n), lazy_kind(n, "identifier"), !lazy_hasvb(f, n), lazy_ntext(n, t), lazy_nd(n, d), lazy_ma(d, t, v).
+lazy_tv(f, r, v) :- lazy_tw(f, r, n), lazy_kind(n, "identifier"), !lazy_hasvb(f, n), lazy_ntext(n, t), lazy_nd(n, d), !lazy_hasma(d, t),
+    lazy_lastfromof(f, t, v).
+lazy_tv(f, r, t) :- lazy_tw(f, r, n), lazy_kind(n, "identifier"), !lazy_hasvb(f, n), lazy_ntext(n, t), lazy_nd(n, d), !lazy_hasma(d, t),
+    !lazy_hasfromof(f, t).
+.decl lazy_hastv(f: node, root: node)
+lazy_hastv(f, r) :- lazy_tv(f, r, _).
+
+// ---- execution context classes ----
+.decl lazy_heads(c: node, n: node)
+lazy_heads(c, b) :- lazy_decl(c, "class_definition", _), lazy_par(g, c, _), lazy_kind(g, "argument_list"), lazy_par(b, g, _).
+lazy_heads(c, f) :- lazy_heads(c, n), lazy_call(n, f, _).
+.decl lazy_ecc(c: node)
+lazy_ecc(c) :- lazy_heads(c, n), lazy_kind(n, "identifier"), lazy_ntext(n, t), suffix("ExecutionContext", t).
+lazy_ecc(c) :- lazy_heads(c, n), lazy_attr(n, t), suffix("ExecutionContext", t).
+
+// ---- function flags ----
+.decl lazy_execctx(f: node)
+lazy_execctx(f) :- lazy_fname(f, name), (name = "execute_sync" ; name = "execute_async"), inside(f, c, lazy_clsset), lazy_ecc(c).
+// a decorator's name resolved: module alias, else module.name of each module-level import of it (an `import`
+// gives NULL, so the name), else the name.
+.decl lazy_decres(f: node, r: symbol)
+lazy_decres(f, r) :- lazy_af(f), lazy_decname(f, _, name), lazy_nd(f, d), lazy_ma(d, name, r).
+lazy_decres(f, full) :- lazy_af(f), lazy_decname(f, _, name), lazy_nd(f, d), !lazy_hasma(d, name), lazy_topfrom(d, name, _, full).
+lazy_decres(f, name) :- lazy_af(f), lazy_decname(f, _, name), lazy_nd(f, d), !lazy_hasma(d, name), lazy_topimport(d, name, _, _).
+lazy_decres(f, name) :- lazy_af(f), lazy_decname(f, _, name), lazy_nd(f, d), !lazy_hasma(d, name), !lazy_hasanyimport(d, name).
+.decl lazy_hasanyimport(d: number, local: symbol)
+lazy_hasanyimport(d, local) :- lazy_imp(d, i, _, _, local, _, _), lazy_imptop(i).
+// the last dot-separated piece of r is s.
+.decl lazy_lastis(r: symbol, s: symbol)
+lazy_lastis(r, "pure_lazy") :- lazy_decres(_, r), (r = "pure_lazy" ; suffix(".pure_lazy", r)).
+lazy_lastis(r, "legacy") :- lazy_decres(_, r), (r = "legacy_sync" ; r = "legacy_async" ; r = "legacy_module_sync" ; r = "legacy_module_async" ;
+    suffix(".legacy_sync", r) ; suffix(".legacy_async", r) ; suffix(".legacy_module_sync", r) ; suffix(".legacy_module_async", r)).
+.decl lazy_pure(f: node)
+lazy_pure(f) :- lazy_decres(f, r), lazy_lastis(r, "pure_lazy").
+.decl lazy_legacy(f: node)
+lazy_legacy(f) :- lazy_decres(f, r), lazy_lastis(r, "legacy").
+.decl lazy_islazy(f: node)
+lazy_islazy(f) :- lazy_pure(f).
+lazy_islazy(f) :- lazy_fname(f, name), suffix("_lazy", name).
+.decl lazy_public(f: node)
+lazy_public(f) :- lazy_fname(f, name), !prefix("_", name).
+
+// ---- owned calls, their resolved callee ----
+.decl lazy_oc(f: node, c: node)
+lazy_oc(f, c) :- lazy_owned(f, c), lazy_call(c, _, _).
+.decl lazy_res(f: node, c: node, r: symbol)
+lazy_res(f, c, v) :- lazy_oc(f, c), lazy_call(c, x, _), lazy_tv(f, x, v).
+lazy_res(f, c, s) :- lazy_oc(f, c), lazy_call(c, x, _), !lazy_hastv(f, x), lazy_callee(c, s).
+// leaf = the last dot-free piece of resolved: leaf = s is resolved = s or resolved ending in "." + s.
+.decl lazy_leafname(s: symbol, p: symbol)
+lazy_leafname(s, p) :- lazy_leafset(_, s), p = cat(".", s).
+.decl lazy_leaf(f: node, c: node, s: symbol)
+lazy_leaf(f, c, s) :- lazy_res(f, c, s), lazy_leafset(_, s).
+lazy_leaf(f, c, s) :- lazy_res(f, c, r), lazy_leafname(s, p), suffix(p, r).
+.decl lazy_leafin(f: node, c: node, set: symbol)
+lazy_leafin(f, c, set) :- lazy_leaf(f, c, s), lazy_leafset(set, s).
+// the leaf sets: (set, name).
+.decl lazy_leafset(set: symbol, s: symbol)
+lazy_leafset("plan0", "ddl_effect_lazy"). lazy_leafset("plan0", "execute_grammar_leaf"). lazy_leafset("plan0", "execute_grammar_leaf_async").
+lazy_leafset("plan0", "fetchall_grammar_leaf"). lazy_leafset("plan0", "fetchall_grammar_leaf_async"). lazy_leafset("plan0", "fetchone_grammar_leaf").
+lazy_leafset("plan0", "fetchone_grammar_leaf_async"). lazy_leafset("plan0", "grammar_effect_lazy"). lazy_leafset("plan0", "grammar_execute").
+lazy_leafset("plan0", "grammar_execute_async"). lazy_leafset("plan0", "grammar_fetchall"). lazy_leafset("plan0", "grammar_fetchall_async").
+lazy_leafset("plan0", "grammar_fetchone"). lazy_leafset("plan0", "grammar_fetchone_async"). lazy_leafset("plan0", "grammar_row_lazy").
+lazy_leafset("plan0", "grammar_rows_lazy"). lazy_leafset("plan0", "grammar_value_lazy"). lazy_leafset("plan0", "scalar_grammar_leaf").
+lazy_leafset("intent", "_add_intent"). lazy_leafset("intent", "_execute_intent_via_txn_plan"). lazy_leafset("intent", "_execute_intent_via_txn_plan_async").
+lazy_leafset("native", "_call_dolt_procedure"). lazy_leafset("native", "_checkout_branch"). lazy_leafset("native", "_create_dolt_branch").
+lazy_leafset("native", "commit").
+lazy_leafset("forbidden", "_ensure_internal_raw_access").
+lazy_leafset("recon", "_execute_direct_internal_lazy"). lazy_leafset("recon", "_execute_schema_ddl"). lazy_leafset("recon", "_execute_schema_ddl_lazy").
+lazy_leafset("recon", "_execute_schema_direct_internal_lazy"). lazy_leafset("recon", "_get_physical_table_info_for_schema_batch").
+lazy_leafset("recon", "_introspect_physical_table_for_schema_batch"). lazy_leafset("recon", "_list_physical_tables_for_schema_batch").
+lazy_leafset("recon", "_schema_operation_lazy"). lazy_leafset("recon", "flush_schema_plan"). lazy_leafset("recon", "get_table_indexes_lazy").
+lazy_leafset("recon", "get_table_info_lazy"). lazy_leafset("recon", "introspect_table_lazy"). lazy_leafset("recon", "list_tables_lazy").
+lazy_leafset("recon", "materialized_physical_columns"). lazy_leafset("recon", "physical_columns_for_reconcile").
+lazy_leafset("recon", "physical_table_exists_for_reconcile").
+lazy_leafset("absence", "_record_table_exists_result").
+lazy_leafset("runtime", "RuntimeBuilderSpec"). lazy_leafset("result", "ResultMaterializationSpec").
+// resolved-name sets: (set, name).
+.decl lazy_resset(set: symbol, s: symbol)
+lazy_resset("getattr", "getattr"). lazy_resset("getattr", "builtins.getattr").
+lazy_resset("getattribute", "__getattribute__"). lazy_resset("getattribute", "object.__getattribute__").
+lazy_resset("getattribute", "getattr"). lazy_resset("getattribute", "builtins.getattr").
+lazy_resset("vars", "vars"). lazy_resset("vars", "builtins.vars").
+lazy_resset("private", "getattr"). lazy_resset("private", "builtins.getattr"). lazy_resset("private", "vars"). lazy_resset("private", "builtins.vars").
+lazy_resset("setattr", "setattr"). lazy_resset("setattr", "builtins.setattr"). lazy_resset("setattr", "__setattr__"). lazy_resset("setattr", "object.__setattr__").
+lazy_resset("callable", "callable"). lazy_resset("callable", "builtins.callable").
+lazy_resset("resolved_internal", "_resolved_lazy_revision_value"). lazy_resset("resolved_internal", "_literalize_resolved_lazy_result").
+lazy_resset("post_op", "literal_post_op"). lazy_resset("post_op", "l2070_batching.post_op.literal_post_op").
+lazy_resset("post_op", "runtime_builder_post_op"). lazy_resset("post_op", "l2070_batching.post_op.runtime_builder_post_op").
+lazy_resset("literal_post_op", "literal_post_op"). lazy_resset("literal_post_op", "l2070_batching.post_op.literal_post_op").
+.decl lazy_resin(f: node, c: node, set: symbol)
+lazy_resin(f, c, set) :- lazy_res(f, c, r), lazy_resset(set, r).
+.decl lazy_internalname(s: symbol)
+lazy_internalname("_context"). lazy_internalname("_error"). lazy_internalname("_pre_populated"). lazy_internalname("_state"). lazy_internalname("_value").
+// callee_kind and callee of an owned call.
+.decl lazy_ock(f: node, c: node, ck: symbol, callee: symbol)
+lazy_ock(f, c, ck, callee) :- lazy_oc(f, c), lazy_call(c, _, ck), lazy_callee(c, callee).
+
+// ---- expression tags ----
+.decl lazy_tag(f: node, n: node, k: symbol)
+lazy_tag(f, o, "plan") :- lazy_ownedk(f, o, "identifier"), lazy_tv(f, o, v), suffix("plan", v).
+lazy_tag(f, o, "plan") :- lazy_ownedk(f, o, "attribute"), lazy_tv(f, o, v), suffix("plan", v).
+lazy_tag(f, o, "plan") :- lazy_ownedk(f, o, "identifier"), lazy_hastv(f, o), lazy_ntext(o, t), suffix("plan", t).
+lazy_tag(f, o, "plan") :- lazy_ownedk(f, o, "attribute"), lazy_hastv(f, o), lazy_ntext(o, t), suffix("plan", t).
+lazy_tag(f, o, "plan") :- lazy_ownedk(f, o, "call"), lazy_tv(f, o, v), (v = "plan" ; suffix("_plan", v) ; prefix("_build_", v)).
+lazy_tag(f, o, "lazy") :- lazy_ownedk(f, o, "identifier"), lazy_tv(f, o, v), (icontains("lazy", v) ; suffix("result", v) ; suffix("Intent", v)).
+lazy_tag(f, o, "lazy") :- lazy_ownedk(f, o, "attribute"), lazy_tv(f, o, v), (contains("lazy", v) ; suffix("result", v)).
+lazy_tag(f, o, "lazy") :- lazy_ownedk(f, o, "call"), lazy_tv(f, o, v), (contains("lazy", v) ; suffix("result", v)).
+lazy_tag(f, o, "callable") :- lazy_ownedk(f, o, "lambda").
+lazy_tag(f, o, "internal") :- lazy_owned(f, o), lazy_attr(o, a), lazy_internalname(a).
+lazy_tag(f, c, "internal") :- lazy_resin(f, c, "resolved_internal").
+lazy_tag(f, c, "internal") :- lazy_resin(f, c, "getattribute"), lazy_argstr(c, 1, v), lazy_internalname(v).
+lazy_tag(f, c, "dynamic") :- lazy_dyncand(f, c, a), lazy_nd(a, d), lazy_span(a, s, _), !lazy_hasstr(d, s).
+lazy_tag(f, c, "dynamic") :- lazy_dyncand(f, c, a), lazy_nd(a, d), lazy_span(a, s, _), lazy_strv(d, s, v),
+    (icontains("builder", v) ; icontains("callable", v) ; icontains("callback", v) ; icontains("decoder", v) ; icontains("factory", v) ;
+     icontains("hook", v) ; icontains("method", v) ; icontains("processor", v) ; icontains("projector", v) ; icontains("registry", v) ;
+     icontains("transform", v)).
+lazy_tag(f, r, k) :- lazy_tag(f, x, k), lazy_vbv(f, r, x).
+lazy_tag(f, p, k) :- lazy_tag(f, c, k), (k = "callable" ; k = "internal"), lazy_par(c, p, _), lazy_kind(p, pk), lazy_tagup(pk).
+lazy_tag(f, p, k) :- lazy_tag(f, c, k), (k = "callable" ; k = "internal"), lazy_par(c, p, _), lazy_object(p, c).
+lazy_tag(f, p, k) :- lazy_tag(f, c, k), (k = "callable" ; k = "internal"), lazy_par(c, p, _), lazy_args(p, c, _).
+.decl lazy_tagup(k: symbol)
+lazy_tagup("tuple"). lazy_tagup("list"). lazy_tagup("set"). lazy_tagup("dictionary"). lazy_tagup("pair"). lazy_tagup("argument_list").
+lazy_tagup("keyword_argument").
+// 'dynamic' candidates: the argument looked at (position 0 for `.get`, else 1) exists, and the call is a
+// getattr, or a `.get` whose receiver is not an ALL_CAPS identifier.
+.decl lazy_dynpos(f: node, c: node, a: node)
+lazy_dynpos(f, c, a) :- lazy_ock(f, c, _, "get"), lazy_arg(c, a, 0).
+lazy_dynpos(f, c, a) :- lazy_ock(f, c, _, callee), callee != "get", lazy_arg(c, a, 1).
+.decl lazy_capsrecv(c: node)
+lazy_capsrecv(c) :- lazy_recv(c, r), lazy_kind(r, "identifier"), lazy_ntext(r, t), match("[A-Z_]+", t).
+.decl lazy_dyncand(f: node, c: node, a: node)
+lazy_dyncand(f, c, a) :- lazy_dynpos(f, c, a), lazy_resin(f, c, "getattribute").
+lazy_dyncand(f, c, a) :- lazy_dynpos(f, c, a), lazy_ock(f, c, "attribute", "get"), !lazy_capsrecv(c).
+.decl lazy_argtag(f: node, c: node, pos: number, k: symbol)
+lazy_argtag(f, c, pos, k) :- lazy_oc(f, c), lazy_arg(c, a, pos), lazy_tag(f, a, k).
+// classified_calls: plan_receiver, lazy_receiver.
+.decl lazy_recvtag(f: node, c: node, k: symbol)
+lazy_recvtag(f, c, k) :- lazy_oc(f, c), lazy_recv(c, r), lazy_tag(f, r, k).
+
+// ---- call targets (call_targets, delegate_targets): over the callee node x of a call or delegate ----
+// site: (function, site node, callee kind, callee name, the callee node).
+.decl lazy_site(f: node, s: node, ck: symbol, callee: symbol, x: node)
+lazy_site(f, c, ck, callee, x) :- lazy_ock(f, c, ck, callee), lazy_call(c, x, _).
+lazy_site(f, v, "identifier", callee, v) :- lazy_delegate(f, _, v), lazy_kind(v, "identifier"), lazy_ntext(v, callee).
+lazy_site(f, v, "attribute", callee, v) :- lazy_delegate(f, _, v), lazy_attr(v, callee).
+// delegate_values: an owned defer_lazy_result call's sync_resolve/async_resolve keyword, an identifier or attribute.
+.decl lazy_delegate(f: node, c: node, v: node)
+lazy_delegate(f, c, v) :- lazy_res(f, c, r), (r = "defer_lazy_result" ; suffix(".defer_lazy_result", r)), lazy_kw(c, k, v),
+    (k = "sync_resolve" ; k = "async_resolve"), lazy_dvkind(v).
+.decl lazy_dvkind(v: node)
+lazy_dvkind(v) :- lazy_kind(v, "identifier").
+lazy_dvkind(v) :- lazy_kind(v, "attribute").
+.decl lazy_fromfn(f: node, local: symbol, full: symbol)
+lazy_fromfn(f, local, full) :- lazy_af(f), lazy_fnfrom(f, local, _, _), s = max s2 : { lazy_fnfrom(f, local, s2, _) }, lazy_fnfrom(f, local, s, full).
+.decl lazy_hasfromfn(f: node, local: symbol)
+lazy_hasfromfn(f, local) :- lazy_fnfrom(f, local, _, _).
+.decl lazy_target(f: node, s: node, t: symbol)
+lazy_target(f, s, t) :- lazy_site(f, s, "identifier", callee, _), lazy_fromfn(f, callee, t).
+lazy_target(f, s, t) :- lazy_site(f, s, "identifier", callee, _), !lazy_hasfromfn(f, callee), lazy_nd(f, d), lazy_lasttopfrom(d, callee, t).
+lazy_target(f, s, t) :- lazy_site(f, s, "identifier", callee, _), !lazy_hasfromfn(f, callee), lazy_nd(f, d), !lazy_hastopfrom(d, callee),
+    lazy_modsym(d, m), lazy_ma(d, callee, r), t = cat(cat(m, "."), r).
+lazy_target(f, s, t) :- lazy_site(f, s, "identifier", callee, _), !lazy_hasfromfn(f, callee), lazy_nd(f, d), !lazy_hastopfrom(d, callee),
+    lazy_modsym(d, m), !lazy_hasma(d, callee), t = cat(cat(m, "."), callee).
+lazy_target(f, s, t) :- lazy_selfsite(f, s, callee, c), lazy_hascma(c, callee), lazy_cma(c, callee, a), lazy_clsprefix(f, c, pre), t = cat(pre, a).
+lazy_target(f, s, t) :- lazy_selfsite(f, s, callee, c), !lazy_hascma(c, callee), lazy_clsprefix(f, c, pre), t = cat(pre, callee).
+lazy_target(f, s, t) :- lazy_site(f, s, "attribute", callee, x), lazy_object(x, r), lazy_kind(r, "identifier"), !lazy_selfsite(f, s, _, _),
+    lazy_ntext(r, rt), lazy_nd(f, d), lazy_lasttopimport(d, rt, iname), t = cat(cat(iname, "."), callee).
+// self./cls. on a class-level function: modsym.Class.
+.decl lazy_selfsite(f: node, s: node, callee: symbol, c: node)
+lazy_selfsite(f, s, callee, c) :- lazy_site(f, s, "attribute", callee, x), lazy_object(x, r), lazy_kind(r, "identifier"), lazy_ntext(r, rt),
+    (rt = "self" ; rt = "cls"), lazy_lex(f, c).
+.decl lazy_clsprefix(f: node, c: node, pre: symbol)
+lazy_clsprefix(f, c, pre) :- lazy_lex(f, c), lazy_af(f), lazy_qual(c, cq), lazy_nd(f, d), lazy_modsym(d, m), pre = cat(cat(cat(cat(m, "."), cq), "."), "").
+.decl lazy_lasttopimport(d: number, local: symbol, name: symbol)
+lazy_lasttopimport(d, local, name) :- lazy_topimport(d, local, _, _), s = max s2 : { lazy_topimport(d, local, s2, _) }, lazy_topimport(d, local, s, name).
+
+// ---- function events: (function, event node, start, end, category, channel) ----
+// The event node is the SQL's e.id (a call, an assignment, a return, a string, the function); `detail` is kept
+// only as the flags that decide findings (lazy_evresolve, lazy_evasync, lazy_evnative).
+.decl lazy_ev0(f: node, e: node, cat: symbol, ch: number)
+lazy_ev0(f, c, "plan", 0) :- lazy_leafin(f, c, "plan0").
+lazy_ev0(f, c, "plan", 1) :- lazy_ock(f, c, "attribute", callee), (callee = "execute" ; callee = "execute_async"), lazy_recvtag(f, c, "plan").
+lazy_ev0(f, c, "plan", 1) :- lazy_ock(f, c, "attribute", callee), (callee = "execute_many" ; callee = "execute_one" ; callee = "fetchall" ;
+    callee = "fetchmany" ; callee = "fetchone" ; callee = "_execute_direct_internal" ; callee = "_execute_direct_internal_async").
+lazy_ev0(f, c, "plan", 1) :- lazy_ock(f, c, "attribute", callee), (callee = "resolve" ; callee = "resolve_async"), lazy_recvtag(f, c, "lazy").
+lazy_ev0(f, c, "intent", 2) :- lazy_leafin(f, c, "intent").
+lazy_ev0(f, c, "intent", 2) :- lazy_res(f, c, r), suffix("Intent", r).
+lazy_ev0(f, c, "grammar", 3) :- lazy_res(f, c, r), prefix("grammar_", r).
+lazy_ev0(f, c, "native", 4) :- lazy_leafin(f, c, "native").
+lazy_ev0(f, c, "private", 5) :- lazy_resin(f, c, "vars"), lazy_arg(c, _, 0).
+lazy_ev0(f, c, "private", 5) :- lazy_resin(f, c, "private"), lazy_argstr(c, 1, "_conn").
+lazy_ev0(f, c, "private", 6) :- lazy_ock(f, c, "attribute", "get"), lazy_recv(c, r), lazy_callee(r, rc), lazy_call(r, _, _),
+    (rc = "vars" ; rc = "builtins.vars"), lazy_argstr(c, 0, "_conn").
+lazy_ev0(f, c, "internal", 7) :- lazy_resin(f, c, "getattribute"), lazy_argstr(c, 1, v), lazy_internalname(v), lazy_argtag(f, c, 0, "lazy").
+lazy_ev0(f, c, "state", 8) :- lazy_resin(f, c, "setattr"), lazy_argstr(c, 1, v), (v = "_branch_anchor" ; v = "_branch_id" ; v = "_revision_id"),
+    lazy_argtag(f, c, 2, "internal").
+lazy_ev0(f, c, "forbidden_pure", 9) :- lazy_leafin(f, c, "forbidden").
+lazy_ev0(f, c, "reconciliation", 10) :- lazy_leafin(f, c, "recon"), !lazy_leaf(f, c, "flush_schema_plan").
+lazy_ev0(f, c, "reconciliation", 10) :- lazy_leaf(f, c, "flush_schema_plan"), !lazy_flushok(f).
+lazy_ev0(f, c, "bootstrap", 11) :- lazy_ock(f, c, "attribute", callee), lazy_mutator(callee), lazy_recv(c, r), lazy_selfrooted(r).
+lazy_ev0(f, c, "absence", 12) :- lazy_leaf(f, c, "_record_table_exists_result"), lazy_arg(c, a, 1), lazy_kind(a, "false").
+lazy_ev0(f, c, "dynamic", 13) :- lazy_fname(f, name), prefix("materialize_", name), lazy_resin(f, c, "callable"), lazy_argtag(f, c, 0, "dynamic").
+lazy_ev0(f, c, "dynamic", 13) :- lazy_fname(f, name), prefix("materialize_", name), lazy_call(c, x, "identifier"), lazy_oc(f, c), lazy_tag(f, x, "dynamic").
+lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, "closed_post_op", v), lazy_tag(f, v, "callable").
+lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, _, v), lazy_tag(f, v, "callable"), !lazy_haskw(c, "closed_post_op"), lazy_resin(f, c, "post_op").
+lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, "literal_kwargs", v), lazy_tag(f, v, "callable"), !lazy_haskw(c, "closed_post_op"),
+    lazy_leaf(f, c, "RuntimeBuilderSpec").
+lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, k, v), (k = "literal_payload" ; k = "default_value"), lazy_tag(f, v, "callable"),
+    !lazy_haskw(c, "closed_post_op"), lazy_leaf(f, c, "ResultMaterializationSpec").
+lazy_ev0(f, c, "payload", 14) :- lazy_resin(f, c, "literal_post_op"), !lazy_haskw(c, "closed_post_op"), lazy_argtag(f, c, 0, "callable").
+lazy_ev0(f, n, "dolt", 15) :- lazy_owned(f, o), lazy_n(d, o, _, s, e), lazy_strn(d, n, s, e), lazy_strval(n, v),
+    (icontains("dolt_", v) ; icontains("dolt log", v) ; icontains("dolt branches", v)).
+lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "attribute"), lazy_selfrooted(l).
+lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "subscript"), lazy_selfrooted(l).
+lazy_ev0(f, r, "of_return", 17) :- lazy_owned(f, r), lazy_ret(r, c), lazy_lazyof(c).
+lazy_ev0(f, a, "absence", 18) :- lazy_owned(f, a), lazy_asg(a, _, "identifier"), lazy_asgtext(a, t), (contains("snapshot", t) ; contains("existing", t)),
+    lazy_asgr(a, c), lazy_call(c, _, "identifier"), lazy_callee(c, ce), (ce = "set" ; ce = "frozenset"), lazy_args(c, g, _), !lazy_haskid(g).
+lazy_ev0(f, r, "absence", 19) :- lazy_owned(f, r), lazy_ret(r, c), lazy_lazyof(c), lazy_arg(c, a, 0), lazy_kind(a, "false"),
+    lazy_fname(f, name), name != "table_exists_lazy", lazy_fqual(f, q), !icontains("_should_skip_", q),
+    (icontains("schema_fact", q) ; icontains("exists", q) ; icontains("has_", q) ; icontains("table", q) ; icontains("column", q) ;
+     icontains("index", q) ; icontains("trigger", q)).
+lazy_ev0(f, f, "context", 20) :- lazy_execctx(f).
+// the dolt event's id is the string's __start, not a node; it is the string node here (a key, never joined).
+.decl lazy_mutator(s: symbol)
+lazy_mutator("add"). lazy_mutator("append"). lazy_mutator("clear"). lazy_mutator("discard"). lazy_mutator("extend"). lazy_mutator("insert").
+lazy_mutator("pop"). lazy_mutator("remove"). lazy_mutator("setdefault"). lazy_mutator("update").
+// `LazyResult.of(…)`: callee attribute `of`, full callee text (?:^|\.)LazyResult\.of$.
+.decl lazy_lazyof(c: node)
+lazy_lazyof(c) :- lazy_call(c, x, "attribute"), lazy_attr(x, "of"), lazy_ntext(x, t), (t = "LazyResult.of" ; suffix(".LazyResult.of", t)).
+// flush_schema_plan is allowed in these functions.
+.decl lazy_flushok(f: node)
+lazy_flushok(f) :- lazy_fname(f, n), (n = "_bulk_schema_plan_context" ; n = "_commit_schema_transaction" ; n = "_create_fts_index_schema_sync" ;
+    n = "create_table_from_schema" ; n = "drop_table").
+lazy_flushok(f) :- lazy_fqual(f, q), (q = "LazySchemaTransaction._bulk_schema_plan_context" ; q = "LazySchemaTransaction._commit_schema_transaction" ;
+    q = "LazySchemaTransaction._create_fts_index_schema_sync" ; q = "SyncSchemaTransaction.create_table_from_schema" ; q = "SyncSchemaTransaction.drop_table").
+// the events kept: bootstrap and forbidden_pure ones only in @pure_lazy functions.
+.decl lazy_ev(f: node, e: node, cat: symbol, ch: number)
+lazy_ev(f, e, cat, ch) :- lazy_ev0(f, e, cat, ch), cat != "bootstrap", cat != "forbidden_pure".
+lazy_ev(f, e, cat, ch) :- lazy_ev0(f, e, cat, ch), (cat = "bootstrap" ; cat = "forbidden_pure"), lazy_pure(f).
+.decl lazy_evstart(e: node, s: number)
+lazy_evstart(e, s) :- lazy_ev(_, e, _, _), lazy_span(e, s, _).
+// the marks the events give (A): each category, and plan events with uses_conn ("conn"), with lazy.resolve
+// ("resolve"), without the native_cursor. prefix ("orchestration").
+.decl lazy_evtag(f: node, e: node, tag: symbol, ch: number)
+lazy_evtag(f, e, cat, ch) :- lazy_ev(f, e, cat, ch).
+lazy_evtag(f, e, "conn", ch) :- lazy_evconn(f, e), lazy_ev(f, e, "plan", ch).
+lazy_evtag(f, e, "resolve", ch) :- lazy_evresolve(f, e), lazy_ev(f, e, "plan", ch).
+lazy_evtag(f, e, "orchestration", ch) :- lazy_ev(f, e, "plan", ch), !lazy_evnative(f, e).
+.decl lazy_hasspantop(f: node, s: number, e: number)
+lazy_hasspantop(f, s, e) :- lazy_spantop(f, s, e, _).
+lazy_amark0(f, x, tag, ch, s) :- lazy_evtag(f, e, tag, ch), lazy_span(e, s, en), lazy_spantop(f, s, en, x).
+lazy_afree(f, tag, ch, s) :- lazy_evtag(f, e, tag, ch), lazy_span(e, s, en), !lazy_hasspantop(f, s, en).
+// plan details: lazy.resolve(_async) (channel 1 on resolve/resolve_async), a detail ending in _async, the
+// native_cursor. prefix.
+.decl lazy_evresolve(f: node, e: node)
+lazy_evresolve(f, c) :- lazy_ev(f, c, "plan", 1), lazy_ock(f, c, _, callee), (callee = "resolve" ; callee = "resolve_async").
+.decl lazy_evasync(f: node, e: node)
+lazy_evasync(f, c) :- lazy_ev(f, c, "plan", 0), lazy_res(f, c, r), suffix("_async", r).
+lazy_evasync(f, c) :- lazy_ev(f, c, "plan", 1), lazy_callee(c, callee), suffix("_async", callee).
+lazy_evasync(f, c) :- lazy_ev(f, c, "grammar", 3), lazy_res(f, c, r), suffix("_async", r).
+.decl lazy_evnative(f: node, e: node)
+lazy_evnative(f, c) :- lazy_ev(f, c, "plan", _), lazy_recv(c, r), lazy_kind(r, "identifier"), lazy_ntext(r, t), lazy_nativecursor(f, t),
+    lazy_callee(c, callee), (callee = "fetchone" ; callee = "fetchmany" ; callee = "fetchall").
+// uses_conn: a `_conn` attribute inside the first argument or an owner/txn/tx/conn/connection keyword's value.
+.decl lazy_connattr(d: number, s: number, e: number)
+lazy_connattr(d, s, e) :- lazy_n(d, a, "attribute", s, e), lazy_attr(a, "_conn").
+.decl lazy_evconn(f: node, e: node)
+lazy_evconn(f, c) :- lazy_ev(f, c, "plan", _), lazy_arg(c, a, 0), lazy_n(d, a, _, ax, ae), lazy_connattr(d, s, e), s >= ax, e <= ae.
+lazy_evconn(f, c) :- lazy_ev(f, c, "plan", _), lazy_kw(c, k, v), (k = "owner" ; k = "txn" ; k = "tx" ; k = "conn" ; k = "connection"),
+    lazy_n(d, v, _, vs, ve), lazy_connattr(d, s, e), s >= vs, e <= ve.
+
+// ---- architecture edges, reachable ----
+// a function's qualname is defined again later in its file.
+.decl lazy_redefined(f: node)
+lazy_redefined(f) :- lazy_af(f), lazy_qual(f, q), lazy_nd(f, d), lazy_span(f, s, _), lazy_decl(g, "function_definition", _), lazy_qual(g, q),
+    lazy_nd(g, d), lazy_span(g, s2, _), s2 > s.
+.decl lazy_symfn(s: symbol, f: node)
+lazy_symfn(s, f) :- lazy_sym(f, s), !lazy_redefined(f).
+// (owner, call, target function): call_targets joined to function_flags by symbol, not the owner itself.
+.decl lazy_edge(f: node, c: node, t: node)
+lazy_edge(f, c, t) :- lazy_oc(f, c), lazy_target(f, c, s), lazy_symfn(s, t), t != f.
+.decl lazy_reach(r: node, n: node)
+lazy_reach(r, r) :- lazy_af(r).
+lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
+
+// ---- the call graph (graph_functions, graph_edges) ----
+// graph_functions: per symbol, across files, the functions no other function of the symbol has a larger
+// fact_order than. fact_order is the text of the enclosing classes' region starts (classes starting before the
+// function and ending at or after it: its class ancestors), outermost first, then the function's own, each 20
+// digits, '/1/' between: as text it orders as that sequence of numbers, lexicographically, a proper prefix first.
+.decl lazy_foenc(f: node, r: number)
+lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
+.decl lazy_foel(f: node, i: number, v: number)
+lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { lazy_foenc(f, r2), r2 < r }.
+lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
+.decl lazy_folen(f: node, n: number)
+lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.
+.decl lazy_sympair(f: node, g: node)
+lazy_sympair(f, g) :- lazy_sym(f, s), lazy_sym(g, s), f != g.
+.decl lazy_fodiff(f: node, g: node, i: number)
+lazy_fodiff(f, g, i) :- lazy_sympair(f, g), lazy_foel(f, i, a), lazy_foel(g, i, b), a != b.
+.decl lazy_hasfodiff(f: node, g: node)
+lazy_hasfodiff(f, g) :- lazy_fodiff(f, g, _).
+.decl lazy_symlater(f: node)
+lazy_symlater(f) :- lazy_hasfodiff(f, g), i = min j : { lazy_fodiff(f, g, j) }, lazy_foel(f, i, a), lazy_foel(g, i, b), b > a.
+lazy_symlater(f) :- lazy_sympair(f, g), !lazy_hasfodiff(f, g), lazy_folen(f, n), lazy_folen(g, m), m > n.
+.decl lazy_gf(f: node)
+lazy_gf(f) :- lazy_sym(f, _), !lazy_symlater(f).
+// a function's graph node: the graph function of its symbol.
+.decl lazy_gnode(f: node, g: node)
+lazy_gnode(f, g) :- lazy_sym(f, s), lazy_gf(g), lazy_sym(g, s).
+// (src, dst, call, location): ordered by the call's visit_key within src.
+.decl lazy_gedge(src: node, dst: node, c: node, loc: number)
+lazy_gedge(f, t, c, loc) :- lazy_edge(f, c, t), lazy_gf(f), lazy_gf(t), lazy_span(c, loc, _).
+// the graphs: (graph, src, dst, call, location); "eager" and the five categories in node mode, the rest in edge mode.
+.decl lazy_graph(g: symbol, mode: symbol)
+lazy_graph("plan", "node"). lazy_graph("intent", "node"). lazy_graph("native", "node"). lazy_graph("dolt", "node").
+lazy_graph("orchestration", "node"). lazy_graph("eager", "node").
+lazy_graph("legacy", "edge"). lazy_graph("permission", "edge"). lazy_graph("nonlazy", "edge").
+.decl lazy_nonlazycut(s: symbol)
+lazy_nonlazycut("_internal.dynamic_import.load_python_module"). lazy_nonlazycut("l2070_batching.lazy_runtime.build_visible_whole_document_embedding_write").
+lazy_nonlazycut("l5200_vector_index.index_implementations.pgvector._vector_dimension_mismatch_from_pgvector_error").
+.decl lazy_ge(g: symbol, src: node, dst: node, c: node, loc: number)
+lazy_ge(g, f, t, c, loc) :- lazy_graph(g, _), g != "nonlazy", lazy_gedge(f, t, c, loc).
+lazy_ge("nonlazy", f, t, c, loc) :- lazy_gedge(f, t, c, loc), lazy_sym(t, s), !lazy_nonlazycut(s).
+// sinks: (graph, node, location).
+.decl lazy_permsym(s: symbol)
+lazy_permsym("l4000_permissions.lazy_permission_support.check_object_write_permission_lazy").
+lazy_permsym("l4000_permissions.lazy_permission_support.check_upsert_conflict_write_permission_lazy").
+lazy_permsym("l4000_permissions.lazy_permission_support.check_write_permission_lazy").
+lazy_permsym("l4000_permissions.permission_enforcement.check_object_write_permission").
+lazy_permsym("l4000_permissions.permission_enforcement.check_write_permission").
+.decl lazy_gsink(g: symbol, n: node, loc: number)
+lazy_gsink(k, f, loc) :- lazy_gf(f), lazy_localfirst(f, k, loc).
+lazy_gsink("legacy", f, loc) :- lazy_gf(f), lazy_legacy(f), lazy_fstart(f, loc).
+lazy_gsink("permission", f, loc) :- lazy_gf(f), lazy_sym(f, s), lazy_permsym(s), lazy_fstart(f, loc).
+lazy_gsink("eager", f, loc) :- lazy_gf(f), lazy_intrinsic(f, loc).
+lazy_gsink("nonlazy", f, loc) :- lazy_gf(f), !lazy_islazy(f), lazy_fstart(f, loc).
+.decl lazy_issink(g: symbol, n: node)
+lazy_issink(g, n) :- lazy_gsink(g, n, _).
+// local_graph_events and graph_sinks: a function's first event of a category, by (visit_key, channel).
+.decl lazy_localfirst(f: node, k: symbol, loc: number)
+lazy_localfirst(f, k, loc) :- lazy_apick(f, k, loc), (k = "plan" ; k = "intent" ; k = "native" ; k = "dolt" ; k = "orchestration").
+// The search (see the header): a root's successful edges, the first one's location.
+// live: the node reaches a sink in the graph of its file (a node of another file has no edges there).
+.decl lazy_live(g: symbol, n: node)
+lazy_live(g, n) :- lazy_issink(g, n).
+lazy_live(g, n) :- lazy_ge(g, n, t, _, _), lazy_issink(g, t).
+lazy_live(g, n) :- lazy_ge(g, n, t, _, _), lazy_nd(n, d), lazy_nd(t, d), lazy_live(g, t).
+// cr: reached from the root through nodes of its file that are not sinks; a root on a cycle reaches itself.
+.decl lazy_cr(g: symbol, r: node, n: node)
+lazy_cr(g, r, n) :- lazy_ge(g, r, n, _, _), lazy_nd(r, d), lazy_nd(n, d), !lazy_issink(g, n).
+lazy_cr(g, r, z) :- lazy_cr(g, r, n), lazy_ge(g, n, z, _, _), lazy_nd(n, d), lazy_nd(z, d), !lazy_issink(g, z).
+.decl lazy_oncycle(g: symbol, r: node)
+lazy_oncycle(g, r) :- lazy_cr(g, r, r).
+// av: for a root on a cycle, what a child reaches without passing through the root.
+.decl lazy_av(g: symbol, r: node, c: node, n: node)
+lazy_av(g, r, c, c) :- lazy_oncycle(g, r), lazy_ge(g, r, c, _, _), c != r, !lazy_issink(g, c), lazy_nd(r, d), lazy_nd(c, d).
+lazy_av(g, r, c, z) :- lazy_av(g, r, c, n), lazy_ge(g, n, z, _, _), z != r, !lazy_issink(g, z), lazy_nd(n, d), lazy_nd(z, d).
+.decl lazy_ok(g: symbol, r: node, c: node)
+lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), lazy_issink(g, c).
+lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), c != r, !lazy_issink(g, c), !lazy_oncycle(g, r), lazy_nd(r, d), lazy_nd(c, d), lazy_live(g, c).
+lazy_ok(g, r, c) :- lazy_av(g, r, c, n), lazy_ge(g, n, t, _, _), lazy_issink(g, t).
+// the root's first successful edge by the call's visit_key (the edge's ordinal); rows tied in it by location.
+.decl lazy_bmark(g: symbol, r: node, c: node, loc: number)
+lazy_bmark(g, r, c, loc) :- lazy_ok(g, r, t), lazy_ge(g, r, t, c, loc).
+.decl lazy_brow(g: symbol, r: node, k: symbol, x: symbol, loc: number)
+lazy_brow(g, r, k, x, loc) :- lazy_bmark(g, r, c, loc), lazy_vk(r, c, k), x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+.decl lazy_bhasrow(g: symbol, r: node)
+lazy_bhasrow(g, r) :- lazy_brow(g, r, _, _, _).
+.decl lazy_bpick(g: symbol, r: node, loc: number)
+lazy_bpick(g, r, loc) :- lazy_bhasrow(g, r), s = join x by k : { lazy_brow(g, r, k, x, _) }, lazy_brow(g, r, _, x, loc), x = substr(s, 0, 12).
+// the result per graph node: a node-mode sink is its own hit.
+.decl lazy_hit(g: symbol, r: node, loc: number)
+lazy_hit(g, r, loc) :- lazy_graph(g, "node"), lazy_gsink(g, r, loc).
+lazy_hit(g, r, loc) :- lazy_graph(g, "node"), lazy_gf(r), !lazy_issink(g, r), lazy_bpick(g, r, loc).
+lazy_hit(g, r, loc) :- lazy_graph(g, "edge"), lazy_bpick(g, r, loc).
+// per function (roots are every function_flags row, joined back by symbol).
+.decl lazy_result(g: symbol, f: node, loc: number)
+lazy_result(g, f, loc) :- lazy_gnode(f, n), lazy_hit(g, n, loc).
+.decl lazy_hasresult(g: symbol, f: node)
+lazy_hasresult(g, f) :- lazy_result(g, f, _).
+// graph_legacy's roots are the pure functions; graph_eager's the pure ones without a legacy match; graph_nonlazy's
+// the lazy ones, less pure ones with a legacy match.
+.decl lazy_legacymatch(f: node, loc: number)
+lazy_legacymatch(f, loc) :- lazy_pure(f), lazy_result("legacy", f, loc).
+.decl lazy_haslegacy(f: node)
+lazy_haslegacy(f) :- lazy_legacymatch(f, _).
+.decl lazy_eager(f: node, loc: number)
+lazy_eager(f, loc) :- lazy_pure(f), !lazy_haslegacy(f), lazy_result("eager", f, loc).
+.decl lazy_nonlazy(f: node, loc: number)
+lazy_nonlazy(f, loc) :- lazy_islazy(f), !lazy_purelegacy(f), lazy_result("nonlazy", f, loc).
+.decl lazy_purelegacy(f: node)
+lazy_purelegacy(f) :- lazy_pure(f), lazy_haslegacy(f).
+
+// ---- intrinsic: a function's own eager reason ----
+.decl lazy_intrcat(f: node, cat: symbol, co: number)
+lazy_intrcat(f, "plan", 4) :- lazy_af(f).
+lazy_intrcat(f, "native", 5) :- lazy_af(f).
+lazy_intrcat(f, "context", 0) :- lazy_sensitive(f).
+lazy_intrcat(f, "internal", 1) :- lazy_sensitive(f).
+lazy_intrcat(f, "state", 2) :- lazy_sensitive(f).
+lazy_intrcat(f, "private", 3) :- lazy_sensitive(f).
+.decl lazy_intrev(f: node, co: number, loc: number)
+lazy_intrev(f, co, loc) :- lazy_intrcat(f, cat, co), lazy_apick(f, cat, loc).
+.decl lazy_hasintrev(f: node)
+lazy_hasintrev(f) :- lazy_intrev(f, _, _).
+.decl lazy_intrinsic(f: node, loc: number)
+lazy_intrinsic(f, loc) :- lazy_hasintrev(f), co = min c2 : { lazy_intrev(f, c2, _) }, lazy_intrev(f, co, loc).
+lazy_intrinsic(f, loc) :- lazy_af(f), !lazy_hasintrev(f), lazy_asyncish(f), lazy_fstart(f, loc).
+.decl lazy_asyncish(f: node)
+lazy_asyncish(f) :- lazy_legacy(f).
+lazy_asyncish(f) :- lazy_af(f), op(f, "async"), !lazy_pure(f).
+lazy_asyncish(f) :- lazy_fname(f, n), suffix("_async", n).
+
+// ---- diagnostics: (function or nothing, doc, start, code, order class) ----
+// late(f): the row is one the final WHERE drops for a pure function with a legacy match (diagnostic_order > 17).
+.decl lazy_diag(d: number, s: number, code: symbol)
+.decl lazy_fdiag(f: node, s: number, code: symbol, late: number)
+lazy_diag(d, s, code) :- lazy_fdiag(f, s, code, 0), lazy_nd(f, d).
+lazy_diag(d, s, code) :- lazy_fdiag(f, s, code, 1), lazy_nd(f, d), !lazy_purelegacy(f).
+.decl lazy_firstev(f: node, cat: symbol, loc: number)
+lazy_firstev(f, cat, loc) :- lazy_apick(f, cat, loc).
+// diagnostics_0
+lazy_fdiag(f, s, "LA-001", 0) :- lazy_pure(f), lazy_result("plan", f, s).
+lazy_fdiag(f, s, "LA-002", 0) :- lazy_result("plan", f, s), lazy_hasresult("intent", f).
+lazy_fdiag(f, s, "LA-003", 0) :- lazy_result("plan", f, s), lazy_public(f), !lazy_islazy(f), !lazy_hasresult("intent", f), lazy_fpath(f, _, p),
+    (prefix("impl/common/l3500_bulk_ops/", p) ; prefix("impl/common/l7300_revision_history/", p) ; prefix("impl/common/l9700_sql_graph_query/", p) ;
+     p = "impl/common/l5200_sql_query/_insert_from_query.py").
+lazy_fdiag(f, s, "LA-004", 0) :- lazy_result("native", f, s), lazy_fpath(f, _, p), !contains("migration", p), lazy_hasresult("orchestration", f).
+lazy_fdiag(f, s, "LA-005", 0) :- lazy_la005path(f), lazy_result("dolt", f, s).
+lazy_fdiag(f, s, "LA-005", 0) :- lazy_la005path(f), !lazy_hasresult("dolt", f), lazy_result("native", f, s).
+.decl lazy_la005path(f: node)
+lazy_la005path(f) :- lazy_fpath(f, _, p), (prefix("impl/common/l7100_versioned_operations/", p) ; prefix("impl/common/l7248_sparse_versioned_transactions/", p) ;
+    prefix("impl/common/l7300_sql_versioned_transactions/", p) ; prefix("l7250_versioned_operations/", p)).
+lazy_fdiag(f, s, "LA-006", 0) :- lazy_apick(f, "conn", s).
+// diagnostics_1
+lazy_fdiag(f, s, "LA-007", 0) :- lazy_result("plan", f, s), lazy_fname(f, n), prefix("prepare_", n).
+lazy_fdiag(f, s, "LA-008", 0) :- lazy_fpath(f, _, p), (prefix("impl/common/l7248_sparse_versioned_transactions/", p) ;
+    prefix("impl/common/l7300_sql_versioned_transactions/", p) ; prefix("impl/doltdb/versioned_write_transaction.py", p)),
+    lazy_reach(f, n), lazy_ev(n, _, "grammar", _), lazy_fname(f, name), aname = cat(name, "_async"), lazy_fname(a, aname), lazy_nd(a, d), lazy_nd(f, d),
+    lazy_reach(a, m), lazy_evasync(m, _), lazy_fstart(f, s).
+lazy_fdiag(f, s, "LA-009", 0) :- lazy_sensitive(f), (cat = "context" ; cat = "internal" ; cat = "state" ; cat = "private"), lazy_firstev(f, cat, s).
+// diagnostics_2
+lazy_fdiag(f, s, "LA-009", 1) :- lazy_eager(f, s).
+lazy_fdiag(f, s, "LA-010", 0) :- lazy_fname(f, n), icontains("lazy", n), icontains("sync", n), lazy_fstart(f, s).
+lazy_fdiag(f, s, "LA-011", 0) :- lazy_la011(f), lazy_result("plan", f, s).
+.decl lazy_la011(f: node)
+lazy_la011(f) :- lazy_fpath(f, _, p), prefix("impl/common/l2070_server_plan/", p), lazy_fname(f, n),
+    (n = "lower" ; n = "compile" ; n = "preprocess" ; n = "pre_op" ; n = "post_op").
+// hydration calls (call_targets: the call's own visit_key, then id), a mark of A.
+lazy_amark0(f, c, "hydration", 0, loc) :- lazy_fpath(f, _, p), prefix("impl/common/l2070_server_plan/", p), lazy_oc(f, c), lazy_target(f, c, t),
+    (t = "hydrate_many_post_op" ; t = "hydrate_one_post_op" ; t = "runtime_sql_conn_from_hydrator"), lazy_span(c, loc, _).
+lazy_fdiag(f, s, "LA-011", 0) :- lazy_apick(f, "hydration", s).
+lazy_fdiag(f, s, "LA-012", 0) :- !lazy_legacy(f), lazy_af(f), lazy_apick(f, "resolve", s).
+lazy_fdiag(f, s, "LA-013", 0) :- lazy_ev(f, e, "forbidden_pure", _), lazy_pure(f), lazy_evstart(e, s).
+// diagnostics_3
+lazy_fdiag(f, s, "LA-013", 0) :- lazy_legacymatch(f, s).
+lazy_fdiag(f, s, "LA-013", 1) :- lazy_nonlazy(f, s).
+lazy_fdiag(f, s, "LA-014", 1) :- lazy_ev(f, e, cat, _), (cat = "payload" ; cat = "dynamic"), lazy_la014path(f), lazy_evstart(e, s).
+.decl lazy_la014path(f: node)
+lazy_la014path(f) :- lazy_fpath(f, _, p), (prefix("impl/common/l2070_server_plan/", p) ; p = "impl/common/l2200_sql_dialect/sql_connection.py" ;
+    p = "l2070_batching/post_op.py").
+lazy_fdiag(f, s, "LA-015", 1) :- lazy_ev(f, e, "of_return", _), lazy_bootstrap(f), lazy_evstart(e, s).
+lazy_fdiag(f, s, "LA-016", 1) :- lazy_ev(f, e, "bootstrap", _), lazy_bootstrap(f), lazy_pure(f), lazy_evstart(e, s).
+// diagnostics_4
+lazy_fdiag(f, s, "LA-017", 1) :- lazy_ev(f, e, cat, _), (cat = "reconciliation" ; cat = "absence"), lazy_reconciliation(f), lazy_evstart(e, s).
+lazy_fdiag(f, s, "LA-017", 1) :- lazy_evresolve(f, e), lazy_reconname(f), lazy_fpath(f, _, p),
+    (prefix("impl/common/l2200_sql_dialect/", p) ; p = "l2000_connection/schema_transaction.py"), lazy_evstart(e, s).
+lazy_fdiag(f, s, "LA-017", 1) :- lazy_reconciliation(f), lazy_fpath(f, _, p), lazy_fqual(f, q), key = cat(cat(p, "::"), q), lazy_cutover(key),
+    lazy_fstart(f, s).
+// side-queue fields (no function): lower(path || ' ' || qualname) ~ 'bootstrap|ddl'.
+lazy_diag(d, s, "LA-016") :- lazy_sqf(d, a, q), lazy_doc(d, p), (icontains("bootstrap", p) ; icontains("ddl", p) ; icontains("bootstrap", q) ; icontains("ddl", q)),
+    lazy_span(a, s, _).
+.decl lazy_sqname(s: symbol)
+lazy_sqname("pending_after_create_schema_ddl_async_batch_ref_id"). lazy_sqname("pending_after_create_schema_ddl_async_statements").
+lazy_sqname("pending_after_create_schema_ddl_batch_ref_id"). lazy_sqname("pending_after_create_schema_ddl_statements").
+lazy_sqname("pending_polymorphic_guard_ddl_async_batch_scheduled"). lazy_sqname("pending_polymorphic_guard_ddl_async_statements").
+lazy_sqname("pending_polymorphic_guard_ddl_batch_scheduled"). lazy_sqname("pending_polymorphic_guard_ddl_statements").
+lazy_sqname("pending_staged_trigger_ddl_async_batch_scheduled"). lazy_sqname("pending_staged_trigger_ddl_async_statements").
+lazy_sqname("pending_staged_trigger_ddl_batch_scheduled"). lazy_sqname("pending_staged_trigger_ddl_statements").
+// side_queue_fields: a class-body `name = …` (identifier target, typed or not) of a side-queue name.
+.decl lazy_sqf(d: number, a: node, q: symbol)
+lazy_sqf(d, a, q) :- lazy_asg(a, _, "identifier"), lazy_asgtext(a, name), lazy_sqname(name), lazy_par(a, stmt, _), lazy_par(stmt, b, _), lazy_clsbody(c, b),
+    lazy_qual(c, cq), q = cat(cat(cq, "."), name), lazy_nd(a, d).
+// calls and imports anywhere (no function): the origins defer, compat and compat_import (lazy_diagc), which the
+// query's cases "collector-extra" and "analyzed-functions" keep alone or drop.
+.decl lazy_diagc(d: number, s: number, code: symbol)
+lazy_diagc(d, s, "LA-013") :- lazy_call(c, _, "identifier"), lazy_callee(c, "defer_lazy_result"), lazy_n(d, c, _, s, _).
+lazy_diagc(d, s, "LA-013") :- lazy_call(c, _, "attribute"), lazy_callee(c, "defer_lazy_result"), lazy_n(d, c, _, s, _).
+lazy_diagc(d, s, "LA-013") :- lazy_imp(d, i, x, _, _, "defer_lazy_result", s), lazy_impmodule(i, "l2055_lazy_result.transform"), lazy_impx(i, x, _).
+lazy_diagc(d, s, "LA-009") :- lazy_call(c, _, _), lazy_callee(c, ce), lazy_compat(ce, _), lazy_n(d, c, _, s, _), lazy_doc(d, p), lazy_sensitive_path(p).
+lazy_diagc(d, s, "LA-009") :- lazy_imp(d, i, _, _, _, name, s), lazy_impmodule(i, "l2055_lazy_result.transform"), lazy_compat(name, 1), lazy_doc(d, p),
+    lazy_sensitive_path(p).
+// the compatibility surfaces: (name, 1 when its import is forbidden too).
+.decl lazy_compat(s: symbol, imp: number)
+lazy_compat("RuntimeMapStep", 1). lazy_compat("RuntimeProjectionStep", 1). lazy_compat("_RuntimeMapConfig", 1). lazy_compat("_RuntimeProjectionConfig", 1).
+lazy_compat("_lazy_result_step_ref_id", 0). lazy_compat("_literal_lazy_result_value", 0). lazy_compat("_literalize_resolved_lazy_result", 0).
+lazy_compat("_object_ref_from_input", 0). lazy_compat("_object_sequence_ref_from_input", 0). lazy_compat("_scalar_ref_from_input", 0).
+lazy_compat("_scalar_sequence_ref_from_input", 0). lazy_compat("defer_lazy_result", 1). lazy_compat("flat_map_lazy_result", 1).
+lazy_compat("map_lazy_result", 1). lazy_compat("materialize_return_value_runtime_projection_builder", 1).
+// diagnostics_5: permission, delegate.
+lazy_fdiag(f, s, "LA-011", 0) :- lazy_la011(f), lazy_result("permission", f, s), !lazy_hasresult("plan", f).
+.decl lazy_delegatehit(f: node, s: number)
+lazy_delegatehit(f, s) :- lazy_fname(f, n), suffix("_lazy", n), !lazy_pure(f), lazy_delegate(f, c, v), lazy_target(f, v, t), lazy_sym(g, t),
+    lazy_eagertarget(g), lazy_span(c, s, _).
+.decl lazy_eagertarget(g: node)
+lazy_eagertarget(g) :- lazy_ev(g, _, "plan", _).
+lazy_eagertarget(g) :- lazy_oc(g, c), lazy_target(g, c, t), lazy_leafset("plan0", x), (t = x ; suffix(p, t)), lazy_leafname(x, p).
+.decl lazy_hasdelegatehit(f: node)
+lazy_hasdelegatehit(f) :- lazy_delegatehit(f, _).
+lazy_fdiag(f, s, "LA-009", 0) :- lazy_hasdelegatehit(f), s = min s2 : { lazy_delegatehit(f, s2) }.
+
+// ---- findings, by entryPoint ----
+// "_scan_deleted_cold_bootstrap_surfaces": the syntax gate is empty, so no row (requireNonemptyInput);
+// "collector-extra": only the origins defer, compat and compat_import; "analyzed-functions": all but those.
+.decl lazy_gate(d: number)
+lazy_gate(d) :- lazy_doc(d, _), !option_value("entryPoint", "_scan_deleted_cold_bootstrap_surfaces").
+.decl lazy_row(d: number, s: number, code: symbol)
+lazy_row(d, s, code) :- lazy_diag(d, s, code), lazy_gate(d), !option_value("entryPoint", "collector-extra").
+lazy_row(d, s, code) :- lazy_diagc(d, s, code), lazy_gate(d), !option_value("entryPoint", "analyzed-functions").
+.decl lazy_line(d: number, s: number, l: number)
+lazy_line(d, s, l) :- lazy_row(d, s, _), node(d, n, _, s, _), line(n, l).
+violation("data-layer-lazy-architecture", "lazy-architecture", code, p, l) :- lazy_row(d, s, code), lazy_doc(d, p), lazy_line(d, s, l).
+
+// ---- the cutover surfaces of LA-017 (path::qualname) ----
+.decl lazy_cutover(k: symbol)
+lazy_cutover("impl/common/l2200_sql_dialect/schema_ensure.py::cached_or_fetched_table_columns").
+lazy_cutover("impl/common/l2200_sql_dialect/schema_ensure.py::ensure_model_table_usable").
+lazy_cutover("impl/common/l2200_sql_dialect/schema_ensure.py::model_table_is_usable_lazy").
+lazy_cutover("impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin._polymorphic_check_constraint_reconciliation_ddl_for_write").
+lazy_cutover("impl/common/l2200_sql_dialect/sql_core_support_mixin.py::_SqlCoreSupportMixin.table_exists_many_lazy").
+lazy_cutover("impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaCreationMixin._polymorphic_check_constraint_reconciliation_ddl_for_write").
+lazy_cutover("impl/common/l2200_sql_dialect/sql_schema_services.py::_SqlSchemaMixin.table_exists_many_lazy").
+lazy_cutover("impl/common/l7245_versioned_backends/versioned_fk_triggers.py::reconcile_versioned_fk_triggers_for_existing_table").
+lazy_cutover("impl/mariadb/core_support_service.py::_MariaDBCoreSupportMixin._table_exists_many_uncached_lazy").
+lazy_cutover("impl/mariadb/metadata_schema_service.py::_MariaDBMetadataSchemaMixin._table_exists_many_uncached_lazy").
+lazy_cutover("impl/postgres/metadata_schema_service.py::_PostgresMetadataSchemaMixin._table_exists_many_uncached_lazy").
+lazy_cutover("impl/sqlite/connection.py::SqliteSchemaService.table_exists_many_lazy").
+lazy_cutover("l2000_connection/connection_caches.py::_ConnectionTableCacheMixin.table_exists_many_lazy").
+lazy_cutover("l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_table_from_schema_async").
+lazy_cutover("l2000_connection/schema_transaction.py::AsyncSchemaTransaction.create_tables_from_schema_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_indexes_many_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._get_physical_table_info_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._introspect_physical_table_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._list_physical_tables_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._prime_bulk_column_snapshots_for_existing_tables_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction._seed_bulk_column_snapshots_for_schema_batch_async").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction.create_tables_from_schema_lazy").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_columns_for_reconcile").
+lazy_cutover("l2000_connection/schema_transaction.py::LazySchemaTransaction.physical_table_exists_for_reconcile").
+lazy_cutover("l2000_connection/schema_transaction.py::SyncSchemaTransaction.create_tables_from_schema").
+lazy_cutover("l2000_connection/table_existence_authority.py::_table_exists_many_from_schema_service_lazy").
+lazy_cutover("l2000_connection/table_existence_authority.py::connection_table_exists_lazy").
+lazy_cutover("l2000_connection/table_existence_authority.py::connection_table_exists_many_lazy").
+lazy_cutover("l2000_connection/table_existence_authority.py::sql_schema_table_exists_lazy").
+lazy_cutover("l2000_connection/table_existence_authority.py::sql_schema_table_exists_many_lazy").
+lazy_cutover("logged_table.py::LoggedTable._ensure_log_columns_exist").
+lazy_cutover("logged_table.py::LoggedTable._log_column_repair_needed_from_schema_facts").
+
+// ==== deleted-cold-<k>, deleted-sidecar-<k>: the first line holding the surface (see the header) ====
+.decl deleted_surface(clause: symbol, s: symbol)
+deleted_surface("deleted-cold-0", "BootstrapEngineRunMode.COLD").
+deleted_surface("deleted-cold-1", "BootstrapMode.COLD").
+deleted_surface("deleted-cold-2", "COLD_APPLICATION").
+deleted_surface("deleted-cold-3", "WRITE_TRANSITION_ARTIFACT").
+deleted_surface("deleted-cold-4", "WriteTransitionArtifactEffect").
+deleted_surface("deleted-cold-5", "_allow_post_commit_bootstrap_scope_invalidation").
+deleted_surface("deleted-cold-6", "_allow_versioned_base_table_creation").
+deleted_surface("deleted-cold-7", "_bootstrap_force_versioned_aux_cold_create_only").
+deleted_surface("deleted-cold-8", "_lifecycle_effects_with_transition_payload").
+deleted_surface("deleted-cold-9", "begin_bootstrap_transition_capture").
+deleted_surface("deleted-cold-10", "cold_application").
+deleted_surface("deleted-cold-11", "finish_bootstrap_transition_capture").
+deleted_surface("deleted-cold-12", "pending_after_create_schema_ddl_async_batch_ref_id").
+deleted_surface("deleted-cold-13", "pending_after_create_schema_ddl_async_statements").
+deleted_surface("deleted-cold-14", "pending_after_create_schema_ddl_batch_ref_id").
+deleted_surface("deleted-cold-15", "pending_after_create_schema_ddl_statements").
+deleted_surface("deleted-cold-16", "pending_polymorphic_guard_ddl_async_batch_scheduled").
+deleted_surface("deleted-cold-17", "pending_polymorphic_guard_ddl_async_statements").
+deleted_surface("deleted-cold-18", "pending_polymorphic_guard_ddl_batch_scheduled").
+deleted_surface("deleted-cold-19", "pending_polymorphic_guard_ddl_statements").
+deleted_surface("deleted-cold-20", "pending_staged_trigger_ddl_async_batch_scheduled").
+deleted_surface("deleted-cold-21", "pending_staged_trigger_ddl_async_statements").
+deleted_surface("deleted-cold-22", "pending_staged_trigger_ddl_batch_scheduled").
+deleted_surface("deleted-cold-23", "pending_staged_trigger_ddl_statements").
+deleted_surface("deleted-sidecar-0", "DeletedSchemaState").
+deleted_surface("deleted-sidecar-1", "SchemaSidecarProvider").
+deleted_surface("deleted-sidecar-2", "SchemaTransactionSidecar").
+deleted_surface("deleted-sidecar-3", "_deleted_deleted_schema_state").
+deleted_surface("deleted-sidecar-4", "_deleted_schema_state").
+deleted_surface("deleted-sidecar-5", "_schema_sidecar").
+deleted_surface("deleted-sidecar-6", "create_logged_tables").
+deleted_surface("deleted-sidecar-7", "create_logged_tables_async").
+deleted_surface("deleted-sidecar-8", "create_logged_tables_lazy").
+deleted_surface("deleted-sidecar-9", "defer_retroactive_versioned_fk_triggers").
+deleted_surface("deleted-sidecar-10", "deleted_deleted_schema_state_accessor").
+deleted_surface("deleted-sidecar-11", "deleted_schema_state").
+deleted_surface("deleted-sidecar-12", "deleted_schema_state_accessor").
+deleted_surface("deleted-sidecar-13", "ensure_commit_triggers_lazy").
+deleted_surface("deleted-sidecar-14", "ensure_large_column_metadata_schema_lazy").
+deleted_surface("deleted-sidecar-15", "ensure_logged_table_lazy").
+deleted_surface("deleted-sidecar-16", "ensure_queue_lazy").
+deleted_surface("deleted-sidecar-17", "ensure_table_event_trigger_lazy").
+deleted_surface("deleted-sidecar-18", "has_schema_sidecar").
+deleted_surface("deleted-sidecar-19", "pending_constraint_metadata_models").
+deleted_surface("deleted-sidecar-20", "pending_create_index_statements").
+deleted_surface("deleted-sidecar-21", "pending_create_table_statements").
+deleted_surface("deleted-sidecar-22", "pending_graph_config_metadata_models").
+deleted_surface("deleted-sidecar-23", "pending_large_column_metadata_models").
+deleted_surface("deleted-sidecar-24", "pending_log_immutability_statements").
+deleted_surface("deleted-sidecar-25", "pending_polymorphic_metadata_models").
+deleted_surface("deleted-sidecar-26", "pending_retroactive_versioned_fk_models").
+deleted_surface("deleted-sidecar-27", "pending_staged_trigger_models").
+deleted_surface("deleted-sidecar-28", "pending_versioned_aux_bootstrap_verifications").
+deleted_surface("deleted-sidecar-29", "schema_sidecar").
+deleted_surface("deleted-sidecar-30", "schema_transaction_sidecar").
+// the files the patterns read (paths: **/*.py, not scripts/**); under entryPoint "scan_files.ast-component",
+// "collector-extra" and "analyzed-functions" every pattern is `\b\B`, which matches nothing.
+.decl deleted_doc(d: number, p: symbol)
+deleted_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), suffix(".py", p), !prefix("scripts/", p),
+    !option_value("entryPoint", "scan_files.ast-component"), !option_value("entryPoint", "collector-extra"),
+    !option_value("entryPoint", "analyzed-functions").
+.decl deleted_at(clause: symbol, d: number, l: number)
+deleted_at(c, d, l) :- deleted_doc(d, _), tape_line(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
+.decl deleted_has(clause: symbol, d: number)
+deleted_has(c, d) :- deleted_at(c, d, _).
+violation("data-layer-lazy-architecture", "deleted-cold-0", "LA-018", p, l) :- deleted_has("deleted-cold-0", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-0", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-1", "LA-018", p, l) :- deleted_has("deleted-cold-1", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-1", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-2", "LA-018", p, l) :- deleted_has("deleted-cold-2", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-2", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-3", "LA-018", p, l) :- deleted_has("deleted-cold-3", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-3", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-4", "LA-018", p, l) :- deleted_has("deleted-cold-4", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-4", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-5", "LA-018", p, l) :- deleted_has("deleted-cold-5", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-5", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-6", "LA-018", p, l) :- deleted_has("deleted-cold-6", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-6", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-7", "LA-018", p, l) :- deleted_has("deleted-cold-7", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-7", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-8", "LA-018", p, l) :- deleted_has("deleted-cold-8", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-8", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-9", "LA-018", p, l) :- deleted_has("deleted-cold-9", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-9", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-10", "LA-018", p, l) :- deleted_has("deleted-cold-10", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-10", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-11", "LA-018", p, l) :- deleted_has("deleted-cold-11", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-11", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-12", "LA-018", p, l) :- deleted_has("deleted-cold-12", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-12", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-13", "LA-018", p, l) :- deleted_has("deleted-cold-13", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-13", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-14", "LA-018", p, l) :- deleted_has("deleted-cold-14", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-14", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-15", "LA-018", p, l) :- deleted_has("deleted-cold-15", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-15", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-16", "LA-018", p, l) :- deleted_has("deleted-cold-16", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-16", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-17", "LA-018", p, l) :- deleted_has("deleted-cold-17", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-17", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-18", "LA-018", p, l) :- deleted_has("deleted-cold-18", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-18", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-19", "LA-018", p, l) :- deleted_has("deleted-cold-19", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-19", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-20", "LA-018", p, l) :- deleted_has("deleted-cold-20", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-20", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-21", "LA-018", p, l) :- deleted_has("deleted-cold-21", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-21", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-22", "LA-018", p, l) :- deleted_has("deleted-cold-22", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-22", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-cold-23", "LA-018", p, l) :- deleted_has("deleted-cold-23", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-23", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-0", "LA-018", p, l) :- deleted_has("deleted-sidecar-0", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-0", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-1", "LA-018", p, l) :- deleted_has("deleted-sidecar-1", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-1", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-2", "LA-018", p, l) :- deleted_has("deleted-sidecar-2", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-2", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-3", "LA-018", p, l) :- deleted_has("deleted-sidecar-3", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-3", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-4", "LA-018", p, l) :- deleted_has("deleted-sidecar-4", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-4", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-5", "LA-018", p, l) :- deleted_has("deleted-sidecar-5", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-5", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-6", "LA-018", p, l) :- deleted_has("deleted-sidecar-6", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-6", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-7", "LA-018", p, l) :- deleted_has("deleted-sidecar-7", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-7", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-8", "LA-018", p, l) :- deleted_has("deleted-sidecar-8", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-8", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-9", "LA-018", p, l) :- deleted_has("deleted-sidecar-9", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-9", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-10", "LA-018", p, l) :- deleted_has("deleted-sidecar-10", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-10", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-11", "LA-018", p, l) :- deleted_has("deleted-sidecar-11", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-11", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-12", "LA-018", p, l) :- deleted_has("deleted-sidecar-12", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-12", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-13", "LA-018", p, l) :- deleted_has("deleted-sidecar-13", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-13", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-14", "LA-018", p, l) :- deleted_has("deleted-sidecar-14", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-14", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-15", "LA-018", p, l) :- deleted_has("deleted-sidecar-15", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-15", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-16", "LA-018", p, l) :- deleted_has("deleted-sidecar-16", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-16", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-17", "LA-018", p, l) :- deleted_has("deleted-sidecar-17", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-17", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-18", "LA-018", p, l) :- deleted_has("deleted-sidecar-18", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-18", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-19", "LA-018", p, l) :- deleted_has("deleted-sidecar-19", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-19", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-20", "LA-018", p, l) :- deleted_has("deleted-sidecar-20", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-20", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-21", "LA-018", p, l) :- deleted_has("deleted-sidecar-21", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-21", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-22", "LA-018", p, l) :- deleted_has("deleted-sidecar-22", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-22", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-23", "LA-018", p, l) :- deleted_has("deleted-sidecar-23", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-23", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-24", "LA-018", p, l) :- deleted_has("deleted-sidecar-24", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-24", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-25", "LA-018", p, l) :- deleted_has("deleted-sidecar-25", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-25", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-26", "LA-018", p, l) :- deleted_has("deleted-sidecar-26", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-26", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-27", "LA-018", p, l) :- deleted_has("deleted-sidecar-27", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-27", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-28", "LA-018", p, l) :- deleted_has("deleted-sidecar-28", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-28", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-29", "LA-018", p, l) :- deleted_has("deleted-sidecar-29", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-29", d, l2) }.
+violation("data-layer-lazy-architecture", "deleted-sidecar-30", "LA-018", p, l) :- deleted_has("deleted-sidecar-30", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-sidecar-30", d, l2) }.

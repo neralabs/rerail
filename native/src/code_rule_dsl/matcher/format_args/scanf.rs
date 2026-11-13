@@ -6,7 +6,7 @@
 
 use super::printf::{call_values, format_tree};
 use super::{Fields, Key, Prepared, Side, key_of, positional_past};
-use crate::code_rule_dsl::literal::{Grammar, SubDoc};
+use crate::code_rule_dsl::literal::SubDoc;
 use crate::code_rule_dsl::matcher::value::Reading;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{AstGrep, Doc};
@@ -24,7 +24,7 @@ pub(super) fn prepare<'t, D: Doc>(
     let Some(string) = env.get_match(string) else {
         return Prepared::NoMatch;
     };
-    let tree = match format_tree(string.clone(), Grammar::Scanf, reading) {
+    let tree = match format_tree(string.clone(), crate::code_rule_dsl::literal::scanf::GRAMMAR, reading) {
         Ok(tree) => tree,
         Err(prepared) => return prepared,
     };
@@ -76,5 +76,29 @@ pub(super) fn prepare<'t, D: Doc>(
         tree,
         unused,
         missing,
+    }
+}
+
+/// PHP's `sscanf` and `fscanf` calls (`FormatPreparer`).
+pub struct Scanf;
+
+impl super::FormatPreparer for Scanf {
+    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
+    }
+    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+        match &format.reading {
+            Some(reading) => prepare(&format.string, &format.args, reading, env),
+            None => Prepared::Unknown,
+        }
     }
 }

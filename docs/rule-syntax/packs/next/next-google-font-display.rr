@@ -1,0 +1,35 @@
+.policy "next-google-font-display" revision 2
+.description "Add a display value of swap or optional to Google Fonts stylesheet links; a missing, auto, block or fallback value can hide or shift text while the font loads."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's google-font-display. A <link> whose href is a Google Fonts stylesheet URL must ask for a
+// font-display of swap or optional in its query:
+//   <link href="https://fonts.googleapis.com/css2?family=Inter" />               missing
+//   <link href="https://fonts.googleapis.com/css2?family=Inter&display=block" /> "Block is not recommended"
+//   <link href="https://fonts.googleapis.com/css2?family=Inter&display=swap" />  fine
+// The query is the text between the URL's first and second `?` (`href.split('?', 2)[1]`).
+
+#include "tsx/next.rr"
+
+.violation display(at: node, why: symbol) code "@next/next/google-font-display"
+    "{why} See: https://nextjs.org/docs/messages/google-font-display"
+    suppress eslint "@next/next/google-font-display"
+    suppress oxlint "google-font-display"
+    suppress biome "lint/suspicious/useGoogleFontDisplay"
+display(o, "A font-display parameter is missing (adding `&display=optional` is recommended).") :-
+    font_query(o, q), !match("(?:.*&)?display(?:[=&].*)?", q).
+display(o, cat(v, " is not recommended.")) :- first_display(o, w), says(w, v).
+// first_display(o, w): w is the value of the first display parameter (URLSearchParams.get), "" for a bare
+// `display`. The value is not percent-decoded: display=%62lock is block to the plugin, and unreported here.
+.decl first_display(o: node, w: symbol)
+first_display(o, @replace_all(@slice(t, strlen(pre) + 8, strlen(t)), "^(?:=([^&]*))?[\\s\\S]*", "$1")) :-
+    font_query(o, q), t = cat(cat("&", q), "&"), contains("&display", t),
+    pre = @replace_all(t, "&display[=&][\\s\\S]*", "").
+.decl says(w: symbol, v: symbol)  // the plugin capitalises the value
+says("auto", "Auto"). says("block", "Block"). says("fallback", "Fallback").
+
+// font_query(o, q): opening tag o is a <link> to a Google Fonts stylesheet, with query q.
+.decl font_query(o: node, q: symbol)
+font_query(o, q) :- tag_of(o, "link"), attr_str(o, "href", h), prefix("https://fonts.googleapis.com/css", h),
+    (match("[^?]*\\?(?<q>[^?]*)(?:\\?.*)?", h) ; !contains("?", h), q = "").

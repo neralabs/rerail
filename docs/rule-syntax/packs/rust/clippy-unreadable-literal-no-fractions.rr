@@ -1,0 +1,18 @@
+.policy "clippy-unreadable-literal-no-fractions" revision 3
+.description "Add underscore separators to Rust number literals with runs of more than five digits, fractions excepted; long digit runs are hard to read."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
+
+// Clippy's unreadable_literal (pedantic) under `unreadable-literal-lint-fractions = false`: a long run of
+// digits with no `_` is reported in the integer part only.
+//   123456.0        reported
+//   1.234567        not reported: the fraction is not checked for length
+// The fraction's grouping still counts for the other grouping lints (see clippy-inconsistent-digit-grouping).
+.violation unreadable_literal(at: node) code "unreadable_literal"
+    "Add underscore separators to this number literal, e.g. 1_000_000 instead of 1000000."
+    suppress clippy "clippy::unreadable_literal", "clippy::pedantic", "warnings"
+unreadable_literal(n) :- grouping_lint(n, "unreadable_literal", "false").

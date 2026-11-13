@@ -1,0 +1,15 @@
+# corpus: fallback: errors at several delays
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+error "a" when quote & next(quote)
+error "b" when bs & next(x, 9)
+escape "c" when prev(nul, 3) & op

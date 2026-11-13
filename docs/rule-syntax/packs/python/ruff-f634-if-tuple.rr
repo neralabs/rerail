@@ -1,0 +1,18 @@
+.policy "ruff-f634-if-tuple" revision 3
+.description "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F634 (pyflakes): an `if` or `elif` whose test is a non-empty tuple, which is always true. Reported at the
+// test.
+//   if (a, b): ...           ← F634
+//   elif (c,): ...           ← F634
+//   if (): ...               not reported: the empty tuple is false
+#include "python/pyflakes.rr"
+//   nonempty_tuple(e)  e, through parentheses, is a tuple with at least one element
+
+.violation F634(at: node) code "F634"
+    "Replace this tuple condition with the intended boolean expression; a non-empty tuple is always true."
+    suppress ruff "F634"
+F634(t) :- py_if(_, t, _), nonempty_tuple(t).

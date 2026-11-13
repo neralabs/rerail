@@ -1,0 +1,16 @@
+.policy "ruff-n812-lowercase-imported-as-non-lowercase" revision 2
+.description "Keep the alias of an imported lowercase name lowercase; an uppercase alias makes readers mistake a function or module for a class or constant."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N812 (pep8-naming): a lowercase name imported under an alias with an uppercase letter. Exempt when the
+// name or the alias matches `pep8-naming.ignore-names`.
+//   from mod import lowercase as Lowercase    ← N812
+//   import os.path as osp                      not reported
+#include "python/naming.rr"
+
+.violation N812(at: node, x: symbol, a: symbol) code "N812"
+    "Use a lowercase alias instead of `{a}` for `{x}` and update its uses; leave it if `{x}` is really a class or constant despite its lowercase name."
+    suppress ruff "N812"
+N812(i, x, a) :- alias_import(i, x, a), cased_lower(x), !lower_name(a), !naming_ignored(x), !naming_ignored(a).

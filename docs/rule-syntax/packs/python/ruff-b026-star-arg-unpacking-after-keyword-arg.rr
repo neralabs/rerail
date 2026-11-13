@@ -1,0 +1,15 @@
+.policy "ruff-b026-star-arg-unpacking-after-keyword-arg" revision 2
+.description "Put star-argument unpacking before keyword arguments in calls; placing it after is legal but misleading about argument order."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B026 (flake8-bugbear): `*args` after a keyword argument in a call. Python still passes the starred values
+// positionally, before the keyword, which the order on the page hides. Each such `*args` is reported.
+//   foo(bam="bam", *["bar", "baz"])    ← B026 at `*[…]`
+//   foo(*["bar"], bam="bam", *["baz"]) ← B026 at the second one only
+#include "python/bugbear.rr"
+
+.violation B026(at: node) code "B026" "Star-arg unpacking after a keyword argument is strongly discouraged"
+    suppress ruff "B026"
+B026(s) :- bb_arg(c, s), kind(s, "list_splat"), bb_arg(c, k), bb_kwlike(k), k < s.

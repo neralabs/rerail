@@ -1,0 +1,18 @@
+   Compiling rerail-store v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native/crates/store)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 6.46s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_store-9f329dac6c2013e9)
+
+running 11 tests
+test content_store::facts_memo::tests::completions_outside_their_set_and_empty_paths_are_refused ... ok
+test content_store::facts_memo::tests::one_plans_result_is_the_memos_row_for_it ... ok
+test content_store::facts_memo::tests::content_pure_rows_serve_every_path_and_path_rows_only_theirs ... ok
+test content_store::facts_memo::tests::a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced ... ok
+test content_store::facts_memo::tests::results_for_many_files_answer_as_one_file_at_a_time ... ok
+test content_store::facts_memo::tests::completion_words_merge_and_serve_other_plan_sets ... ok
+test content_store::facts_memo::tests::a_run_digest_names_the_output_not_the_content ... ok
+test content_store::facts_memo::tests::memo_batch_work_is_bounded_by_demanded_keys ... ok
+test content_store::facts_memo::tests::opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor ... ok
+test content_store::facts_memo::tests::unknown_additive_tables_leave_the_store_readable ... ok
+test content_store::facts_memo::tests::memo_rows_cascade_from_collected_sources_and_pins_keep_them ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 152 filtered out; finished in 0.08s

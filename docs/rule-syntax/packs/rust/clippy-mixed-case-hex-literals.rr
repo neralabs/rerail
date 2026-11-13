@@ -1,0 +1,15 @@
+.policy "clippy-mixed-case-hex-literals" revision 3
+.description "Use one letter case for the digits of a Rust hexadecimal literal, all upper or all lower."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   num_lit(n, radix, int, suffix)   a number literal's radix and integer digits
+
+// Clippy's mixed_case_hex_literals (style): a hexadecimal literal whose digits mix a-f and A-F.
+//   0x1aB   0xA_b   0xaBu8   reported        0xabcd   0xABCD_u32   not reported
+.violation mixed_case_hex_literals(at: node) code "mixed_case_hex_literals"
+    "Use one letter case for this hex literal's digits, e.g. 0xABCD or 0xabcd, not 0xAbCd."
+    suppress clippy "clippy::mixed_case_hex_literals", "clippy::all", "clippy::style", "warnings"
+mixed_case_hex_literals(n) :- num_lit(n, 16, i, _), glob("*[a-f]*", i), glob("*[A-F]*", i).

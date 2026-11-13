@@ -1,0 +1,20 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "data-layer",
+  "name": "Data-layer architecture rules",
+  "category": "repository",
+  "covers": "Sixty nera-data-layer candidate checks at the pinned revision. Fifth-batch symbol-graph parity remains incomplete.",
+  "reason": "Repository-specific candidate ports; activation waits for parity and integration checks.",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "l2050_transaction/**/*.py",
+          "impl/common/l2070_server_plan/**/*.py"
+        ],
+        "label": "nera-data-layer transaction and server-plan layers"
+      }
+    ]
+  },
+  "rules": []
+}

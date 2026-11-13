@@ -1,0 +1,21 @@
+.policy "ruff-pt012-pytest-raises-with-multiple-statements" revision 2
+.description "Keep a pytest.raises block to a single simple statement; extra statements can raise the expected exception before the code under test runs, so the test passes for the wrong reason."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT012 (flake8-pytest-style): a `with pytest.raises(…)` block holding more than the one simple statement
+// that should raise; anything else may raise first and pass the test. A lone def or class is fine (it tests a
+// decorator), as is `for x in it: pass` (or `...`), and a nested `with` whose body is one simple statement.
+//   with pytest.raises(ValueError):      ← PT012
+//       x = make()
+//       x.check()
+//   with pytest.raises(ValueError):      not reported
+//       make().check()
+#include "python/pytest.rr"
+//   pytest_with(w, q), pytest_crowded(w)
+
+.violation PT012(at: node) code "PT012"
+    "Keep only the statement that should raise inside `pytest.raises`; move setup and follow-up statements before or after the `with` block, unless each one is needed to trigger the error."
+    suppress ruff "PT012"
+PT012(w) :- pytest_with(w, "pytest.raises"), pytest_crowded(w).

@@ -1,0 +1,251 @@
+{
+  "format": "rerail.native-relations-implementation/v1",
+  "dataLayerCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "workload": {
+    "files": 5,
+    "sourceBytes": 1026452
+  },
+  "build": {
+    "nativeSha256": "e10999a37affe2392d06575721259e99191dd55d813c5d232b8e0cd73f92e769",
+    "nativeOptLevel": 1,
+    "nativeCodegenUnits": 256,
+    "lto": "thin",
+    "allocator": "system-malloc-shim",
+    "profileFeature": true,
+    "artifact": "build-storage/profile.json"
+  },
+  "repetitions": 3,
+  "median": {
+    "baseline": {
+      "coldCpuMs": 12392.681999999999,
+      "editCpuMs": 3128.4159999999997,
+      "coldWallMs": 24993.376042,
+      "editWallMs": 7469.785541999998,
+      "unchangedWallMs": 11.326833999999508,
+      "peakRssBytes": 1074577408
+    },
+    "candidate": {
+      "coldCpuMs": 11687.411,
+      "editCpuMs": 3045.3689999999997,
+      "coldWallMs": 26424.309374999997,
+      "editWallMs": 7805.456582999999,
+      "unchangedWallMs": 9.970084000000497,
+      "peakRssBytes": 983646208
+    }
+  },
+  "reductionPercent": {
+    "coldCpuMs": 5.691027979254204,
+    "editCpuMs": 2.6546022012417847,
+    "coldWallMs": -5.725250284696992,
+    "editWallMs": -4.493717244124884,
+    "unchangedWallMs": 11.978192670600363,
+    "peakRssBytes": 8.462042782868561
+  },
+  "pairs": [
+    {
+      "iteration": 1,
+      "baseline": "final-baseline-1/profile.json",
+      "candidate": "final-candidate-1/profile.json",
+      "phases": {
+        "cold": {
+          "baselineMs": 21862.501958999997,
+          "experimentMs": 15827.337417,
+          "wallSpeedup": 1.3813126859554836,
+          "baselineCpuMs": 12110.998000000001,
+          "experimentCpuMs": 11450.24
+        },
+        "unchanged": {
+          "baselineMs": 9.396458999999595,
+          "experimentMs": 9.769625000000815,
+          "wallSpeedup": 0.9618034469080248,
+          "baselineCpuMs": 9.549,
+          "experimentCpuMs": 9.815
+        },
+        "edit": {
+          "baselineMs": 5454.49425,
+          "experimentMs": 4174.007042000001,
+          "wallSpeedup": 1.3067764848298975,
+          "baselineCpuMs": 3048.885,
+          "experimentCpuMs": 3014.737
+        }
+      },
+      "baselinePeakRssBytes": 1029406720,
+      "experimentPeakRssBytes": 943144960,
+      "changedSettings": {
+        "retainSqlStages": {
+          "baseline": true,
+          "experiment": false
+        }
+      },
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:913532683f356c79be3060a114c2e2cea4695231ba30904965d322467b49ceae",
+          "experiment": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        }
+      },
+      "nativeSha256": "e10999a37affe2392d06575721259e99191dd55d813c5d232b8e0cd73f92e769",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    {
+      "iteration": 2,
+      "baseline": "final-baseline-2/profile.json",
+      "candidate": "final-candidate-2/profile.json",
+      "phases": {
+        "cold": {
+          "baselineMs": 24993.376042,
+          "experimentMs": 41468.677625,
+          "wallSpeedup": 0.602704920277766,
+          "baselineCpuMs": 12392.681999999999,
+          "experimentCpuMs": 12398.75
+        },
+        "unchanged": {
+          "baselineMs": 11.326833999999508,
+          "experimentMs": 9.970084000000497,
+          "wallSpeedup": 1.136082103219887,
+          "baselineCpuMs": 10.603,
+          "experimentCpuMs": 10.0
+        },
+        "edit": {
+          "baselineMs": 7469.785541999998,
+          "experimentMs": 12359.929292,
+          "wallSpeedup": 0.6043550384090658,
+          "baselineCpuMs": 3128.4159999999997,
+          "experimentCpuMs": 3134.915
+        }
+      },
+      "baselinePeakRssBytes": 1074954240,
+      "experimentPeakRssBytes": 986824704,
+      "changedSettings": {
+        "retainSqlStages": {
+          "baseline": true,
+          "experiment": false
+        }
+      },
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:913532683f356c79be3060a114c2e2cea4695231ba30904965d322467b49ceae",
+          "experiment": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        }
+      },
+      "nativeSha256": "e10999a37affe2392d06575721259e99191dd55d813c5d232b8e0cd73f92e769",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    },
+    {
+      "iteration": 3,
+      "baseline": "final-baseline-3/profile.json",
+      "candidate": "final-candidate-3/profile.json",
+      "phases": {
+        "cold": {
+          "baselineMs": 45075.722584,
+          "experimentMs": 26424.309374999997,
+          "wallSpeedup": 1.7058429775518025,
+          "baselineCpuMs": 12911.237,
+          "experimentCpuMs": 11687.411
+        },
+        "unchanged": {
+          "baselineMs": 11.506291999998211,
+          "experimentMs": 10.572166999998444,
+          "wallSpeedup": 1.0883570038195485,
+          "baselineCpuMs": 11.34,
+          "experimentCpuMs": 10.751999999999999
+        },
+        "edit": {
+          "baselineMs": 7823.815500000004,
+          "experimentMs": 7805.456582999999,
+          "wallSpeedup": 1.0023520618947506,
+          "baselineCpuMs": 3192.9139999999998,
+          "experimentCpuMs": 3045.3689999999997
+        }
+      },
+      "baselinePeakRssBytes": 1074577408,
+      "experimentPeakRssBytes": 983646208,
+      "changedSettings": {
+        "retainSqlStages": {
+          "baseline": true,
+          "experiment": false
+        }
+      },
+      "changedPolicies": {
+        "data-layer-serverplan-quality": {
+          "baseline": "sha256:913532683f356c79be3060a114c2e2cea4695231ba30904965d322467b49ceae",
+          "experiment": "sha256:551e8acd121184ac9beb724089a7d3407cae1c710c4bcef93ff33ecfa9a6489e"
+        }
+      },
+      "nativeSha256": "e10999a37affe2392d06575721259e99191dd55d813c5d232b8e0cd73f92e769",
+      "warning": "Matched single runs on a shared host; use repeated CPU and wall measurements."
+    }
+  ],
+  "notes": [
+    "Paired runs use the same native addon, workload, allocator and profiler settings.",
+    "Baseline retains input captures and SQL stages and uses the previous eager-text policy.",
+    "Candidate releases captures and stages, defers source text, narrows window inputs and uses strict native forest traversal.",
+    "Wall times vary widely on a shared host; CPU and peak RSS are the primary comparisons.",
+    "Earlier failing and intermediate implementations are excluded."
+  ],
+  "validation": {
+    "upstreamOracle": {
+      "replayedCalls": 200,
+      "positiveCalls": 135,
+      "cleanCalls": 65,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "productionBaseline": {
+      "cases": 219,
+      "positive": 130,
+      "clean": 89,
+      "transitions": 57,
+      "differences": 0,
+      "failures": 0
+    },
+    "nativeTests": {
+      "files": 5,
+      "passed": 273,
+      "artifact": "tests-verified/profile.json"
+    },
+    "pythonTests": {
+      "passed": 50,
+      "skipped": 0,
+      "artifact": "python-storage/profile.json"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "artifact": "check-verified/profile.json"
+    },
+    "referenceCheck": {
+      "exitCode": 0,
+      "artifact": "check-reference-final/profile.json"
+    },
+    "profileClippy": {
+      "exitCode": 0,
+      "artifact": "clippy-storage/profile.json"
+    },
+    "productionClippy": {
+      "exitCode": 0,
+      "artifact": "clippy-production-fast-cached/profile.json",
+      "allTargets": true,
+      "buildOverrideOptLevel": 3,
+      "elapsedSeconds": 90.9228012089734
+    }
+  },
+  "externalProfile": {
+    "artifact": "profile-storage/profile.json",
+    "profiler": "macOS sample",
+    "captures": 3,
+    "excludedFromTimingComparison": true,
+    "leafSpanWallMs": {
+      "sql-materialize": 9127.75,
+      "sql-index": 4560.15,
+      "input-extract": 4400.155,
+      "sql-reach-prepare": 3565.627,
+      "sql-reach-walk": 725.865
+    },
+    "bottomUpFindings": [
+      "Matcher anchor selection, child traversal, sorting and budget checks in the first capture.",
+      "SQLite VM execution, B-tree movement, balancing and memory copying in the later captures."
+    ],
+    "caveat": "Worker wall spans can overlap; short samples are not whole-run CPU percentages."
+  }
+}

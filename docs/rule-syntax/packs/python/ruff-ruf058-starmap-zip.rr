@@ -1,0 +1,25 @@
+.policy "ruff-ruf058-starmap-zip" revision 1
+.description "Pass the iterables straight to map instead of calling starmap on zip; zipping only to unpack each tuple again is unnecessary."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF058: `itertools.starmap(f, zip(a, b))`, two arguments and no keywords, where zip has no keywords
+// and not only `*xs` arguments. `zip(a, b, strict=…)` counts too when the code targets Python 3.14+ (the
+// `pythonVersion` option; the default is 3.10), where map takes `strict=`.
+//   starmap(func, zip(a, b))           ← RUF058  `map(func, a, b)`
+//   starmap(func, zip(*a))             not reported: map needs the iterables one by one
+#include "python/ruff.rr"
+
+.violation RUF058(at: node, msg: symbol) code "RUF058" "{msg}"
+    suppress ruff "RUF058"
+RUF058(c, "Replace `starmap(f, zip(a, b))` with `map(f, a, b)` (`map(f, [])` for an empty `zip()`). Keep it if `map` is shadowed in this scope.") :-
+    starmap_zip(c, z), call_nkwargs(z, 0).
+RUF058(c, "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict=...)`; `map` accepts `strict=` on Python 3.14+. Keep it if `map` is shadowed in this scope.") :-
+    starmap_zip(c, z), call_nkwargs(z, 1), call_kwarg(z, "strict", _), targets(14).
+// starmap_zip(c, z): starmap c has two positional arguments (the first may be `*fs`), the second the zip call
+// z, whose positional arguments are not all `*xs` (none at all is fine).
+.decl starmap_zip(c: node, z: node)
+starmap_zip(c, z) :- call_q(c, "itertools.starmap"), call_nargs(c, 2), call_nkwargs(c, 0), call_item(c, a, j),
+    pos_item(a), count : { call_item(c, b, i), i < j, pos_item(b) } = 1, unparen(a, z), call_q(z, "builtins.zip"),
+    (call_nargs(z, 0) ; call_item(z, p, _), pos_item(p), !kind(p, "list_splat")).

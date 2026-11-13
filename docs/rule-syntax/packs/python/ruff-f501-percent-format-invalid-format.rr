@@ -1,0 +1,19 @@
+.policy "ruff-f501-percent-format-invalid-format" revision 2
+.description "Fix malformed %-format strings, such as incomplete specifiers or unclosed %(key) names; they raise an error at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F501 (pyflakes): `S % R` where the str literal S is not a valid printf-style format: a `%` at the end, an
+// unclosed `%(key`, a placeholder cut off. Python raises ValueError. A bad conversion character is F509 instead.
+// Only the first error counts, as CPython stops there.
+//   "%(name)" % {"name": 1}       ← F501: no conversion character
+//   "100%" % ()                   ← F501
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v)  b is `s % r`, s a plain str literal with value v
+//   pct_error(v, what)       v's first error: "invalid" or "unsupported"
+
+.violation F501(at: node) code "F501"
+    "Fix this malformed %-format string, such as an incomplete specifier or an unclosed %(key) name."
+    suppress ruff "F501"
+F501(b) :- percent_fmt(b, _, _, v), pct_error(v, "invalid").

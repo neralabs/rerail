@@ -7,7 +7,6 @@ use super::{
 };
 use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::sync::Arc;
 
 pub(super) struct LocalResultCache {
@@ -25,7 +24,7 @@ impl LocalResultCache {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -378,7 +377,7 @@ fn decode_local_result(codec: i64, raw_length: i64, frame: Vec<u8>) -> StoreResu
             "unsupported local result codec {codec}"
         )));
     }
-    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+    let bytes = super::decompress(&frame, 0)?;
     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
         return Err(StoreError::Corrupt(
             "local result length does not match metadata".to_owned(),

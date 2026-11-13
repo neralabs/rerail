@@ -1,0 +1,40 @@
+{
+  "gates": {
+    "all_ruff_edge_fixtures_measured": true,
+    "ruff_edges_match": true,
+    "rr_full_workload_matches": true,
+    "rr_findings_match": true,
+    "rr-profile_full_workload_matches": true,
+    "rr-profile_findings_match": true
+  },
+  "edges_vs_ruff": [
+    {
+      "fixture": "1f85485a7075",
+      "expected": 120,
+      "actual": 120,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "38094aa6ac7e",
+      "expected": 2,
+      "actual": 2,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "483985bd330e",
+      "expected": 24,
+      "actual": 24,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "c6d2d16e3195",
+      "expected": 32,
+      "actual": 32,
+      "missing": [],
+      "unexpected": []
+    }
+  ]
+}

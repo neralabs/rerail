@@ -1,0 +1,20 @@
+# corpus: class: 4 classes in one program
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+class c0 = 0xd0..0xe3 'P'
+mask m0 = c0
+class c1 = 0x10..0x10 'q'
+mask m1 = c1
+class c2 = '5'..'V' 0x96
+mask m2 = c2
+class c3 = 'G'..'T' 'Z'
+mask m3 = c3

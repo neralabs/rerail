@@ -1,0 +1,18 @@
+# corpus: tree: one bracket sep none keywords values many roots
+lexer corpus
+class open  = '['
+class close = ']'
+class ws    = ' ' '\n' '\t'
+class digit = '0'..'9'
+class w     = 'a'..'z' '0'..'9' '-' '.'
+token punct = start open | close
+keywords punct { "[" "]" } required
+token atom  = start starts(w) last lasts(w)
+keywords atom { "true" -> true  "null" -> null }
+skip ws
+error "a stray byte" when ~(open | close | ws | w)
+tree t {
+  node doc = value*
+  node list nested = '[' value* ']'
+  choice value supertype _value = list | atom | true | null
+}

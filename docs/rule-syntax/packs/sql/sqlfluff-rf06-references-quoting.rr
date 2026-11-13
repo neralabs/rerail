@@ -1,0 +1,24 @@
+.policy "sqlfluff-rf06-references-quoting" revision 2
+.description "Remove double quotes from SQL identifiers that mean the same unquoted; PostgreSQL folds unquoted names to lower case anyway."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's RF06 (references.quoting), defaults (prefer_quoted_identifiers false, case_sensitive true), as
+// PostgreSQL reads names: a double-quoted identifier that would mean the same without quotes, because it is
+// already in lower case, is a valid bare name and is no reserved word:
+//   SELECT "column_reference" FROM t             reported
+//   SELECT "Column" FROM t                       fine: unquoted it would fold to column
+//   SELECT "select" FROM t                       fine: a reserved word
+// Other dialects fold to upper case (ANSI) or quote with `…` (MySQL); this rule reads every file as
+// PostgreSQL, as the JSON does. Function bodies are not checked.
+
+#include "sql/syntax.rr"
+#include "../packs/sql/sqlfluff-rf06-references-quoting.facts.rr"   // pg_reserved
+
+.violation RF06(at: node) code "RF06" "Unnecessary quoted identifier; use the unquoted form."
+    suppress sqlfluff "RF06", "L059", "all", "references", "references.quoting"
+RF06(n) :- (kind(n, "identifier") ; kind(n, "literal")), text(n, q),
+    match("\"(?<x>[\\p{Ll}\\p{Lm}\\p{Lo}_][\\p{Ll}\\p{Lm}\\p{Lo}\\p{N}_$]*)\"", q),
+    !reserved(x), !inside(n, _, "function_body").
+.decl reserved(x: symbol)
+reserved(@lower(w)) :- pg_reserved(w).

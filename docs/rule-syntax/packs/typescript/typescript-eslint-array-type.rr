@@ -1,0 +1,108 @@
+.policy "typescript-eslint-array-type" revision 2
+.description "Use the array shorthand type syntax instead of the generic Array and ReadonlyArray types in TypeScript; one style reads consistently."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-a.rr"
+//   type_parent, type_child, ts_keyword
+
+// typescript-eslint's array-type: one way of writing array types. Options `default` and `readonly` (which
+// defaults to `default`, and governs `readonly T[]`, ReadonlyArray<T> and Readonly<T[]>), each:
+//   "array" (the default)  Array<string>  → string[]         ReadonlyArray<string>  → readonly string[]
+//   "generic"              string[]       → Array<string>    readonly string[]      → ReadonlyArray<string>
+//   "array-simple"         T[] for simple element types (names, keywords, arrays), Array<T> for the others:
+//                          Array<string> → string[];   (A | B)[] → Array<A | B>
+// A bare `Array` is `any[]`. The fix rewrites the type; a non-simple element is shown as T in the message.
+.violation array_type(at: node, id: symbol, msg: symbol) code "@typescript-eslint/array-type" "{msg}"
+    suppress eslint "@typescript-eslint/array-type"
+    suppress biome "lint/style/useConsistentArrayType"
+    fix safe rewrite "Rewrite the array type"
+// T[] where Array<T> is wanted:  Array type using 'string[]' is forbidden. Use 'Array<string>' instead.
+array_type(at, id, cat(cat(cat("Array type using '", p), cat(t, "[]' is forbidden")), cat(why, use))) :-
+    short_form(a, at, ro), mode(ro, m), names(ro, c, p), child(a, e, 0), type_child(e, y), shown(y, t),
+    (m = "generic", id = "errorStringGeneric", why = "" ;
+     m = "array-simple", !simple(y), id = "errorStringGenericSimple", why = " for non-simple types"),
+    use = cat(cat(". Use '", c), cat(cat("<", t), ">' instead.")).
+// Array<T> where T[] is wanted:  Array type using 'Array<string>' is forbidden. Use 'string[]' instead.
+array_type(g, id, cat(cat(cat("Array type using '", c), cat(cat("<", t), ">' is forbidden")), cat(why, use))) :-
+    long_form(g, c, ro, x), mode(ro, m), (m = "array", why = "" ; m = "array-simple", simple_arg(x),
+    why = " for simple types"), names(ro, _, p), shown_arg(x, t), message_id(m, c, id),
+    (c = "Readonly", sfx = "" ; c != "Readonly", sfx = "[]"), use = cat(cat(". Use '", p), cat(t, cat(sfx, "' instead."))).
+
+// short_form(a, at, ro): array_type a, `readonly` (ro "readonly", reported at the operator) or not ("").
+.decl short_form(a: node, at: node, ro: symbol)
+short_form(a, r, "readonly") :- kind(a, "array_type"), type_parent(a, r), kind(r, "readonly_type").
+short_form(a, a, "") :- kind(a, "array_type"), !readonly_parent(a).
+.decl readonly_parent(a: node)
+readonly_parent(a) :- kind(a, "array_type"), type_parent(a, r), kind(r, "readonly_type").
+// long_form(g, c, ro, x): a reference to Array, ReadonlyArray or Readonly<…[]> with c its name and x its one
+// type argument (0 when it has none: `Array` alone means any[]).
+.decl long_form(g: node, c: symbol, ro: symbol, x: node)
+// An `extends` or `implements` entry (`interface I extends Array<string> {}`) is no type reference: heritage.
+long_form(g, c, ro, x) :- kind(g, "generic_type"), !heritage(g), field(g, "name", n), kind(n, "type_identifier"), text(n, c),
+    (c = "Array", ro = "" ; c = "ReadonlyArray", ro = "readonly"), field(g, "type_arguments", l),
+    count : { child(l, o, _), !kind(o, "comment") } = 1, child(l, w, _), !kind(w, "comment"), type_child(w, x).
+long_form(g, "Readonly", "readonly", x) :- kind(g, "generic_type"), !heritage(g), field(g, "name", n), text(n, "Readonly"),
+    field(g, "type_arguments", l), child(l, w, 0), type_child(w, x), kind(x, "array_type").
+long_form(g, c, ro, 0) :- kind(g, "type_identifier"), text(g, c), (c = "Array", ro = "" ;
+    c = "ReadonlyArray", ro = "readonly"), !field(_, "name", g), !heritage(g).
+.decl mode(ro: symbol, m: symbol)  // the option for plain ("") and readonly arrays
+mode("", m) :- option("default", m).
+mode("", "array") :- !option("default", _).
+mode("readonly", m) :- option("readonly", m).
+mode("readonly", m) :- !option("readonly", _), mode("", m).
+.decl names(ro: symbol, c: symbol, p: symbol)  // the generic name and the short form's prefix
+names("", "Array", ""). names("readonly", "ReadonlyArray", "readonly ").
+.decl message_id(m: symbol, c: symbol, id: symbol)
+message_id("array", "Readonly", "errorStringArrayReadonly").
+message_id("array", c, "errorStringArray") :- (c = "Array" ; c = "ReadonlyArray").
+message_id("array-simple", "Readonly", "errorStringArraySimpleReadonly").
+message_id("array-simple", c, "errorStringArraySimple") :- (c = "Array" ; c = "ReadonlyArray").
+
+// simple(x): isSimpleType. Names (plain or qualified), keywords, `this`, arrays, and Array<simple>.
+.decl simple(x: node)
+simple(x) :- kind(x, k), (k = "type_identifier" ; k = "nested_type_identifier" ; k = "array_type" ; k = "this_type").
+simple(x) :- ts_keyword(x, t), simple_keyword(t).
+simple(x) :- kind(x, "generic_type"), field(x, "name", n), text(n, "Array"), field(x, "type_arguments", l),
+    count : { child(l, o, _), !kind(o, "comment") } = 1, child(l, w, _), !kind(w, "comment"), type_child(w, y),
+    simple(y).
+.decl simple_keyword(t: symbol)
+simple_keyword("any"). simple_keyword("boolean"). simple_keyword("never"). simple_keyword("number").
+simple_keyword("bigint"). simple_keyword("object"). simple_keyword("string"). simple_keyword("symbol").
+simple_keyword("unknown"). simple_keyword("void"). simple_keyword("null"). simple_keyword("undefined").
+.decl simple_arg(x: node)  // no argument (any) counts as simple
+simple_arg(0) :- long_form(_, _, _, 0).
+simple_arg(x) :- long_form(_, _, _, x), simple(x).
+.decl shown(x: node, t: symbol)  // a simple type's text, else T
+shown(x, t) :- simple(x), text(x, t).
+shown(x, "T") :- type_child(_, x), !simple(x).
+.decl shown_arg(x: node, t: symbol)
+shown_arg(0, "any") :- long_form(_, _, _, 0).
+shown_arg(x, t) :- long_form(_, _, _, x), x != 0, shown(x, t).
+
+// Fixes: T[] → Array<T> (parentheses go: `(A | B)[]` → Array<A | B>), and back, with parentheses where the
+// element would otherwise bind wrongly: a union, intersection, function, `keyof`, conditional or ReadonlyArray.
+rewrite(at, id, _) :- (id = "errorStringGeneric" ; id = "errorStringGenericSimple"), short_form(a, at, ro),
+    names(ro, c, _), child(a, e, 0), type_child(e, y) => replace(at, `$c<$y>`).
+rewrite(g, id, _) :- long_form(g, _, _, _), id != "errorStringGeneric", id != "errorStringGenericSimple",
+    long_text(g, t), outer(g, t, r) => replace(g, `$r`).
+.decl long_text(g: node, t: symbol)
+long_text(g, cat(p, cat(w, s))) :- long_form(g, c, ro, x), x != 0, names(ro, _, p), wrapped(x, w),
+    (c = "Readonly", s = "" ; c != "Readonly", s = "[]").
+long_text(g, cat(p, "any[]")) :- long_form(g, _, ro, 0), names(ro, _, p).
+// outer(g, t, r): a readonly array written as the element of another array needs parentheses:
+// ReadonlyArray<string>[] → (readonly string[])[], not readonly string[][].
+.decl outer(g: node, t: symbol, r: symbol)
+outer(g, t, cat("(", cat(t, ")"))) :- long_text(g, t), readonly_element(g).
+outer(g, t, t) :- long_text(g, t), !readonly_element(g).
+.decl readonly_element(g: node)
+readonly_element(g) :- long_form(g, _, "readonly", _), child(a, g, 0), kind(a, "array_type").
+.decl wrapped(x: node, w: symbol)
+wrapped(x, cat("(", cat(t, ")"))) :- long_form(_, _, _, x), text(x, t), needs_parens(x).
+wrapped(x, t) :- long_form(_, _, _, x), text(x, t), !needs_parens(x).
+.decl needs_parens(x: node)
+needs_parens(x) :- kind(x, k), (k = "union_type" ; k = "intersection_type" ; k = "function_type" ;
+    k = "constructor_type" ; k = "conditional_type" ; k = "infer_type" ; k = "index_type_query" ;
+    k = "readonly_type").
+needs_parens(x) :- kind(x, "type_identifier"), text(x, "ReadonlyArray").

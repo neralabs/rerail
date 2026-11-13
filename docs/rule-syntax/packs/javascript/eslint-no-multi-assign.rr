@@ -1,0 +1,22 @@
+.policy "eslint-no-multi-assign" revision 4
+.description "Avoid chained assignments; assign each variable in its own statement."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   assignment, deparen
+
+// ESLint's no-multi-assign: an assignment used as the value of a declaration, a class field or (unless
+// ignoreNonDeclaration is true) another assignment. The inner assignment is reported.
+//   const a = b = c;          → `b = c`
+//   a = b = c;                → `b = c` (not with ignoreNonDeclaration)
+//   class C { x = y = 1; }    → `y = 1`  (a field_definition in JavaScript, public_field_definition in TS)
+.violation no_multi_assign(at: node) code "no-multi-assign" "Unexpected chained assignment."
+    suppress eslint "no-multi-assign"
+    suppress oxlint "no-multi-assign"
+no_multi_assign(a) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, a), assignment(a).
+no_multi_assign(a) :- (kind(d, "public_field_definition") ; kind(d, "field_definition")), field(d, "value", v),
+    deparen(v, a), assignment(a).
+no_multi_assign(a) :- assignment(o), field(o, "right", v), deparen(v, a), assignment(a),
+    !option("ignoreNonDeclaration", "true").

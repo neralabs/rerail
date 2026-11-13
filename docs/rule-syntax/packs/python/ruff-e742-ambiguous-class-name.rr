@@ -1,0 +1,16 @@
+.policy "ruff-e742-ambiguous-class-name" revision 2
+.description "Avoid naming classes l, I or O; in many fonts they are hard to tell apart from 1 and 0."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff E742 (pycodestyle): a class named `l`, `I` or `O`, letters that many fonts draw like 1 and 0.
+//   class I: ...        ← E742 at `I`
+//   class Id: ...       not reported
+#include "python/pyflakes.rr"
+//   ambiguous_name(x)  x is "l", "I" or "O" (also E741, E743)
+
+.violation E742(at: node, x: symbol) code "E742"
+    "Rename class `{x}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
+    suppress ruff "E742"
+E742(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), ambiguous_name(x).

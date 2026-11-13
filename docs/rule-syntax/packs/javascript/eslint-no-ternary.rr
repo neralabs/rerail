@@ -1,0 +1,14 @@
+.policy "eslint-no-ternary" revision 4
+.description "Avoid the ternary conditional operator entirely; write an if statement instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-ternary: every conditional expression is reported, at its start. No options.
+//   const x = a ? b : c;       → reported
+//   if (a) x = b; else x = c;  fine
+.violation no_ternary(at: node) code "no-ternary" "Ternary operator used."
+    suppress eslint "no-ternary"
+    suppress oxlint "no-ternary"
+    suppress biome "lint/style/noTernary"
+no_ternary(t) :- kind(t, "ternary_expression").

@@ -1,0 +1,64 @@
+.policy "ruff-air311-airflow3-suggested-update" revision 3
+.description "Replace Airflow APIs that Airflow 3 deprecated but still supports with their newer equivalents, and stop passing the sla arguments; the old ones are expected to be removed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR311 (Airflow): an Airflow 2 API that Airflow 3 still accepts but deprecated. A read of a moved name is
+// reported at the name or the attribute's last part (unless it is an `except ImportError` fallback for the new
+// name); so is a deprecated keyword: `sla_miss_callback=` to a DAG, `datasets=` to DatasetOrTimeSchedule (a safe
+// rename to `assets=`), and `sla=` to an operator, at the keyword's name.
+//   from airflow import Dataset
+//   Dataset("s3://x")                   ← AIR311: import `Asset` from `airflow.sdk` instead
+//   from airflow.models.param import Param
+//   Param(1)                            ← AIR311: import `Param` from `airflow.sdk.definitions.param`
+//   BashOperator(task_id="t", sla=None) ← AIR311: `sla` has no replacement
+#include "python/misc-airflow.rr"
+
+.violation AIR311(at: node, x: symbol, m: symbol) code "AIR311"
+    "Import `{x}` from `{m}` instead; the old name still works in Airflow 3 but is expected to be removed later."
+    suppress ruff "AIR311"
+.violation AIR311_gone(at: node, q: symbol) code "AIR311"
+    "`{q}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
+    suppress ruff "AIR311"
+.violation AIR311_arg(at: node, k: symbol) code "AIR311"
+    "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+    suppress ruff "AIR311"
+.violation AIR311_datasets(at: node) code "AIR311"
+    "Rename the `datasets` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed later."
+    suppress ruff "AIR311"
+    fix safe to_assets "Rename to `assets`"
+to_assets(at) => replace(at, `assets`).
+
+AIR311(at, x, m) :- air_ref(e, at, q), air311_new(q, m, x), !air_guarded(e, m, x).
+air_needs_guard(e, m, x) :- air_ref(e, _, q), air311_new(q, m, x).
+AIR311_gone(at, q) :- air_ref(_, at, q), q = "airflow.datasets.DatasetAliasEvent".
+AIR311_arg(n, "sla_miss_callback") :- air_kw(c, "sla_miss_callback", n), air_call(c, q), air_dag(q).
+AIR311_datasets(n) :- air_kw(c, "datasets", n), call_q(c, "airflow.timetables.datasets.DatasetOrTimeSchedule").
+AIR311_arg(n, "sla") :- air_kw(c, "sla", n), air_call(c, q), air_kind(q, "operators", "Operator").
+air_kind_ask("operators", "Operator").
+// air311_new(old, module, name): old's Airflow 3 spelling is `name` in `module`.
+.decl air311_new(old: symbol, m: symbol, x: symbol)
+air311_new(q, "airflow.sdk", x) :- air311_sdk(q, x).
+air311_new(@dot(m, x), "airflow.sdk", x) :- air311_same(m, x).
+air311_new(cat("airflow.decorators.base.", x), "airflow.sdk.bases.decorator", x) :- (x = "DecoratedMappedOperator" ;
+    x = "DecoratedOperator" ; x = "TaskDecorator" ; x = "get_unique_task_id" ; x = "task_decorator_factory").
+air311_new("airflow.io.store.attach", "airflow.sdk.io", "attach").
+air311_new("airflow.sensors.base.poke_mode_only", "airflow.sdk.bases.sensor", "poke_mode_only").
+air311_new("airflow.datasets.expand_alias_to_datasets", "airflow.models.asset", "expand_alias_to_assets").
+air311_new("airflow.timetables.datasets.DatasetOrTimeSchedule", "airflow.timetables.assets", "AssetOrTimeSchedule").
+air311_new(q, "airflow.sdk.definitions.param", x) :- air_ref(_, _, q), prefix("airflow.models.", q), split_dot(q, m, x), m != "",
+    (x = "Param" ; x = "ParamsDict" ; x = "DagParam").
+.decl air311_sdk(old: symbol, x: symbol)  // renamed, into airflow.sdk
+air311_sdk("airflow.Dataset", "Asset"). air311_sdk("airflow.datasets.Dataset", "Asset").
+air311_sdk("airflow.datasets.DatasetAlias", "AssetAlias"). air311_sdk("airflow.datasets.DatasetAll", "AssetAll").
+air311_sdk("airflow.datasets.DatasetAny", "AssetAny").
+air311_sdk("airflow.models.dag.DAG", "DAG"). air311_sdk("airflow.models.DAG", "DAG"). air311_sdk("airflow.DAG", "DAG").
+.decl air311_same(m: symbol, x: symbol)  // `m.x` is now airflow.sdk.x
+air311_same("airflow.datasets.metadata", "Metadata"). air311_same("airflow.io.path", "ObjectStoragePath").
+air311_same("airflow.models", "Connection"). air311_same("airflow.models", "Variable").
+air311_same("airflow.models.baseoperator", x) :- (x = "chain" ; x = "chain_linear" ; x = "cross_downstream").
+air311_same("airflow.models.baseoperatorlink", "BaseOperatorLink").
+air311_same("airflow.sensors.base", "BaseSensorOperator"). air311_same("airflow.sensors.base", "PokeReturnValue").
+air311_same("airflow.utils.dag_parsing_context", "get_parsing_context").
+air311_same("airflow.decorators", x) :- (x = "dag" ; x = "task" ; x = "task_group" ; x = "setup" ; x = "teardown").

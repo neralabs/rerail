@@ -1,0 +1,29 @@
+.policy "ruff-pt011-pytest-raises-too-broad" revision 2
+.description "Constrain pytest.raises for broad exceptions such as ValueError or OSError with a message match or a more specific exception; otherwise unrelated errors also pass."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT011 (flake8-pytest-style): `pytest.raises(E)` for a broad E with no `match=` (or an empty one) and no
+// `check=` (other than None). Broad is option `raises-require-match-for` (default BaseException, Exception,
+// ValueError, OSError, IOError, EnvironmentError, socket.error) plus `raises-extend-require-match-for`, globs
+// over the qualified name. The callable form, `pytest.raises(E, func)` or `func=`, is left alone.
+//   with pytest.raises(ValueError): …                ← PT011, at ValueError
+//   with pytest.raises(ValueError, match="bad"): …   not reported
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
+//   pytest_broad(c, e, s)
+
+.violation PT011(at: node, id: symbol) code "PT011" "{id}"
+    suppress ruff "PT011"
+PT011(e, cat("Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises(", x,
+        ")`, or expect a more specific exception, so unrelated `", x, "` errors do not pass.")) :-
+    broad_raise(e, s), s != "socket.error", text(e, x).
+PT011(e, cat("`", x, "` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass.")) :-
+    broad_raise(e, "socket.error"), text(e, x).
+
+.decl broad_raise(e: node, s: symbol)
+broad_raise(e, s) :- exc_call(c, "pytest.raises"), !kwarg(c, "func", _), !exc_arg(c, 1, _),
+    exc_argument(c, "expected_exception", 0, e), pytest_broad("raises", e, s),
+    (!kwarg(c, "match", _) ; kwarg(c, "match", m), pytest_empty_or_null(m)),
+    (!kwarg(c, "check", _) ; kwarg(c, "check", k), kind(k, "none")).

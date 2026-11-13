@@ -1,0 +1,14 @@
+.policy "collision-regression" revision 1
+.language python
+.scope include "**/*"
+#include "core.rr"
+.decl a_b(n:node)
+.decl a(n:node)
+.decl c(q:symbol)
+.decl b_c(q:symbol)
+a_b(n) :- kind(n,"attribute"), text(n,"r.get").
+a(n) :- kind(n,"attribute"), text(n,"r.post").
+c("requests.get"). b_c("requests.post").
+.violation ASYNC210(at:node) code "ASYNC210" "collision regression"
+ASYNC210(n) :- python_qualified(n,_,a_b,c).
+ASYNC210(n) :- python_qualified(n,_,a,b_c).

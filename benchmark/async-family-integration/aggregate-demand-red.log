@@ -1,0 +1,83 @@
+   Compiling rerail-engine v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native)
+warning: unused import: `table_source`
+  --> native/src/code_rule_dsl/logic/native.rs:36:195
+   |
+36 | ...alize, open, pending, release, reprobe, run, step_counts, table_source, unindex};
+   |                                                              ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> native/src/code_rule_dsl/logic/plan/corpus.rs:496:13
+    |
+496 |         let mut bump = |c: &'static str, worst: &mut &'static str| {
+    |             ----^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `render` is never used
+   --> native/src/build_languages.rs:559:4
+    |
+559 | fn render(entries: &[Entry], test_planned: &[String]) -> String {
+    |    ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `decisions_since` is never used
+   --> native/src/code_rule_dsl/logic/profile.rs:440:33
+    |
+440 | pub(in crate::code_rule_dsl) fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
+    |                                 ^^^^^^^^^^^^^^^
+
+warning: function `add_decisions` is never used
+   --> native/src/code_rule_dsl/logic/profile.rs:445:33
+    |
+445 | pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
+    |                                 ^^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+   --> native/src/code_rule_dsl/logic/plan/corpus/scoping.rs:225:5
+    |
+225 |     drop(place);
+    |     ^^^^^-----^
+    |          |
+    |          argument has type `{closure@native/src/code_rule_dsl/logic/plan/corpus/scoping.rs:133:17: 133:68}`
+    |
+    = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+    |
+225 -     drop(place);
+225 +     let _ = place;
+    |
+
+warning: `rerail-engine` (lib test) generated 6 warnings (run `cargo fix --lib -p rerail-engine --tests` to apply 2 suggestions)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 11m 26s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6)
+
+running 3 tests
+
+thread 'code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns' (106039266) panicked at native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs:35:9:
+rr_agg1($p, $s, $v, $w, $x) :- ancestor($w, $s, $p), binding($w, $p, $x, $v)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle' (106039267) panicked at native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs:46:5:
+assertion failed: !demands.is_empty()
+
+thread 'code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name' (106039268) panicked at native/src/code_rule_dsl/logic/rr/aggregate_demand/tests.rs:21:5:
+zero count still enumerates: result($w, $s, $x, 0) :- wanted($w, $s, $x), $rr_agg1 = count { rr_agg2(_, $s, _, $w, $x) }, 0 = $rr_agg1
+test code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns ... FAILED
+test code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle ... FAILED
+test code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name ... FAILED
+
+failures:
+
+failures:
+    code_rule_dsl::logic::rr::aggregate_demand::tests::general_count_and_sum_restrict_groups_without_dropping_witness_columns
+    code_rule_dsl::logic::rr::aggregate_demand::tests::recursive_consumer_does_not_create_an_aggregate_dependency_cycle
+    code_rule_dsl::logic::rr::aggregate_demand::tests::zero_count_is_an_antijoin_with_demanded_world_scope_and_name
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p rerail-engine --lib`

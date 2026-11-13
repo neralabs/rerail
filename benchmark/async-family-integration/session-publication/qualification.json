@@ -1,0 +1,43 @@
+{
+  "integration": "5ea1d2f75",
+  "merge": "d65a24d47",
+  "compiler": {
+    "checks": 13,
+    "failures": 0
+  },
+  "profile": "profiling",
+  "features": [
+    "p-anchor-corpus"
+  ],
+  "incremental": false,
+  "binarySha256": "7531055138d25c2588f7f5828a6d599e984e4b4193def5c2563d229bed546a3a",
+  "sessionComposed": {
+    "checks": 13,
+    "failures": 0
+  },
+  "store": {
+    "checks": 8,
+    "failures": 0,
+    "publicationStatementsBefore": 782,
+    "publicationStatementsAfter": 18,
+    "publicationVm": 74776
+  },
+  "positiveFindings": 120,
+  "nativeColdBudget": {
+    "executions": 396,
+    "ceiling": 100,
+    "status": "failed, retained in native measurements"
+  },
+  "toolchain": "rustc 1.97.1 aarch64-apple-darwin",
+  "sourceFiles": {
+    "native/Cargo.toml": "205702f7f55d7b4e2f197cc006181872ead646d1ee127c27d17bb26bb30d0092",
+    "native/src/code_rule_dsl/logic/plan.rs": "456d69f18d36adc051fb3947fd74d4a5d993c3f72dd82cfe798c8dd1c1f77396",
+    "native/src/code_rule_dsl/logic/plan/compose.rs": "7ae79e912b21b8e93c09c19af4fcc435483492f771478823f5bc630212ee25db",
+    "native/src/code_rule_dsl/logic/plan/compose/retained.rs": "0103872b9f7d4b57f1712e9174f27acc592528f20a5d285dc52c5974b7430070",
+    "native/src/code_rule_dsl/logic/plan/compose/stages.rs": "397e60f37366a1c87c38e2234722fbf975af852675eab417855c9b7c68ae96ec",
+    "native/src/code_rule_dsl/logic/plan/compose/tests.rs": "828e7722d012c07967bc7b2c80168623f6658dbc6a3eb83ba89fd9864ef9e53b",
+    "native/src/content_store/frames.rs": "ca4ab013f5f65d1c94875ba46a6f280a20c92ec811c6a2ab642656d77552801c"
+  },
+  "nativeSessionBinarySha256": "5f2a85c70f713bb1827a53fcc3ada387ed0fd19c6a2ba4d5b60d7e55becd2250",
+  "nativeSessionNote": "Native session control ran before the final changes confined to composed planning; final whole-job controls use binarySha256."
+}

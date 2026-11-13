@@ -1,0 +1,20 @@
+.policy "react-jsx-no-duplicate-props" revision 2
+.description "Give each JSX prop once per element; a repeated prop silently overrides the earlier one."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-duplicate-props: a prop given twice on one element; every repeat after the first is reported.
+// Names compare exactly (the ignoreCase option is off); namespaced props (xlink:href) and spreads are skipped.
+//   <div a="1" b a="2" />       the second `a` is reported
+//   <div a="1" {...p} a="2" />  still reported: the spread does not separate them
+#include "tsx/react.rr"
+
+.violation duplicate_prop(at: node, x: symbol)
+    code "react/jsx-no-duplicate-props"
+    "Remove one of the two `{x}` props on this element; only the last one takes effect."
+    suppress eslint "react/jsx-no-duplicate-props"
+    suppress oxlint "jsx-no-duplicate-props"
+    suppress biome "lint/suspicious/noDuplicateJsxProps"
+duplicate_prop(a, x) :- react_open(_, o), jsx_prop(o, x, a), child(a, n, 0), kind(n, "property_identifier"),
+    jsx_prop(o, x, b), precedes(b, a).

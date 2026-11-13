@@ -1,0 +1,56 @@
+// python/upgrade-imports: what Ruff's pyupgrade rules about old names share: where an exception class is used
+// (UP024, UP041), names through parentheses, and imports by the module they name as written (UP026, UP035).
+//
+// Interface
+//   up_qual(e, q)               e denotes q as Ruff resolves it where it runs (python/upgrade's sym_at), also
+//                            through parentheses on an attribute's object: `(mmap).error` is "mmap.error"
+//   exc_site(e, how)         e is an exception expression Ruff's alias rules look at, how:
+//                              "handler"  the type of an `except` clause, not a tuple (parentheses off)
+//                              "raise"    the exception of a `raise` (not its `from` cause)
+//                              "call"     the function of any call: `IOError(1)`, wherever it is
+//   handler_tuple(t, e)      t is the tuple type of an `except` clause, and e one of its elements (parentheses off)
+//   from_stmt(i, m)          i is a non-relative `from m import …`, m as written without spaces
+//   from_name(i, a, x, l)    alias a of from-import i imports x as local name l (l = x without `as`)
+//   plain_import(i, a, m, l) alias a of `import …` statement i imports module m, bound as l (`import a.b` binds
+//                            l = "a.b" here, the name the rules rewrite; `import a.b as c` binds "c")
+//
+// Python background
+//   - Ruff's AST has no parentheses: `except (IOError):` is the name IOError, `except (IOError,):` a tuple. The
+//     finding sits on the name, or on the whole tuple (its `(`).
+//   - `raise E from C`: only E is the raised exception; a call `raise E(1)` is reached through its function.
+//
+//   try: ...
+//   except (IOError, KeyError):      handler_tuple(<the tuple>, <IOError>), handler_tuple(…, <KeyError>)
+//   except socket.error as e:        exc_site(<socket.error>, "handler")
+//   raise IOError(1)                 exc_site(<IOError>, "call")
+#include "python/upgrade.rr"
+
+.decl up_qual(e: node, q: symbol)
+up_qual(e, q) :- sym_at(e, q).
+up_qual(e, @dot(q, a)) :- attr_of(e, o, a), kind(o, "parenthesized_expression"), unparen(o, m), up_qual(m, q).
+
+// ---- exception sites -----------------------------------------------------------------------------------------
+// up_handler_type(x, t): the type expression of except clause x, parentheses and `as` off.
+.decl up_handler_type(x: node, t: node)
+up_handler_type(x, t) :- kind(x, "except_clause"), field(x, "value", v), !kind(v, "as_pattern"), unparen(v, t).
+up_handler_type(x, t) :- kind(x, "except_clause"), field(x, "value", v), kind(v, "as_pattern"), child(v, w, 0),
+    unparen(w, t).
+.decl exc_site(e: node, how: symbol)
+exc_site(t, "handler") :- up_handler_type(_, t), !kind(t, "tuple").
+exc_site(e, "raise") :- kind(r, "raise_statement"), child(r, v, _), !field(r, "cause", v), unparen(v, e).
+exc_site(f, "call") :- kind(c, "call"), field(c, "function", f).
+.decl handler_tuple(t: node, e: node)
+handler_tuple(t, e) :- up_handler_type(_, t), kind(t, "tuple"), child(t, c, _), unparen(c, e).
+
+// ---- imports as written --------------------------------------------------------------------------------------
+.decl from_stmt(i: node, m: symbol)
+from_stmt(i, @replace_all(s, "\\s+", "")) :- kind(i, "import_from_statement"), field(i, "module_name", n),
+    kind(n, "dotted_name"), text(n, s).
+.decl from_name(i: node, a: node, x: symbol, l: symbol)
+from_name(i, a, x, x) :- from_stmt(i, _), field(i, "name", a), kind(a, "dotted_name"), text(a, x).
+from_name(i, a, x, l) :- from_stmt(i, _), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n),
+    text(n, x), field(a, "alias", al), text(al, l).
+.decl plain_import(i: node, a: node, m: symbol, l: symbol)
+plain_import(i, a, m, m) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "dotted_name"), text(a, m).
+plain_import(i, a, m, l) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"),
+    field(a, "name", n), text(n, m), field(a, "alias", al), text(al, l).

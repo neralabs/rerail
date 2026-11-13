@@ -22,7 +22,7 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use crate::code_rule_dsl::package_manifest::{Manifest, Manifests};
+use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -42,7 +42,7 @@ const INDEX_BATCH_BYTES: usize = 1024 * 1024;
 /// never read whole.
 const BINARY_PREFIX_BYTES: u64 = 8000;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs inside `plan` on this thread once the scoped files are listed, before the restore.
     static PLAN_GATE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -50,8 +50,8 @@ thread_local! {
 }
 
 /// Run `gate` inside the next index plan on this thread, before it restores any file.
-#[cfg(test)]
-pub(super) fn gate_next_plan(gate: impl FnOnce() + 'static) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn gate_next_plan(gate: impl FnOnce() + 'static) {
     PLAN_GATE.with(|slot| *slot.borrow_mut() = Some(Box::new(gate)));
 }
 
@@ -85,14 +85,14 @@ pub struct RepositoryIndexOptions {
 pub struct WorkspaceIndexTask {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) closed: Arc<AtomicBool>,
-    pub(super) options: RepositoryIndexOptions,
+    pub options: RepositoryIndexOptions,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl WorkspaceIndexTask {
     /// One index call over `state`, with sources above `max_file_bytes` refused and `.git` ignored
     /// as the host ignores it.
-    pub(super) fn for_test(
+    pub fn for_test(
         state: Arc<Mutex<WorkspaceState>>,
         closed: Arc<AtomicBool>,
         max_file_bytes: u32,
@@ -137,7 +137,7 @@ pub(super) struct RepositoryIndex {
     /// its own rules, so this index neither lists nor reads them.
     nested_checkouts: Vec<String>,
     /// The `package.json` files read so far, by directory.
-    manifests: Manifests,
+    manifests: Box<dyn RepositoryContext>,
 }
 
 struct PendingFile {
@@ -155,7 +155,7 @@ struct PendingFile {
 pub(super) fn reusable_directories(
     repository: &git_workspace::GitWorkspace,
     repository_prefix: &str,
-    manifests: &mut Manifests,
+    manifests: &mut dyn RepositoryContext,
 ) -> Vec<DirectoryReuse> {
     let root = repository_prefix.trim_end_matches('/');
     repository
@@ -203,7 +203,7 @@ pub(super) fn reusable_directories(
 
 /// The module a host would send for a repository file: derived from the package markers in the
 /// same worktree the source is read from, so repository and host ingestion agree.
-pub(super) fn repository_module(
+pub fn repository_module(
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
     language: &str,
@@ -214,12 +214,12 @@ pub(super) fn repository_module(
 /// The package a host would send for a repository file: the nearest `package.json` in the same
 /// worktree of a file whose family reads one (`package_manifests`), below the workspace root
 /// `manifests` reads.
-pub(super) fn repository_package(
-    manifests: &mut Manifests,
+pub fn repository_package(
+    manifests: &mut dyn RepositoryContext,
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
     language: &str,
-) -> Option<Arc<Manifest>> {
+) -> Option<crate::code_rule_dsl::language::FileManifest> {
     package_manifests(language)
         .then(|| manifests.of_file(&repository.worktree_root.join(repository_path)))
         .flatten()
@@ -302,7 +302,7 @@ impl WorkspaceIndexTask {
     /// else its longest extension the host lists (`.blade.php` before `.php`) with a nonempty
     /// name before it, as the host's `sourceLanguageOfPath` reads it: a file named only `.php`
     /// has no extension, and `.blade.php` is a `.php` file named `.blade`.
-    pub(super) fn source_language(&self, path: &str) -> Option<String> {
+    pub fn source_language(&self, path: &str) -> Option<String> {
         let name = std::path::Path::new(path)
             .file_name()?
             .to_str()?
@@ -477,13 +477,13 @@ impl WorkspaceIndexTask {
             |path| storage.withholds(path),
             &mut failures,
         )?;
-        let mut manifests = Manifests::new(repository.worktree_root.join(prefix))
-            .reading_server_graphs(
-                code_rules
-                    .iter()
-                    .any(|code_rule| code_rule.reads_server_graph()),
-            );
-        let directories = reusable_directories(repository, prefix, &mut manifests);
+        let mut manifests = repository_context(
+            repository.worktree_root.join(prefix),
+            code_rules
+                .iter()
+                .any(|code_rule| code_rule.reads_server_graph()),
+        );
+        let directories = reusable_directories(repository, prefix, &mut *manifests);
         let catalog = candidate_catalog(&code_rules)?;
         let reusable_prefixes = if REUSE_DIRECTORY_RESULTS {
             storage
@@ -493,7 +493,7 @@ impl WorkspaceIndexTask {
         } else {
             HashSet::new()
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if let Some(gate) = PLAN_GATE.with(|slot| slot.borrow_mut().take()) {
             gate();
         }
@@ -504,7 +504,7 @@ impl WorkspaceIndexTask {
                 &accepted,
                 &reusable_prefixes,
                 catalog,
-                &mut manifests,
+                &mut *manifests,
             )?
         } else {
             HashSet::new()
@@ -536,7 +536,7 @@ impl WorkspaceIndexTask {
         accepted: &[PendingFile],
         reusable_prefixes: &HashSet<String>,
         catalog: CandidateCatalogIdentity,
-        manifests: &mut Manifests,
+        manifests: &mut dyn RepositoryContext,
     ) -> Result<HashSet<String>> {
         let aliases = accepted
             .iter()
@@ -676,7 +676,7 @@ impl WorkspaceIndexTask {
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
             let module = repository_module(repository, &file.repository_path, &file.language);
             let package = repository_package(
-                &mut index.manifests,
+                &mut *index.manifests,
                 repository,
                 &file.repository_path,
                 &file.language,
@@ -804,7 +804,7 @@ impl Task for WorkspaceIndexTask {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The index routes a name as the host's `sourceLanguageOfPath` does: a listed whole name,

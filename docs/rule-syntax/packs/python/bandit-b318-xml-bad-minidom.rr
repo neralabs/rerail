@@ -1,0 +1,15 @@
+.policy "bandit-b318-xml-bad-minidom" revision 2
+.description "Use defusedxml instead of xml.dom.minidom to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B318 (its B001 blacklist): a call to xml.dom.minidom's parse or parseString.
+//   from xml.dom.minidom import parseString; parseString(s)    B318
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B318(at: node) code "B318"
+    "Using xml.dom.minidom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."
+    suppress nosec "B318"
+B318(n) :- blacklisted(n, "B318").

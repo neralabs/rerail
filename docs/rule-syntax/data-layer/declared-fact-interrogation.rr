@@ -1,0 +1,64 @@
+.policy "data-layer:declared-fact-interrogation" revision 1
+.description "Facts are asked of the object, not inferred from its shape: no override identity tests, no getattr/hasattr probes of contract attributes."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
+.scope tests false
+// Python linter: scripts/lint_declared_fact_interrogation.py.
+//   OVERRIDE_IDENTITY_PROBE  `type(step).publishes_rows is not Base.publishes_rows`: whether a subclass overrode a
+//                            method, read as what it answers. A comparison whose operators are all `is` / `is not`,
+//                            where the first operand and some later one are attributes of the same name and one of
+//                            them is `type(x).name` with x not `self`.
+//   CONTRACT_ATTR_PROBE      `getattr(binding, "ephemeral", True)` / `hasattr(…)`: the second positional argument is
+//                            a string literal naming one of sixteen contract attributes.
+// The suite plugin reads only files that contain "type(", "getattr(" or "hasattr(" (dfi_file).
+
+.decl dfi_contract(x: symbol)
+dfi_contract("auxiliary_query"). dfi_contract("column_type_hints"). dfi_contract("declared_column_type_hints").
+dfi_contract("declared_columns"). dfi_contract("ephemeral"). dfi_contract("relation_role").
+dfi_contract("source_tables"). dfi_contract("defines"). dfi_contract("reads_outside_itself").
+dfi_contract("creates_indexes"). dfi_contract("effects_known"). dfi_contract("guarded_creates").
+dfi_contract("guarded_indexes"). dfi_contract("ddl_effect_scope"). dfi_contract("modifies_rows").
+dfi_contract("relation_scope").
+
+#include "python/ast.rr"    // unparen, str_const; attr_of from python/names
+
+// dfi_file(d): the source triggers.
+.decl dfi_file(d: number)
+dfi_file(d) :- source(d, sp), text(sp, s), match("(?s).*(type|getattr|hasattr)\\(.*", s).
+// dfi_pos(c, i, a): a is call c's i-th positional argument (`*xs` included, as in ast's Call.args).
+.decl dfi_pos(c: node, i: number, a: node)
+dfi_pos(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+    !dfi_not_pos(a), i = count : { child(al, b, k), k < j, !dfi_not_pos(b) }.
+.decl dfi_not_pos(a: node)
+dfi_not_pos(a) :- kind(a, "comment"). dfi_not_pos(a) :- kind(a, "keyword_argument").
+dfi_not_pos(a) :- kind(a, "dictionary_splat").
+// dfi_builtin_call(c, f): c calls the bare name f.
+.decl dfi_builtin_call(c: node, f: symbol)
+dfi_builtin_call(c, f) :- kind(c, "call"), field(c, "function", n), kind(n, "identifier"), text(n, f).
+
+// dfi_type_attr(e, x): e is `type(s).x`, s not the name self.
+.decl dfi_type_attr(e: node, x: symbol)
+dfi_type_attr(e, x) :- unparen(e, a), attr_of(a, o, x), unparen(o, c), dfi_builtin_call(c, "type"),
+    !dfi_self_subject(c).
+.decl dfi_self_subject(c: node)
+dfi_self_subject(c) :- dfi_pos(c, 0, s), kind(s, "identifier"), text(s, "self").
+// dfi_attr(e, x): e is any attribute named x.
+.decl dfi_attr(e: node, x: symbol)
+dfi_attr(e, x) :- unparen(e, a), attr_of(a, _, x).
+
+// dfi_identity(c, l, r): c compares only by `is` / `is not`; l is its first operand, r a later one. The linter
+// pairs the first operand with each later one (not neighbours): in `o is type(x).f is B.f` it never pairs the last two.
+.decl dfi_identity(c: node, l: node, r: node)
+dfi_identity(c, l, r) :- kind(c, "comparison_operator"), child(c, l, 0), child(c, r, i), i > 0, !kind(r, "comment"),
+    count : { op_at(c, _, o), o != "is", o != "is not" } = 0.
+
+.violation OVERRIDE_IDENTITY_PROBE(at: node, name: symbol)
+    "whether '{name}' was overridden is read as what '{name}' answers; call it and use the answer"
+OVERRIDE_IDENTITY_PROBE(c, x) :- dfi_identity(c, l, r), dfi_type_attr(l, x), dfi_attr(r, x), docof(c, d), dfi_file(d).
+OVERRIDE_IDENTITY_PROBE(c, x) :- dfi_identity(c, l, r), dfi_type_attr(r, x), dfi_attr(l, x), docof(c, d), dfi_file(d).
+
+.violation CONTRACT_ATTR_PROBE(at: node, fn: symbol, name: symbol)
+    "{fn}() probes declared contract attribute '{name}'; access it through the contract, or check for the protocol"
+CONTRACT_ATTR_PROBE(c, f, x) :- dfi_builtin_call(c, f), (f = "getattr" ; f = "hasattr"), dfi_pos(c, 1, a0), unparen(a0, a),
+    str_const(a, x), dfi_contract(x), docof(c, d), dfi_file(d).

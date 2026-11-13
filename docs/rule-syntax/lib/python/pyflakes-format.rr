@@ -1,0 +1,175 @@
+// python/pyflakes-format: printf-style (`"%s" % x`) and str.format (`"{}".format(x)`) format strings, parsed as
+// CPython parses them, for Ruff's F501-F509 and F521-F525.
+//
+// Interface
+//   Percent format, for `S % R` where S is a plain str literal (python/pyflakes' plain_str):
+//     percent_fmt(b, s, r, v)    b is `s % r`; v is s's value; r is the operand without parentheses
+//     pct_error(v, what)         v does not parse: what is "unsupported" (a bad conversion character, F509) or
+//                                "invalid" (anything else, F501). Only the first error counts, as in CPython.
+//     pct_ok(v)                  v parses
+//     pct_key(v, k)              v has a `%(k)…` placeholder
+//     pct_positional(v, n)       v takes n positional values: each placeholder without a key, and each `*` width
+//                                or precision
+//     pct_star(v)                v has a `*` width or precision
+//   str.format, for `S.format(…)` where S is a plain str literal:
+//     format_call(c, v)          call c is `S.format(…)`; v is S's value
+//     brace_ok(v)                v parses; else it is F521
+//     brace_auto(v, n)           v has n `{}` fields (nested ones in format specs included)
+//     brace_index(v, i)          v has a `{i}` field
+//     brace_keyword(v, x)        v has a `{x}` field
+//   Call arguments: call_pos(c, i, a) (before any `*args`), arg_pos(c, i, a) (all, a `*args` one position),
+//                   call_npos(c, n); keywords and splats: python/ruff's call_kw, call_star, call_kwsplat
+//   Operands:       known_non_tuple(e)   e's type is known and is not a tuple: a literal, a display, `not x`, …
+//                   sequence_display(r), mapping_display(r), dict_str_key(d, x), dict_spread(d), open_dict(d)
+//
+// How the parsers work. Each one cuts the string's value into tokens with one regex per step: the text up to
+// the first `%` (or brace), then one placeholder, then the rest, which the next step reads. A step is tested once
+// per distinct remainder, like every text test (core.rr). The steps stop at the first token that does not parse.
+//
+// CPython background
+//   printf-style: `%%` is a literal %. A placeholder is `%`, then an optional `(key)`, flags `#0- +`, a width
+//   (digits or `*`), a precision (`.` and digits or `*`), a length modifier `hlL` (ignored), and a conversion
+//   character, one of `diouxXeEfFgGcrsab`. A `*` takes its value from the positional values.
+//   str.format: `{{` and `}}` are literal braces; a field is `{name!conv:spec}`. name is empty (automatic
+//   numbering), digits (an index) or an identifier (a keyword), followed by `.attr` and `[key]` parts; conv is
+//   r, s or a; spec may hold nested fields, one level deep.
+#include "python/ruff.rr"   // call_kw, call_star, call_kwsplat; python/pyflakes
+
+// ---- percent format ----------------------------------------------------------------------------------------------
+.decl percent_fmt(b: node, s: node, r: node, v: symbol)
+percent_fmt(b, s, r, v) :- kind(b, "binary_operator"), op(b, "%"), field(b, "left", s), unparen(s, s0), plain_str(s0, v),
+    field(b, "right", r0), unparen(r0, r).
+.decl pct_value(v: symbol)
+pct_value(v) :- percent_fmt(_, _, _, v).
+// pct_rest(v, r, i): after i tokens (`%%` or placeholders), the rest of v is r.
+.decl pct_rest(v: symbol, r: symbol, i: number)
+pct_rest(v, v, 0) :- pct_value(v).
+pct_rest(v, rest, i + 1) :- pct_rest(v, r, i), match("[^%]*%%(?<rest>[\\s\\S]*)", r).                 // `%%`
+pct_rest(v, rest, i + 1) :- pct_spec(v, i, _, _, _, rest).
+// pct_spec(v, i, key, width, prec, rest): token i of v is a placeholder; key "" when it has none; width and prec as
+// written ("*", "8", ""; prec keeps its dot).
+.decl pct_spec(v: symbol, i: number, key: symbol, width: symbol, prec: symbol, rest: symbol)
+pct_spec(v, i, key, w, p, rest) :- pct_rest(v, r, i), match(
+    "[^%]*%(?<key>(\\([^)]*\\))?)[#0 +\\-]*(?<w>(\\*|[0-9]+)?)(?<p>(\\.(\\*|[0-9]*))?)[hlL]?[diouxXeEfFgGcrsab](?<rest>[\\s\\S]*)",
+    r).
+// The first `%` that starts neither `%%` nor a placeholder. A known shape up to a bad character is
+// "unsupported" (`%y`, `%(a)5j`); an unclosed key or a string that ends inside a placeholder is "invalid".
+.decl pct_error(v: symbol, what: symbol)
+pct_error(v, "unsupported") :- pct_badchar(v, _).
+pct_error(v, "invalid") :- pct_stuck(v, i), !pct_badchar(v, i).
+// pct_stuck(v, i): after i tokens the rest has a `%` that starts no token. pct_badchar(v, i): it is a placeholder
+// shape up to a character that is not a conversion.
+.decl pct_stuck(v: symbol, i: number)
+pct_stuck(v, i) :- pct_rest(v, r, i), contains("%", r), !match("[^%]*%%[\\s\\S]*", r), !pct_spec(v, i, _, _, _, _).
+.decl pct_badchar(v: symbol, i: number)
+pct_badchar(v, i) :- pct_stuck(v, i), pct_rest(v, r, i),
+    match("[^%]*%(\\([^)]*\\))?[#0 +\\-]*(\\*|[0-9]+)?(\\.(\\*|[0-9]*))?[hlL]?[^diouxXeEfFgGcrsab(][\\s\\S]*", r).
+.decl pct_ok(v: symbol)
+pct_ok(v) :- pct_value(v), !pct_error(v, _).
+.decl pct_key(v: symbol, k: symbol)
+pct_key(v, k) :- pct_ok(v), pct_spec(v, _, key, _, _, _), match("\\((?<k>[^)]*)\\)", key).
+.decl pct_star(v: symbol)
+pct_star(v) :- pct_ok(v), pct_spec(v, _, _, w, p, _), (w = "*" ; p = ".*").
+.decl pct_positional(v: symbol, n: number)
+pct_positional(v, a + b + c) :- pct_ok(v), a = count : { pct_spec(v, i1, "", _, _, _) },
+    b = count : { pct_spec(v, i2, _, "*", _, _) }, c = count : { pct_spec(v, i3, _, _, ".*", _) }.
+
+// ---- str.format --------------------------------------------------------------------------------------------------
+.decl format_call(c: node, v: symbol)
+format_call(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "format"), unparen(o, s), plain_str(s, v).
+.decl brace_value(v: symbol)
+brace_value(v) :- format_call(_, v).
+// brace_rest(v, r, i): after i tokens (literal braces and fields), the rest of v is r.
+.decl brace_rest(v: symbol, r: symbol, i: number)
+brace_rest(v, v, 0) :- brace_value(v).
+brace_rest(v, rest, i + 1) :- brace_rest(v, r, i), match("[^{}]*(\\{\\{|\\}\\})(?<rest>[\\s\\S]*)", r).
+brace_rest(v, rest, i + 1) :- brace_field(v, i, _, _, _, rest).
+// brace_field(v, i, name, conv, spec, rest): token i is a field. conv keeps its `!`, spec its `:`.
+.decl brace_field(v: symbol, i: number, name: symbol, conv: symbol, spec: symbol, rest: symbol)
+brace_field(v, i, f, cv, sp, rest) :- brace_rest(v, r, i),
+    match("[^{}]*\\{(?<f>[^{}!:]*)(?<cv>(![^{}:]*)?)(?<sp>(:([^{}]|\\{[^{}]*\\})*)?)\\}(?<rest>[\\s\\S]*)", r).
+// brace_nested(v, i, j, name, conv, rest): nested field j in the spec of field i (`{:{width}}`); rest follows it.
+.decl spec_rest(v: symbol, i: number, r: symbol, j: number)
+spec_rest(v, i, sp, 0) :- brace_field(v, i, _, _, sp, _).
+spec_rest(v, i, rest, j + 1) :- brace_nested(v, i, j, _, _, rest).
+.decl brace_nested(v: symbol, i: number, j: number, name: symbol, conv: symbol, rest: symbol)
+brace_nested(v, i, j, f, cv, rest) :- spec_rest(v, i, r, j),
+    match("[^{}]*\\{(?<f>[^{}!:]*)(?<cv>(![^{}:]*)?)(:[^{}]*)?\\}(?<rest>[\\s\\S]*)", r).
+// brace_name(v, k, name, conv): every field, top-level and nested; k orders them (Ruff numbers `{}` in this order).
+.decl brace_name(v: symbol, k: number, name: symbol, conv: symbol)
+brace_name(v, i * 1000, f, cv) :- brace_field(v, i, f, cv, _, _).
+brace_name(v, i * 1000 + j + 1, f, cv) :- brace_nested(v, i, j, f, cv, _).
+// brace_arg(v, k, a): field k's argument part (before any `.attr` or `[key]`).
+.decl brace_arg(v: symbol, k: number, a: symbol)
+brace_arg(v, k, a) :- brace_name(v, k, f, _), match("(?<a>[^.\\[]*)[\\s\\S]*", f).
+.decl brace_bad(v: symbol)
+// A brace that starts no token: a lone `}`, an unclosed `{`, a spec nested two deep.
+brace_bad(v) :- brace_rest(v, r, i), (contains("{", r) ; contains("}", r)), !match("[^{}]*(\\{\\{|\\}\\})[\\s\\S]*", r),
+    !brace_field(v, i, _, _, _, _).
+// A field whose name has an empty `.` part or an unclosed or empty `[ ]`, or a conversion other than r, s, a.
+brace_bad(v) :- brace_name(v, _, f, _), !match("[^.\\[]*([.][^.\\[\\]]+|\\[[^\\]]+\\])*", f).
+brace_bad(v) :- brace_name(v, _, _, cv), cv != "", cv != "!r", cv != "!s", cv != "!a".
+.decl brace_ok(v: symbol)
+brace_ok(v) :- brace_value(v), !brace_bad(v).
+.decl brace_auto(v: symbol, n: number)
+brace_auto(v, n) :- brace_ok(v), n = count : { brace_arg(v, k, "") }.
+.decl brace_index(v: symbol, i: number)
+brace_index(v, to_number(a)) :- brace_ok(v), brace_arg(v, _, a), match("[0-9]+", a).
+.decl brace_keyword(v: symbol, x: symbol)
+brace_keyword(v, a) :- brace_ok(v), brace_arg(v, _, a), a != "", !match("[0-9]+", a).
+
+// ---- call arguments ----------------------------------------------------------------------------------------------
+// call_pos(c, i, a): a is call c's i-th positional argument, counting only those before the first `*args`
+// (past one, positions are unknown: F524, UP030). arg_pos counts over all positional arguments, a `*args` taking
+// one position, and gives a row for each one that is not starred (Ruff's F523 enumerate).
+// `"{}".format(x for x in y)`: a lone generator expression is the call's arguments node itself.
+.decl call_pos(c: node, i: number, a: node)
+call_pos(c, i, a) :- format_call(c, _), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+    fmt_positional(a), !kind(a, "list_splat"), count : { child(al, s, j2), j2 < j, kind(s, "list_splat") } = 0,
+    i = count : { child(al, b, j3), j3 < j, fmt_positional(b) }.
+call_pos(c, 0, g) :- format_call(c, _), field(c, "arguments", g), kind(g, "generator_expression").
+.decl arg_pos(c: node, i: number, a: node)
+arg_pos(c, i, a) :- format_call(c, _), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+    fmt_positional(a), !kind(a, "list_splat"), i = count : { child(al, b, j3), j3 < j, fmt_positional(b) }.
+arg_pos(c, 0, g) :- format_call(c, _), field(c, "arguments", g), kind(g, "generator_expression").
+.decl fmt_positional(a: node)  // an argument that is not `k=v`, `**kw` or a comment
+fmt_positional(a) :- child(al, a, _), kind(al, "argument_list"), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"),
+    !kind(a, "comment").
+.decl call_npos(c: node, n: number)  // positional arguments before any `*args`
+call_npos(c, n) :- format_call(c, _), n = count : { call_pos(c, _, _) }.
+
+// ---- operands ----------------------------------------------------------------------------------------------------
+// sequence_display(r): r is a list, tuple or set display or comprehension, or a generator expression (F502).
+// mapping_display(r): r is a dict display or comprehension (F503, F508).
+.decl sequence_display(r: node)
+sequence_display(r) :- kind(r, k), (k = "list" ; k = "tuple" ; k = "set" ; k = "list_comprehension" ;
+    k = "set_comprehension" ; k = "generator_expression").
+.decl mapping_display(r: node)
+mapping_display(r) :- kind(r, "dictionary").
+mapping_display(r) :- kind(r, "dictionary_comprehension").
+// dict_str_key(d, x): dict display d has an entry whose key is the str literal x (F504, F505).
+// dict_spread(d): d has a `**m` entry. open_dict(d): d has a `**m` entry or a key that is not a str literal, so
+// its keys are not all known (F505).
+.decl dict_str_key(d: node, x: symbol)
+dict_str_key(d, x) :- kind(d, "dictionary"), child(d, p, _), kind(p, "pair"), field(p, "key", k), plain_str(k, x).
+.decl dict_spread(d: node)
+dict_spread(d) :- kind(d, "dictionary"), child(d, s, _), kind(s, "dictionary_splat").
+.decl open_dict(d: node)
+open_dict(d) :- dict_spread(d).
+open_dict(d) :- kind(d, "dictionary"), child(d, p, _), kind(p, "pair"), field(p, "key", k), !plain_str(k, _).
+
+// known_non_tuple(e): e's type is known statically and is not a tuple (Ruff's ResolvedPythonType): a literal
+// other than a tuple, an f-string, a list, set or dict display or comprehension, a generator expression, `not x`,
+// a comparison, or an operator, conditional or boolean expression whose operands are all such. A name, call,
+// attribute or subscript may hold a tuple, so it is unknown.
+//   "%s %s" % 42          known: one value, two placeholders (F507)
+//   "%s %s" % pair        unknown: pair may be a tuple
+.decl known_non_tuple(e: node)
+known_non_tuple(e) :- unparen(e, m), py_literal(m).
+known_non_tuple(e) :- unparen(e, m), (fstring(m) ; mutable_literal(m) ; kind(m, "generator_expression")).
+known_non_tuple(e) :- unparen(e, m), (kind(m, "not_operator") ; kind(m, "comparison_operator")).
+known_non_tuple(e) :- unparen(e, m), kind(m, "unary_operator"), field(m, "argument", a), known_non_tuple(a).
+known_non_tuple(e) :- unparen(e, m), (kind(m, "binary_operator") ; kind(m, "boolean_operator")),
+    field(m, "left", l), field(m, "right", r), known_non_tuple(l), known_non_tuple(r).
+known_non_tuple(e) :- unparen(e, m), kind(m, "conditional_expression"), child(m, a, 0), child(m, b, 2),
+    known_non_tuple(a), known_non_tuple(b).

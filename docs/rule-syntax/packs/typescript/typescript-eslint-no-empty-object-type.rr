@@ -1,0 +1,65 @@
+.policy "typescript-eslint-no-empty-object-type" revision 2
+.description "Avoid empty TypeScript interfaces and the empty object type; both accept any non-nullish value, so use object, unknown or the extended type instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-a.rr"
+//   ts_member, type_parent
+
+// typescript-eslint's no-empty-object-type: `{}` and an empty interface admit any value but null and undefined.
+//   let a: {};   interface A {}           say `object` (any object) or `unknown` (any value)
+//   interface B extends C {}             is just C: say `type B = C`
+//   type X = {} & Y;   interface D extends E, F {}       left alone: they mean something
+// allowInterfaces ("always", "with-single-extends") and allowObjectTypes ("always") turn checks off, and
+// allowWithName (a regex) spares interfaces and type aliases with matching names. Suggestions rewrite an
+// interface into a type alias, except when a class of the same name merges with it.
+.violation no_empty_object_type(at: node, msg: symbol) code "@typescript-eslint/no-empty-object-type"
+    "{msg}"
+    suppress eslint "@typescript-eslint/no-empty-object-type"
+    fix to_object "Replace with `object`."
+    fix to_unknown "Replace with `unknown`."
+    fix to_alias "Replace empty interface with a type alias."
+no_empty_object_type(n, "An empty interface allows any non-nullish value, and one extending a single type is equivalent to that supertype: use `object`, `unknown` or a type alias instead.") :-
+    empty_interface(i, _), field(i, "name", n).
+no_empty_object_type(b, m) :- empty_object(b),
+    m = cat("The `{}` (\"empty object\") type allows any non-nullish value, including literals like `0` and `\"\"`",
+        ": use `object` for any object or `unknown` for any value.").
+
+// empty_interface(i, k): no members, k types extended (0, or 1 unless with-single-extends).
+.decl empty_interface(i: node, k: number)
+empty_interface(i, k) :- kind(i, "interface_declaration"), !option("allowInterfaces", "always"), field(i, "body", b),
+    !ts_member(b, _, _), k = count : { extended(i, _) }, (k = 0 ; k = 1, !option("allowInterfaces", "with-single-extends")),
+    !named_ok(i).
+.decl extended(i: node, t: node)
+extended(i, t) :- child(i, c, _), kind(c, "extends_type_clause"), field(c, "type", t).
+.decl named_ok(d: node)
+named_ok(d) :- (kind(d, "interface_declaration") ; kind(d, "type_alias_declaration")), field(d, "name", n), text(n, x),
+    option("allowWithName", r), match(cat("[\\s\\S]*(?:", cat(r, ")[\\s\\S]*")), x).
+
+// empty_object(b): `{}` as a type, not in an intersection.
+.decl empty_object(b: node)
+empty_object(b) :- kind(b, "object_type"), !option("allowObjectTypes", "always"), !ts_member(b, _, _),
+    !in_intersection(b), !alias_ok(b).
+.decl in_intersection(b: node)
+in_intersection(b) :- kind(b, "object_type"), type_parent(b, p), kind(p, "intersection_type").
+.decl alias_ok(b: node)
+alias_ok(b) :- kind(b, "object_type"), type_parent(b, a), kind(a, "type_alias_declaration"), named_ok(a).
+
+// merged(i): a class of the same name beside the interface (declaration merging); then no suggestion.
+.decl merged(i: node)
+merged(i) :- empty_interface(i, _), field(i, "name", n), text(n, x), scope_item(i, s), scope_item(c, s),
+    (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")), field(c, "name", m), text(m, x).
+.decl scope_item(d: node, s: node)
+scope_item(d, s) :- child(s, d, _), !kind(s, "export_statement").
+scope_item(d, s) :- child(e, d, _), kind(e, "export_statement"), child(s, e, _).
+
+.decl alias_head(i: node, h: symbol)
+alias_head(i, cat("type ", cat(x, g))) :- empty_interface(i, _), !merged(i), field(i, "name", n), text(n, x),
+    (field(i, "type_parameters", p), text(p, g) ; !field(i, "type_parameters", _), g = "").
+to_object(n, _) :- empty_interface(i, 0), alias_head(i, h), field(i, "name", n) => replace(i, `$h = object`).
+to_unknown(n, _) :- empty_interface(i, 0), alias_head(i, h), field(i, "name", n) => replace(i, `$h = unknown`).
+to_alias(n, _) :- empty_interface(i, 1), alias_head(i, h), field(i, "name", n), extended(i, t), text(t, y)
+    => replace(i, `$h = $y`).
+to_object(b, _) :- empty_object(b) => replace(b, `object`).
+to_unknown(b, _) :- empty_object(b) => replace(b, `unknown`).

@@ -1,0 +1,100 @@
+// python/bugbear: the vocabulary of Ruff's flake8-bugbear (B) and flake8-pie (PIE) rules: calls of builtins and
+// their argument shapes, Ruff's literal and identifier tests, and exception handlers. Loop variables are in
+// python/bugbear-loops.rr.
+//
+// Interface
+//   1. Calls:     bb_builtin_call(c, x)     c's callee resolves to the builtin x: `getattr(…)`, `builtins.getattr(…)`
+//                                           (python/names' sym_of; a local def of that name hides it)
+//                 bb_sym_call(c, q)         call c's callee resolves to q: `contextlib.suppress`, `re.sub`
+//                 bb_pos(c, i, a)           a is c's i-th positional argument, parentheses off (`*xs` is one)
+//                 (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_star, call_kwsplat)
+//                 bb_expr_stmt(e)           e is a whole expression statement (`setattr(o, "x", 1)` on its own line)
+//   2. Literals:  ruff_literal(e)           Ruff's is_literal_expr: a str, bytes, number, bool, None or `...`
+//                 bb_mangled(v)             such an identifier is name-mangled in a class: `__x`, not `__x__`
+//                 bb_mutable(e)             Ruff's is_mutable_expr: a list, dict or set display or comprehension, or a
+//                                           call of `list`, `dict`, `set` or a mutable collections class
+//                 bb_immutable_call(c)      call c (its callee subscripts off) returns a value Ruff knows is immutable:
+//                                           `tuple()`, `frozenset[str]()`, `re.compile(…)`, `datetime.date(…)`, …
+//                 bb_callee(c, q)           c's callee, a subscript taken off (`set[str]()`), resolves to q
+//   3. Handlers:  handler_type(x, t)        except clause x (or except*) has type t, `as e` and parentheses off
+//                 handler_elt(x, e, i)      t is a tuple and e its i-th element, parentheses off (`*xs` kept)
+//                 exc_name(e, s)            e is a Name or an Attribute chain spelled s (Ruff's UnqualifiedName)
+//                 try_handler(t, x, i)      x is the i-th except clause of try statement t
+//
+// Python background
+//   - Ruff's tree has no parentheses: `except (ValueError):` has the Name ValueError as its type, and a finding on
+//     it starts at the name. A tuple's range does include its parentheses.
+//   - `getattr` and the other builtins are found by resolving the name, so `import builtins; builtins.getattr`
+//     counts and a module-level `def getattr` does not.
+//
+//   getattr(o, "x")                  bb_builtin_call(<call>, "getattr"), npos 2, nkw 0
+//   except (A, b.C) as e:            handler_type(<x>, <tuple>), handler_elt(<x>, <A>, 0), exc_name(<b.C>, "b.C")
+#include "python/ruff.rr"   // call_nargs, call_nkwargs, call_kw; python/pyflakes, python/ast, python/names
+
+// ---- 1. calls ----------------------------------------------------------------------------------------------------
+.decl bb_builtin_call(c: node, x: symbol)
+bb_builtin_call(c, x) :- bb_sym_call(c, q), split_dot(q, "builtins", x).
+.decl bb_sym_call(c: node, q: symbol)
+bb_sym_call(c, q) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), sym_of(f, q).
+// bb_arg(c, a): a is an argument of c: a child of its argument list other than a comment, or the lone
+// generator expression of `f(x for x in y)`, which tree-sitter puts in place of the argument list.
+.decl bb_arg(c: node, a: node)
+bb_arg(c, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a, _),
+    !kind(a, "comment").
+bb_arg(c, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").
+.decl bb_kwlike(a: node)
+bb_kwlike(a) :- kind(a, "keyword_argument").
+bb_kwlike(a) :- kind(a, "dictionary_splat").
+.decl bb_pos(c: node, i: number, a: node)
+bb_pos(c, i, a) :- bb_arg(c, a0), !bb_kwlike(a0), unparen(a0, a), child(l, a0, j), kind(l, "argument_list"),
+    i = count : { child(l, o, k), k < j, !kind(o, "comment"), !bb_kwlike(o) }.
+bb_pos(c, 0, g) :- bb_arg(c, g), kind(g, "generator_expression"), field(c, "arguments", g).
+.decl bb_expr_stmt(e: node)
+bb_expr_stmt(e) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1).
+
+// ---- 2. literals -------------------------------------------------------------------------------------------------
+// ruff_literal(e): through parentheses, e is a literal Ruff's is_literal_expr accepts. An f-string or t-string is
+// not one; `-1` is a unary operation, not a literal.
+.decl ruff_literal(e: node)
+ruff_literal(e) :- unparen(e, m), py_literal(m).
+.decl bb_mangled(v: symbol)
+bb_mangled(v) :- identifier(v), prefix("__", v), !suffix("__", v).
+
+// Mutability, after ruff_python_semantic's typing helpers. A call Ruff cannot resolve is neither.
+.decl bb_callee(c: node, q: symbol)
+bb_callee(c, q) :- kind(c, "call"), field(c, "function", f0), unparen(f0, s), kind(s, "subscript"),
+    field(s, "value", f1), unparen(f1, f), sym_of(f, q).
+bb_callee(c, q) :- bb_sym_call(c, q), field(c, "function", f0), unparen(f0, f), !kind(f, "subscript").
+.decl bb_mutable(e: node)
+bb_mutable(e) :- unparen(e, m), kind(m, k), mutable_kind(k).
+bb_mutable(e) :- unparen(e, m), bb_callee(m, q), bb_mutable_q(q).
+.decl bb_immutable_call(c: node)
+bb_immutable_call(c) :- bb_callee(c, q), bb_immutable_q(q).
+.decl bb_mutable_q(q: symbol)  // is_mutable_return_type
+bb_mutable_q("builtins.dict"). bb_mutable_q("builtins.list"). bb_mutable_q("builtins.set").
+bb_mutable_q("collections.Counter"). bb_mutable_q("collections.OrderedDict"). bb_mutable_q("collections.defaultdict").
+bb_mutable_q("collections.deque").
+.decl bb_immutable_q(q: symbol)  // is_immutable_return_type
+bb_immutable_q("datetime.date"). bb_immutable_q("datetime.datetime"). bb_immutable_q("datetime.time").
+bb_immutable_q("datetime.timedelta"). bb_immutable_q("datetime.timezone"). bb_immutable_q("datetime.tzinfo").
+bb_immutable_q("decimal.Decimal"). bb_immutable_q("fractions.Fraction"). bb_immutable_q("operator.attrgetter").
+bb_immutable_q("operator.itemgetter"). bb_immutable_q("operator.methodcaller"). bb_immutable_q("pathlib.Path").
+bb_immutable_q("types.MappingProxyType"). bb_immutable_q("re.compile").
+bb_immutable_q(@dot("builtins", x)) :- (x = "bool" ; x = "bytes" ; x = "complex" ; x = "float" ; x = "frozenset" ;
+    x = "int" ; x = "range" ; x = "str" ; x = "tuple" ; x = "slice" ; x = "frozendict").
+
+// ---- 3. handlers -------------------------------------------------------------------------------------------------
+// tree-sitter parses `except*` as an except_clause too (with a `*` token); its type is the `value` field, or the
+// first child of an as_pattern when the clause names the exception.
+.decl handler_type(x: node, t: node)
+handler_type(x, t) :- kind(x, "except_clause"), field(x, "value", v), kind(v, "as_pattern"), child(v, t0, 0),
+    unparen(t0, t).
+handler_type(x, t) :- kind(x, "except_clause"), field(x, "value", v), !kind(v, "as_pattern"), unparen(v, t).
+.decl handler_elt(x: node, e: node, i: number)
+handler_elt(x, e, i) :- handler_type(x, t), kind(t, "tuple"), child(t, e0, j), !kind(e0, "comment"),
+    unparen(e0, e), i = count : { child(t, o, k), k < j, !kind(o, "comment") }.
+.decl exc_name(e: node, s: symbol)
+exc_name(e, s) :- dotted_expr(e, s), (kind(e, "identifier") ; kind(e, "attribute")).
+.decl try_handler(t: node, x: node, i: number)
+try_handler(t, x, i) :- kind(t, "try_statement"), child(t, x, j), kind(x, "except_clause"),
+    i = count : { child(t, o, k), k < j, kind(o, "except_clause") }.

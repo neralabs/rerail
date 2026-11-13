@@ -1,0 +1,305 @@
+.policy "data-layer:conditional-architecture" revision 1
+.description "ConditionalStep is a control-flow primitive: SQL compilation of conditionals lives in the server-plan layer, behind typed contracts."
+.language python
+.mode block
+.scope include "l2070_batching/conditional_step.py", "impl/common/l2070_server_plan/steps/_conditional_compile.py", "impl/common/l2070_server_plan/steps/sql_conditional.py", "impl/common/l2070_server_plan/sql_backend_executor.py", "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py"
+.scope tests true
+// Python linter: scripts/lint_conditional_architecture.py (CONDA-001 … 004, per file) and
+// scripts/conditional_architecture_facts.py (CONDA-005, across the files).
+//   In l2070_batching/conditional_step.py ("the step file"):
+//     CONDA-001 inside ConditionalStep.compile (innermost class and innermost def, each by name): an import of an
+//               impl.common.l2100_sql_grammar / impl.common.l2070_server_plan module or of a Sql* name; a call named
+//               compile or Sql*; CompiledStep(grammar=…). Also a ConditionalStep class with no compile method.
+//     CONDA-002 the same imports anywhere else in the file (`import impl.…` is always 002).
+//     CONDA-004 the names _DDL_TAGS and _UNGATABLE_TAG are not both read; ConditionalStep.__init__ calls
+//               _validate_branch_content fewer than twice.
+//   CONDA-003 in the dialect test file: `cs.compile(…)`, `conditional.compile(…)`, `conditional_step.compile(…)`.
+//   CONDA-005 the typed contracts, when one of the four canonical owners exists in any file:
+//     the semantic ConditionalStep's require_sql_physical_conditional raises TypeError on every path;
+//     the physical SqlConditionalStep (a subclass of it) overrides that method without raising and without backend
+//       selection; compile_sql_conditional_step takes `step: SqlConditionalStep` and calls step.require_… before any
+//       *_conditional_strategy call, with no backend selection; SqlBackendExecutor._lower_conditional_step calls
+//       SqlConditionalStep.from_semantic. A missing owner puts the finding at line 1 of its canonical file.
+//     And, for every such class: ConditionalStep.compile raises TypeError; SqlBackendExecutor has _lower_conditional_step.
+//   The facts module computes further findings (callback fields, state writes, backend controls, child compiles,
+//   lowering levels); the linter keeps only the six messages above, so they are not written here.
+// The per-file collector runs only on files whose text holds one of its triggers (ConditionalStep, .compile(, …).
+// Names follow the scripts, not Python: a class's qualified name is its module (from the path, starting at impl/,
+// l2070_batching/ or scripts/, else the file's stem) and its own name, nesting ignored; base classes resolve only
+// their first segment, through the imports seen before the class; a class's methods are every def whose
+// innermost class it is, nested defs included, the last of each name counting.
+//
+// How to read this file
+//   mf_class / mf_def / mf_walk / mf_call_name (data-layer/match-frames) place a node among the defs and classes
+//   as the scripts' stacks do, and name a callee as their _call_name does.
+//   1. Names: ca_dotted (looks through calls), ca_fw (the framework's call_name), ca_alias / ca_resolved.
+//   2. The step file and the test file: CONDA-001 … 004.
+//   3. Classes, methods, functions and the conditional subclass closure, across files.
+//   4. ca_raises: a block that reaches `raise TypeError` on every path.
+//   5. CONDA-005.
+
+#include "python/ast.rr"   // unparen, body_of, body_stmt, py_if, py_orelse, ast_name, from_module_raw
+#include "python/calls.rr" // call_arg
+#include "data-layer/match-frames.rr"   // mf_class, mf_def, mf_walk, mf_call_name
+
+// ---- 1. names ----------------------------------------------------------------------------------------------------
+// ca_dotted(e, s): the facts module's _dotted_name: a Name or an attribute chain, looking through calls:
+// `a.b(x).c` gives "a.b.c", `factory().TypeError` "factory.TypeError", `x[0].y` "y". ca_fw(e, s): the
+// framework's call_name, which stops at a call: `factory().x` gives "x".
+// Both join the chain's names in source order (by end offset: an inner link ends first).
+// ca_link(how, e, a): a is on e's chain (e itself included), following attribute objects, and call functions
+// when how is "dotted".
+.decl ca_how(how: symbol)
+ca_how("dotted"). ca_how("fw").
+.decl ca_link(how: symbol, e: node, a: node)
+ca_link(h, e, m) :- ca_how(h), ca_link_root(e), unparen(e, m).
+ca_link(h, e, m) :- ca_link(h, e, a), kind(a, "attribute"), field(a, "object", o), unparen(o, m).
+ca_link("dotted", e, m) :- ca_link("dotted", e, a), kind(a, "call"), field(a, "function", f), unparen(f, m).
+.decl ca_link_root(e: node)                // the expressions whose names are asked for
+ca_link_root(f) :- kind(c, "call"), field(c, "function", f).
+ca_link_root(e) :- kind(r, "raise_statement"), child(r, e, 0).
+ca_link_root(b) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, b, _).
+ca_link_root(e) :- kind(t, "type"), child(t, e, 0).
+// ca_piece(how, e, a, x): name x on e's chain, at node a: an attribute's name, or the identifier ending the chain.
+.decl ca_piece(how: symbol, e: node, a: node, x: symbol)
+ca_piece(h, e, a, x) :- ca_link(h, e, a), kind(a, "attribute"), field(a, "attribute", t), text(t, x).
+ca_piece(h, e, a, x) :- ca_link(h, e, a), kind(a, "identifier"), text(a, x).
+.decl ca_named(how: symbol, e: node, s: symbol)
+ca_named(h, e, s) :- ca_piece(h, e, _, _), s = join x by z sep "." : { ca_piece(h, e, a, x), node(_, a, _, _, z) }.
+.decl ca_dotted(e: node, s: symbol)
+ca_dotted(e, s) :- ca_named("dotted", e, s).
+.decl ca_fw(e: node, s: symbol)
+ca_fw(e, s) :- ca_named("fw", e, s).
+
+// ca_alias(i, local, target): import i makes local stand for target, as the facts module records it:
+// `from m import x as y` gives y → "m.x" (not for `from . import …`); `import a.b` gives a → "a.b".
+.decl ca_alias(i: node, local: symbol, target: symbol)
+ca_alias(i, l, @dot(m, x)) :- from_module_raw(i, m), m != "", field(i, "name", a), ca_item(a, x, l).
+ca_alias(i, l, x) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"), ca_item(a, x, l).
+ca_alias(i, @head(x), x) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "dotted_name"), text(a, x).
+// ca_item(a, name, local): an import item, its name as written and the name it binds.
+.decl ca_item(a: node, name: symbol, local: symbol)
+ca_item(a, x, x) :- kind(a, "dotted_name"), text(a, x).
+ca_item(a, x, l) :- kind(a, "aliased_import"), field(a, "name", n), text(n, x), field(a, "alias", al), text(al, l).
+// ca_resolved(e, at, s): name e, with its first segment replaced by the latest alias imported before node at.
+.decl ca_want(e: node, at: node)                     // the names that need resolving: bases and annotations
+ca_want(b, k) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, b, _), !kind(b, "keyword_argument").
+ca_want(e, f) :- ca_param(f, _, a), child(a, e, 0).
+.decl ca_resolved(e: node, at: node, s: symbol)
+ca_resolved(e, at, s) :- ca_want(e, at), ca_dotted(e, r), ca_split(r, h, t), ca_alias_at(at, h, q), s = cat(q, t).
+ca_resolved(e, at, r) :- ca_want(e, at), ca_dotted(e, r), ca_split(r, h, _), !ca_alias_at(at, h, _).
+// ca_split("a.b.c", "a", ".b.c"): the first segment, and the rest with its dot.
+.decl ca_split(r: symbol, h: symbol, t: symbol)
+ca_split(r, h, t) :- ca_dotted(_, r), match("(?<h>[^.]*)(?<t>.*)", r).
+.decl ca_alias_at(at: node, h: symbol, q: symbol)
+ca_alias_at(at, h, q) :- ca_want(e, at), ca_dotted(e, r), ca_split(r, h, _), docof(at, d),
+    j = max v : { ca_alias(i, h, _), docof(i, d), earlier(i, at), visit_index(i, v) },
+    ca_alias(i2, h, q), docof(i2, d), visit_index(i2, j).
+
+// ---- 2. the step file and the dialect test file (CONDA-001 … 004) ------------------------------------------------
+.decl ca_trigger(t: symbol)
+ca_trigger("ConditionalStep"). ca_trigger("compile_conditional_step"). ca_trigger(".compile(").
+ca_trigger("not ctx.backend_type.is_sql_backend"). ca_trigger("not ctx.supports_data_modifying_ctes").
+.decl ca_step_doc(d: number)
+ca_step_doc(d) :- doc(d, "l2070_batching/conditional_step.py", _), source(d, sp), text(sp, t), ca_trigger(g), contains(g, t).
+.decl ca_test_doc(d: number)
+ca_test_doc(d) :- doc(d, "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py", _),
+    source(d, sp), text(sp, t), ca_trigger(g), contains(g, t).
+// ca_in_step(n): n is in the step file. ca_compile(n): its innermost class is a ConditionalStep and its innermost
+// def is a compile. ca_init(n): the same for __init__.
+.decl ca_in_step(n: node)
+ca_in_step(n) :- docof(n, d), ca_step_doc(d).
+.decl ca_owned(n: node, x: symbol)
+ca_owned(n, x) :- ca_in_step(n), mf_class(n, k), def_name(k, "ConditionalStep"), mf_def(n, f), def_name(f, x).
+// Imports: modules under the two impl packages (prefix test, no dot boundary), and names starting Sql.
+.decl ca_impl_prefix(p: symbol)
+ca_impl_prefix("impl.common.l2100_sql_grammar"). ca_impl_prefix("impl.common.l2070_server_plan").
+// ca_bad_import(i): `from impl.common.… import …`, `from … import Sql…`, or `import Sql…` inside compile: CONDA-001
+// inside ConditionalStep.compile, and for the from-imports CONDA-002 elsewhere. ca_impl_import(i): `import
+// impl.common.…`, always CONDA-002.
+.decl ca_bad_import(i: node)
+ca_bad_import(i) :- from_module_raw(i, m), ca_impl_prefix(p), prefix(p, m), ca_in_step(i).
+ca_bad_import(i) :- kind(i, "import_from_statement"), field(i, "name", a), ca_item(a, x, _), prefix("Sql", x),
+    ca_in_step(i).
+ca_bad_import(i) :- kind(i, "import_statement"), field(i, "name", a), ca_item(a, x, _), prefix("Sql", x),
+    ca_owned(i, "compile").
+.decl ca_impl_import(i: node)
+ca_impl_import(i) :- kind(i, "import_statement"), field(i, "name", a), ca_item(a, x, _), ca_impl_prefix(p),
+    prefix(p, x), ca_in_step(i).
+
+.violation CONDA001(at: loc) code "CONDA-001" "ConditionalStep.compile() must not import or assemble SQL grammar locally"
+CONDA001(i) :- ca_bad_import(i), ca_owned(i, "compile").
+CONDA001(c) :- mf_call_name(c, "compile"), ca_owned(c, "compile").
+CONDA001(c) :- mf_call_name(c, x), prefix("Sql", x), ca_owned(c, "compile").
+CONDA001(c) :- mf_call_name(c, "CompiledStep"), call_arg(c, _, "grammar", _), ca_owned(c, "compile").
+// The last ConditionalStep class of the file, when no def named compile has a ConditionalStep as innermost class.
+CONDA001(k) :- ca_last_step_class(k), !ca_has_compile().
+.decl ca_last_step_class(k: node)
+ca_last_step_class(k) :- def_name(k, "ConditionalStep"), kind(k, "class_definition"), ca_in_step(k), docof(k, d),
+    visit_index(k, v), v = max w : { def_name(k2, "ConditionalStep"), kind(k2, "class_definition"), docof(k2, d),
+    visit_index(k2, w) }.
+.decl ca_has_compile()
+ca_has_compile() :- def_name(f, "compile"), kind(f, "function_definition"), mf_class(f, k), def_name(k, "ConditionalStep"),
+    ca_in_step(f).
+
+.violation CONDA002(at: node) code "CONDA-002" "l2070_batching.conditional_step must not import impl SQL compiler modules or SQL grammar classes"
+CONDA002(i) :- ca_bad_import(i), !ca_owned(i, "compile"), kind(i, "import_from_statement").
+CONDA002(i) :- ca_impl_import(i).
+
+.violation CONDA003(at: node) code "CONDA-003" "Conditional dialect tests must compile SqlConditionalStep, not a semantic conditional."
+// Parentheses do not count: `(cs).compile(ctx)` and `(conditional.compile)(ctx)` are the same call to ast.
+CONDA003(c) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o0, "compile"), unparen(o0, o),
+    kind(o, "identifier"), text(o, x), ca_test_receiver(x), docof(c, d), ca_test_doc(d).
+.decl ca_test_receiver(x: symbol)
+ca_test_receiver("cs"). ca_test_receiver("conditional"). ca_test_receiver("conditional_step").
+
+.violation CONDA004(at: span, why: symbol) code "CONDA-004" "{why}"
+CONDA004(@place(p, 1), "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants.") :-
+    ca_step_doc(d), doc(d, p, _), ca_guard(g), !ca_reads(d, g).
+CONDA004(@place(p, l), "ConditionalStep.__init__ must validate both then and else branch contents.") :-
+    ca_step_doc(d), doc(d, p, _), ca_init_line(d, l),
+    count : { mf_call_name(c, "_validate_branch_content"), ca_owned(c, "__init__"), docof(c, d) } < 2.
+.decl ca_guard(x: symbol)
+ca_guard("_DDL_TAGS"). ca_guard("_UNGATABLE_TAG").
+.decl ca_reads(d: number, x: symbol)
+ca_reads(d, x) :- ca_guard(x), ast_name(n, x), docof(n, d).
+// ca_init_line(d, l): the line of the last __init__ whose innermost class is a ConditionalStep, else 1.
+.decl ca_init_line(d: number, l: number)
+ca_init_line(d, l) :- ca_step_doc(d), v = max w : { ca_step_init(d, f), visit_index(f, w) }, ca_step_init(d, f),
+    visit_index(f, v), line(f, l).
+ca_init_line(d, 1) :- ca_step_doc(d), !ca_step_init(d, _).
+.decl ca_step_init(d: number, f: node)
+ca_step_init(d, f) :- def_name(f, "__init__"), kind(f, "function_definition"), mf_class(f, k),
+    def_name(k, "ConditionalStep"), docof(f, d), ca_step_doc(d).
+
+// ---- 3. classes, methods, functions, across files ----------------------------------------------------------------
+// ca_module(d, m): the scripts' module name for a file.
+.decl ca_module(d: number, m: symbol)
+ca_module(d, @replace_all(m, "/", ".")) :- doc(d, p, _),
+    match("(?:[^/]+/)*?(?<m>(?:impl|l2070_batching|scripts)/.*)\\.[^./]*", p).
+ca_module(d, s) :- doc(d, p, _), !match("(?:.*/)?(?:impl|l2070_batching|scripts)/.*", p), file_name(d, f),
+    match("(?<s>.*?)(?:\\.[^.]*)?", f).
+// ca_row(k, q): k is the last class of its name in its file (the facts keep one row per name), qualified q.
+.decl ca_row(k: node, q: symbol)
+ca_row(k, @dot(m, x)) :- def_name(k, x), kind(k, "class_definition"), docof(k, d), ca_module(d, m),
+    visit_index(k, v), v = max w : { def_name(k2, x), kind(k2, "class_definition"), docof(k2, d), visit_index(k2, w) }.
+// ca_method(k, x, f): f is class row k's method x: the last def named x (in visit order) whose innermost class is k.
+.decl ca_method(k: node, x: symbol, f: node)
+ca_method(k, x, f) :- ca_row(k, _), mf_class(f, k), def_name(f, x), kind(f, "function_definition"), visit_index(f, v),
+    v = max w : { mf_class(f2, k), def_name(f2, x), kind(f2, "function_definition"), visit_index(f2, w) }.
+// ca_function(f, q): a def with no class around it, the last of its name in its file, qualified q.
+.decl ca_function(f: node, q: symbol)
+ca_function(f, @dot(m, x)) :- def_name(f, x), kind(f, "function_definition"), !mf_class(f, _), docof(f, d),
+    ca_module(d, m), visit_index(f, v),
+    v = max w : { def_name(f2, x), kind(f2, "function_definition"), !mf_class(f2, _), docof(f2, d), visit_index(f2, w) }.
+// ca_belongs(n, f): n is attributed to method entry f: its innermost def is f (or one of f's name in f's class).
+.decl ca_belongs(n: node, f: node)
+ca_belongs(n, f) :- ca_method(k, x, f), mf_class(n, k), mf_def(n, g), def_name(g, x).
+
+// ca_conditional(q): q is the semantic ConditionalStep or inherits from it, through bases as the scripts resolve them.
+.decl ca_base(q: symbol, b: symbol)
+ca_base(q, b) :- ca_row(k, q), field(k, "superclasses", al), child(al, e, _), ca_resolved(e, k, b).
+.decl ca_conditional(q: symbol)
+ca_conditional("l2070_batching.conditional_step.ConditionalStep").
+ca_conditional(q) :- ca_base(q, b), ca_conditional(b).
+
+// ca_param(f, x, ann): parameter x of def f (positional or keyword-only) and its annotation node.
+.decl ca_param(f: node, x: symbol, ann: loc)
+ca_param(f, x, a) :- ca_function(f, _), sig_param(f, _, nm, _, k, a, _), text(nm, x),
+    (k = "posonly" ; k = "pos" ; k = "kwonly").
+// ca_backend_selection(f): f reads backend_type / is_sql_backend / dialect and holds any if, if-expression or match,
+// related or not; or it names BackendType.
+.decl ca_backend_attr(x: symbol)
+ca_backend_attr("backend_type"). ca_backend_attr("is_sql_backend"). ca_backend_attr("dialect").
+.decl ca_branch(k: symbol)
+ca_branch("if_statement"). ca_branch("elif_clause"). ca_branch("conditional_expression"). ca_branch("match_statement").
+.decl ca_backend_selection(f: node)
+ca_backend_selection(f) :- mf_walk(a, f), kind(a, "attribute"), field(a, "attribute", t), text(t, x), ca_backend_attr(x),
+    mf_walk(i, f), kind(i, k), ca_branch(k).
+ca_backend_selection(f) :- mf_walk(n, f), ast_name(n, "BackendType").
+
+// ---- 4. always raises TypeError ----------------------------------------------------------------------------------
+// ca_type_error(r): raise statement r raises TypeError or TypeError(…), as _dotted_name reads it.
+.decl ca_type_error(r: node)
+ca_type_error(r) :- kind(r, "raise_statement"), child(r, e, 0), ca_dotted(e, "TypeError").
+// ca_raises(b, i): from statement i of block b on, every path reaches `raise TypeError` before a return.
+// A raise decides (TypeError or not); an `if` with an else whose branches both raise, or a match whose cases all
+// raise, decides yes; a return stops; anything else (a bare `if`, a loop, a try, a yield) is passed over.
+.decl ca_raises(b: node, i: number)
+ca_raises(b, i) :- body_stmt(b, s, i), ca_type_error(s).
+ca_raises(b, i) :- body_stmt(b, s, i), py_if(s, _, t), ca_raises(t, 0), py_orelse(s, o), ca_else_raises(o).
+ca_raises(b, i) :- body_stmt(b, s, i), kind(s, "match_statement"), ca_cases_raise(s, 0).
+ca_raises(b, i) :- body_stmt(b, s, i), !kind(s, "raise_statement"), !kind(s, "return_statement"), ca_raises(b, i + 1).
+// ca_else_raises(o): an elif (an If of its own, with its else) or an else clause, raising on every path.
+.decl ca_else_raises(o: node)
+ca_else_raises(o) :- kind(o, "else_clause"), field(o, "body", b), ca_raises(b, 0).
+ca_else_raises(o) :- kind(o, "elif_clause"), py_if(o, _, t), ca_raises(t, 0), py_orelse(o, o2), ca_else_raises(o2).
+// ca_cases_raise(m, i): cases i, i+1, … of match m all raise (there is at least one).
+.decl ca_case(m: node, c: node, i: number)
+ca_case(m, c, i) :- kind(m, "match_statement"), field(m, "body", bl), child(bl, c, _), kind(c, "case_clause"),
+    i = count : { child(bl, c2, _), kind(c2, "case_clause"), c2 < c }.
+.decl ca_cases_raise(m: node, i: number)
+ca_cases_raise(m, i) :- ca_case(m, c, i), field(c, "consequence", b), ca_raises(b, 0), !ca_case(m, _, i + 1).
+ca_cases_raise(m, i) :- ca_case(m, c, i), field(c, "consequence", b), ca_raises(b, 0), ca_cases_raise(m, i + 1).
+.decl ca_always_raises(f: node)
+ca_always_raises(f) :- body_of(f, b), kind(f, "function_definition"), ca_raises(b, 0).
+
+// ---- 5. CONDA-005 ------------------------------------------------------------------------------------------------
+// ca_owner(role, q, path, kind, why): the four canonical owners: a class or a module-level function, its
+// canonical file, and the finding when its contract is broken.
+.decl ca_owner(role: symbol, q: symbol, path: symbol, kind: symbol, why: symbol)
+ca_owner("semantic", "l2070_batching.conditional_step.ConditionalStep", "l2070_batching/conditional_step.py", "class",
+    "semantic typed conditional contract must unconditionally reject with TypeError").
+ca_owner("physical", "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep",
+    "impl/common/l2070_server_plan/steps/sql_conditional.py", "class",
+    "physical typed conditional contract must override semantic rejection without backend selection").
+ca_owner("compiler", "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step",
+    "impl/common/l2070_server_plan/steps/_conditional_compile.py", "function",
+    "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection").
+ca_owner("executor", "impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor",
+    "impl/common/l2070_server_plan/sql_backend_executor.py", "class",
+    "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional").
+// ca_owner_at(role, k): the owner's node, of its own kind: `def ConditionalStep()` is no semantic owner.
+.decl ca_owner_at(role: symbol, k: node)
+ca_owner_at(r, k) :- ca_owner(r, q, _, "class", _), ca_row(k, q).
+ca_owner_at(r, f) :- ca_owner(r, q, _, "function", _), ca_function(f, q).
+// ca_present(): some class or function has one of the four names, whichever kind; then the contracts are checked.
+.decl ca_present()
+ca_present() :- ca_owner(_, q, _, _, _), ca_row(_, q).
+ca_present() :- ca_owner(_, q, _, _, _), ca_function(_, q).
+// ca_valid(role): the owner keeps its typed contract.
+.decl ca_valid(role: symbol)
+// The semantic class's require_sql_physical_conditional raises TypeError on every path.
+ca_valid("semantic") :- ca_owner_at("semantic", k), ca_method(k, "require_sql_physical_conditional", f), ca_always_raises(f).
+// The physical class is conditional, and its override neither raises on every path nor selects a backend.
+ca_valid("physical") :- ca_owner_at("physical", k), ca_row(k, q), ca_conditional(q),
+    ca_method(k, "require_sql_physical_conditional", f), !ca_always_raises(f), !ca_backend_selection(f).
+// The compiler takes `step: SqlConditionalStep`, validates it before the first strategy call, selects no backend.
+ca_valid("compiler") :- ca_owner_at("compiler", f), ca_owner("physical", q, _, _, _), ca_param(f, "step", a), child(a, e, 0),
+    ca_resolved(e, f, q), !ca_backend_selection(f), ca_first_check(f, v),
+    !ca_strategy_first(f, v).
+// The executor's _lower_conditional_step calls ….SqlConditionalStep.from_semantic.
+ca_valid("executor") :- ca_owner_at("executor", k), ca_method(k, "_lower_conditional_step", f), ca_belongs(c, f),
+    kind(c, "call"), field(c, "function", fn), ca_fw(fn, s), suffix("SqlConditionalStep.from_semantic", s).
+// ca_first_check(f, l): the first line where f calls step.require_sql_physical_conditional; ca_strategy_first: a
+// *_conditional_strategy call on that line or before it.
+.decl ca_call_in(f: node, c: node, s: symbol)
+ca_call_in(f, c, s) :- ca_function(f, _), mf_walk(c, f), kind(c, "call"), field(c, "function", fn), ca_dotted(fn, s).
+.decl ca_first_check(f: node, l: number)
+ca_first_check(f, l) :- ca_call_in(f, _, "step.require_sql_physical_conditional"),
+    l = min k : { ca_call_in(f, c, "step.require_sql_physical_conditional"), line(c, k) }.
+.decl ca_strategy_first(f: node, l: number)
+ca_strategy_first(f, l) :- ca_first_check(f, l), ca_call_in(f, c, s), suffix("_conditional_strategy", s), line(c, k), k <= l.
+
+.violation CONDA005(at: loc, why: symbol) code "CONDA-005" "{why}"
+CONDA005(k, m) :- ca_present(), ca_owner(r, _, _, _, m), ca_owner_at(r, k), !ca_valid(r).
+CONDA005(@place(p, 1), m) :- ca_present(), ca_owner(r, _, p, _, m), !ca_owner_at(r, _).
+// Every semantic ConditionalStep row must raise TypeError somewhere in its compile method.
+CONDA005(k, "semantic ConditionalStep must reject direct compilation with TypeError") :-
+    ca_row(k, "l2070_batching.conditional_step.ConditionalStep"), !ca_compile_rejects(k).
+// Every SqlBackendExecutor row of the sql_backend_executor module must define _lower_conditional_step.
+CONDA005(k, "SqlBackendExecutor must define _lower_conditional_step") :- ca_row(k, q),
+    suffix("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor", q),
+    !ca_method(k, "_lower_conditional_step", _).
+.decl ca_compile_rejects(k: node)
+ca_compile_rejects(k) :- ca_method(k, "compile", f), ca_belongs(r, f), ca_type_error(r).

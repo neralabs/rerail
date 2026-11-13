@@ -1,0 +1,22 @@
+.policy "ruff-pt001-pytest-fixture-incorrect-parentheses-style" revision 2
+.description "Drop the empty parentheses from an argument-free pytest fixture decorator, so fixtures follow the style of the pytest documentation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT001 (flake8-pytest-style): the parentheses of a fixture decorator, against option `fixture-parentheses`.
+// At its default, false, a call with no arguments is reported; at true, a bare decorator is. Only a function's
+// first fixture decorator is read (pytest.fixture or pytest.yield_fixture).
+//   @pytest.fixture()            ← PT001 at the default
+//   @pytest.fixture              ← PT001 with fixture-parentheses = true
+//   @pytest.fixture(scope="module")   never reported
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), exc_no_args(c)
+
+.violation PT001(at: node, id: symbol) code "PT001" "{id}"
+    suppress ruff "PT001"
+PT001(d, cat("Remove the empty parentheses: write the decorator as `@", x, "` instead of `@", x, "()`.")) :-
+    !option("fixture-parentheses", "true"), pytest_fixture(_, d, e), exc_no_args(e), field(e, "function", g),
+    text(g, x).
+PT001(d, cat("Add parentheses: write the decorator as `@", x, "()` instead of `@", x, "`.")) :-
+    option("fixture-parentheses", "true"), pytest_fixture(_, d, e), !kind(e, "call"), text(e, x).

@@ -69,6 +69,7 @@
                           "follows": {
                             "stopBy": "end",
                             "regex": "^:$",
+                            "stored": "a slice's `::`: stored",
                             "follows": {
                               "stopBy": "end",
                               "regex": "^:$"

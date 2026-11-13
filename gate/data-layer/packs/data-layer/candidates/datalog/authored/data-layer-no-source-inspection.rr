@@ -1,0 +1,44 @@
+// data-layer-no-source-inspection, authored clauses `inspection-3` and `inspection-4`: `from inspect import
+// getsource` / `getsourcelines`, plain or aliased.
+// The policy: an import_from_statement with a direct child in field `module_name` whose text is `inspect`
+// (`^inspect$`), and a direct child (stopBy neighbor) that is either a dotted_name with text `^getsource$` not
+// in the statement's `module_name` field, or an aliased_import whose full text (`node_text`, comments included, as
+// W's regex reads it) matches `\bgetsource\b`.
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// An import from `inspect`, in scope.
+.decl inspection_3_from_inspect(d: number, n: node)
+inspection_3_from_inspect(d, n) :-
+    node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d),
+    field(n, "module_name", m), text(m, "inspect").
+
+// An aliased_import's full text.
+.decl inspection_3_alias_text(a: node, s: symbol)
+inspection_3_alias_text(a, s) :- inspection_3_from_inspect(_, n), child(n, a, _), node(_, a, "aliased_import", _, _), node_text(a, s).
+
+// inspection-3: getsource.
+.decl inspection_3_name(n: node)
+inspection_3_name(n) :-
+    inspection_3_from_inspect(_, n), child(n, c, _), node(_, c, "dotted_name", _, _), text(c, "getsource"),
+    !field(n, "module_name", c).
+inspection_3_name(n) :-
+    inspection_3_from_inspect(_, n), child(n, c, _), inspection_3_alias_text(c, s),
+    match("(?s).*\\bgetsource\\b.*", s).
+
+violation("data-layer-no-source-inspection", "inspection-3", "NSI001", p, l) :-
+    inspection_3_from_inspect(d, n), inspection_3_name(n), doc(d, p, _), line(n, l).
+
+// inspection-4: getsourcelines.
+.decl inspection_4_name(n: node)
+inspection_4_name(n) :-
+    inspection_3_from_inspect(_, n), child(n, c, _), node(_, c, "dotted_name", _, _), text(c, "getsourcelines"),
+    !field(n, "module_name", c).
+inspection_4_name(n) :-
+    inspection_3_from_inspect(_, n), child(n, c, _), inspection_3_alias_text(c, s),
+    match("(?s).*\\bgetsourcelines\\b.*", s).
+
+violation("data-layer-no-source-inspection", "inspection-4", "NSI001", p, l) :-
+    inspection_3_from_inspect(d, n), inspection_4_name(n), doc(d, p, _), line(n, l).

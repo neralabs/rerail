@@ -1,0 +1,59 @@
+.policy "react-hooks-refs" revision 2
+.description "Read and write refs only in effects and event handlers, never while a component or hook renders, so what it shows never depends on a value React does not track."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/refs (React Compiler): `ref.current` is not state; React does not re-render when it changes, so
+// render code must neither read nor write it. Refs are useRef's results and any name `ref` or ending in `Ref`.
+//   return <b>{countRef.current}</b>;                          reported: a read during render
+//   ref.current = value;                                        reported: a write during render
+//   if (ref.current == null) { ref.current = make(); }          not: lazy initialisation is allowed
+//   const read = () => ref.current; return <b>{read()}</b>;     reported at read(): it reads during render
+//   items.map(() => ref.current)                                reported at the callback: map calls it now
+//   useEffect(() => { ref.current = v; });  <b onClick={() => ref.current.focus()}/>   not: they run later
+// The compiler also tracks refs through props objects, aliases and returned values; this rule does not (NOTES).
+#include "tsx/react-compiler.rr"
+
+.violation refs(at: node, msg: symbol)
+    code "react-hooks/refs"
+    "{msg}"
+    suppress eslint "react-hooks/refs"
+    suppress oxlint "refs"
+refs(m, x) :- rc_current(m), rc_own(m, h), rc_render_fn(h, _), !lazy_init(m), !memo_dep(m), how(m, w), says(w, x).
+refs(k, x) :- rc_called_fn(k, g, _), touches(g), says("read", x).
+refs(g, x) :- rc_fn(g), touches(g), deparen(a, g), child(l, a, _), kind(l, "arguments"), field(c, "arguments", l),
+    !rc_hook_call(c), rc_own(c, h), rc_render_fn(h, _), says("read", x).
+
+// memo_dep(m): m is in the dependency list of useMemo or useCallback, which the compiler drops (it memoizes
+// by its own analysis): useCallback(() => …, [ref.current]).
+.decl memo_dep(m: node)
+memo_dep(m) :- (rc_react_call(c, "useMemo") ; rc_react_call(c, "useCallback")), call_arg(c, l, 1), within(m, l).
+.decl touches(g: node)  // g's own code reads or writes a ref's current
+touches(g) :- rc_current(m), rc_own(m, g).
+.decl how(m: node, w: symbol)  // "write" for `r.current = …`, `+=` and `++`, else "read"; `+=` reads as well
+how(m, "write") :- written(m).
+how(m, "read") :- rc_current(m), !written(m).
+how(m, "read") :- rc_current(m), kind(a, "augmented_assignment_expression"), field(a, "left", m).
+.decl written(m: node)
+written(m) :- rc_current(m), (kind(a, "assignment_expression"), field(a, "left", m) ;
+    kind(a, "augmented_assignment_expression"), field(a, "left", m) ; kind(a, "update_expression"), field(a, "argument", m)).
+// lazy_init(m): `if (r.current == null) { r.current = … }`: the null test, and writes to r inside the branch.
+// A test by `!r.current` is a read; the writes under it are allowed.
+.decl lazy_init(m: node)
+lazy_init(m) :- null_test(_, m).
+lazy_init(m) :- guard(i, o), field(i, "consequence", b), within(m, b), written(m), !how(m, "read"),
+    field(m, "object", o2), text(o2, x), text(o, x).
+.decl guard(i: node, o: node)  // if statement i tests ref o's current for null or falsiness
+guard(i, o) :- (null_test(i, t) ; not_test(i, t)), field(t, "object", o).
+.decl null_test(i: node, t: node)  // if (r.current == null), === null, == undefined
+null_test(i, t) :- kind(i, "if_statement"), field(i, "condition", c), child(c, b, 0), kind(b, "binary_expression"),
+    (op(b, "==") ; op(b, "===")), field(b, "left", t), rc_current(t), field(b, "right", n),
+    (kind(n, "null") ; kind(n, "undefined")).
+.decl not_test(i: node, t: node)  // if (!r.current)
+not_test(i, t) :- kind(i, "if_statement"), field(i, "condition", c), child(c, u, 0), kind(u, "unary_expression"),
+    op(u, "!"), field(u, "argument", t), rc_current(t).
+
+.decl says(w: symbol, m: symbol)
+says("read", "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.").
+says("write", "Move this ref write into an effect or event handler; while rendering, write a ref only to initialise it once inside a null check.").

@@ -1,0 +1,20 @@
+.policy "ruff-pt026-pytest-use-fixtures-without-parameters" revision 2
+.description "Remove usefixtures markers that name no fixtures, or pass them the fixtures to apply; a marker without arguments does nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT026 (flake8-pytest-style): `@pytest.mark.usefixtures` on a function with no fixtures named, bare or with
+// empty parentheses. Ruff reads the bare form only as an attribute: `from pytest.mark import usefixtures` and a
+// bare `@usefixtures` is not reported.
+//   @pytest.mark.usefixtures()       ← PT026
+//   @pytest.mark.usefixtures         ← PT026
+//   @pytest.mark.usefixtures("db")   not reported
+#include "python/pytest.rr"
+//   pytest_mark(o, d, e, m), exc_no_args(c)
+
+.violation PT026(at: node) code "PT026"
+    "Remove this `usefixtures` decorator, or pass it the names of the fixtures to apply; without arguments it does nothing."
+    suppress ruff "PT026"
+PT026(d) :- pytest_mark(f, d, e, "usefixtures"), kind(f, "function_definition"),
+    (kind(e, "attribute") ; exc_no_args(e)).

@@ -1,0 +1,1758 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-swallowed-exceptions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Candidate port of nera-data-layer swallowed_exceptions at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "services/**/*.py",
+      "data_layer_testing/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "protocol": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "^(?:KeyError|StopAsyncIteration|StopIteration)$"
+                  }
+                ]
+              },
+              {
+                "pattern": "queue.Empty"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "has": {
+                      "matches": "protocol",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "has": {
+                      "matches": "protocol",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "all": [
+                          {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          },
+                          {
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "except-warning",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "except_clause"
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "any": [
+                              {
+                                "matches": "protocol"
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "as_pattern"
+                                  },
+                                  {
+                                    "has": {
+                                      "matches": "protocol",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "value"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "kind": "lambda"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "except_clause",
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "raise_statement",
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "class_definition"
+                                              },
+                                              {
+                                                "kind": "function_definition"
+                                              },
+                                              {
+                                                "kind": "lambda"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "kind": "except_clause"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "lambda"
+                                  }
+                                ]
+                              },
+                              {
+                                "inside": {
+                                  "kind": "except_clause",
+                                  "stopBy": "end"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$ERROR"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "alias"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "as_pattern"
+                                },
+                                {
+                                  "has": {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "pattern": "$ERROR"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    },
+                                    "stopBy": "neighbor",
+                                    "field": "alias"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "value"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "block"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "attribute",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "keyword_argument",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "pattern": "$ERROR"
+                                      }
+                                    ],
+                                    "stopBy": {
+                                      "any": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "kind": "function_definition"
+                                            },
+                                            {
+                                              "kind": "lambda"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "kind": "except_clause"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "attribute",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "keyword_argument",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "pattern": "$ERROR"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "attribute",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "keyword_argument",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "pattern": "$ERROR"
+                                      }
+                                    ],
+                                    "stopBy": {
+                                      "any": [
+                                        {
+                                          "any": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "class_definition"
+                                                },
+                                                {
+                                                  "kind": "function_definition"
+                                                },
+                                                {
+                                                  "kind": "lambda"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "kind": "except_clause"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "kind": "as_pattern_target"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "value"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "except|suppress",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "except|suppress",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "WARNING",
+        "anchor": "witness.span",
+        "message": "WARNING: except warning"
+      }
+    },
+    {
+      "id": "except-critical",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "except_clause"
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "any": [
+                              {
+                                "matches": "protocol"
+                              },
+                              {
+                                "all": [
+                                  {
+                                    "kind": "as_pattern"
+                                  },
+                                  {
+                                    "has": {
+                                      "matches": "protocol",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ]
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "value"
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "all": [
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "kind": "function_definition"
+                                        },
+                                        {
+                                          "kind": "lambda"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "inside": {
+                                        "kind": "except_clause",
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "raise_statement",
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "class_definition"
+                                              },
+                                              {
+                                                "kind": "function_definition"
+                                              },
+                                              {
+                                                "kind": "lambda"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "kind": "except_clause"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "not": {
+                            "inside": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "class_definition"
+                                    },
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "lambda"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "except_clause",
+                                    "stopBy": "end"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "pattern": "$ERROR"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "alias"
+                              }
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "as_pattern"
+                                  },
+                                  {
+                                    "has": {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "pattern": "$ERROR"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      },
+                                      "stopBy": "neighbor",
+                                      "field": "alias"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "value"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "kind": "attribute",
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "kind": "keyword_argument",
+                                                  "stopBy": "neighbor",
+                                                  "field": "name"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "pattern": "$ERROR"
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "class_definition"
+                                              },
+                                              {
+                                                "kind": "function_definition"
+                                              },
+                                              {
+                                                "kind": "lambda"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "kind": "except_clause"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "attribute",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "keyword_argument",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "pattern": "$ERROR"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "kind": "attribute",
+                                                  "stopBy": "neighbor",
+                                                  "field": "attribute"
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "kind": "keyword_argument",
+                                                  "stopBy": "neighbor",
+                                                  "field": "name"
+                                                }
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "pattern": "$ERROR"
+                                        }
+                                      ],
+                                      "stopBy": {
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "class_definition"
+                                                  },
+                                                  {
+                                                    "kind": "function_definition"
+                                                  },
+                                                  {
+                                                    "kind": "lambda"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "kind": "except_clause"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "kind": "as_pattern_target"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "value"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "except|suppress",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "except|suppress",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CRITICAL",
+        "anchor": "witness.span",
+        "message": "CRITICAL: except critical"
+      }
+    },
+    {
+      "id": "suppress-legacy",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "with_statement"
+                  },
+                  {
+                    "not": {
+                      "regex": "^async\\b"
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "with_clause"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "with_item"
+                              },
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "pattern": "$SUPPRESS"
+                                        },
+                                        {
+                                          "has": {
+                                            "any": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "identifier"
+                                                  },
+                                                  {
+                                                    "regex": "^(?:suppress)$"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "pattern": "contextlib.suppress"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "has": {
+                                                    "matches": "protocol",
+                                                    "stopBy": "neighbor"
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "not": {
+                                                            "kind": "comment"
+                                                          }
+                                                        },
+                                                        {
+                                                          "nthChild": {
+                                                            "position": 2,
+                                                            "ofRule": {
+                                                              "not": {
+                                                                "kind": "comment"
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "arguments"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "as_pattern"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "call"
+                                              },
+                                              {
+                                                "pattern": "$SUPPRESS"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "kind": "identifier"
+                                                        },
+                                                        {
+                                                          "regex": "^(?:suppress)$"
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "pattern": "contextlib.suppress"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "function"
+                                                }
+                                              },
+                                              {
+                                                "not": {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "has": {
+                                                          "matches": "protocol",
+                                                          "stopBy": "neighbor"
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "not": {
+                                                                  "kind": "comment"
+                                                                }
+                                                              },
+                                                              {
+                                                                "nthChild": {
+                                                                  "position": 2,
+                                                                  "ofRule": {
+                                                                    "not": {
+                                                                      "kind": "comment"
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor"
+                                                          }
+                                                        }
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "arguments"
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "value"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "except|suppress",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "except|suppress",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CRITICAL",
+        "anchor": "witness.span",
+        "message": "CRITICAL: suppress legacy",
+        "each": "SUPPRESS"
+      }
+    },
+    {
+      "id": "suppress-critical",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "with_statement"
+                  },
+                  {
+                    "pattern": "$WITH"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "with_clause"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "with_item"
+                              },
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "call"
+                                        },
+                                        {
+                                          "pattern": "$SUPPRESS"
+                                        },
+                                        {
+                                          "has": {
+                                            "any": [
+                                              {
+                                                "pattern": "contextlib.suppress"
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:suppress)$"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "inside": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "module"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "all": [
+                                                                  {
+                                                                    "kind": "import_from_statement"
+                                                                  },
+                                                                  {
+                                                                    "has": {
+                                                                      "all": [
+                                                                        {
+                                                                          "kind": "dotted_name"
+                                                                        },
+                                                                        {
+                                                                          "regex": "^(?:contextlib)$"
+                                                                        }
+                                                                      ],
+                                                                      "stopBy": "neighbor",
+                                                                      "field": "module_name"
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              },
+                                                              {
+                                                                "pattern": "$IMPORT"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "any": [
+                                                                    {
+                                                                      "all": [
+                                                                        {
+                                                                          "kind": "dotted_name"
+                                                                        },
+                                                                        {
+                                                                          "regex": "^suppress$"
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "all": [
+                                                                        {
+                                                                          "kind": "aliased_import"
+                                                                        },
+                                                                        {
+                                                                          "has": {
+                                                                            "all": [
+                                                                              {
+                                                                                "kind": "dotted_name"
+                                                                              },
+                                                                              {
+                                                                                "regex": "^suppress$"
+                                                                              }
+                                                                            ],
+                                                                            "stopBy": "neighbor",
+                                                                            "field": "name"
+                                                                          }
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor"
+                                                                }
+                                                              },
+                                                              {
+                                                                "layout": {
+                                                                  "after": {
+                                                                    "to": "capture.WITH",
+                                                                    "breaks": {
+                                                                      "min": 0
+                                                                    }
+                                                                  }
+                                                                }
+                                                              },
+                                                              {
+                                                                "not": {
+                                                                  "inside": {
+                                                                    "all": [
+                                                                      {
+                                                                        "kind": "module"
+                                                                      },
+                                                                      {
+                                                                        "has": {
+                                                                          "all": [
+                                                                            {
+                                                                              "all": [
+                                                                                {
+                                                                                  "kind": "import_from_statement"
+                                                                                },
+                                                                                {
+                                                                                  "has": {
+                                                                                    "all": [
+                                                                                      {
+                                                                                        "kind": "dotted_name"
+                                                                                      },
+                                                                                      {
+                                                                                        "regex": "^(?:contextlib)$"
+                                                                                      }
+                                                                                    ],
+                                                                                    "stopBy": "neighbor",
+                                                                                    "field": "module_name"
+                                                                                  }
+                                                                                }
+                                                                              ]
+                                                                            },
+                                                                            {
+                                                                              "pattern": "$LATER"
+                                                                            },
+                                                                            {
+                                                                              "layout": {
+                                                                                "before": {
+                                                                                  "to": "capture.IMPORT",
+                                                                                  "breaks": {
+                                                                                    "min": 0
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            {
+                                                                              "layout": {
+                                                                                "after": {
+                                                                                  "to": "capture.WITH",
+                                                                                  "breaks": {
+                                                                                    "min": 0
+                                                                                  }
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          ],
+                                                                          "stopBy": "end"
+                                                                        }
+                                                                      }
+                                                                    ],
+                                                                    "stopBy": "end"
+                                                                  }
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "end"
+                                                          }
+                                                        }
+                                                      ],
+                                                      "stopBy": "end"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "function"
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:KeyError)$"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor"
+                                                  }
+                                                },
+                                                {
+                                                  "not": {
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "not": {
+                                                            "kind": "comment"
+                                                          }
+                                                        },
+                                                        {
+                                                          "nthChild": {
+                                                            "position": 2,
+                                                            "ofRule": {
+                                                              "not": {
+                                                                "kind": "comment"
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "arguments"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "as_pattern"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "call"
+                                              },
+                                              {
+                                                "pattern": "$SUPPRESS"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "pattern": "contextlib.suppress"
+                                                    },
+                                                    {
+                                                      "all": [
+                                                        {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "^(?:suppress)$"
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "inside": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "module"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "all": [
+                                                                        {
+                                                                          "kind": "import_from_statement"
+                                                                        },
+                                                                        {
+                                                                          "has": {
+                                                                            "all": [
+                                                                              {
+                                                                                "kind": "dotted_name"
+                                                                              },
+                                                                              {
+                                                                                "regex": "^(?:contextlib)$"
+                                                                              }
+                                                                            ],
+                                                                            "stopBy": "neighbor",
+                                                                            "field": "module_name"
+                                                                          }
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "pattern": "$IMPORT"
+                                                                    },
+                                                                    {
+                                                                      "has": {
+                                                                        "any": [
+                                                                          {
+                                                                            "all": [
+                                                                              {
+                                                                                "kind": "dotted_name"
+                                                                              },
+                                                                              {
+                                                                                "regex": "^suppress$"
+                                                                              }
+                                                                            ]
+                                                                          },
+                                                                          {
+                                                                            "all": [
+                                                                              {
+                                                                                "kind": "aliased_import"
+                                                                              },
+                                                                              {
+                                                                                "has": {
+                                                                                  "all": [
+                                                                                    {
+                                                                                      "kind": "dotted_name"
+                                                                                    },
+                                                                                    {
+                                                                                      "regex": "^suppress$"
+                                                                                    }
+                                                                                  ],
+                                                                                  "stopBy": "neighbor",
+                                                                                  "field": "name"
+                                                                                }
+                                                                              }
+                                                                            ]
+                                                                          }
+                                                                        ],
+                                                                        "stopBy": "neighbor"
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "layout": {
+                                                                        "after": {
+                                                                          "to": "capture.WITH",
+                                                                          "breaks": {
+                                                                            "min": 0
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    },
+                                                                    {
+                                                                      "not": {
+                                                                        "inside": {
+                                                                          "all": [
+                                                                            {
+                                                                              "kind": "module"
+                                                                            },
+                                                                            {
+                                                                              "has": {
+                                                                                "all": [
+                                                                                  {
+                                                                                    "all": [
+                                                                                      {
+                                                                                        "kind": "import_from_statement"
+                                                                                      },
+                                                                                      {
+                                                                                        "has": {
+                                                                                          "all": [
+                                                                                            {
+                                                                                              "kind": "dotted_name"
+                                                                                            },
+                                                                                            {
+                                                                                              "regex": "^(?:contextlib)$"
+                                                                                            }
+                                                                                          ],
+                                                                                          "stopBy": "neighbor",
+                                                                                          "field": "module_name"
+                                                                                        }
+                                                                                      }
+                                                                                    ]
+                                                                                  },
+                                                                                  {
+                                                                                    "pattern": "$LATER"
+                                                                                  },
+                                                                                  {
+                                                                                    "layout": {
+                                                                                      "before": {
+                                                                                        "to": "capture.IMPORT",
+                                                                                        "breaks": {
+                                                                                          "min": 0
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  },
+                                                                                  {
+                                                                                    "layout": {
+                                                                                      "after": {
+                                                                                        "to": "capture.WITH",
+                                                                                        "breaks": {
+                                                                                          "min": 0
+                                                                                        }
+                                                                                      }
+                                                                                    }
+                                                                                  }
+                                                                                ],
+                                                                                "stopBy": "end"
+                                                                              }
+                                                                            }
+                                                                          ],
+                                                                          "stopBy": "end"
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "end"
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "end"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor",
+                                                  "field": "function"
+                                                }
+                                              },
+                                              {
+                                                "not": {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "^(?:KeyError)$"
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor"
+                                                        }
+                                                      },
+                                                      {
+                                                        "not": {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "not": {
+                                                                  "kind": "comment"
+                                                                }
+                                                              },
+                                                              {
+                                                                "nthChild": {
+                                                                  "position": 2,
+                                                                  "ofRule": {
+                                                                    "not": {
+                                                                      "kind": "comment"
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            ],
+                                                            "stopBy": "neighbor"
+                                                          }
+                                                        }
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "arguments"
+                                                  }
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "value"
+                                }
+                              }
+                            ],
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "except|suppress",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "except|suppress",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CRITICAL",
+        "anchor": "witness.span",
+        "message": "CRITICAL: suppress critical",
+        "each": "SUPPRESS"
+      }
+    }
+  ]
+}

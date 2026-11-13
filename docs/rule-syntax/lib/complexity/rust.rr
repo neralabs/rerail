@@ -1,0 +1,28 @@
+// complexity/rust: lizard's decision points in Rust, on tree-sitter-rust 0.24, for complexity/cyclomatic.rr.
+//
+// A function is an `fn` with a body: methods, trait default methods, nested fns, async, const and unsafe ones. A
+// trait's required method (`fn f(&self);`) is a function_signature_item, not scored. A closure is not a function
+// here: its conditions count toward the fn around it, as lizard counts them. Decisions:
+//   if (else if and if let included)  for  while (and while let)  ?     an expression each
+//   match                       once, however many arms; an arm's `if` guard counts too
+//   a && b   a || b             each operator, and each `&&` of a let chain (`if let Some(x) = a && b`)
+// Not counted: loop, else, let…else, where, ?Sized. Rerail reads Rust before macro expansion, so nothing inside
+// a macro invocation (`assert!(a && b)`) counts: its tokens are a token tree, not expressions.
+//
+//   fn parse(s: &str) -> Result<u8, E> {    CCN 4
+//       let n = s.parse::<u8>()?;           ?
+//       if n > 9 && n < 99 { … }            if, &&
+//   }
+#include "complexity/cyclomatic.rr"
+
+cc_boundary("function_item").
+
+cc_decision(n, 0) :- kind(n, k), cc_rust_expression(k).
+cc_decision(n, 0) :- kind(n, "match_pattern"), field(n, "condition", _).
+cc_decision(n, 0) :- kind(n, "binary_expression"), (op(n, "&&") ; op(n, "||")).
+cc_decision(n, i) :- kind(n, "let_chain"), op_at(n, i, "&&").
+.decl cc_rust_expression(k: symbol)
+cc_rust_expression("if_expression"). cc_rust_expression("for_expression"). cc_rust_expression("while_expression").
+cc_rust_expression("match_expression"). cc_rust_expression("try_expression").
+
+cc_name(f, x) :- kind(f, "function_item"), field(f, "name", n), text(n, x).

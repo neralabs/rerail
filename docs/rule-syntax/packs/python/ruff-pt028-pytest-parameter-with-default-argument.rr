@@ -1,0 +1,28 @@
+.policy "ruff-pt028-pytest-parameter-with-default-argument" revision 2
+.description "Don't give pytest test function parameters default values; the default always wins, so a fixture of the same name is never injected."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT028 (flake8-pytest-style): a default value on a parameter of a likely pytest test: a `test*` function
+// at module level, or directly in a `Test*` class that defines no `__init__`. pytest never injects a fixture
+// into such a parameter. `*args` and `**kwargs` have no default.
+//   def test_x(a=1): ...                     ← PT028, at the default
+//   class TestC:
+//       def test_y(self, b=2): ...           ← PT028
+//   def helper(a=1): ...                     not reported
+#include "python/pytest.rr"
+//   ast: sig_param(f, p, nm, i, kind, ann, dflt); names: scope_node(n, s), def_name(f, x)
+
+.violation PT028(at: node, x: symbol) code "PT028"
+    "Remove the default of `{x}`: pytest never fills a parameter that has a default from a fixture or parametrize. Set fixed values in the test body, or keep it if pytest does not collect this function."
+    suppress ruff "PT028"
+PT028(m, x) :- likely_test(f), sig_param(f, _, nm, _, k, _, v), k != "vararg", k != "kwarg", !unset(v), text(nm, x),
+    unparen(v, m).
+.decl likely_test(f: node)
+likely_test(f) :- kind(f, "function_definition"), def_name(f, t), prefix("test", t), scope_node(f, s),
+    (kind(s, "module") ; kind(s, "class_definition"), def_name(s, c), prefix("Test", c), !has_init(s)).
+.decl has_init(c: node)  // a def __init__ directly in class c's body
+has_init(c) :- kind(c, "class_definition"), field(c, "body", b), child(b, s, _),
+    (i = s ; kind(s, "decorated_definition"), field(s, "definition", i)), kind(i, "function_definition"),
+    def_name(i, "__init__").

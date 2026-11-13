@@ -1,0 +1,294 @@
+# `.rr`, step 8: aggregates, `r(n) :- n = count : { s(_) }, m = sum v by k sep "," : { t(k, v) }.`
+#
+# The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
+#   - An aggregate: its word, then for `count` a `:`, for `min`, `max`, `sum`, `mean` and
+#     `join` a value; keys after `by` (one, or a list in parentheses); a separator after `sep`;
+#     then `:` and a body in braces.
+#   - The words are soft: an aggregate's only where one can be. Before a `(` the word is a
+#     call's function (an atom's relation at a literal's start); before anything else that is
+#     no term, a variable. The word's leaf is a variable, and the token after it wraps it in an
+#     aggregate, giving it its own kind back.
+#   - An aggregate's value and single key are terms with no named argument anywhere in them,
+#     so the `:` after them is the aggregate's (the `_nn` rules: no named arguments).
+#   - `{` and `}` are punctuation.
+# The rest is step 7's.
+#
+# Not in this step yet: `min (…) : { … }`, which the engine tells from a call only after its
+# `)`, goes to the engine, as does an aggregate as another's value. A parenthesized term at a
+# literal's start; edits (`=>`), the other directives, floats, a setting's `{ … }`. A `` `` ``
+# with no closing pair and a run of four backticks or more go to the engine.
+
+lexer rr
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class dot       = '.'
+class comma     = ','
+class u         = 'u'
+class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&' '{' '}'
+class colon     = ':'
+class minus     = '-'
+class eq        = '='
+class lt        = '<'
+class gt        = '>'
+class bang      = '!'
+class tick      = '`'
+
+mask last_byte  = ~next(~empty)
+
+# --- Regions -----------------------------------------------------------------------------------
+
+# Each kind of region by its opener `o_*` and its closer, from the raw bytes: the bytes from an
+# opener to before its closer are `f_* = fill(o_*, closer)`. The hidden bytes, where no opener
+# counts, run from the byte after an opener through its closer: `prev` of the fills (a two- or
+# three-byte closer, `prev` by two or three too). A line comment's `\n` is not hidden: it ends
+# the line.
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+mask tt         = tick & next(tick)
+mask ttt        = tt & next(tick, 2)
+mask tick1      = tick & ~next(tick)
+mask tick2      = tt & ~next(tick, 2)
+mask tick3      = ttt & ~next(tick, 3)
+rounds until settled {
+  carry hidden  = empty
+  mask code0    = ~hidden
+  mask o_str    = q & code0
+  mask o_line   = line_open & code0
+  mask o_block  = block_open & code0
+  mask o_t1     = tick1 & code0
+  mask o_t2     = tick2 & code0
+  mask o_t3     = tick3 & code0
+  mask f_str    = fill(o_str, q)
+  mask f_line   = fill(o_line, lf)
+  mask f_block  = fill(o_block, block_end)
+  mask f_t1     = fill(o_t1, tick)
+  mask f_t2     = fill(o_t2, tt)
+  mask f_t3     = fill(o_t3, ttt)
+  next hidden   = prev(f_str | f_block | f_t1 | f_t2 | f_t3) | (prev(f_line) & ~lf) | prev(f_t2 | f_t3, 2) | prev(f_t3, 3)
+}
+
+# Each region's last byte.
+mask closing    = prev(f_str) & ~f_str
+mask line_last  = f_line & ~next(f_line)
+mask block_last = prev(f_block) & ~f_block
+mask t1_last    = prev(f_t1) & ~f_t1
+mask t2_last    = prev(f_t2, 2) & ~prev(f_t2)
+mask t3_last    = prev(f_t3, 3) & ~prev(f_t3, 2)
+mask o_tick     = o_t1 | o_t2 | o_t3
+mask region     = hidden | o_str | o_line | o_block | o_tick
+
+error "a string open at the end of the file" when f_str & last_byte
+error "a block comment open at the end of the file" when f_block & last_byte
+error "a backtick literal open at the end of the file" when (f_t1 | f_t3) & last_byte
+escape "a `` with no closing pair" when f_t2 & last_byte
+escape "a run of four backticks or more" when ttt & next(tick, 3) & ~hidden
+# `\u{…}` and `\uXXXX` are checked by the engine's lexer, which refuses some: the file goes to it.
+escape "a \\u escape in a string" when f_str & ~o_str & escaped & u
+
+# --- Code --------------------------------------------------------------------------------------
+
+mask code       = ~region
+
+# `#` and its word.
+mask directive  = code & hash
+mask hashword   = fill(directive, ~(code & word))
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word & ~hashword
+mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
+mask num        = w & ~ident                    # the digits before it
+# A float, `1.5`: a '.' after a number's digits and before a digit.
+escape "a float" when code & dot & prev(num) & next(digit)
+# The engine reads a number as an i64: one of 19 or more digits (leading zeros aside) is
+# checked by it.
+mask sig        = fill(num & nonzero, ~num)
+mask sig2       = sig & prev(sig)
+mask sig4       = sig2 & prev(sig2, 2)
+mask sig8       = sig4 & prev(sig4, 4)
+mask sig16      = sig8 & prev(sig8, 8)
+escape "a number of 19 digits or more" when sig16 & prev(sig2, 16) & prev(sig, 18)
+
+# --- Punctuation -------------------------------------------------------------------------------
+
+# A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
+mask two        = code & ((colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt)))
+mask two_start  = two & ~escaped(two)
+mask second     = prev(two_start)
+mask p          = code & punct
+mask p_start    = p & ~second
+mask p_last     = (p_start & ~two_start) | second
+
+error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+token string     = start quote & o_str last closing
+token comment    = start slash & (o_line | o_block) last line_last | block_last
+token code_literal = start tick & o_tick last t1_last | t2_last | t3_last
+token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
+keywords hash_word { "#include" } required
+token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
+token number     = start digit & num & ~prev(num) last num & ~next(num)
+token punct      = start punct & p_start last p_last
+# `decl` is a word, a keyword only where a statement's `.` comes before it; `_`, only where a
+# term can be a wildcard; `must` and `may`, only at a head's start; the aggregates' words,
+# `by` and `sep`, only where an aggregate can be. The other directives' words and the aggregates' (which later steps
+# parse): reserved, so a file with one goes to the engine's parser.
+keywords identifier { "edit" -> reserved "functor" -> reserved "type" -> reserved "input" -> reserved "output" -> reserved "lattice" -> reserved "pragma" -> reserved "violation" -> reserved "policy" -> reserved } soft { "decl" "_" "must" "may" "count" "min" "max" "sum" "mean" "join" "by" "sep" }
+keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" "{" "}" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
+
+skip code & ws
+
+# --- Line breaks -------------------------------------------------------------------------------
+
+# Every grammar token's start (the comments' left out): a mark goes before the next one.
+mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & num & ~prev(num)) | p_start
+mask after_comma = fill(code & comma & p_start, starts_g)
+# The file's end ends a line too: a setting ends there.
+mark line        = lf, end
+mark newline     = lf & ~after_comma, end
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree rr {
+  node source_file whole = (include | setting | clause)*
+  node include          = '#include' path: string
+  node setting          = '.' (declaration_tail | line (declaration_tail | name: identifier) | name: identifier (argument: value | setting_punctuation)* newline)
+  # A `.decl`: the node opened as a setting at the `.` is a declaration.
+  choice declaration_tail = retag declaration merge '.decl' 'decl' name: identifier columns: column_list (modifier: value | punctuation)* line
+  node column_list      = '(' [column: column (',' column: column)*] ')'
+  node column           = name: identifier ':' type: type
+  node type             = name: identifier ['<' [argument: identifier] '>']
+  choice value          = identifier | number | string
+  node clause           = head: head (',' head: head)* [':-' body: body] '.'
+  # A head's modal: `must` or `may`, then the relation. Before a `(` it was the relation: the
+  # `(` relabels it, an identifier.
+  node head             = modal: ('must' | 'may') (relation: identifier arguments: argument_list
+                                                  | relabel relation as identifier arguments: argument_list)
+                        | relation: identifier arguments: argument_list
+  node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
+  # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
+  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
+  node conjunction nested = literal: literal (',' literal: literal)*
+  node group nested     = '(' body: body ')'
+  # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
+  # variable, unless a `(` after it makes it an atom's relation. `_` is a term here: a
+  # wildcard. A term at a literal's start goes on as one (`more`), then a comparison or a
+  # pattern follows.
+  # An operator after an atom: it was a call, its word the function (`relabel … inner`).
+  choice literal        = (number | string | code_literal | '_' as wildcard | minus | functor_call) more (comparison_tail | pattern_tail)
+                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)]
+                                                 | more (comparison_tail | pattern_tail))
+                        | aggregate_literal
+                        | negation | group
+  # `!` before an atom, a pattern match or a negation: never a comparison.
+  node negation nested  = '!' operand: negated
+  choice negated        = (number | string | code_literal | '_' as wildcard | minus | functor_call) more pattern_tail
+                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail]
+                                                 | more pattern_tail)
+                        | aggregate_negated
+                        | negation | group
+  choice comparison_tail = wrap comparison left operator: comparison_operator right: term
+  choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal
+  # After a primary: the rest of its product, then of its term.
+  choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
+  choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
+  # Terms by precedence, each operator around the left side so far.
+  choice term nested    = product (wrap binary_expression left operator: additive right: product)*
+  choice product        = primary (wrap binary_expression left operator: multiplicative right: primary)*
+  choice additive       = '+' | '-'
+  choice multiplicative = '*' | '/' | '%'
+  # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
+  # argument's name.
+  choice primary        = number | unsigned
+  choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call
+                        | identifier as variable [wrap call function as identifier arguments: argument_list
+                                                 | wrap named_argument name as identifier ':' value: term]
+                        | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
+                        | 'min' as variable [min_agg | wrap call function as identifier arguments: argument_list]
+                        | 'max' as variable [max_agg | wrap call function as identifier arguments: argument_list]
+                        | 'sum' as variable [sum_agg | wrap call function as identifier arguments: argument_list]
+                        | 'mean' as variable [mean_agg | wrap call function as identifier arguments: argument_list]
+                        | 'join' as variable [join_agg | wrap call function as identifier arguments: argument_list]
+                        | parenthesized_expression
+  # `-` and a number: one number leaf. Else `-` and its operand, a primary that is no number.
+  choice minus          = '-' (merge number number | wrap unary_expression operator operand: unsigned)
+  node parenthesized_expression = '(' expression: term ')'
+  node functor_call     = '@' function: identifier arguments: argument_list
+  # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
+  # comparison or a pattern; else the word as any other.
+  choice aggregate_literal = 'count' as variable (count_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+                           | 'min' as variable (min_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+                           | 'max' as variable (max_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+                           | 'sum' as variable (sum_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+                           | 'mean' as variable (mean_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+                           | 'join' as variable (join_agg more (comparison_tail | pattern_tail) | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more (comparison_tail | pattern_tail)] | more (comparison_tail | pattern_tail))
+  choice aggregate_negated = 'count' as variable (count_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'min' as variable (min_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'max' as variable (max_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'sum' as variable (sum_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'mean' as variable (mean_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'join' as variable (join_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+  # The aggregate around its word, which takes its own kind back.
+  choice count_agg      = wrap aggregate operator as 'count' ':' '{' body: body '}'
+  choice min_agg       = wrap aggregate operator as 'min' aggregated
+  choice max_agg       = wrap aggregate operator as 'max' aggregated
+  choice sum_agg       = wrap aggregate operator as 'sum' aggregated
+  choice mean_agg      = wrap aggregate operator as 'mean' aggregated
+  choice join_agg      = wrap aggregate operator as 'join' aggregated
+  # What a value's aggregate holds after its word.
+  choice aggregated     = value: agg_value ['by' ('(' key: term (',' key: term)* ')' | key: agg_value)] ['sep' separator: string] ':' '{' body: body '}'
+  # An aggregate's value or single key: a term with no named argument in it, starting with no
+  # `-` or `(` (after the word those make it a variable's or a call's). A word of an aggregate
+  # here is a variable, or `count`'s aggregate: before a term or a `(` it would be another
+  # aggregate, which goes to the engine.
+  choice agg_value = (number | string | code_literal | '_' as wildcard | functor_nn) more_nn
+                   | identifier as variable [wrap call function as identifier arguments: argument_list_nn] more_nn
+                   | count_value
+                   | 'min' as variable more_nn
+                   | 'max' as variable more_nn
+                   | 'sum' as variable more_nn
+                   | 'mean' as variable more_nn
+                   | 'join' as variable more_nn
+  # `count` in a value: a `:` after it is its aggregate's, as the engine reads it (a nested
+  # level takes what it can before it ends).
+  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn] more_nn
+  # Terms with no named argument.
+  choice more_nn        = (wrap binary_expression left operator: multiplicative right: primary_nn)* (wrap binary_expression left operator: additive right: product_nn)*
+  choice term_nn nested = product_nn (wrap binary_expression left operator: additive right: product_nn)*
+  choice product_nn     = primary_nn (wrap binary_expression left operator: multiplicative right: primary_nn)*
+  choice primary_nn     = number | unsigned_nn
+  choice unsigned_nn nested = string | code_literal | '_' as wildcard | minus_nn | functor_nn
+                            | identifier as variable [wrap call function as identifier arguments: argument_list_nn]
+                            | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'min' as variable [min_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'max' as variable [max_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'sum' as variable [sum_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'mean' as variable [mean_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'join' as variable [join_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | parenthesized_nn
+  choice minus_nn       = '-' (merge number number | wrap unary_expression operator operand: unsigned_nn)
+  # The same nodes as their named kinds, retagged at their first token.
+  node parenthesized_nn = retag parenthesized_expression '(' expression: term_nn ')'
+  node functor_nn       = retag functor_call '@' function: identifier arguments: argument_list_nn
+  node argument_list_nn nested = retag argument_list '(' [argument: term_nn (',' argument: term_nn)*] ')'
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  # A setting's: every punctuation but `{`, which opens a JSON object (a later step's).
+  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  hidden line newline
+  extra comment
+}

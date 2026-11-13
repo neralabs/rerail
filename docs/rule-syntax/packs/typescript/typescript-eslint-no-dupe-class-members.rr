@@ -1,0 +1,43 @@
+.policy "typescript-eslint-no-dupe-class-members" revision 8
+.description "Remove duplicate member names in a TypeScript class; the later one silently overwrites the earlier."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   static_key, private_key, estree_key, member_kind, is_static
+
+// typescript-eslint's no-dupe-class-members: ESLint's rule, with overload signatures and computed keys left
+// out. A class member whose name an earlier member of the same class declared, both static or both not; a
+// getter and a setter of one name are a pair, not duplicates. Reported at the later member's key.
+//   class A { foo() {} foo() {} }                 → the second foo       "d" = 1; d = 2   → d
+//   class A { foo(): void; foo(x?) {} }           fine: an overload signature and its implementation
+//   class A { ["foo"]() {} foo() {} }             fine: computed keys are skipped
+//   class A { get foo() {} set foo(v) {} }        fine        foo() {} static foo() {}    fine
+.violation no_dupe_class_members(at: node, x: symbol) code "@typescript-eslint/no-dupe-class-members"
+    "Duplicate name '{x}'. Rename or remove one of the two '{x}' members; the later declaration silently overwrites the earlier."
+    suppress eslint "@typescript-eslint/no-dupe-class-members"
+    suppress oxlint "no-dupe-class-members"
+    suppress biome "lint/suspicious/noDuplicateClassMembers"
+no_dupe_class_members(k, x) :- class_entry(c, m, x, s, w), class_entry(c, e, x, s, v), e < m, clash(w, v),
+    estree_key(m, k).
+
+// class_entry(c, m, x, s, w): m is a member of class body c with a plain (not computed, not #private) name x,
+// static s ("static" or ""), of kind w: "get", "set", or "init" for a method or field. tree-sitter writes an
+// overload `foo(): void;` as a method_signature, so sort leaves it out.
+.decl class_entry(c: node, m: node, x: symbol, s: symbol, w: symbol)
+class_entry(c, m, x, s, w) :- kind(c, "class_body"), child(c, m, _), static_key(m, x), !private_key(m, _),
+    holder_key(m, k), !kind(k, "computed_property_name"), sort(m, w), static_of(m, s).
+.decl sort(m: node, w: symbol)
+sort(m, "get") :- member_kind(m, "get").
+sort(m, "set") :- member_kind(m, "set").
+sort(m, "init") :- member_kind(m, "method").
+sort(m, "init") :- kind(m, "public_field_definition").
+.decl static_of(m: node, s: symbol)
+static_of(m, "static") :- is_static(m).
+static_of(m, "") :- child(c, m, _), kind(c, "class_body"), !is_static(m).
+// clash(w, v): a member of kind w after one of kind v replaces it: a getter replaces a getter or a plain member,
+// a setter likewise, a plain member anything.
+.decl clash(w: symbol, v: symbol)
+clash("get", "init"). clash("get", "get"). clash("set", "init"). clash("set", "set").
+clash("init", "init"). clash("init", "get"). clash("init", "set").

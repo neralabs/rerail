@@ -1,0 +1,711 @@
+{
+  "format": "rerail.rr-fresh-case-inputs/v1",
+  "cases": [
+    {
+      "id": "fresh:type-safety:where-body-text",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    \"expression: str\"\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:where-comment-text",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    # expression: str\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:where-trailing-comment-outside-ast",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    return x\n    # expression: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:order-by-stops-at-first-marker",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x):\n    # column: str\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:order-by-no-return-marker",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(\n    x,\n):\n    # column: str\n    return x\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:order-by-11-line-window",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x):\n\n\n\n\n\n\n\n\n# column: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:order-by-window-outside-body",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x):\n    return x\n\ncolumn: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:order-by-nfkc",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_ｂy(column: str):\n    pass\n# def order_by\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:no-signature-trigger",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_ｂy(column: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:nested-async",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "async def outer():\n    async def where(expression: str):\n        pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:duplicate-functions-same-line",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x = lambda: \": str |T\"): pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:body-generic-matches",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    a: str | T\n    return a\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:where-unicode-whitespace",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    \"expression: str\"\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:where-combining-suffix",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(expression: stŕ):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:where-superscript-suffix",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    \"expression: str²\"\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:multiline-string-ending",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(x):\n    \"\"\"expression:\nstr\n\"\"\"\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:function-content-only-gates",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signature_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        },
+        "content": "def unrelated"
+      }
+    },
+    {
+      "id": "fresh:type-safety:function-content-reads-disk",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signature_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        },
+        "content": "def where(x): pass"
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-content-uses-argument",
+      "check": "type_safety_patterns",
+      "entry": "check_file_content_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "clean = 1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        },
+        "content": "x: str|Expression"
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-syntax-errors",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def broken(: # str|Expression\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-comments",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "  # str|Expression; _eq=1; query.filter_gt(x)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-multiple-per-category",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "a:str|Expression; b:str|Expression\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-all-categories",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "a:str|Expression; b:str|Field; c:Expression[Any, Any]; d=_ne=1; q.filter_eq(x)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-unicode-word",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "éstr|Expression\n²str|Expression\ństr|Expression\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-all-line-separators",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "str|Field\u000bstr|Expression_eq=1 a.filter_gt(x)\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:signature-allowlist",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "impl/common/l2060_query_spec/query_spec.py",
+          "source": "def order_by(column: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/common/l2060_query_spec/query_spec.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:pattern-allowlist",
+      "check": "type_safety_patterns",
+      "entry": "check_file_for_patterns",
+      "files": [
+        {
+          "path": "impl/common/l2060_query_spec/query_spec.py",
+          "source": "x:str|Expression;_gt=1\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "impl/common/l2060_query_spec/query_spec.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:spaced-window-line-10",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x) :\n    pass\n\n\n\n\n\n\n\n# column: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:spaced-window-line-11",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x) :\n    pass\n\n\n\n\n\n\n\n\n# column: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:spaced-window-line-12",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def order_by(x) :\n    pass\n\n\n\n\n\n\n\n\n\n# column: str\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:tests/mod.py",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "tests/mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "tests/mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:test/mod.py",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "test/mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "test/mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:conform/mod.py",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "conform/mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "conform/mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:test_mod.py",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "test_mod.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "test_mod.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:mod_test.py",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod_test.py",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod_test.py"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:mod.txt",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.txt",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.txt"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:type-safety:explicit-path:mod.PY",
+      "check": "type_safety_patterns",
+      "entry": "check_function_signatures",
+      "files": [
+        {
+          "path": "mod.PY",
+          "source": "def where(expression: str):\n    pass\n"
+        }
+      ],
+      "arguments": {
+        "file_path": {
+          "path": "mod.PY"
+        },
+        "base_dir": {
+          "path": "."
+        }
+      }
+    }
+  ]
+}

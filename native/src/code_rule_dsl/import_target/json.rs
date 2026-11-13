@@ -155,7 +155,7 @@ impl<'de> Deserialize<'de> for Json {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::Json;
 
     #[test]

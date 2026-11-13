@@ -1,0 +1,25 @@
+.policy "eslint-no-duplicate-case" revision 5
+.description "Don't repeat the same case test in a switch statement; the duplicate case can never be reached."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen, token_text
+
+// ESLint's no-duplicate-case: a `case` whose test is token for token the test of an earlier case of the same
+// switch. Spacing, comments and outer parentheses do not count.
+//   switch (a) { case 1: f(); case (1): g(); }      → the second case
+//   switch (a) { case b.c: f(); case b . c: g(); }  → the second case
+// No options.
+.violation no_duplicate_case(at: node) code "no-duplicate-case"
+    "Remove this case or change its test; an earlier case with the same test always matches first."
+    suppress eslint "no-duplicate-case"
+    suppress oxlint "no-duplicate-case"
+    suppress biome "lint/suspicious/noDuplicateCase"
+no_duplicate_case(c) :- test(c, s), precedes(p, c), test(p, s).
+
+// test(c, s): case c's test, as tokens.
+.decl test(c: node, s: symbol)
+test(c, s) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x), token_text(x, s).
+token_text_ask(x) :- kind(c, "switch_case"), field(c, "value", v), deparen(v, x).

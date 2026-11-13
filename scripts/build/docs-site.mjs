@@ -15,6 +15,9 @@
 // alone. A relative link to a file that does not exist fails the build, listing each, and nothing is written.
 // ```mermaid blocks render in the browser: a page that has one loads mermaid from jsDelivr, pinned to an exact version,
 // and themes it from the tokens. No network at build time, and the output depends on the checkout alone.
+// The engine's design notes, measurement journals and rule-syntax workbench (`UNPUBLISHED`) stay out of the site: no
+// page, copy, Markdown twin, search entry or llms line, and a published doc's link to one goes to the file on GitHub, as
+// a link that leaves `docs/` does.
 //
 // Every page, the DSL reference too, has the same top bar with a search box over `search-index.json` (each page's h2
 // and h3 sections, the reference's cards and grammar productions); a page with three or more sections has an outline
@@ -64,6 +67,61 @@ const REFERENCE = "code-rule-dsl-reference.html";
 const SITE = "https://neralabs.github.io/rerail";
 /** The JSON Schema of a code-rule document, generated from the zod schema the engine's host validates with. */
 const SCHEMA = "rerail.policy.v1.schema.json";
+
+/**
+ * The paths under `docs/` the site leaves out, a trailing `/` naming a directory: maintainers' engine design notes,
+ * spikes and measurement journals, and the rule-syntax workbench (the engine compiles docs/rule-syntax/lib/core.rr, so
+ * it stays where it is). Each must exist, so the list cannot outlive what it names.
+ */
+const UNPUBLISHED = [
+  "final-shape/",
+  "parser-generators/",
+  "rule-engine-direction/",
+  "rule-syntax/",
+  "batched-sql-performance.md",
+  "code-rule-profiling.md",
+  "data-layer-batch-five.md",
+  "data-layer-batch-four-root-causes.md",
+  "data-layer-batch-four.md",
+  "data-layer-batch-six.md",
+  "data-layer-batch-three.md",
+  "data-layer-batch-two.md",
+  "data-layer-engine-gaps.md",
+  "data-layer-performance-journal.md",
+  "data-layer-port-execution-plan.md",
+  "data-layer-rule-port.md",
+  "gpu-producer-execution-contract.md",
+  "native-relations-implementation.md",
+  "native-relations-spikes.md",
+  "reachability-spikes.md",
+  "relational-execution-design.md",
+  "rule-syntax-options.md",
+  "shared-producer-contracts.md",
+  "shared-producer-workplan.md",
+  "shared-sql-performance.md",
+  "shared-syntax-implementation.md",
+  "shared-syntax-requirement.md",
+  "sql-composition-implementation.md",
+  "sql-composition-opportunities.md",
+  "sql-execution-chunk-c.md",
+  "sql-execution-opportunities.md",
+  "sql-execution-owner-spike.md",
+  "sql-execution-stages.md",
+  "sql-executor-recovery-plan.md",
+  "sql-executor.md",
+  "sql-materialization-shape.md",
+  "sql-performance-recovery-workplan.md",
+  "sql-performance-spikes.md",
+  "sql-post-c-spikes.md",
+  "sql-preparation-architecture.md",
+  "sql-preparation-spikes.md",
+  "sql-shape-spikes.md",
+  "sql-unification-and-updates-plan.md",
+  "sql-workload-profiling.md",
+];
+
+/** Whether docs path `path` (relative to `docs/`, `/`-separated) is one the site leaves out. */
+const unpublished = (path) => UNPUBLISHED.some((entry) => (entry.endsWith("/") ? `${path}/`.startsWith(entry) : path === entry));
 
 /** The header's links after the docs index, each shown when the site has its page. */
 const NAV = [
@@ -149,7 +207,7 @@ function rewriteUrl(url, from) {
   const absolute = join(ROOT, ...repoPath.split("/"));
   if (repoPath === ".." || repoPath.startsWith("../") || !existsSync(absolute)) return { missing: true };
   const directory = statSync(absolute).isDirectory();
-  if (!repoPath.startsWith("docs/") || directory) {
+  if (!repoPath.startsWith("docs/") || directory || unpublished(target)) {
     const tail = repoPath === "." ? "" : `/${encodeURI(repoPath)}`;
     return { url: `${REPO}/${directory ? "tree" : "blob"}/${BRANCH}${tail}${suffix}` };
   }
@@ -1212,7 +1270,7 @@ function llmsTxt(readme, titles) {
       continue;
     }
     const item = /^- \[[^\]]+\]\(([^)]+)\):\s*([\s\S]*)/u.exec(block);
-    if (item === null || section === null || item[1].startsWith("..")) continue;
+    if (item === null || section === null || item[1].startsWith("..") || unpublished(item[1])) continue;
     const page = pagePath(item[1]);
     listed.add(page);
     const description = item[2].replace(/\s+/gu, " ").replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1").trim();
@@ -1246,7 +1304,13 @@ if (undeclared.length > 0) {
   process.exit(1);
 }
 
-const files = walk(DOCS);
+const stale = UNPUBLISHED.filter((entry) => !existsSync(join(DOCS, ...entry.split("/"))));
+if (stale.length > 0) {
+  process.stderr.write(`docs-site: UNPUBLISHED names paths docs/ does not have: ${stale.join(", ")}\n`);
+  process.exit(1);
+}
+
+const files = walk(DOCS).filter((path) => !unpublished(path));
 const pages = new Set(files.map((path) => (path.endsWith(".md") ? pagePath(path) : path)));
 const outputs = new Map([["tokens.css", tokens]]);
 const copies = [];

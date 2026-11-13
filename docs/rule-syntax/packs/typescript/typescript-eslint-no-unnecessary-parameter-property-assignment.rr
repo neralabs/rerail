@@ -1,0 +1,65 @@
+.policy "typescript-eslint-no-unnecessary-parameter-property-assignment" revision 2
+.description "Don't assign a TypeScript parameter property to this in its constructor; the parameter property already makes that assignment."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   ctor, fn_param, static_prop, deparen, estree_parent
+#include "tsx/ts-b-scope.rr"
+//   resolves, variable
+
+// typescript-eslint's no-unnecessary-parameter-property-assignment: `constructor(private x) { this.x = x; }` sets
+// this.x twice; the parameter property already did. Reported at the assignment, with `=`, `||=`, `&&=` or `??=`,
+// when the right side is the parameter x itself (`x as T` and `x!` too).
+//   constructor(public a: string) { this.a = a; }                          → reported
+//   constructor(public a: string) { this.a = a.trim(); }                   fine: a new value
+//   constructor(public a: string) { this.a += "!"; this.a = a; }           fine: a compound assignment came first
+//   class C { b = (this.a = "x"); constructor(public a: string) { this.a = a; } }     fine: a field wrote it first
+// Assignments count in the constructor itself and in an arrow function called or passed right there
+// (`(() => { this.a = a; })()`). No options.
+.violation no_unnecessary_parameter_property_assignment(at: node) code "@typescript-eslint/no-unnecessary-parameter-property-assignment" "Remove this assignment; the constructor's parameter property already sets this member."
+    suppress eslint "@typescript-eslint/no-unnecessary-parameter-property-assignment"
+no_unnecessary_parameter_property_assignment(a) :- ctor_write(a, k, x, "="), field(a, "right", r), same_param(r, x),
+    has_property_param(k, x), !compound_before(a, k, x), child(b, k, _), !field_write(b, x).
+
+// this_write(a, x, o): a assigns to `this.x` (or this["x"]) with operator o.
+.decl this_write(a: node, x: symbol, o: symbol)
+this_write(a, x, "=") :- kind(a, "assignment_expression"), field(a, "left", l), deparen(l, m), static_prop(m, t, x),
+    kind(t, "this").
+this_write(a, x, o) :- kind(a, "augmented_assignment_expression"), field(a, "left", l), deparen(l, m),
+    static_prop(m, t, x), kind(t, "this"), op(a, o0), o0 != "",
+    (o0 = "||=", o = "=" ; o0 = "&&=", o = "=" ; o0 = "??=", o = "=" ; o0 != "||=", o0 != "&&=", o0 != "??=", o = o0).
+// ctor_write(a, k, x, o): this_write a is code of constructor k: its nearest function is k, or an arrow IIFE in k.
+.decl ctor_write(a: node, k: node, x: symbol, o: symbol)
+ctor_write(a, k, x, o) :- this_write(a, x, o), nearest(a, k, function_kind), ctor(k).
+ctor_write(a, k, x, o) :- this_write(a, x, o), nearest(a, f, function_kind), arrow_iife(f, _),
+    nearest(f, k, function_kind), ctor(k).
+// arrow_iife(f, c): arrow f's ESTree parent is call c, as callee or as an argument (the rule's isArrowIIFE).
+.decl arrow_iife(f: node, c: node)
+arrow_iife(f, c) :- kind(f, "arrow_function"), estree_parent(f, c), kind(c, "call_expression").
+arrow_iife(f, c) :- kind(f, "arrow_function"), estree_parent(f, g), kind(g, "arguments"), child(c, g, _),
+    kind(c, "call_expression").
+// same_param(r, x): right side r is the identifier x (through `as` and `!`), and x there is a parameter.
+.decl same_param(r: node, x: symbol)
+same_param(r, x) :- ctor_write(a, _, x, "="), field(a, "right", r), bare_id(r, i), text(i, x), resolves(i, f, x),
+    variable(f, x, _, "param").
+.decl bare_id(e: node, i: node)  // e is identifier i, maybe inside `as T` and `!`
+bare_id(e, i) :- ctor_write(a, _, _, "="), field(a, "right", e), deparen(e, i), kind(i, "identifier").
+bare_id(e, i) :- ctor_write(a, _, _, "="), field(a, "right", e), deparen(e, w), unwrap(w, i).
+.decl unwrap(w: node, i: node)
+unwrap(w, i) :- (kind(w, "as_expression") ; kind(w, "non_null_expression")), child(w, c, 0), deparen(c, i),
+    kind(i, "identifier").
+unwrap(w, i) :- (kind(w, "as_expression") ; kind(w, "non_null_expression")), child(w, c, 0), deparen(c, v), unwrap(v, i).
+.decl has_property_param(k: node, x: symbol)  // `constructor(public x)`, `constructor(readonly x = 1)`
+has_property_param(k, x) :- ctor(k), fn_param(k, p, _), field(p, "pattern", n), kind(n, "identifier"), text(n, x),
+    param_property(p).
+.decl compound_before(a: node, k: node, x: symbol)  // `this.x += …` earlier in the constructor
+compound_before(a, k, x) :- ctor_write(a, k, x, "="), ctor_write(c, k, x, o), o != "=", earlier(c, a).
+// field_write(b, x): a field initialiser of class body b assigns this.x, outside any function (or in an arrow
+// IIFE that is the field's value).
+.decl field_write(b: node, x: symbol)
+field_write(b, x) :- this_write(a, x, _), nearest(a, b, "class_body"), inside(a, p, "public_field_definition"),
+    child(b, p, _), !inside(a, _, function_kind).
+field_write(b, x) :- this_write(a, x, _), nearest(a, b, "class_body"), nearest(a, f, function_kind), arrow_iife(f, c),
+    child(b, p, _), kind(p, "public_field_definition"), field(p, "value", c), !inside(p, _, function_kind).

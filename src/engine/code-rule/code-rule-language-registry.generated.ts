@@ -30,6 +30,13 @@ export const LANGUAGE_REGISTRY = /* registry */ [
     "suppressions": [
       "noqa",
       "nosec"
+    ],
+    "fragments": [
+      {
+        "name": "annotation",
+        "dialect": "python",
+        "start": "expression"
+      }
     ]
   },
   {
@@ -267,17 +274,69 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "via": "script-block"
       }
     ]
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "rr",
+    "status": "supported",
+    "family": "rr",
+    "dialects": [
+      {
+        "label": "rr",
+        "variant": "Rr",
+        "suffixes": [
+          ".rr"
+        ],
+        "parser": "rr",
+        "grammar": "native:rr",
+        "tapeTag": 13
+      }
+    ],
+    "capabilities": {
+      "scope": "refused",
+      "value": "refused",
+      "arguments": "refused",
+      "calls": "refused",
+      "formatArgs": "refused"
+    },
+    "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "json",
+    "status": "supported",
+    "family": "json",
+    "dialects": [
+      {
+        "label": "json",
+        "variant": "Json",
+        "suffixes": [
+          ".json"
+        ],
+        "parser": "bitlex",
+        "grammar": "ast-grep:Json",
+        "tapeTag": 14
+      }
+    ],
+    "capabilities": {
+      "scope": "refused",
+      "value": "refused",
+      "arguments": "refused",
+      "calls": "refused",
+      "formatArgs": "refused"
+    },
+    "suppressions": []
   }
 ] /* end registry */ as const;
 
 /** Every language a rule may name: supported, then planned. */
-export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"] as const;
+export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json"] as const;
 /** The languages the engine reads. */
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"] as const;
+export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json"] as const;
 /** The languages a rule may name that the engine does not read yet. */
 export const CODE_RULE_PLANNED_LANGUAGES = [] as const;
 /** The semantic families of the supported languages. */
-export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue"] as const;
+export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue", "rr", "json"] as const;
 /** The capabilities every entry declares support for. */
 export const CODE_RULE_SEMANTIC_CAPABILITIES = ["scope", "value", "arguments", "calls", "formatArgs"] as const;
 /** The suppression comments the supported languages honour. */

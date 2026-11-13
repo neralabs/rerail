@@ -1,0 +1,21 @@
+.policy "ruff-up050-useless-class-metaclass-type" revision 2
+.description "Remove an explicit type metaclass from a class definition; it is already the default metaclass."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP050 (pyupgrade): `metaclass=type` in a class header, where `type` is the builtin (also written
+// `builtins.type`). It is the default metaclass. The finding is at the keyword argument.
+//   class A(metaclass=type): ...              ← UP050
+//   class B(A, metaclass=builtins.type): ...  ← UP050
+//   type = str
+//   class C(metaclass=type): ...              not reported: `type` is str here
+#include "python/upgrade.rr"
+//   builtin_at(e, x): e reads the builtin x, at that point of the module
+
+.violation UP050(at: node, cls: symbol) code "UP050"
+    "Remove `metaclass=type` from class `{cls}`; `type` is already the default metaclass. If it is the only argument, drop the parentheses too."
+    suppress ruff "UP050"
+UP050(k, x) :- kind(c, "class_definition"), def_name(c, x), field(c, "superclasses", al), child(al, k, _),
+    kind(k, "keyword_argument"), field(k, "name", n), text(n, "metaclass"), field(k, "value", v),
+    builtin_at(v, "type").

@@ -1,0 +1,226 @@
+// tsx/statements: JavaScript and TypeScript statements as ESLint's statement rules see them. The body of an if,
+// else or loop and whether it has braces; if/else chains and dangling ifs; one-line layout; what removing braces
+// does to automatic semicolon insertion; variable declarations by kind, with their declarators and scopes.
+//
+// What a rule gets from this library:
+//   body(s, b, w)            b is the body of control statement s; w names s: "if", "else", "while", "do", "for",
+//                            "for-in", "for-of", "with", "label"
+//   else_of(s, x)            x is the statement after `else` in if s (`else if` gives the inner if)
+//   if_chain(t, s)           s is in the if / else-if chain headed by t
+//   braced(b)                b is a { … } block
+//   block_stmt(b, x)         x is a statement directly in block b (comments are not statements)
+//   single_statement(b, x)   block b holds exactly one statement, x
+//   needs_braces(b)          block b's braces cannot go without changing or breaking the program
+//   block_declaration(x)     x is a declaration only a block may hold: let, const, using, class, function
+//   dangling_if(x)           x ends in an `if` without `else`, so an `else` after x would attach to it
+//   one_liner(x)             x starts and ends on one line (a `;` alone on the next line does not count)
+//   collapsed(b)             body b ends on the line where its statement's head ends: `if (a) b();`
+//   asi_hazard(x)            the token after x would continue x's statement across a line break
+//   unbrace_unsafe(b)        removing b's braces would break the program, though needs_braces does not say so
+//   unbrace(b)               edit: remove b's braces, keeping what is between them
+//   var_decl(d, k)           d declares variables of kind k: "var", "let", "const", "using", "await using"
+//   for_head(f, k)           loop f declares its variable in its head: `for (const x of xs)` gives "const"
+//   keyword(d, t)            t is the token d starts with: `var`, `let`, `const`, `using`, `await`
+//   declarator(d, v, i)      v is a declarator of d (a for head is its own); i orders them
+//   initialized(v)           declarator v has `= …`
+//   require_call(v)          v's value is a call of `require(…)`
+//   decl_scope(d, s)         s is the scope d's names belong to: the function for var, the block otherwise
+//   decl_stmt(d, x)          x is the statement d stands as: `declare let a;` is an ambient declaration
+//   is_comment(n)            n is a comment, `//`, `/* */` or `<!--`: tree-sitter extras, never statements
+//   prev_stmt(x, p)          p is the statement just before x in the same list, comments skipped
+//
+// Builds on tsx/names (fn_scope) and core: the tape (kind, field, child, op, text, line, end_line, col),
+// nearest, next_sibling, precedes, and core's token relations (first_token, last_token, token_before, token_after).
+
+
+#include "tsx/names.rr"
+#include "layout.rr"
+
+// Computed only for the arguments rules ask about, not for every node in the file.
+.pragma "magic-transform" "one_liner,asi_hazard,unbrace_unsafe"
+
+// ---- bodies ----------------------------------------------------------------------------------------------------
+// body(s, b, w): the statement a control statement runs. In tree-sitter every body is a field; `else` is a clause
+// holding one statement. for-in and for-of share one node kind and differ by their `in` / `of` token.
+.decl body(s: node, b: node, w: symbol)
+body(s, b, "if")     :- kind(s, "if_statement"), field(s, "consequence", b).
+// `if (a) x(); else if (b) y();` has no else body: the inner if continues the chain (see if_chain).
+body(s, b, "else")   :- else_of(s, b), !kind(b, "if_statement").
+body(s, b, "while")  :- kind(s, "while_statement"), field(s, "body", b).
+body(s, b, "do")     :- kind(s, "do_statement"), field(s, "body", b).
+body(s, b, "for")    :- kind(s, "for_statement"), field(s, "body", b).
+body(s, b, "for-in") :- kind(s, "for_in_statement"), op(s, "in"), field(s, "body", b).
+body(s, b, "for-of") :- kind(s, "for_in_statement"), op(s, "of"), field(s, "body", b).
+body(s, b, "with")   :- kind(s, "with_statement"), field(s, "body", b).
+body(s, b, "label")  :- kind(s, "labeled_statement"), field(s, "body", b).
+// else_of(s, x): `else x`. The clause's one statement may have comments beside it: `else /* why */ x();`.
+.decl else_of(s: node, x: node)
+else_of(s, x) :- kind(s, "if_statement"), field(s, "alternative", e), child(e, x, _), !is_comment(x).
+// if_chain(t, s): `if (a) … else if (b) … else if (c) …` is one chain; t is its first if, which no else holds.
+.decl if_chain(t: node, s: node)
+if_chain(t, t) :- kind(t, "if_statement"), !else_of(_, t).
+if_chain(t, s) :- if_chain(t, p), else_of(p, s), kind(s, "if_statement").
+
+// ---- blocks ----------------------------------------------------------------------------------------------------
+.decl braced(b: node)
+braced(b) :- kind(b, "statement_block").
+// block_stmt(b, x): the statements of a block. `;` alone is a statement (empty_statement); a comment is not.
+.decl block_stmt(b: node, x: node)
+block_stmt(b, x) :- kind(b, "statement_block"), child(b, x, _), !is_comment(x).
+.decl single_statement(b: node, x: node)
+single_statement(b, x) :- block_stmt(b, x), count : { block_stmt(b, _) } = 1.
+// needs_braces(b): ESLint's "braces necessary". Unbracing would change or break the program when the block
+//   holds no statement or several:           if (a) { x(); y(); }
+//   holds a declaration (a syntax error bare): if (a) { let x = f(); }
+//   holds a dangling if and `else` follows:   if (a) { if (b) x(); } else y();   (the else would move to `if (b)`)
+.decl needs_braces(b: node)
+needs_braces(b) :- braced(b), count : { block_stmt(b, _) } != 1.
+needs_braces(b) :- single_statement(b, x), block_declaration(x).
+needs_braces(b) :- single_statement(b, x), dangling_if(x), field(i, "consequence", b), field(i, "alternative", _).
+// block_declaration(x): what JavaScript allows only in a block, never as the bare body of if or a loop.
+.decl block_declaration(x: node)
+block_declaration(x) :- var_decl(x, k), k != "var".
+block_declaration(x) :- kind(x, k), (k = "function_declaration" ; k = "generator_function_declaration" ;
+    k = "class_declaration" ; k = "abstract_class_declaration").
+// dangling_if(x): an `else` written after x would belong to an if inside x. ESLint's hasUnsafeIf.
+//   if (a) b();                    yes: the if itself has no else
+//   if (a) b(); else if (c) d();   yes: the last if of the chain has none
+//   while (x) if (a) b();          yes: loops, labels and with pass it on from their body
+//   if (a) b(); else c();          no
+.decl dangling_if(x: node)
+dangling_if(x) :- kind(x, "if_statement"), !field(x, "alternative", _).
+dangling_if(x) :- else_of(x, y), dangling_if(y).
+dangling_if(x) :- body(x, b, w), w != "if", w != "else", w != "do", dangling_if(b).
+
+// ---- layout ------------------------------------------------------------------------------------------------------
+// The tokens ESLint measures may be ones the tape leaves out (a call's `)`, a block's braces), so lines are read
+// from the nodes, and the code around a node from the source (layout.rr).
+// code_end_line(n, l): the line n's code ends on, not counting a trailing `;`. ESLint measures lines to it, so
+// `x()\n;` still counts as one line.
+.decl code_end_line(n: node, l: number)
+code_end_line(n, l) :- end_line(n, l), text(n, t), !match("(?s).*;", t).
+code_end_line(n, l) :- text(n, t), match("(?s).*;", t), last_code_child(n, c), end_line(c, l).
+.decl last_code_child(n: node, c: node)
+last_code_child(n, c) :- child(n, c, i), !kind(c, "comment"), !code_child_after(n, i).
+.decl code_child_after(n: node, i: number)
+code_child_after(n, i) :- child(n, _, i), child(n, d, j), j > i, !kind(d, "comment").
+// one_liner(x): ESLint's isOneLiner. `foo();` is; `foo(\n  a);` is not; `;` (empty statement) always is.
+.decl one_liner(x: node)
+one_liner(x) :- kind(x, "empty_statement").
+one_liner(x) :- line(x, l), code_end_line(x, l).
+// collapsed(b): ESLint's isCollapsedOneLiner: the body ends on the line of the token before it (the `)` of the
+// condition, `else` or `do`). `if (a) b();` and `if (a) { b(); }` are; `if (a)\n  b();` is not.
+.decl collapsed(b: node)
+collapsed(b) :- body(_, b, _), before_line(b, l), code_end_line(b, l).
+layout_at(b) :- body(_, b, _).
+
+// ---- braces and automatic semicolon insertion -------------------------------------------------------------------
+// asi_hazard(x): a line that starts with ( [ / ` + or - continues the statement before it; JavaScript inserts no
+// semicolon there.   a = b \n (c || d).run()   runs as   a = b(c || d).run().   (\x60 is the backtick.)
+.decl asi_hazard(x: node)
+asi_hazard(x) :- next_code(x, t), match("(?s)\\s*[(\\[/\\x60+-].*", t).
+layout_at(b) :- braced(b).
+// unbrace_unsafe(b): removing b's braces would break the program in a way needs_braces does not catch.
+// 1. b's last statement would run into the code after the block: no `;` ends it and none would be inserted.
+//    ESLint's curly reports such a block but offers no fix.
+//      if (a) { x = y } (z || w)()      unbraced: `x = y (z || w)()`, a call
+//    Safe: the last statement ends in `;`, nothing follows the block, or it ends with a block of its own.
+.decl unbrace_unsafe(b: node)
+unbrace_unsafe(b) :- braced(b), last_code_child(b, x), text(x, t), !match("(?s).*;", t), !closes_block(x), next_code(b, _),
+    ( end_line(x, l), after_line(b, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t) ).
+// 2. b holds a TypeScript enum or interface, which may not stand bare as a body. ESLint's curly does not count
+//    them as declarations, so it reports the braces (and its fix breaks the code).
+unbrace_unsafe(b) :- single_statement(b, x), kind(x, k), (k = "enum_declaration" ; k = "interface_declaration").
+// closes_block(x): statement x ends with the `}` of a block statement. A function expression's or arrow's body does
+// not count: the expression goes on after it (`f = function () {}` then `(x)` on the next line is a call).
+.decl closes_block(x: node)
+closes_block(x) :- last_code_child(_, x), node(_, x, _, _, e), (k = x ; within(k, x)), node(_, k, _, _, e),
+    kind(k, "statement_block"), !value_body(k).
+.decl value_body(k: node)  // the body of a function used as a value
+value_body(k) :- field(f, "body", k), kind(f, fk),
+    (fk = "function_expression" ; fk = "arrow_function" ; fk = "generator_function" ; fk = "method_definition").
+// unbrace(b): `{ x(); }` becomes ` x(); `: both braces go, everything between them stays. After a keyword with
+// no space, `do{x()}while(c)` or `else{x()}`, the `{` becomes a space, or `dox()` would be one identifier. The
+// braces are the block's first and last characters (the tape keeps no token for them).
+.edit unbrace(b: node)
+unbrace(b) :- match("(?s)(?<o>\\{).*(?<c>\\})", b), !glued(b) => replace(o, ``), replace(c, ``).
+unbrace(b) :- match("(?s)(?<o>\\{).*(?<c>\\})", b), glued(b) => replace(o, ` `), replace(c, ``).
+// glued(b): a word (`do`, `else`) ends where b starts, and b's statement starts with a word character.
+.decl glued(b: node)
+glued(b) :- braced(b), structural_before(b, w), match("(?s).*[A-Za-z0-9_$]", w), match("(?s)\\{\\s*[A-Za-z0-9_$\\\\].*", b).
+
+// ---- declarations ----------------------------------------------------------------------------------------------
+// var_decl(d, k): `var a`, `let a`, `const a`, `using a`, `await using a`. The kind is the leading keyword token.
+.decl var_decl(d: node, k: symbol)
+var_decl(d, "var")         :- kind(d, "variable_declaration").
+var_decl(d, k)             :- kind(d, "lexical_declaration"), op(d, k), (k = "let" ; k = "const").
+var_decl(d, "using")       :- kind(d, "using_declaration"), !op(d, "await").    // the JavaScript grammar
+var_decl(d, "await using") :- kind(d, "using_declaration"), op(d, "await").
+var_decl(s, k)             :- ts_using(s, _, k).
+// TypeScript's grammar (0.23.2) has no using_declaration. `using a = f(), b = g();` is an expression statement:
+// a sequence of assignments, the first carrying an anonymous `using` token; `await using` puts the first in an
+// await_expression. Each assignment is a declarator (see declarator).
+.decl ts_using(s: node, a: node, k: symbol)
+ts_using(s, a, "using")       :- lead(s, a), op(a, "using").
+ts_using(s, a, "await using") :- lead(s, w), kind(w, "await_expression"), child(w, a, 0), op(a, "using").
+.decl lead(s: node, x: node)  // the expression an expression statement starts with
+lead(s, x) :- kind(s, "expression_statement"), child(s, x, 0), !kind(x, "sequence_expression").
+lead(s, x) :- kind(s, "expression_statement"), child(s, q, 0), kind(q, "sequence_expression"), child(q, x, 0).
+// for_head(f, k): `for (var k in o)`, `for (const x of xs)`. The head has no declaration node: the keyword is a
+// token of the loop and the variable is its "left" field. Sloppy `for (var x = 0 in o)` puts a "value" on the loop.
+.decl for_head(f: node, k: symbol)
+for_head(f, k) :- kind(f, "for_in_statement"), field(f, "left", _), op(f, k), (k = "var" ; k = "let" ; k = "const").
+// keyword(d, t): `var` in `var a;`, and in `for (\n var k in o)` too, where the head starts after the loop.
+.decl keyword(d: node, t: span)
+// The first word of the declaration (`var` the kind implies, so the tape keeps none), or of the for's head.
+keyword(d, t) :- var_decl(d, _), match("(?s)(?<t>[A-Za-z]+)\\b.*", d).
+keyword(f, t) :- for_head(f, _), field(f, "left", _), match("(?s)for\\s*(await\\s*)?\\(\\s*(?<t>var|let|const)\\b.*", f).
+// declarator(d, v, i): `let a = 1, b;` has declarators `a = 1` (i = 0) and `b` (i = 1). A for head is its own
+// single declarator; TypeScript's `using` has its assignments.
+.decl declarator(d: node, v: node, i: number)
+declarator(d, v, i) :- var_decl(d, _), child(d, v, i), kind(v, "variable_declarator").
+declarator(f, f, 0) :- for_head(f, _).
+declarator(s, a, 0) :- ts_using(s, a, _).
+declarator(s, a, i) :- ts_using(s, _, _), child(s, q, 0), kind(q, "sequence_expression"), child(q, a, i), i > 0.
+// initialized(v): `a = 1`. A declarator's value is its "value" field; a TypeScript using assignment's is "right".
+.decl initialized(v: node)
+initialized(v) :- declarator(_, v, _), init_of(v, _).
+.decl init_of(v: node, e: node)
+init_of(v, e) :- declarator(_, v, _), (field(v, "value", e) ; field(v, "right", e)).
+// require_call(v): `fs = require("fs")`. ESLint's isRequire: the value is a call whose callee is `require`.
+.decl require_call(v: node)
+require_call(v) :- init_of(v, c), kind(c, "call_expression"), field(c, "function", f),
+    kind(f, "identifier"), text(f, "require").
+// Scopes, as ESLint's one-var keeps them. `var` belongs to the enclosing function (or program, or static block);
+// let, const and using to the nearest block, which includes a for statement's head and a switch. One quirk:
+// a TypeScript namespace body opens no scope there, so `let a; namespace N { let b; }` share one.
+// var_scope is tsx/names' fn_scope (the kinds are the same: functions, the program, static blocks); the block
+// scopes below follow ESLint's one-var stack instead of names' block_scope.
+.decl var_scope(k: symbol)
+var_scope(k) :- fn_scope(k).
+.decl lexical_scope(k: symbol)
+lexical_scope("program"). lexical_scope("statement_block"). lexical_scope("for_statement").
+lexical_scope("for_in_statement"). lexical_scope("switch_statement").
+.decl block_scope_at(n: node)
+block_scope_at(n) :- kind(n, k), lexical_scope(k), !namespace_body(n).
+.decl namespace_body(n: node)  // `namespace N { … }`, `module M { … }`, `declare module "m" { … }`
+namespace_body(n) :- field(m, "body", n), (kind(m, "internal_module") ; kind(m, "module")).
+// decl_scope(d, s). A for-in/of head's let or const belongs to the loop itself: two loops never share it.
+.decl decl_scope(d: node, s: node)
+decl_scope(d, s) :- var_decl(d, "var"), nearest(d, s, var_scope).
+decl_scope(d, s) :- var_decl(d, k), k != "var", nearest(d, s, block_scope_at).
+decl_scope(f, s) :- for_head(f, "var"), nearest(f, s, var_scope).
+decl_scope(f, f) :- for_head(f, k), k != "var".
+// decl_stmt(d, x): TypeScript's `declare let a: number;` wraps the declaration in an ambient_declaration, which
+// stands in the statement list; ESLint sees a plain declaration there.
+.decl decl_stmt(d: node, x: node)
+decl_stmt(d, x) :- var_decl(d, _), child(x, d, _), kind(x, "ambient_declaration").
+decl_stmt(d, d) :- var_decl(d, _), count : { child(x, d, _), kind(x, "ambient_declaration") } = 0.
+.decl comment_kind(k: symbol)
+comment_kind("comment"). comment_kind("html_comment").
+.decl is_comment(n: node)
+is_comment(n) :- kind(n, k), comment_kind(k).
+// prev_stmt(x, p): in `let a; /* note */ let b;`, prev_stmt(let b, let a).
+.decl prev_stmt(x: node, p: node)
+prev_stmt(x, p) :- next_sibling(p, x), !is_comment(p).
+prev_stmt(x, p) :- next_sibling(c, x), is_comment(c), prev_stmt(c, p).

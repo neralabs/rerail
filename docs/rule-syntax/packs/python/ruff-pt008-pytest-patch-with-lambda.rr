@@ -1,0 +1,31 @@
+.policy "ruff-pt008-pytest-patch-with-lambda" revision 2
+.description "Patch with a fixed return value rather than a lambda that ignores its arguments; it states the intent and keeps call assertions available."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT008 (flake8-pytest-style): `mocker.patch(target, lambda …: value)` where the lambda ignores its
+// arguments; `return_value=value` says the same. The callee is matched by spelling: `mocker.patch`,
+// `class_mocker.patch`, …, `mock.patch`, `unittest.mock.patch`, and their `.object` (whose `new` is the third
+// argument). A call that already passes `return_value=` is left alone.
+//   mocker.patch("os.getcwd", lambda: "/tmp")              ← PT008
+//   mocker.patch("os.path.join", lambda *a: a[0])          not reported: the lambda reads a
+#include "python/pytest.rr"
+//   exc_dotted(e, s), exc_argument(c, k, i, a), kwarg(c, k, v); names: params(f, x, i)
+
+.violation PT008(at: node, f: symbol) code "PT008"
+    "Pass the lambda's result to `{f}` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call."
+    suppress ruff "PT008"
+PT008(g, s) :- kind(c, "call"), field(c, "function", g), exc_dotted(g, s), patcher(s, i),
+    !kwarg(c, "return_value", _), exc_argument(c, "new", i, l), kind(l, "lambda"), !reads_args(l).
+
+// patcher(s, i): a patch function and the position of its `new` argument.
+.decl patcher(s: symbol, i: number)
+patcher(cat(m, ".patch"), 1) :- mocker(m).
+patcher(cat(m, ".patch.object"), 2) :- mocker(m).
+.decl mocker(m: symbol)
+mocker("mocker"). mocker("class_mocker"). mocker("module_mocker"). mocker("package_mocker").
+mocker("session_mocker"). mocker("mock"). mocker("unittest.mock").
+// reads_args(l): a name in l's body is one of l's parameters (`*args` and `**kw` included).
+.decl reads_args(l: node)
+reads_args(l) :- kind(l, "lambda"), field(l, "body", b), params(l, x, _), (n = b ; within(n, b)), ast_name(n, x).

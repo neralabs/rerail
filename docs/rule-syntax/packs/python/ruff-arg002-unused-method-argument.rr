@@ -1,0 +1,21 @@
+.policy "ruff-arg002-unused-method-argument" revision 2
+.description "Remove method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ARG002 (flake8-unused-arguments): an instance method's parameter that the body never reads. `self`
+// is left out, and so are names matching dummy-variable-rgx (`_`, `_x`). Not checked: stubs (`...`, `pass`,
+// a docstring, `raise NotImplementedError`), @abstractmethod, @override and @overload methods, dunders other
+// than `__init__` and `__call__`, and defs that call `locals()`.
+//   class C:
+//       def f(self, x): print(1)        ← ARG002 at x
+//       def g(self, x): ...             not reported: a stub
+//       def __exit__(self, *a): pass    not reported: a dunder
+#include "python/misc2-args.rr"
+//   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
+
+.violation ARG002(at: node, name: symbol) code "ARG002"
+    "Remove `{name}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
+    suppress ruff "ARG002"
+ARG002(nm, x) :- arg_unused(_, nm, x, "ARG002").

@@ -1,0 +1,5 @@
+{
+  "title": "Loop variables never read",
+  "rule": "ruff-b007-unused-loop-control-variable",
+  "note": "B007 flags a loop variable the body never uses: name it _ (or _name) to say so."
+}

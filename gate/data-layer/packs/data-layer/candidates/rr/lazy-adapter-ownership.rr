@@ -1,0 +1,168 @@
+.policy "data-layer:lazy-adapter-ownership" revision 1
+.description "One pure-lazy owner behind eager sync and async compatibility APIs."
+.language python
+.mode block
+.scope dirs "data_layer", "impl/common", "l9750_graphql", "l9900_auto_api", "l3200_metadata", "l2000_connection"
+.scope tests false
+.on syntax_error report LAO000 at line 1
+// Python linter: scripts/lint_lazy_adapter_ownership.py. It looks at owners: functions at module level and methods
+// of module-level classes. Calls and awaits in nested functions count for the owner around them.
+//   LAO001  a legacy adapter (@legacy_sync, @legacy_async, @legacy_module_sync, @legacy_module_async) whose body
+//           is not a stub
+//   LAO002  a module-level adapter whose lazy target is not defined in the file
+//   LAO003  its lazy target is defined, but not @pure_lazy (or @lazy)
+//   LAO004  a @pure_lazy owner calls `….execute()`, resolve, fetch or their _async forms
+//   LAO005  an owner with a transaction parameter calls a method on it that is not *_lazy, and is neither an
+//           adapter, an external boundary nor pure-lazy
+//   LAO006  an async owner with a transaction parameter that never awaits, and is not an adapter, an external
+//           boundary or an abstract stub
+//   LAO000  the file does not parse (at line 1, as scan_source reports it)
+// Decorators are known by their last name: `@x.pure_lazy` and `@pure_lazy(…)` are pure_lazy. Nothing is resolved.
+// A file is read only if its text contains one of the linter's source triggers (the plugin's fact engine).
+//
+// How to read this file
+//   1. lao_owner / lao_frame: the owners, and the owner each node's calls count for.
+//   2. lao_dec: the decorators by name; lao_target: the lazy name an adapter delegates to.
+//   3. lao_txn: transaction-typed parameters, by the text of their annotation.
+//   4. lao_stub / lao_abstract: the two notions of an empty body.
+//   5. One rule per code.
+
+#include "python/names.rr"
+#include "python/ast.rr"      // ast_parent, def_frame, sig_param, body_stmt, str_const
+
+.decl lao_trigger(v: symbol)
+lao_trigger("Transaction"). lao_trigger("PlanScope"). lao_trigger("legacy_"). lao_trigger("pure_lazy").
+lao_trigger("@lazy").
+.decl lao_doc(d: number)
+lao_doc(d) :- source(d, sp), text(sp, s), lao_trigger(t), contains(t, s).
+.decl legacy_dec(v: symbol)
+legacy_dec("legacy_sync"). legacy_dec("legacy_async"). legacy_dec("legacy_module_sync").
+legacy_dec("legacy_module_async").
+.decl external_dec(v: symbol)
+external_dec("direct_legacy_module_sync"). external_dec("direct_legacy_module_async").
+external_dec("external_io_boundary"). external_dec("external_io_boundary_sync").
+external_dec("external_io_boundary_async").
+.decl pure_dec(v: symbol)
+pure_dec("pure_lazy"). pure_dec("lazy").
+.decl eager_terminal(v: symbol)
+eager_terminal("execute"). eager_terminal("execute_async"). eager_terminal("resolve").
+eager_terminal("resolve_async"). eager_terminal("fetch"). eager_terminal("fetch_async").
+
+// lao_owner(f, k, x): f is an owner named x; k is its class's name, or "" at module level. Two module-level
+// classes with one name share k, as the linter's (class_name, name) key does.
+.decl lao_owner(f: node, k: symbol, x: symbol)
+lao_owner(f, "", x) :- lao_doc(d), docof(f, d), kind(f, "function_definition"), ast_parent(f, m),
+    kind(m, "module"), def_name(f, x).
+lao_owner(f, k, x) :- lao_doc(d), docof(f, d), kind(f, "function_definition"), ast_parent(f, c),
+    kind(c, "class_definition"), ast_parent(c, m), kind(m, "module"), def_name(c, k), def_name(f, x).
+// lao_frame(n, f): n's calls and awaits count for owner f: its innermost def (decorators included) if that is an
+// owner, else that def's own owner. A node with no owner above it (module level, a def under a module-level
+// `if`) counts for none.
+.decl lao_frame(n: node, f: node)
+lao_frame(n, g) :- def_frame(n, g), lao_owner(g, _, _).
+lao_frame(n, f) :- def_frame(n, g), !lao_owner(g, _, _), lao_frame(g, f).
+// lao_attr_call(f, c, o, a): call `o.a(…)` counts for owner f.
+.decl lao_attr_call(f: node, c: node, o: node, a: symbol)
+lao_attr_call(f, c, o, a) :- kind(c, "call"), field(c, "function", fn), kind(fn, "attribute"),
+    field(fn, "object", o), field(fn, "attribute", t), text(t, a), lao_frame(c, f).
+
+// lao_dec(f, x, e): decorator e of f has last name x: `@a.b(…)` gives "b".
+.decl lao_dec(f: node, x: symbol, e: node)
+lao_dec(f, x, e) :- decorator(f, e), lao_dec_name(e, x).
+.decl lao_dec_name(e: node, x: symbol)
+lao_dec_name(e, x) :- kind(e, "call"), field(e, "function", t), lao_dec_name(t, x).
+lao_dec_name(e, x) :- kind(e, "identifier"), text(e, x).
+lao_dec_name(e, x) :- kind(e, "attribute"), field(e, "attribute", a), text(a, x).
+.decl lao_legacy(f: node)
+lao_legacy(f) :- lao_dec(f, x, _), legacy_dec(x).
+.decl lao_external(f: node)
+lao_external(f) :- lao_dec(f, x, _), external_dec(x).
+.decl lao_pure(f: node)
+lao_pure(f) :- lao_dec(f, x, _), pure_dec(x).
+
+// lao_target(f, t): adapter f delegates to t. The first legacy decorator decides: its `lazy_name="…"` if that
+// is a plain string, else f's name with `_lazy` added, after removing `_async` then `_sync` (legacy_async,
+// legacy_sync), `_async` (legacy_module_async), or nothing (legacy_module_sync).
+.decl lao_target(f: node, t: symbol)
+lao_target(f, t) :- lao_first(f, e, _), lao_lazy_name(e, t).
+lao_target(f, cat(b, "_lazy")) :- lao_first(f, e, x), !lao_lazy_name(e, _), def_name(f, n), lao_base(x, n, b).
+.decl lao_first(f: node, e: node, x: symbol)
+lao_first(f, e, x) :- lao_dec(f, x, e), legacy_dec(x), count : { lao_dec(f, y, e2), legacy_dec(y), e2 < e } = 0.
+.decl lao_lazy_name(e: node, t: symbol)
+lao_lazy_name(e, t) :- kind(e, "call"), field(e, "arguments", al), child(al, kw, _), kind(kw, "keyword_argument"),
+    field(kw, "name", k), text(k, "lazy_name"), field(kw, "value", v), str_const(v, t).
+.decl lao_base(x: symbol, n: symbol, b: symbol)
+lao_base(x, n, b) :- (x = "legacy_async" ; x = "legacy_sync"), lao_owner(_, _, n), lao_cut("_async", n, m),
+    lao_cut("_sync", m, b).
+lao_base("legacy_module_async", n, b) :- lao_owner(_, _, n), lao_cut("_async", n, b).
+lao_base("legacy_module_sync", n, n) :- lao_owner(_, _, n).
+// lao_cut(s, n, m): m is n with the suffix s removed, if it has it (str.removesuffix).
+.decl lao_cut(s: symbol, n: symbol, m: symbol)
+lao_cut(s, n, m) :- (s = "_async" ; s = "_sync"), lao_name(n), suffix(s, n), m = @slice(n, 0, strlen(n) - strlen(s)).
+lao_cut(s, n, n) :- (s = "_async" ; s = "_sync"), lao_name(n), !suffix(s, n).
+.decl lao_name(n: symbol)
+lao_name(n) :- lao_owner(_, _, n).
+lao_name(m) :- lao_owner(_, _, n), suffix("_async", n), m = @slice(n, 0, strlen(n) - 6).
+// lao_lookup(k, t, g): g is the owner the linter's by_owner_and_name finds for (k, t): the last one in the file.
+.decl lao_lookup(k: symbol, t: symbol, g: node)
+lao_lookup(k, t, g) :- lao_owner(g, k, t), docof(g, d), count : { lao_owner(g2, k, t), docof(g2, d), g2 > g } = 0.
+
+// lao_txn(f, x): parameter x of f (positional or keyword-only, not *args or **kwargs) is a transaction. Its
+// annotation's text is cut at `[`, `]` and `|`; a piece qualifies if it ends in PlanScope, or if its part after
+// the last dot ends in Transaction and contains Read, Write or Schema. `Optional[WriteTransaction]` and
+// `api.LazyReadTransaction | None` qualify; the string annotation 'WriteTransaction' does not.
+.decl lao_txn(f: node, x: symbol)
+lao_txn(f, x) :- lao_owner(f, _, _), sig_param(f, _, nm, _, k, a, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
+    text(a, t), match_all("(?<piece>[^\\[\\]|]+)", t), lao_txn_piece(piece), text(nm, x).
+.decl lao_txn_piece(s: symbol)
+lao_txn_piece(s) :- lao_ann_piece(s), match("(?s).*PlanScope\\s*", s).
+lao_txn_piece(s) :- lao_ann_piece(s), match("(?s)(?:.*\\.)?(?<n>[^.]*Transaction)\\s*", s),
+    (contains("Read", n) ; contains("Write", n) ; contains("Schema", n)).
+.decl lao_ann_piece(s: symbol)
+lao_ann_piece(piece) :- lao_owner(f, _, _), sig_param(f, _, _, _, _, a, _), text(a, t),
+    match_all("(?<piece>[^\\[\\]|]+)", t).
+
+// lao_stub(f): every statement of f's body is a stub: a docstring-like string or `...`, raise, pass, del, or a
+// call of _legacy_delegate_stub(_async). lao_abstract(f): after dropping strings, every statement is pass,
+// raise or `...` (an empty remainder counts).
+.decl lao_expr(s: node, e: node)   // s is an expression statement of one expression e
+lao_expr(s, e) :- kind(s, "expression_statement"), count : { child(s, _, _) } = 1, child(s, e, 0).
+.decl lao_str_stmt(s: node)
+lao_str_stmt(s) :- lao_expr(s, e), str_const(e, _).
+.decl lao_stub_stmt(s: node)
+lao_stub_stmt(s) :- lao_str_stmt(s).
+lao_stub_stmt(s) :- lao_expr(s, e), kind(e, "ellipsis").
+lao_stub_stmt(s) :- kind(s, k), (k = "raise_statement" ; k = "pass_statement" ; k = "delete_statement").
+lao_stub_stmt(s) :- lao_expr(s, c), kind(c, "call"), field(c, "function", n), kind(n, "identifier"),
+    text(n, x), (x = "_legacy_delegate_stub" ; x = "_legacy_delegate_stub_async").
+.decl lao_stub(f: node)
+lao_stub(f) :- lao_owner(f, _, _), field(f, "body", b), body_stmt(b, _, _), count : { body_stmt(b, s, _), !lao_stub_stmt(s) } = 0.
+.decl lao_abstract_stmt(s: node)
+lao_abstract_stmt(s) :- lao_str_stmt(s).
+lao_abstract_stmt(s) :- lao_expr(s, e), kind(e, "ellipsis").
+lao_abstract_stmt(s) :- kind(s, k), (k = "raise_statement" ; k = "pass_statement").
+.decl lao_abstract(f: node)
+lao_abstract(f) :- lao_owner(f, _, _), field(f, "body", b), count : { body_stmt(b, s, _), !lao_abstract_stmt(s) } = 0.
+
+.violation LAO001(at: node, name: symbol) "{name} is a legacy adapter but its body contains executable planning or I/O"
+LAO001(f, x) :- lao_owner(f, _, x), lao_legacy(f), !lao_stub(f).
+
+.violation LAO002(at: node, name: symbol, t: symbol) "{name} delegates to missing module lazy target {t}"
+LAO002(f, x, t) :- lao_owner(f, "", x), lao_legacy(f), lao_target(f, t), !lao_lookup("", t, _).
+
+.violation LAO003(at: node, name: symbol, t: symbol) "{name} delegates to {t}, which is not @pure_lazy"
+LAO003(f, x, t) :- lao_owner(f, k, x), lao_legacy(f), lao_target(f, t), lao_lookup(k, t, g), !lao_pure(g).
+
+.violation LAO004(at: node, name: symbol) "@pure_lazy surface {name} reaches eager terminal"
+LAO004(f, x) :- lao_owner(f, _, x), lao_pure(f), lao_attr_call(f, _, _, a), eager_terminal(a).
+
+// The method is called on the parameter's bare name (`txn.insert(…)`, not `self.txn.insert(…)`).
+.violation LAO005(at: node, name: symbol) "transaction-facing function {name} owns eager calls instead of delegating to one @pure_lazy surface"
+LAO005(f, x) :- lao_owner(f, _, x), lao_txn(f, p), lao_attr_call(f, _, o, a), kind(o, "identifier"), text(o, p),
+    !suffix("_lazy", a), !lao_legacy(f), !lao_external(f), !lao_pure(f).
+
+.violation LAO006(at: node, name: symbol) "async transaction-facing function {name} has no awaited I/O and is not a legacy adapter"
+LAO006(f, x) :- lao_owner(f, _, x), is_async(f), lao_txn(f, _), !lao_awaits(f), !lao_legacy(f), !lao_external(f),
+    !lao_abstract(f).
+.decl lao_awaits(f: node)
+lao_awaits(f) :- kind(w, "await"), lao_frame(w, f).

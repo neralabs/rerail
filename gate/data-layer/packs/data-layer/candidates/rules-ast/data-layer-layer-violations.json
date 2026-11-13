@@ -1,0 +1,991 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-layer-violations",
+  "revision": 1,
+  "mode": "log",
+  "description": "Candidate port of nera-data-layer layer_violations at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "conform/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "layer-0",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "edge",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "import_from_statement"
+                            },
+                            {
+                              "has": {
+                                "pattern": "$MOD",
+                                "stopBy": "neighbor",
+                                "field": "module_name"
+                              }
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "if_statement"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:TYPE_CHECKING)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "condition"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$EDGE"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": {
+                                "$option": "sourceGate",
+                                "cases": {
+                                  "true": "import\\ |from\\ ",
+                                  "false": "(?s).*"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": {
+                                  "$option": "sourceGate",
+                                  "cases": {
+                                    "true": "import\\ |from\\ ",
+                                    "false": "(?s).*"
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "file": {
+                  "path": {
+                    "regex": "(?:^|/)(?:api|impl)/",
+                    "notRegex": "^(?:.*/)?tests/.*$|^(?:.*/)?l0500_ts_models/.*$|^(?:.*/)?l2070_server_plan/.*$|^(?:.*/)?l3000_schema_builder/.*$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_lazy_mixin\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$"
+                  }
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "start": "capture.EDGE.startByte",
+              "from": {
+                "source": "file.path",
+                "regex": "(?:^|/)l([0-9]{4})_",
+                "group": 1
+              },
+              "to": {
+                "source": "capture.MOD",
+                "regex": "\\.l([0-9]{4})_",
+                "group": 1
+              },
+              "grammar": {
+                "source": "file.path",
+                "regex": "(?:^|/)(l2100_sql_grammar)/",
+                "group": 1
+              }
+            },
+            "where": {
+              "all": [
+                {
+                  "lt": [
+                    "edge.from",
+                    "edge.to"
+                  ]
+                },
+                {
+                  "not": {
+                    "all": [
+                      {
+                        "eq": [
+                          "edge.grammar",
+                          "l2100_sql_grammar"
+                        ]
+                      },
+                      {
+                        "eq": [
+                          "edge.to",
+                          "2200"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        },
+        "group_by": [
+          "edge.path",
+          "edge.start"
+        ]
+      },
+      "violation": {
+        "code": "layer_dependency",
+        "anchor": "witness.span",
+        "message": "Import from a higher layer"
+      }
+    },
+    {
+      "id": "layer-1",
+      "budget": {
+        "query": {
+          "evidence": {
+            "as": "edge",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "dotted_name"
+                                    },
+                                    {
+                                      "pattern": "$MOD"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "all": [
+                                    {
+                                      "kind": "aliased_import"
+                                    },
+                                    {
+                                      "has": {
+                                        "pattern": "$MOD",
+                                        "stopBy": "neighbor",
+                                        "field": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "inside": {
+                                "kind": "import_statement",
+                                "stopBy": "neighbor"
+                              }
+                            },
+                            {
+                              "not": {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "if_statement"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:TYPE_CHECKING)$"
+                                          }
+                                        ],
+                                        "stopBy": "neighbor",
+                                        "field": "condition"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$EDGE"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "module"
+                            },
+                            {
+                              "regex": {
+                                "$option": "sourceGate",
+                                "cases": {
+                                  "true": "import\\ |from\\ ",
+                                  "false": "(?s).*"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "module"
+                              },
+                              {
+                                "regex": {
+                                  "$option": "sourceGate",
+                                  "cases": {
+                                    "true": "import\\ |from\\ ",
+                                    "false": "(?s).*"
+                                  }
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "file": {
+                  "path": {
+                    "regex": "(?:^|/)(?:api|impl)/",
+                    "notRegex": "^(?:.*/)?tests/.*$|^(?:.*/)?l0500_ts_models/.*$|^(?:.*/)?l2070_server_plan/.*$|^(?:.*/)?l3000_schema_builder/.*$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_lazy_mixin\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$"
+                  }
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "start": "capture.EDGE.startByte",
+              "from": {
+                "source": "file.path",
+                "regex": "(?:^|/)l([0-9]{4})_",
+                "group": 1
+              },
+              "to": {
+                "source": "capture.MOD",
+                "regex": "\\.l([0-9]{4})_",
+                "group": 1
+              },
+              "grammar": {
+                "source": "file.path",
+                "regex": "(?:^|/)(l2100_sql_grammar)/",
+                "group": 1
+              }
+            },
+            "where": {
+              "all": [
+                {
+                  "lt": [
+                    "edge.from",
+                    "edge.to"
+                  ]
+                },
+                {
+                  "not": {
+                    "all": [
+                      {
+                        "eq": [
+                          "edge.grammar",
+                          "l2100_sql_grammar"
+                        ]
+                      },
+                      {
+                        "eq": [
+                          "edge.to",
+                          "2200"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "count": {
+          "lte": 0
+        },
+        "group_by": [
+          "edge.path",
+          "edge.start"
+        ]
+      },
+      "violation": {
+        "code": "layer_dependency",
+        "anchor": "witness.span",
+        "message": "Import from a higher layer"
+      }
+    },
+    {
+      "id": "api_impl-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "import_from_statement"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$MOD",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "dotted_name"
+                          },
+                          {
+                            "regex": "^impl\\."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "import\\ |from\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "import\\ |from\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:.*/)?api/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?__init__\\.py$|^(?:.*/)?l9900_ts_models/.*$|^(?:.*/)?api/(?:.*/)?tests/.*$|^(?:.*/)?l8000_admin/(?:.*/)?tools/.*$|^(?:.*/)?l2000_connection/(?:.*/)?connection_factory\\.py$|^(?:.*/)?l4200_event_pipeline/(?:.*/)?bridges/.*$|^(?:.*/)?l3200_metadata/.*$|^(?:.*/)?l1500_llm/(?:.*/)?__init__\\.py$|^(?:.*/)?l1400_config/(?:.*/)?bootstrap\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?cache_integration\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?cli\\.py$|^(?:.*/)?l2000_connection/(?:.*/)?connection\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?connection\\.py$|^(?:.*/)?l2090_response/(?:.*/)?cursor_pagination\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?diff_types\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?dispatcher\\.py$|^(?:.*/)?_internal/(?:.*/)?dynamic_import\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_auto_queue\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_metadata\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_worker\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?enqueue\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?executor\\.py$|^(?:.*/)?l3500_bulk_ops/(?:.*/)?export_cursor\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?factory\\.py$|^(?:.*/)?l5100_fts/(?:.*/)?fts_search_manager\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?index_manager\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_diff_bytes\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_embedding\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_fts_search\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_infrastructure\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_query_extended\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?lazy_runtime\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?log_table\\.py$|^(?:.*/)?logged_table\\.py$|^(?:.*/)?l7800_versioned_merge/(?:.*/)?merge\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?ownership_scheme\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?permission_filter\\.py$|^(?:.*/)?index_implementations/(?:.*/)?pgvector\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_helpers\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?plan_query_builder\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_runtime\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?processor\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?query_spec\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?queue_definition\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?rbac_models\\.py$|^(?:.*/)?l7900_versioned_rebase/(?:.*/)?rebase\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?resolve_branch_steps\\.py$|^(?:.*/)?l1000_schema/(?:.*/)?schema_def\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?server_query_builder\\.py$|^(?:.*/)?l4400_scheduler/(?:.*/)?service\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?sparse_change\\.py$|^(?:.*/)?l9700_graph_query/(?:.*/)?sql_graph_runtime\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?sql_query_spec\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?subscription\\.py$|^(?:.*/)?testing\\.py$|^(?:.*/)?l2050_transaction/(?:.*/)?transaction\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?trigger_builder\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?triggers\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?validation\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?validation\\.py$|^(?:.*/)?l7000_versioned_schema/(?:.*/)?versioned_connection\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?versioned_operations\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?versioned_select_steps\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "api_impl",
+        "anchor": "witness.span",
+        "message": "api_impl: api_impl-0"
+      }
+    },
+    {
+      "id": "conform_impl-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "import_from_statement"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$MOD",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "dotted_name"
+                          },
+                          {
+                            "regex": "^impl\\."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "import\\ |from\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "import\\ |from\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:.*/)?conform/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?conftest\\.py$|^(?:.*/)?bench_all_backends\\.py$|^(?:.*/)?test_bugbot_regressions\\.py$|^(?:.*/)?test_bulk_loader\\.py$|^(?:.*/)?test_config\\.py$|^(?:.*/)?test_cross_backend_import\\.py$|^(?:.*/)?test_export_import\\.py$|^(?:.*/)?test_fts_basic\\.py$|^(?:.*/)?test_fts_pagination\\.py$|^(?:.*/)?test_fts_validation\\.py$|^(?:.*/)?test_incremental_export_import\\.py$|^(?:.*/)?test_log_model_registry\\.py$|^(?:.*/)?test_log_table_export_import\\.py$|^(?:.*/)?test_materialization\\.py$|^(?:.*/)?test_materialization_jobs\\.py$|^(?:.*/)?test_migration_ddl_bugs_round2\\.py$|^(?:.*/)?test_neo4j_validation\\.py$|^(?:.*/)?test_object_history\\.py$|^(?:.*/)?test_permission_audit\\.py$|^(?:.*/)?test_permission_cache\\.py$|^(?:.*/)?test_permission_column_filter\\.py$|^(?:.*/)?test_permission_events\\.py$|^(?:.*/)?test_permission_evolution\\.py$|^(?:.*/)?test_permission_introspection\\.py$|^(?:.*/)?test_permission_noop\\.py$|^(?:.*/)?test_permission_ownership\\.py$|^(?:.*/)?test_permission_pagination\\.py$|^(?:.*/)?test_permission_row_filter\\.py$|^(?:.*/)?test_permission_share\\.py$|^(?:.*/)?test_permission_validation\\.py$|^(?:.*/)?test_pgvector_e2e\\.py$|^(?:.*/)?test_pgvector_low_level\\.py$|^(?:.*/)?test_pgvector_migrations\\.py$|^(?:.*/)?test_pgvector_stress\\.py$|^(?:.*/)?test_pgvector_vs_hnsw_comparison\\.py$|^(?:.*/)?test_polymorphic_inheritance\\.py$|^(?:.*/)?test_rbac_audit_integration\\.py$|^(?:.*/)?test_rbac_foreign_keys\\.py$|^(?:.*/)?test_rbac_integration\\.py$|^(?:.*/)?test_rbac_polymorphic\\.py$|^(?:.*/)?test_rbac_provider\\.py$|^(?:.*/)?test_rbac_schema\\.py$|^(?:.*/)?test_schema_drift_e2e\\.py$|^(?:.*/)?test_security_regression\\.py$|^(?:.*/)?test_sparse_backend_incremental\\.py$|^(?:.*/)?test_sql_roundtrip_efficiency\\.py$|^(?:.*/)?test_uuid_introspection\\.py$|^(?:.*/)?test_uuid_validation\\.py$|^(?:.*/)?test_vector_query_analysis\\.py$|^(?:.*/)?test_versioned_operations\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "conform_impl",
+        "anchor": "witness.span",
+        "message": "conform_impl: conform_impl-0"
+      }
+    },
+    {
+      "id": "api_impl-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "pattern": "$MOD"
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "has": {
+                                  "pattern": "$MOD",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "dotted_name"
+                          },
+                          {
+                            "regex": "^impl\\."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "import\\ |from\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "import\\ |from\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:.*/)?api/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?__init__\\.py$|^(?:.*/)?l9900_ts_models/.*$|^(?:.*/)?api/(?:.*/)?tests/.*$|^(?:.*/)?l8000_admin/(?:.*/)?tools/.*$|^(?:.*/)?l2000_connection/(?:.*/)?connection_factory\\.py$|^(?:.*/)?l4200_event_pipeline/(?:.*/)?bridges/.*$|^(?:.*/)?l3200_metadata/.*$|^(?:.*/)?l1500_llm/(?:.*/)?__init__\\.py$|^(?:.*/)?l1400_config/(?:.*/)?bootstrap\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?cache_integration\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?cli\\.py$|^(?:.*/)?l2000_connection/(?:.*/)?connection\\.py$|^(?:.*/)?l8100_ops_analytics/(?:.*/)?connection\\.py$|^(?:.*/)?l2090_response/(?:.*/)?cursor_pagination\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?diff_types\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?dispatcher\\.py$|^(?:.*/)?_internal/(?:.*/)?dynamic_import\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_auto_queue\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_metadata\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?embedding_worker\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?enqueue\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?executor\\.py$|^(?:.*/)?l3500_bulk_ops/(?:.*/)?export_cursor\\.py$|^(?:.*/)?l1450_keys/(?:.*/)?factory\\.py$|^(?:.*/)?l5100_fts/(?:.*/)?fts_search_manager\\.py$|^(?:.*/)?l5200_vector_index/(?:.*/)?index_manager\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_diff_bytes\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_embedding\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_fts_search\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_infrastructure\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?intent_query_extended\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?lazy_runtime\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?log_table\\.py$|^(?:.*/)?logged_table\\.py$|^(?:.*/)?l7800_versioned_merge/(?:.*/)?merge\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?ownership_scheme\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?permission_filter\\.py$|^(?:.*/)?index_implementations/(?:.*/)?pgvector\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_helpers\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?plan_query_builder\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?plan_revision_history_query\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?plan_runtime\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?processor\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?query_spec\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?queue_definition\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?rbac_models\\.py$|^(?:.*/)?l7900_versioned_rebase/(?:.*/)?rebase\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?resolve_branch_steps\\.py$|^(?:.*/)?l1000_schema/(?:.*/)?schema_def\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?server_query_builder\\.py$|^(?:.*/)?l4400_scheduler/(?:.*/)?service\\.py$|^(?:.*/)?l6000_log_table/(?:.*/)?sparse_change\\.py$|^(?:.*/)?l9700_graph_query/(?:.*/)?sql_graph_runtime\\.py$|^(?:.*/)?l2060_query_builder/(?:.*/)?sql_query_spec\\.py$|^(?:.*/)?l5000_subscriptions/(?:.*/)?subscription\\.py$|^(?:.*/)?testing\\.py$|^(?:.*/)?l2050_transaction/(?:.*/)?transaction\\.py$|^(?:.*/)?l9800_rippling/(?:.*/)?trigger_builder\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?triggers\\.py$|^(?:.*/)?l4000_permissions/(?:.*/)?validation\\.py$|^(?:.*/)?l4100_queue/(?:.*/)?validation\\.py$|^(?:.*/)?l7000_versioned_schema/(?:.*/)?versioned_connection\\.py$|^(?:.*/)?l7250_versioned_operations/(?:.*/)?versioned_operations\\.py$|^(?:.*/)?l2070_batching/(?:.*/)?versioned_select_steps\\.py$|^(?:.*/)?l7200_versioned_transactions/(?:.*/)?versioned_transactions\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "api_impl",
+        "anchor": "witness.span",
+        "message": "api_impl: api_impl-1"
+      }
+    },
+    {
+      "id": "conform_impl-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "dotted_name"
+                              },
+                              {
+                                "pattern": "$MOD"
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "aliased_import"
+                              },
+                              {
+                                "has": {
+                                  "pattern": "$MOD",
+                                  "stopBy": "neighbor",
+                                  "field": "name"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "all": [
+                              {
+                                "kind": "if_statement"
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "kind": "identifier"
+                                    },
+                                    {
+                                      "regex": "^(?:TYPE_CHECKING)$"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "condition"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "module_name"
+                        }
+                      },
+                      {
+                        "has": {
+                          "regex": "^impl\\.",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "dotted_name"
+                          },
+                          {
+                            "regex": "^impl\\."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "import\\ |from\\ ",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "import\\ |from\\ ",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:.*/)?conform/(?:.*/)?[^/]*\\.py$",
+              "notRegex": "^(?:.*/)?conftest\\.py$|^(?:.*/)?bench_all_backends\\.py$|^(?:.*/)?test_bugbot_regressions\\.py$|^(?:.*/)?test_bulk_loader\\.py$|^(?:.*/)?test_config\\.py$|^(?:.*/)?test_cross_backend_import\\.py$|^(?:.*/)?test_export_import\\.py$|^(?:.*/)?test_fts_basic\\.py$|^(?:.*/)?test_fts_pagination\\.py$|^(?:.*/)?test_fts_validation\\.py$|^(?:.*/)?test_incremental_export_import\\.py$|^(?:.*/)?test_log_model_registry\\.py$|^(?:.*/)?test_log_table_export_import\\.py$|^(?:.*/)?test_materialization\\.py$|^(?:.*/)?test_materialization_jobs\\.py$|^(?:.*/)?test_migration_ddl_bugs_round2\\.py$|^(?:.*/)?test_neo4j_validation\\.py$|^(?:.*/)?test_object_history\\.py$|^(?:.*/)?test_permission_audit\\.py$|^(?:.*/)?test_permission_cache\\.py$|^(?:.*/)?test_permission_column_filter\\.py$|^(?:.*/)?test_permission_events\\.py$|^(?:.*/)?test_permission_evolution\\.py$|^(?:.*/)?test_permission_introspection\\.py$|^(?:.*/)?test_permission_noop\\.py$|^(?:.*/)?test_permission_ownership\\.py$|^(?:.*/)?test_permission_pagination\\.py$|^(?:.*/)?test_permission_row_filter\\.py$|^(?:.*/)?test_permission_share\\.py$|^(?:.*/)?test_permission_validation\\.py$|^(?:.*/)?test_pgvector_e2e\\.py$|^(?:.*/)?test_pgvector_low_level\\.py$|^(?:.*/)?test_pgvector_migrations\\.py$|^(?:.*/)?test_pgvector_stress\\.py$|^(?:.*/)?test_pgvector_vs_hnsw_comparison\\.py$|^(?:.*/)?test_polymorphic_inheritance\\.py$|^(?:.*/)?test_rbac_audit_integration\\.py$|^(?:.*/)?test_rbac_foreign_keys\\.py$|^(?:.*/)?test_rbac_integration\\.py$|^(?:.*/)?test_rbac_polymorphic\\.py$|^(?:.*/)?test_rbac_provider\\.py$|^(?:.*/)?test_rbac_schema\\.py$|^(?:.*/)?test_schema_drift_e2e\\.py$|^(?:.*/)?test_security_regression\\.py$|^(?:.*/)?test_sparse_backend_incremental\\.py$|^(?:.*/)?test_sql_roundtrip_efficiency\\.py$|^(?:.*/)?test_uuid_introspection\\.py$|^(?:.*/)?test_uuid_validation\\.py$|^(?:.*/)?test_vector_query_analysis\\.py$|^(?:.*/)?test_versioned_operations\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "conform_impl",
+        "anchor": "witness.span",
+        "message": "conform_impl: conform_impl-1"
+      }
+    }
+  ]
+}

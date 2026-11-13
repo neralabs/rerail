@@ -1,0 +1,22 @@
+.policy "ruff-b004-unreliable-callable-check" revision 2
+.description "Use callable() instead of checking hasattr() or getattr() for __call__; the attribute check gives wrong answers for some objects."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B004 (flake8-bugbear): `hasattr(x, "__call__")` or `getattr(x, "__call__", …)` to test whether x can be
+// called. An object can be callable without the attribute being visible (or the reverse); `callable(x)` asks
+// the type. The callee must resolve to the builtin; hasattr takes exactly two positional arguments, getattr two
+// or three, and neither any keyword.
+//   if hasattr(o, "__call__"):            ← B004 at the call
+//   builtins.getattr(o, "__call__", None) ← B004
+//   hasattr(o, "__call__", 0)             not reported: not a valid hasattr call
+#include "python/bugbear.rr"
+
+.violation B004(at: node) code "B004"
+    "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results."
+    suppress ruff "B004"
+B004(c) :- bb_builtin_call(c, f), call_nkwargs(c, 0), call_nargs(c, k), b004_arity(f, k),
+    bb_pos(c, 1, a), plain_str(a, "__call__").
+.decl b004_arity(f: symbol, k: number)
+b004_arity("hasattr", 2). b004_arity("getattr", 2). b004_arity("getattr", 3).

@@ -1,0 +1,20 @@
+.policy "ruff-air002-airflow-dag-no-schedule-argument" revision 2
+.description "Give every Airflow Dag an explicit schedule; the implicit default changed from daily to none in Airflow 3, silently stopping Dags that relied on it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR002 (Airflow): a `DAG(…)` or `@dag(…)` call without `schedule`, `schedule_interval` or `timetable`.
+// The default schedule changed in Airflow 3 (from daily to none), so the Dag's behaviour depends on the
+// version. The callee is any `airflow….DAG` or `airflow….dag`; only in a file that imports airflow. Reported
+// at the call (for a decorator, its call after the `@`).
+//   DAG(dag_id="class_default_schedule")       ← AIR002
+//   @dag()                                     ← AIR002
+//   DAG(dag_id="x", schedule="@hourly")        not reported
+#include "python/misc-airflow.rr"
+
+.violation AIR002(at: node) code "AIR002"
+    "Pass an explicit `schedule=` to this Dag (`schedule=None` if it should only run when triggered); relying on the default changes behaviour between Airflow 2 and 3."
+    suppress ruff "AIR002"
+AIR002(c) :- air_call(c, q), air_dag(q), !call_kwarg(c, "schedule", _), !call_kwarg(c, "schedule_interval", _),
+    !call_kwarg(c, "timetable", _).

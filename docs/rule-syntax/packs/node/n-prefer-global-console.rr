@@ -1,0 +1,18 @@
+.policy "n-prefer-global-console" revision 4
+.description "Use the global console instead of importing or requiring the console module; it is always available in Node.js."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/prefer-global/console: use the global console, not the console module. Option "always" (the default)
+// reports each load of the module; "never" reports each use of the global:
+//   const console = require("console")    process.getBuiltinModule("node:console")    import console from "console"
+//   export * from "node:console"      reported (a re-export loads the module too)
+//   "never":  console.x  globalThis.console                                          reported
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+
+#include "tsx/node-trace.rr"   // prefer_global_use
+module_global("console", "console", "").
+
+.violation prefer_global(at: node, msg: symbol) code "n/prefer-global/console" "{msg}"
+    suppress eslint "n/prefer-global/console"
+prefer_global(n, m) :- prefer_global_use(n, m).

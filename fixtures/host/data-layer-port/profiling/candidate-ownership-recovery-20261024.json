@@ -1,0 +1,982 @@
+{
+  "format": "rerail.candidate-ownership-recovery/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "188fb8f4",
+  "redCommit": "321f6ec9",
+  "status": "R5-A complete; final 100 limit remains unmet",
+  "accounting": {
+    "baseline": 7733,
+    "requiredRemoval": 3474,
+    "removed": 4048,
+    "observed": 3685,
+    "ceiling": 4259,
+    "accepted": true,
+    "problems": [],
+    "finalLimit": 100,
+    "finalLimitAccepted": false,
+    "sqliteInternal": 994,
+    "unknownOrigins": 0,
+    "replacementRoles": {
+      "other": 2969,
+      "populationStatements": 380,
+      "finalStoreDrop": 4,
+      "storeCreate": 4,
+      "retirementStatements": 324,
+      "storeIndexCreate": 4
+    },
+    "candidateLifecycleBefore": 4764,
+    "candidateLifecycleAfter": 716,
+    "populationPlanningCap": 250,
+    "populationActual": 380,
+    "retirementPlanningCap": 1028,
+    "retirementActual": 324,
+    "tradeoff": "Population exceeds its component planning cap by 130; retirement beats its model by 704. The full 3474 net-removal target is exceeded by 574."
+  },
+  "implementation": [
+    "one scoped SQL owner with a nonunique integer producer/fid/pre index, created before producer fills",
+    "independent dependency frontiers use one bounded SQL population statement with a shared WITH scope",
+    "empty producers complete through explicit batch member metadata, independent of row presence",
+    "each logical binding retains its individual last-use retirement; adjacent releases use one DELETE",
+    "different schemas retain their own physical tables; retained read/write barriers and atomic rollback remain",
+    "build one final schedule; do not build and discard two prior schedules or alias-render discarded SQL",
+    "owner-name metadata is constructed once per execution instead of once per release boundary",
+    "v3 captures retain setup, slots, members, source generations, graph and executable schedule; replay uses production adapters",
+    "no optional engine algorithm, native rule evaluator, budget reset or query reclassification"
+  ],
+  "build": {
+    "nativeFeature": "code-rule-profile",
+    "engineOptLevel": 1,
+    "dependencyOptLevel": 3,
+    "lto": false,
+    "codegenUnits": 256,
+    "workers": 4,
+    "allocatorShim": "/tmp/librerail_jemalloc_check_shim.dylib",
+    "beforeAddon": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-addon/engine.node",
+      "sha256": "5262cd7cb34b2c24433166337bd5e363a2443648626cadca537462f75ade6f74"
+    },
+    "afterAddon": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-addon/engine.node",
+      "sha256": "c1a047254941805a9f46349ae3dafa326c20682be3ae76cebb634fdffd742db3"
+    },
+    "sourceFiles": [
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/lower.rs",
+        "sha256": "d867294ec33f801cb1048ebead8d5b3eb0a1c2a992540f2abc15c928a493c8fc"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/execute.rs",
+        "sha256": "58bb22bb9f3e79d217c505adcf0362dc427088fbb7913e53c718faa85dad5e0f"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/corpus.rs",
+        "sha256": "4d6659b5acd4b5ea73069fa196a0d96844563ad14e12af6c583bd33238471bc1"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/capture.rs",
+        "sha256": "0909e05bb9011ba17d625e04f9c863b416b6f73c21da30fe78f0510522bfd787"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/lower/ownership.rs",
+        "sha256": "8b6817cc96e8a61748fa74e9bfe223c606d810cdba921742f141c79938340269"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/lower/lifetime.rs",
+        "sha256": "0083a81b6ff352dc61ac6131922f6b27a69e70ccdab9d0cc0c17795913128bf2"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/lower/render.rs",
+        "sha256": "90bd55ceb3ce6b8568ddf5f09d862c841bab20b1ad7d6d608ca3e900c4940328"
+      },
+      {
+        "path": "native/src/code_rule_dsl/matcher/anchors/sql/lower/audit.rs",
+        "sha256": "b8cd1d9cbf7335b8b588f7f0999521947e3f599eec577ac689c1ddd940da7b02"
+      }
+    ]
+  },
+  "workload": {
+    "scope": "Complete fixed positive/clean state-tripwire guard; snapshot and workspace execution. Not full repository.",
+    "fixedInputByteIdenticalToBaseline": true,
+    "input": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-acceptance/recording.json",
+      "sha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4"
+    },
+    "timingInput": {
+      "path": ".rerail/profiles/sql-stage-recovery-20261023/shared-acceptance/recording.json",
+      "sha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4"
+    },
+    "baselineFullReport": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/profile.json",
+      "sha256": "76941b2f08e71f6b05dad2f16f95dec657f4878038e253ef0e75a59a572fc2ad"
+    },
+    "afterFullReport": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-acceptance/capture/sql/profile.json",
+      "sha256": "0afb04d851df0c5e65e440adecf7ee46d454b6ff3fdaa4e1fd96f4e7eb890fd1"
+    },
+    "afterInventory": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-acceptance/capture/sql/execution-inventory.json",
+      "sha256": "5ad43f042c6e23b16f38e4234c1f93cb0288e109cd28e0b95ac0882c570a3588"
+    },
+    "guardParity": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-acceptance/capture/parity.json",
+      "sha256": "e49d742c52f10e47ad4ea6f8d08c65f331c20575677956c0775ab05fc27a64bf"
+    }
+  },
+  "matchedReplayCpu": {
+    "directory": ".rerail/profiles/chunk-a-20261024/delivery-controls",
+    "before": {
+      "trials": [
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/before-0.json",
+          "sha256": "b0ee592ecfa031d190f1fd7bf1696747d3ca2cc524341a7b64a93a74f1f06b3d",
+          "passed": true,
+          "userMs": 1528.7,
+          "systemMs": 84.686,
+          "cpuMs": 1613.386,
+          "wallMs": 1753.509375,
+          "maxRSSRaw": 331680,
+          "memory": {
+            "rss": 284058680,
+            "heapTotal": 108724224,
+            "heapUsed": 62609688,
+            "external": 9866410,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/before-1.json",
+          "sha256": "40ca15958ec2e284d66a87e1304d95536fe82622bd39e9ab4d535a39724b5fc6",
+          "passed": true,
+          "userMs": 1626.648,
+          "systemMs": 68.945,
+          "cpuMs": 1695.593,
+          "wallMs": 1657.6344170000002,
+          "maxRSSRaw": 378784,
+          "memory": {
+            "rss": 332506360,
+            "heapTotal": 105807872,
+            "heapUsed": 34245064,
+            "external": 48244796,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/before-2.json",
+          "sha256": "87bc77685f5f391940924897e8502714693615e6998e7c366d11991667ee8c0e",
+          "passed": true,
+          "userMs": 1648.072,
+          "systemMs": 67.941,
+          "cpuMs": 1716.013,
+          "wallMs": 1617.720667,
+          "maxRSSRaw": 383360,
+          "memory": {
+            "rss": 338978136,
+            "heapTotal": 105021440,
+            "heapUsed": 34224776,
+            "external": 48244796,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/before-3.json",
+          "sha256": "0bfd7e7c5409a43b28d8a8900519347954e80e8efc9adb91e4c8ba2a18fb7bc6",
+          "passed": true,
+          "userMs": 1625.587,
+          "systemMs": 82.58,
+          "cpuMs": 1708.167,
+          "wallMs": 1688.9771250000001,
+          "maxRSSRaw": 383824,
+          "memory": {
+            "rss": 338421464,
+            "heapTotal": 107757568,
+            "heapUsed": 40308264,
+            "external": 53180314,
+            "arrayBuffers": 45555395
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/before-4.json",
+          "sha256": "69f676aa05be97d525d81b5f2e44cb5d60d0490c7e60166acc69a9a6a84199a2",
+          "passed": true,
+          "userMs": 1612.868,
+          "systemMs": 82.16,
+          "cpuMs": 1695.028,
+          "wallMs": 1722.2414999999999,
+          "maxRSSRaw": 339280,
+          "memory": {
+            "rss": 291759568,
+            "heapTotal": 108544000,
+            "heapUsed": 40236200,
+            "external": 9866410,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 1695.593,
+      "rangeCpuMs": [
+        1613.386,
+        1716.013
+      ],
+      "medianMaxRssKiB": 378784,
+      "rangeMaxRssKiB": [
+        331680,
+        383824
+      ]
+    },
+    "after": {
+      "trials": [
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/after-0.json",
+          "sha256": "f1e28dd456e69b7aafbfd9defa80865ac10aa5d48ed6c348ccff1cc7ba5889b6",
+          "passed": true,
+          "userMs": 1586.796,
+          "systemMs": 80.871,
+          "cpuMs": 1667.667,
+          "wallMs": 1597.5268339999998,
+          "maxRSSRaw": 335520,
+          "memory": {
+            "rss": 287909496,
+            "heapTotal": 109871104,
+            "heapUsed": 41441120,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/after-1.json",
+          "sha256": "503d9ab912c157215d887952d4d17f6527dd9b6b82cba60c2d028113b5116d3a",
+          "passed": true,
+          "userMs": 1579.47,
+          "systemMs": 69.865,
+          "cpuMs": 1649.335,
+          "wallMs": 1548.751875,
+          "maxRSSRaw": 333664,
+          "memory": {
+            "rss": 286533216,
+            "heapTotal": 112230400,
+            "heapUsed": 40331792,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/after-2.json",
+          "sha256": "f519c7feb20ca25994ae455a3c25767cc3485393db455797573347e4bbb39fab",
+          "passed": true,
+          "userMs": 1625.11,
+          "systemMs": 58.395,
+          "cpuMs": 1683.505,
+          "wallMs": 1696.601917,
+          "maxRSSRaw": 333056,
+          "memory": {
+            "rss": 284533864,
+            "heapTotal": 105021440,
+            "heapUsed": 34269064,
+            "external": 4930892,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/after-3.json",
+          "sha256": "9bd8ef182e527684f02da622aa34834375eabef0c76cc41e67fe2532ec86f94c",
+          "passed": true,
+          "userMs": 1515.676,
+          "systemMs": 54.026,
+          "cpuMs": 1569.702,
+          "wallMs": 1858.2736249999998,
+          "maxRSSRaw": 335664,
+          "memory": {
+            "rss": 288318736,
+            "heapTotal": 113016832,
+            "heapUsed": 40290112,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "path": ".rerail/profiles/chunk-a-20261024/delivery-controls/after-4.json",
+          "sha256": "4c13ce6d34c29d2bcb906e4782a906b5ee14877568034c5495397890a79b9af8",
+          "passed": true,
+          "userMs": 1581.048,
+          "systemMs": 72.368,
+          "cpuMs": 1653.416,
+          "wallMs": 1701.441167,
+          "maxRSSRaw": 340576,
+          "memory": {
+            "rss": 293987816,
+            "heapTotal": 106725376,
+            "heapUsed": 40271384,
+            "external": 7398651,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 1653.416,
+      "rangeCpuMs": [
+        1569.702,
+        1683.505
+      ],
+      "medianMaxRssKiB": 335520,
+      "rangeMaxRssKiB": [
+        333056,
+        340576
+      ]
+    },
+    "cpuChangePercent": -2.487448344030685
+  },
+  "earlierExperiments": [
+    {
+      "decision": "rejected: CPU regression; duplicate scheduling and discarded rendering removed",
+      "timings": {
+        "directory": ".rerail/profiles/chunk-a-20261024/first-controls",
+        "before": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/before-0.json",
+              "sha256": "be7bde231e33e72cf48101a7a61928ec62c8ae8bf33fceeedb6feb9f5a0bf8a9",
+              "passed": true,
+              "userMs": 1592.234,
+              "systemMs": 96.015,
+              "cpuMs": 1688.249,
+              "wallMs": 3005.4312089999994,
+              "maxRSSRaw": 331328,
+              "memory": {
+                "rss": 285828776,
+                "heapTotal": 109346816,
+                "heapUsed": 40309288,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/before-1.json",
+              "sha256": "16c8a931b19a0f4a5ebe49ce73972ab7fa8e5e85dd8eec2b096ff010365037b2",
+              "passed": true,
+              "userMs": 1587.56,
+              "systemMs": 78.859,
+              "cpuMs": 1666.419,
+              "wallMs": 3792.85825,
+              "maxRSSRaw": 325296,
+              "memory": {
+                "rss": 279603168,
+                "heapTotal": 108298240,
+                "heapUsed": 41777488,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/before-2.json",
+              "sha256": "f9d96c32a856bbcb5ef16afa57cc05e7145cf3394c8d5cfd23c93c2cd6cd503e",
+              "passed": true,
+              "userMs": 1582.233,
+              "systemMs": 78.78,
+              "cpuMs": 1661.013,
+              "wallMs": 2848.8535,
+              "maxRSSRaw": 341264,
+              "memory": {
+                "rss": 295249216,
+                "heapTotal": 107757568,
+                "heapUsed": 40219976,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/before-3.json",
+              "sha256": "f8e6c087a0b3b23b583bc32dbce5e1f32476ef6ad03b4f6e8ca0474faf8b8774",
+              "passed": true,
+              "userMs": 1634.603,
+              "systemMs": 97.483,
+              "cpuMs": 1732.086,
+              "wallMs": 3007.4799169999997,
+              "maxRSSRaw": 373072,
+              "memory": {
+                "rss": 327902432,
+                "heapTotal": 109854720,
+                "heapUsed": 40283704,
+                "external": 53180314,
+                "arrayBuffers": 45555395
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/before-4.json",
+              "sha256": "7777170bd6953e6a1445430d648ba777d39a40e6840c71089cc221bb41098df3",
+              "passed": true,
+              "userMs": 1573.737,
+              "systemMs": 108.262,
+              "cpuMs": 1681.999,
+              "wallMs": 2909.8167080000003,
+              "maxRSSRaw": 338624,
+              "memory": {
+                "rss": 293070312,
+                "heapTotal": 106971136,
+                "heapUsed": 40177816,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1681.999,
+          "rangeCpuMs": [
+            1661.013,
+            1732.086
+          ],
+          "medianMaxRssKiB": 338624,
+          "rangeMaxRssKiB": [
+            325296,
+            373072
+          ]
+        },
+        "after": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/after-0.json",
+              "sha256": "9ac2728bc601957d77a6ee75ca8a2e5a28e338b10ee4806c8d371e8c66b45ccd",
+              "passed": true,
+              "userMs": 1713.191,
+              "systemMs": 90.652,
+              "cpuMs": 1803.843,
+              "wallMs": 3862.4849159999994,
+              "maxRSSRaw": 338176,
+              "memory": {
+                "rss": 290989328,
+                "heapTotal": 105283584,
+                "heapUsed": 34204672,
+                "external": 4930892,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/after-1.json",
+              "sha256": "4c67d8b99b100e0c9f9d150b1b1126e1c83c306ab28491fc2b300b603cce3e8c",
+              "passed": true,
+              "userMs": 1682.066,
+              "systemMs": 73.428,
+              "cpuMs": 1755.494,
+              "wallMs": 3895.1967079999995,
+              "maxRSSRaw": 329232,
+              "memory": {
+                "rss": 280946248,
+                "heapTotal": 107233280,
+                "heapUsed": 40181936,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/after-2.json",
+              "sha256": "11769751ebaf0f76f9b2917e5f2eeb85e27bf333d684feb0427004b188bc3e29",
+              "passed": true,
+              "userMs": 1655.223,
+              "systemMs": 65.892,
+              "cpuMs": 1721.115,
+              "wallMs": 3049.826417,
+              "maxRSSRaw": 327872,
+              "memory": {
+                "rss": 281880112,
+                "heapTotal": 107757568,
+                "heapUsed": 40242728,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/after-3.json",
+              "sha256": "89a762ce5e356831e83784652e02474912abe0be5d4633207a9fea504667acbf",
+              "passed": true,
+              "userMs": 1681.967,
+              "systemMs": 72.325,
+              "cpuMs": 1754.292,
+              "wallMs": 2965.6438339999995,
+              "maxRSSRaw": 366640,
+              "memory": {
+                "rss": 322430056,
+                "heapTotal": 109330432,
+                "heapUsed": 40751664,
+                "external": 53250778,
+                "arrayBuffers": 45625859
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/first-controls/after-4.json",
+              "sha256": "493a7c2ab26c97f09f20ad8716e61764743e37bd628519a93b9b3cbb1dd850ff",
+              "passed": true,
+              "userMs": 1639.331,
+              "systemMs": 81.228,
+              "cpuMs": 1720.559,
+              "wallMs": 2681.6645,
+              "maxRSSRaw": 324976,
+              "memory": {
+                "rss": 278570544,
+                "heapTotal": 108019712,
+                "heapUsed": 40204808,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1754.292,
+          "rangeCpuMs": [
+            1720.559,
+            1803.843
+          ],
+          "medianMaxRssKiB": 329232,
+          "rangeMaxRssKiB": [
+            324976,
+            366640
+          ]
+        },
+        "cpuChangePercent": 4.298040605256004
+      },
+      "qualification": "First pair overlapped a short allocation-accounted memory replay; retained as evidence, excluded from final acceptance.",
+      "afterAddon": {
+        "path": ".rerail/profiles/chunk-a-20261024/first-addon/engine.node",
+        "sha256": "643910954027b2c03d916e8eb5616b78a8f60ff9ee9007446bbfd58bd38e61f1"
+      }
+    },
+    {
+      "decision": "intermediate compiler cleanup; provisional controls",
+      "timings": {
+        "directory": ".rerail/profiles/chunk-a-20261024/second-controls",
+        "before": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/before-0.json",
+              "sha256": "85b2e6d2e3b3215610421c5272cf5e1e9f46fe7922fbacfcddadafc0b5435bfa",
+              "passed": true,
+              "userMs": 1629.706,
+              "systemMs": 103.1,
+              "cpuMs": 1732.806,
+              "wallMs": 3184.6887080000006,
+              "maxRSSRaw": 377264,
+              "memory": {
+                "rss": 332768936,
+                "heapTotal": 108806144,
+                "heapUsed": 40776112,
+                "external": 53180314,
+                "arrayBuffers": 45555395
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/before-1.json",
+              "sha256": "8805ff740dd13baade94bd7c3e4ce34aac2518353510e665a4f9dface147c98f",
+              "passed": true,
+              "userMs": 1591.12,
+              "systemMs": 86.096,
+              "cpuMs": 1677.216,
+              "wallMs": 3003.644208,
+              "maxRSSRaw": 363984,
+              "memory": {
+                "rss": 318137976,
+                "heapTotal": 107495424,
+                "heapUsed": 40781976,
+                "external": 53180314,
+                "arrayBuffers": 45555395
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/before-2.json",
+              "sha256": "6fcfb11b3339bdb48f0a7093d70ee7db7129fede48ec126917b793f3c386627f",
+              "passed": true,
+              "userMs": 1596.264,
+              "systemMs": 82.003,
+              "cpuMs": 1678.267,
+              "wallMs": 2760.279958,
+              "maxRSSRaw": 338992,
+              "memory": {
+                "rss": 292578912,
+                "heapTotal": 106971136,
+                "heapUsed": 40279080,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1678.267,
+          "rangeCpuMs": [
+            1677.216,
+            1732.806
+          ],
+          "medianMaxRssKiB": 363984,
+          "rangeMaxRssKiB": [
+            338992,
+            377264
+          ]
+        },
+        "after": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/after-0.json",
+              "sha256": "9d6e0024bcb8b7a2bd623b7100fdb5678d6834adc012daf836d87ed1bae6c731",
+              "passed": true,
+              "userMs": 1505.752,
+              "systemMs": 83.631,
+              "cpuMs": 1589.383,
+              "wallMs": 3427.6597079999997,
+              "maxRSSRaw": 321840,
+              "memory": {
+                "rss": 275375616,
+                "heapTotal": 107773952,
+                "heapUsed": 40892856,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/after-1.json",
+              "sha256": "df781949d16855e4a6c30b08ee43cae1fa09dae5f564722e98e6c713029c77d7",
+              "passed": true,
+              "userMs": 1525.831,
+              "systemMs": 84.419,
+              "cpuMs": 1610.25,
+              "wallMs": 2618.341417,
+              "maxRSSRaw": 326576,
+              "memory": {
+                "rss": 279979616,
+                "heapTotal": 107757568,
+                "heapUsed": 40196336,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/second-controls/after-2.json",
+              "sha256": "6679695b4b694a56b6c48562c0ba7cc2eef78d6a4a0904131ba6fe6eeef1107b",
+              "passed": true,
+              "userMs": 1572.081,
+              "systemMs": 81.947,
+              "cpuMs": 1654.028,
+              "wallMs": 2892.2455,
+              "maxRSSRaw": 334656,
+              "memory": {
+                "rss": 288974576,
+                "heapTotal": 107511808,
+                "heapUsed": 40281992,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1610.25,
+          "rangeCpuMs": [
+            1589.383,
+            1654.028
+          ],
+          "medianMaxRssKiB": 326576,
+          "rangeMaxRssKiB": [
+            321840,
+            334656
+          ]
+        },
+        "cpuChangePercent": -4.052811620558594
+      },
+      "afterAddon": {
+        "path": ".rerail/profiles/chunk-a-20261024/second-addon/engine.node",
+        "sha256": "6f7bfd80de4e6e84317f0d5b2055ef0d2ed728b4b4bef38dd58a42c3f229a926"
+      }
+    },
+    {
+      "decision": "validated before final owner-name metadata hoist; retain all trials",
+      "timings": {
+        "directory": ".rerail/profiles/chunk-a-20261024/final-controls",
+        "before": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/before-0.json",
+              "sha256": "a592c6d35f46aae19e7d18c1e50066a32958376d615c381d877dc63db5ea3880",
+              "passed": true,
+              "userMs": 1598.716,
+              "systemMs": 98.297,
+              "cpuMs": 1697.013,
+              "wallMs": 1790.9437919999998,
+              "maxRSSRaw": 335296,
+              "memory": {
+                "rss": 286483560,
+                "heapTotal": 109330432,
+                "heapUsed": 40222640,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/before-1.json",
+              "sha256": "63fdf053419cb15f9050f02a6ca82f30e77fe59739f8f8793663ffb115035aaa",
+              "passed": true,
+              "userMs": 1609.647,
+              "systemMs": 91.775,
+              "cpuMs": 1701.422,
+              "wallMs": 1928.468667,
+              "maxRSSRaw": 339024,
+              "memory": {
+                "rss": 293364744,
+                "heapTotal": 106184704,
+                "heapUsed": 40457544,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/before-2.json",
+              "sha256": "93018814a9af9651bf8c8fb6b911c19159ef5aa9e92b4d200a3f804007e5ed54",
+              "passed": true,
+              "userMs": 1615.523,
+              "systemMs": 93.455,
+              "cpuMs": 1708.978,
+              "wallMs": 1783.922,
+              "maxRSSRaw": 329792,
+              "memory": {
+                "rss": 284403872,
+                "heapTotal": 110919680,
+                "heapUsed": 40315264,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/before-3.json",
+              "sha256": "666c6d1727f0d71069bf0edd646dd9ed42b4ddabf8a0dcf0bf8f943505373335",
+              "passed": true,
+              "userMs": 1594.905,
+              "systemMs": 96.038,
+              "cpuMs": 1690.943,
+              "wallMs": 1704.087042,
+              "maxRSSRaw": 338112,
+              "memory": {
+                "rss": 291940032,
+                "heapTotal": 108298240,
+                "heapUsed": 40449328,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/before-4.json",
+              "sha256": "b5fd8f5fe126477a4673f89be5a7d4869e2c59bc2bd047bd9135943f48711b35",
+              "passed": true,
+              "userMs": 1614.728,
+              "systemMs": 92.351,
+              "cpuMs": 1707.079,
+              "wallMs": 1865.6519170000001,
+              "maxRSSRaw": 352832,
+              "memory": {
+                "rss": 306260176,
+                "heapTotal": 110313472,
+                "heapUsed": 67242168,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1701.422,
+          "rangeCpuMs": [
+            1690.943,
+            1708.978
+          ],
+          "medianMaxRssKiB": 338112,
+          "rangeMaxRssKiB": [
+            329792,
+            352832
+          ]
+        },
+        "after": {
+          "trials": [
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/after-0.json",
+              "sha256": "95a33ac3b2b76094cae27b8c5e343b39ab7688f25de9671a097606eb0f3401f2",
+              "passed": true,
+              "userMs": 1616.092,
+              "systemMs": 73.59,
+              "cpuMs": 1689.682,
+              "wallMs": 1723.045542,
+              "maxRSSRaw": 372528,
+              "memory": {
+                "rss": 327263744,
+                "heapTotal": 105283584,
+                "heapUsed": 34202800,
+                "external": 48315004,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/after-1.json",
+              "sha256": "762e4cba6918c8675af1177b339c2ee33191b3556ce3928d0e2b37f27f49d4e6",
+              "passed": true,
+              "userMs": 1518.396,
+              "systemMs": 74.978,
+              "cpuMs": 1593.374,
+              "wallMs": 1744.7679999999998,
+              "maxRSSRaw": 329728,
+              "memory": {
+                "rss": 283878768,
+                "heapTotal": 108822528,
+                "heapUsed": 40213088,
+                "external": 7398651,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/after-2.json",
+              "sha256": "e135d84d2ea4d37ccc222ab30aba21f637be126a30f533e955b4ea3ad682461b",
+              "passed": true,
+              "userMs": 1608.716,
+              "systemMs": 81.405,
+              "cpuMs": 1690.121,
+              "wallMs": 1760.114333,
+              "maxRSSRaw": 339040,
+              "memory": {
+                "rss": 292808192,
+                "heapTotal": 107380736,
+                "heapUsed": 34251136,
+                "external": 4930892,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/after-3.json",
+              "sha256": "00d53b13a67d69b18e0d27b8127caeee41299594952b5edb69670cebe16e0bf4",
+              "passed": true,
+              "userMs": 1573.133,
+              "systemMs": 84.388,
+              "cpuMs": 1657.521,
+              "wallMs": 1770.5185000000001,
+              "maxRSSRaw": 324240,
+              "memory": {
+                "rss": 276915160,
+                "heapTotal": 105021440,
+                "heapUsed": 34249160,
+                "external": 4930892,
+                "arrayBuffers": 2241491
+              }
+            },
+            {
+              "path": ".rerail/profiles/chunk-a-20261024/final-controls/after-4.json",
+              "sha256": "cfd6651eb66825b526b610e4c60a58d811239611c3d968e6905d5fad175553f8",
+              "passed": true,
+              "userMs": 1523.263,
+              "systemMs": 74.803,
+              "cpuMs": 1598.066,
+              "wallMs": 1723.672916,
+              "maxRSSRaw": 341088,
+              "memory": {
+                "rss": 293938136,
+                "heapTotal": 107560960,
+                "heapUsed": 42142200,
+                "external": 9866410,
+                "arrayBuffers": 2241491
+              }
+            }
+          ],
+          "medianCpuMs": 1657.521,
+          "rangeCpuMs": [
+            1593.374,
+            1690.121
+          ],
+          "medianMaxRssKiB": 339040,
+          "rangeMaxRssKiB": [
+            324240,
+            372528
+          ]
+        },
+        "cpuChangePercent": -2.580253458577597
+      },
+      "afterAddon": {
+        "path": ".rerail/profiles/chunk-a-20261024/final-addon/engine.node",
+        "sha256": "557b747b4003e74a5bb4896788b314f53f7f99263fe6e9d09ee2e30acb98c1d4"
+      }
+    }
+  ],
+  "memory": {
+    "before": {
+      "path": ".rerail/profiles/chunk-a-20261024/frozen-before-memory.json",
+      "sha256": "e49ed5f793fb7a29e76d8da97c3671998c7faa43ad8b768117a898c0abbf8cd0",
+      "sqliteSteppingHeapPeakBytes": 19793328,
+      "sqliteCompilePeakBytes": 3397936,
+      "statementCounters": {
+        "fullscanSteps": 270,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1815,
+        "vmSteps": 73349
+      },
+      "rows": 161,
+      "peakLiveLogicalBindings": 93
+    },
+    "after": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-frozen-memory.json",
+      "sha256": "b9661f3b0e59df13ad283689a0d41d3db14c5be1233649cfb2d5cc2d45936919",
+      "sqliteSteppingHeapPeakBytes": 19269664,
+      "sqliteCompilePeakBytes": 3040608,
+      "statementCounters": {
+        "fullscanSteps": 130,
+        "scope": "stage and result statements; index and release batches excluded",
+        "sorts": 1812,
+        "vmSteps": 62073
+      },
+      "rows": 161,
+      "peakLiveLogicalBindings": 110
+    },
+    "scope": "First frozen positive candidate frontier, same SQLite adapters and 1024/512 KiB main/temp cache budgets",
+    "exactIntermediateBagParity": true,
+    "bagRows": 161,
+    "note": "Native packet IDs can vary across processes. Frozen-plan recompilation preserves original IDs for exact bag comparison. Increased live logical bindings do not increase the measured heap peak.",
+    "frozenInput": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/owned-acceptance/capture/sql/raw/candidate-9213-0.json",
+      "sha256": "289a2f46720365dd6828b2c290d4f23fb4982822e6295fe05851e7dacad8e489"
+    },
+    "frozenLogicalGraph": {
+      "path": ".rerail/profiles/selector-family-recovery-20261024/logical-graph.json",
+      "sha256": "06ac6adaa35f194f305d8a6e3be00822a1c5e62b576571923ddf77a5a1f3d1c5"
+    },
+    "compiledFrozenPlan": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-frozen/candidate.json",
+      "sha256": "5deba34e319aac66c1af3178d0bf7ae54157e571141f13ccf40c7fbc0b92686d"
+    }
+  },
+  "validation": {
+    "nativeFacingTests": 312,
+    "rustSqlTests": 78,
+    "rustSqlIgnored": 1,
+    "standaloneSqlTests": 54,
+    "budgetRegressionTests": 12,
+    "corpus": {
+      "replayedCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0
+    },
+    "nativeClippy": "all targets, with and without profiling, -D warnings",
+    "standaloneClippy": "all targets, -D warnings",
+    "staticChecks": "TSC, boundaries, structure, Windows paths, rustfmt, diff check",
+    "gateNote": "The fixed full-job launcher still exits 1 at 3685/100 after preserving complete output. Its independent R5-A progress check passes.",
+    "rustSqlRun": {
+      "path": ".rerail/profiles/chunk-a-20261024/delivery-rust-sql/profile.json",
+      "sha256": "90a9f1cf8fb992d37522701763fc91fe47c0216a3178058b3327e9eea45d59b5"
+    }
+  },
+  "externalProfile": {
+    "capture": {
+      "path": ".rerail/profiles/chunk-a-20261024/second-sampled/profile.json",
+      "sha256": "55961ede12903b29186c8d54d2807d55bb1c557d2e73e61c13003e4efda9e24f"
+    },
+    "samples": 2,
+    "note": "Diagnostic CPU samples show regex construction, memory movement/allocation and SQLite preparation. Wall-time stack samples are not CPU-time shares. They are separate from untraced controls."
+  },
+  "nextChunk": {
+    "id": "R5-B",
+    "baseline": 3685,
+    "netRemovalTarget": 1296,
+    "wholeJobAfterTarget": 2389,
+    "note": "Repriced candidate retirement from 1028 to the measured 324; no double counting of savings already delivered in R5-A."
+  },
+  "limitations": [
+    "No full-repository or full-3210-observation run in this chunk.",
+    "CPU ranges overlap on a shared host; the approximately 2.5% median gain is modest.",
+    "Peak process RSS is variable; exact SQLite heap measurements provide the narrower memory evidence.",
+    "Population remains 380 statements; do not claim the original 250 component cap was achieved.",
+    "SQL batch duration belongs to the batch; recover all logical members from the v3 capture instead of assigning all cost to its leading relation.",
+    "3685 submissions still exceed the fixed final limit by 3585."
+  ]
+}

@@ -1,0 +1,133 @@
+.policy "typescript-eslint-no-shadow" revision 3
+.description "Don't declare a TypeScript variable, function or type with a name already declared in an enclosing scope; the inner one hides the outer."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   variable, space, scope_up, scope_node, fexpr_name, variable_scope, for_head, definition_file, program, source_type
+#include "tsx/eslint-b-scope.rr"
+//   es_builtin, global_item
+
+// typescript-eslint's no-shadow: a variable (its first declaring identifier is reported) whose name the scopes
+// around it already declare. Only the nearest outer declaration of the name counts.
+//   const a = 1; function f(a) {}      { let b; { let b; } }      const A = 1; enum E { A }      → the inner one
+//   var g = function g() {};          a function or class expression's own name in its declaration is fine
+//   function f() { let x; } let x;    fine: the outer x is declared later (option hoist, below)
+// Never reported: the program's own declarations in a script, a class's own name inside it, `declare global`
+// blocks, `declare` declarations in a .d.ts file, an interface or type alias merging into `declare module "m"`
+// a type imported from "m", and a static method's type parameter named like its class's.
+// Options:
+//   allow (none)                  names never reported
+//   builtinGlobals (false)        also report a name of a built-in global or a `/* global */` comment
+//   hoist ("functions-and-types") an inner declaration before the outer one counts only when the outer is a
+//                                 function ("functions"), a type alias or interface ("types"), either
+//                                 ("functions-and-types"), anything ("all") or nothing ("never")
+//   ignoreTypeValueShadow (true)  a type named like a value is fine, and the other way round
+//   ignoreFunctionTypeParameterNameValueShadow (true)   `let a; type F = (a: string) => void` is fine, and so is
+//                                 a `declare function` (any bodiless one) named like an outer value
+//   ignoreOnInitialization (false)  fine: a function expression passed in a call in the outer one's initialiser,
+//                                   `const z = xs.map(z => z)`
+.violation no_shadow(at: node, x: symbol) code "@typescript-eslint/no-shadow" "Rename '{x}'; it shadows a declaration of the same name in an enclosing scope."
+    suppress eslint "@typescript-eslint/no-shadow"
+    suppress biome "lint/suspicious/noShadow"
+no_shadow(id, x) :- checked(s, x, id), shadowed(s, x, p), !ignored(s, x, p).
+no_shadow(id, x) :- checked(s, x, id), global_hit(s, x), option("builtinGlobals", "true"), !(!option("ignoreTypeValueShadow", "false"), !is_value(s, x)).
+
+// checked(s, x, id): the variables the rule looks at.
+.decl checked(s: node, x: symbol, id: node)
+checked(s, x, id) :- first_decl(s, x, id, k), k != "class-name", !script_top(s), !augmenting(s), !option_item("allow", _, x),
+    !dts_declare(s, x).
+.decl script_top(s: node)  // a script's top level is the global scope itself, never checked
+script_top(p) :- program(d, p), source_type(d, "script").
+.decl augmenting(s: node)  // in `declare global { … }`
+augmenting(s) :- scope_node(s), kind(b, "statement_block"), child(a, b, _), kind(a, "ambient_declaration"),
+    (s = b ; within(s, b)).
+// dts_declare(s, x): in a .d.ts file, x has a declaration that is itself `declare`d (`declare const x`,
+// `declare class x`, `declare enum x`, `declare namespace x`). A `const p` inside `declare namespace X { … }`
+// is not one, nor is a parameter of a `declare class`.
+.decl dts_declare(s: node, x: symbol)
+dts_declare(s, x) :- variable(s, x, id, k), dts_kind(k), docof(id, d), definition_file(d), nearest(id, n, declaring),
+    child(a, n, 0), kind(a, "ambient_declaration").
+.decl dts_kind(k: symbol)
+dts_kind("var"). dts_kind("let"). dts_kind("const"). dts_kind("class"). dts_kind("class-name"). dts_kind("enum").
+dts_kind("namespace").
+.decl declaring(k: symbol)
+declaring("lexical_declaration"). declaring("variable_declaration"). declaring("class_declaration").
+declaring("abstract_class_declaration"). declaring("enum_declaration"). declaring("internal_module"). declaring("module").
+
+// shadowed(s, x, p): p is the nearest scope outside s that declares x; global_hit: none does (in a module, the
+// program's own declarations only meet the globals).
+.decl seek(s: node, x: symbol, q: node)
+seek(s, x, q) :- checked(s, x, _), scope_up(s, q).
+seek(s, x, q) :- seek(s, x, o), !variable(o, x, _, _), scope_up(o, q).
+.decl shadowed(s: node, x: symbol, p: node)
+shadowed(s, x, p) :- seek(s, x, p), variable(p, x, _, _).
+.decl global_hit(s: node, x: symbol)
+global_hit(s, x) :- checked(s, x, id), (seek(s, x, p), !variable(p, x, _, _), kind(p, "program") ; kind(s, "program")),
+    docof(id, d), (es_builtin(x) ; global_item(c, x, v, _), v != "off", docof(c, d)).
+
+// ignored(s, x, p): an exemption applies to the variable x of s shadowing that of p.
+.decl ignored(s: node, x: symbol, p: node)
+ignored(s, x, p) :- shadowed(s, x, p), type_value(s, x, p).
+ignored(s, x, p) :- shadowed(s, x, p), !option("ignoreFunctionTypeParameterNameValueShadow", "false"), is_value(p, x),
+    !unsigned(s, x).
+ignored(s, x, p) :- shadowed(s, x, p), first_decl(s, x, id, "type-param"), field(m, "type_parameters", tp), within(id, tp),
+    kind(m, "method_definition"), op(m, "static"), first_decl(p, x, _, "type-param"), scope_type(p, "class").
+ignored(s, x, p) :- shadowed(s, x, p), first_decl(p, x, i, "import-type"), nearest(i, im, "import_statement"),
+    field(im, "source", src), str(src, m), kind(s, "module"), field(s, "name", n), str(n, m),
+    first_decl(s, x, _, k), (k = "interface" ; k = "type").
+ignored(s, x, p) :- shadowed(s, x, p), on_initializer(s, x, p).
+ignored(s, x, p) :- shadowed(s, x, p), option("ignoreOnInitialization", "true"), init_pattern(s, x, p).
+ignored(s, x, p) :- shadowed(s, x, p), !option("hoist", "all"), in_tdz(s, x, p).
+
+// type_value(s, x, p): with ignoreTypeValueShadow, one is a value and the other only a type. A type-only import
+// is no value; a global is one.
+.decl is_value(s: node, x: symbol)
+is_value(s, x) :- variable(s, x, _, k), (space(k, "value") ; space(k, "both")).
+.decl outer_value(p: node, x: symbol)
+outer_value(p, x) :- is_value(p, x), first_decl(p, x, _, k), k != "import-type".
+.decl type_value(s: node, x: symbol, p: node)
+type_value(s, x, p) :- shadowed(s, x, p), !option("ignoreTypeValueShadow", "false"), is_value(s, x), !outer_value(p, x).
+type_value(s, x, p) :- shadowed(s, x, p), !option("ignoreTypeValueShadow", "false"), !is_value(s, x), outer_value(p, x).
+// unsigned(s, x): some declaration of x in s is neither a type signature's parameter nor a bodiless function
+// (`declare function x(): void`).
+.decl unsigned(s: node, x: symbol)
+unsigned(s, x) :- variable(s, x, id, k), k != "signature-param", !bodiless(id).
+.decl bodiless(id: node)
+bodiless(id) :- kind(f, "function_signature"), field(f, "name", id).
+
+// on_initializer(s, x, p): a function or class expression's name inside the outer declaration of the same name.
+.decl on_initializer(s: node, x: symbol, p: node)
+on_initializer(s, x, p) :- shadowed(s, x, p), scope_up(s, p), first_decl(s, x, id, k),
+    (k = "function-name" ; k = "class-name", kind(s, "class")), first_decl(p, x, o, ok),
+    (ok = "var" ; ok = "let" ; ok = "const" ; ok = "using"), inside(o, v, outer_decl), within(id, v).
+.decl outer_decl(k: symbol)
+outer_decl("variable_declaration"). outer_decl("lexical_declaration"). outer_decl("for_in_statement").
+
+// in_tdz(s, x, p): the inner name comes before the outer one, and hoist does not cover the outer one's kind.
+.decl in_tdz(s: node, x: symbol, p: node)
+in_tdz(s, x, p) :- shadowed(s, x, p), first_decl(s, x, id, _), first_decl(p, x, o, k), node(_, id, _, _, e), node(_, o, _, b, _),
+    e < b, !hoisted(o, k).
+.decl hoisted(o: node, k: symbol)
+hoisted(o, "function") :- first_decl(_, _, o, "function"), field(f, "name", o), kind(f, fk), fk != "function_signature",
+    (option("hoist", "functions") ; option("hoist", "functions-and-types") ; !option("hoist", _)).
+hoisted(o, k) :- first_decl(_, _, o, k), (k = "type" ; k = "interface"),
+    (option("hoist", "types") ; option("hoist", "functions-and-types") ; !option("hoist", _)).
+
+// init_pattern(s, x, p): s's function is an arrow or function expression right inside p, and the nearest call
+// around it ends inside the value given to the outer name: `const z = xs.map(z => z)`.
+.decl init_pattern(s: node, x: symbol, p: node)
+init_pattern(s, x, p) :- shadowed(s, x, p), variable_scope(s, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),
+    outer_scope(f, p), inside(f, c, "call_expression"), node(_, c, _, _, at), first_decl(p, x, o, _), init_holds(o, at).
+.decl outer_scope(f: node, p: node)  // the scope around function f, past its name's scope
+outer_scope(f, p) :- fexpr_name(f, n), scope_up(n, p).
+outer_scope(f, p) :- scope_node(f), !fexpr_name(f, _), scope_up(f, p).
+.decl init_holds(o: node, at: number)  // offset at falls in the value that binds name o
+init_holds(o, at) :- first_decl(_, _, o, _), declarator_name(d, o, _), field(d, "value", v), spans(v, at).
+init_holds(o, at) :- first_decl(_, _, o, _), for_head(f, _), field(f, "left", l), (o = l ; within(o, l)),
+    field(f, "right", v), spans(v, at).
+init_holds(o, at) :- first_decl(_, _, o, _), (kind(a, "object_assignment_pattern") ; kind(a, "assignment_pattern")),
+    field(a, "left", l), (o = l ; within(o, l)), field(a, "right", v), spans(v, at).
+.decl spans(v: node, at: number)
+spans(v, at) :- node(_, v, _, b, e), node(_, c, "call_expression", _, at), b <= at, at <= e.

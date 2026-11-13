@@ -1,0 +1,83 @@
+.policy "react-no-unstable-nested-components" revision 2
+.description "Define components outside other components; a component created during render is a new type each render, so React remounts its subtree and loses its state."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-unstable-nested-components: a component defined inside another component. Each render makes a new
+// component type, so React unmounts and remounts the whole subtree.
+//   function Parent() { const Child = () => <div/>; return <Child/>; }          Child reported
+//   function Parent() { return <List renderItem={() => <li/>} />; }             not: a render prop (render*)
+//   function Parent() { return <Table footer={() => <tfoot/>} />; }             reported: a component in a prop
+// Also not reported: callbacks of .map(), functions returned to a use* hook, children={…} and {() => …} children,
+// components that return only null, and parents whose name starts with a lower-case letter. The options
+// (allowAsProps, customValidators, propNamePattern) are not in the JSON; propNamePattern is "render*".
+#include "tsx/react-class.rr"
+//   fn_component(f, c), detected(c), parent_component(n, c), ret_jsx(f): see the library's function components
+
+.violation nested(at: node)
+    code "react/no-unstable-nested-components"
+    "Move this component out of its parent component and pass the data it reads as props; keep it here only when it is a render function called directly, not rendered as an element."
+    suppress eslint "react/no-unstable-nested-components"
+    suppress oxlint "no-unstable-nested-components"
+nested(n) :- candidate(n), !excused(n), outer(n, p), !lower_named(p), docof(n, d), react_doc(d).
+
+// What the plugin validates: functions (a method is its FunctionExpression), class declarations and calls.
+.decl checked(n: node)
+checked(n) :- kind(n, k), (function_kind(k) ; k = "class_declaration" ; k = "call_expression").
+// candidate(n): a recorded component, a JSX-returning function in a component nested in a class component, or a
+// JSX-returning function given as a prop (an object property, a JSX attribute, createElement's props).
+.decl candidate(n: node)
+candidate(n) :- checked(n), detected(n).
+candidate(n) :- checked(n), parent_component(n, k), kind(k, "class_declaration"), (comp_fn(n) ; nearest(n, _, comp_fn)),
+    ret_jsx(n).
+candidate(n) :- in_props(n).
+.decl in_props(n: node)
+in_props(n) :- checked(n), as_property(n), ret_jsx(n).
+in_props(n) :- checked(n), !as_property(n), inside(n, a, "jsx_attribute"), child(a, j, 1), kind(j, "jsx_expression"),
+    ret_jsx(n).
+in_props(n) :- checked(n), !as_property(n), !inside(n, _, "jsx_attribute"), detected(n), nearest(n, c,
+    "call_expression"),
+    create_element(c), nearest(n, o, "object"), call_arg(c, o, 1).
+.decl as_property(n: node)  // n is a property's value: { a: () => … }, { a() { … } }
+as_property(n) :- estree_parent(n, p), kind(p, "pair"), field(p, "value", v), deparen(v, n).
+as_property(n) :- kind(n, "method_definition"), child(o, n, _), kind(o, "object").
+.decl property_key(n: node, x: symbol)  // the identifier key of the property n is the value of
+property_key(n, x) :- estree_parent(n, p), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"),
+    text(k, x).
+property_key(n, x) :- as_property(n), kind(n, "method_definition"), field(n, "name", k), kind(k, "property_identifier"),
+    text(k, x).
+
+.decl excused(n: node)
+// A render prop: a render* property, a {…} child of an element, a render* or children attribute.
+excused(n) :- in_props(n), property_key(n, x), glob("render*", x).
+excused(n) :- in_props(n), estree_parent(n, j), kind(j, "jsx_expression"), estree_parent(j, e), kind(e, "jsx_element"),
+    field(e, "open_tag", o), field(o, "name", _).
+excused(n) :- in_props(n), nearest(n, j, "jsx_expression"), estree_parent(j, a), kind(a, "jsx_attribute"),
+    child(a, nm, 0), kind(nm, "property_identifier"), (glob("render*", nm) ; text(nm, "children")).
+excused(n) :- checked(n), property_key(n, x), glob("render*", x).
+// xs.map(…) itself, and a function passed to it.
+excused(n) :- map_call(n).
+excused(n) :- estree_parent(n, l), kind(l, "arguments"), field(c, "arguments", l), map_call(c).
+// return () => <div/>; inside useSomething(…)'s callback
+excused(n) :- estree_parent(n, r), kind(r, "return_statement"), nearest(n, c, "call_expression"), field(c,
+    "function", f),
+    kind(f, "identifier"), match("use[A-Z0-9].*", f).
+// The render method of a class component, and components that return only null (or are wrapped).
+excused(n) :- kind(n, "method_definition"), method_key(n, "render"), parent_component(n, k), kind(k,
+    "class_declaration").
+excused(n) :- fn_component(n, c), !ret_jsx(c).
+.decl map_call(c: node)
+map_call(c) :- kind(c, "call_expression"), field(c, "function", f), field(f, "property", p), text(p, "map").
+
+// outer(n, p): the closest enclosing recorded component; lower_named(p): its name starts with no capital letter
+// (`parentName[0] === parentName[0].toLowerCase()`), its own name or, for an arrow, its variable's.
+.decl outer(n: node, p: node)
+outer(n, p) :- candidate(n), k = max j : { within(n, q), detected(q), ast_depth(q, j) }, within(n, p), detected(p),
+    ast_depth(p, k).
+.decl lower_named(p: node)
+lower_named(p) :- outer(_, p), comp_name(p, x), !match("[A-Z].*", x).
+.decl comp_name(p: node, x: symbol)
+comp_name(p, x) :- field(p, "name", n), text(n, x).
+comp_name(p, x) :- kind(p, "arrow_function"), estree_parent(p, v), kind(v, "variable_declarator"), field(v, "name", n),
+    kind(n, "identifier"), text(n, x).

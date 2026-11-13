@@ -1,0 +1,16 @@
+.policy "ruff-dtz012-call-date-fromtimestamp" revision 2
+.description "Derive a date from a timestamp through a timezone-aware datetime instead of the naive local date; the local date depends on the machine's timezone."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ012 (flake8-datetimez): `datetime.date.fromtimestamp(ts)`, the date in the machine's local timezone.
+// Ruff reports it even when `.astimezone` follows. Reported at the call. Only in a file that imports datetime.
+//   datetime.date.fromtimestamp(1234)            ← DTZ012
+//   date.fromtimestamp(1234)                     ← DTZ012, after `from datetime import date`
+#include "python/datetime.rr"
+
+.violation DTZ012(at: node) code "DTZ012"
+    "Use `datetime.datetime.fromtimestamp(<timestamp>, tz=...).date()` with the timezone whose date you need; `date.fromtimestamp` gives the naive local date, so keep it only if intended."
+    suppress ruff "DTZ012"
+DTZ012(c) :- dt_call(c, "datetime.date.fromtimestamp").

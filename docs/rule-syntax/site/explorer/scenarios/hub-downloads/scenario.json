@@ -1,0 +1,5 @@
+{
+  "title": "Unpinned model downloads",
+  "rule": "bandit-b615-huggingface-unsafe-download",
+  "note": "B615 flags a Hugging Face download that does not pin a revision: the repository can change under you. A commit hash pins it."
+}

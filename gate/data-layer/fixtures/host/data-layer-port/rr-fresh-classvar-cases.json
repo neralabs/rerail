@@ -1,0 +1,300 @@
+{
+  "format": "rerail.rr-fresh-case-inputs/v1",
+  "cases": [
+    {
+      "id": "fresh:classvar:duplicate-chain",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "get_origin(a) is ClassVar is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:mixed-chain",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "get_origin(a) < int is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:nonleft-call",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "x is get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:comments",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "x = (get_origin(a)\n # keep operand order\n is ClassVar)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:parentheses",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "((get_origin))(a) == ((ClassVar))\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:sync-helper",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def is_classvar_annotation(a):\n return get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:async-helper",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "async def is_classvar_annotation(a):\n return get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:nested-helper",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def is_classvar_annotation(a):\n def nested():\n  return get_origin(a) is ClassVar\n return nested()\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:decorated-helper",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "@deco(get_origin(a) is ClassVar)\ndef is_classvar_annotation(a):\n pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:helper-default",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def is_classvar_annotation(a=(get_origin(x) is ClassVar)):\n pass\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:unicode-column",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "def f():\n α = 1; get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:normalized-names",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "# get_origin ClassVar\n𝕘𝕖𝕥_𝕠𝕣𝕚𝕘𝕚𝕟(a) is ℂlassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:fstring",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "f\"value: {get_origin(a) is ClassVar}\"\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:qualified-names",
+      "check": "classvar_check",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "obj.get_origin(a) is obj.ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:source-gate-clean",
+      "check": "classvar_check",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        },
+        "source": "no detector markers",
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:source-gate-open",
+      "check": "classvar_check",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "module.py",
+          "source": "get_origin(a) is ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "module.py"
+        },
+        "source": "get_origin ClassVar",
+        "root": {
+          "path": "."
+        }
+      }
+    },
+    {
+      "id": "fresh:classvar:directory-exclusions",
+      "check": "classvar_check",
+      "entry": "lint_directory",
+      "files": [
+        {
+          "path": "one.py",
+          "source": "get_origin(a) is ClassVar\n"
+        },
+        {
+          "path": "excluded.py",
+          "source": "get_origin(a) is ClassVar\n"
+        },
+        {
+          "path": "__pycache__/three.py",
+          "source": "get_origin(a) is ClassVar\n"
+        },
+        {
+          "path": "sub/two.py",
+          "source": "get_origin(a) != ClassVar\n"
+        }
+      ],
+      "arguments": {
+        "dirpath": {
+          "path": "."
+        },
+        "exclude_patterns": [
+          "excluded.py"
+        ]
+      }
+    }
+  ]
+}

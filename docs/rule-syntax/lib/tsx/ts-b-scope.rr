@@ -1,0 +1,315 @@
+// tsx/ts-b-scope: scopes, variables and references as typescript-eslint's scope manager builds them, for the
+// scope rules of batch ts-2 (no-shadow, no-redeclare, no-use-before-define, no-unused-vars,
+// no-unsafe-declaration-merging, no-non-null-asserted-nullish-coalescing, prefer-for-of).
+//
+// What a rule gets from this library:
+//   scopes
+//     scope_node(s)            s is a scope: the program, a function (its parameters and body are one scope), a
+//                              block, for, switch, catch, class, static block, namespace, enum, a type with its
+//                              own type parameters (alias, interface, signature, function type), a conditional
+//                              type (infer), a mapped type; a named function expression has a scope of its own
+//                              for its name, its `name` node; a class field's value is one too
+//     scope_up(s, p)           p is the scope just around s
+//     scope_of(n, s)           s is the innermost scope around node n (asked for references and bindings)
+//     variable_scope(s, f)     f is the function, static block, field, namespace or program scope that s's `var`s go to
+//     scope_type(s, t)         t names s's kind as the scope manager does: "global", "function", "block", "for",
+//                              "switch", "catch", "class", "class-static-block", "tsModule", "tsEnum", "type",
+//                              "conditionalType", "mappedType", "functionType", "function-expression-name",
+//                              "class-field-initializer"
+//   variables
+//     variable(s, x, id, k)    identifier id declares x in scope s, by declaration kind k: "var", "let", "const",
+//                              "using", "function", "class", "class-name" (a class's own name inside it),
+//                              "function-name" (a function expression's), "param", "signature-param" (in a
+//                              type signature), "catch", "import", "import-type", "import-equals", "type",
+//                              "interface", "enum", "enum-member" (in the enum's scope), "namespace", "type-param"
+//     space(k, sp)             declarations of kind k are values (sp "value"), types ("type") or both ("both")
+//     declares(s, x, sp)       scope s has a variable x that space sp sees
+//     first_decl(s, x, id, k)  id is x's first declaring identifier in s (by position), of kind k
+//     declaring_stmt(id, n)         n is the statement or declaration declaring identifier id belongs to: `const a = 1`,
+//                              `function f() {}`, `interface I {}`, `namespace N {}`, `import A = B`
+//   references
+//     use(r, x, sp)            identifier r reads or writes x, looked up in space sp ("value", "type"; "both" for
+//                              `export { x }`, `export = x` and `export default x`, which export either); a JSX
+//                              element reads React
+//     resolves(r, s, x)        use r finds variable x of scope s (the first scope outwards that declares x)
+//     unresolved(r, x)         use r finds no variable in the file: a global, or nothing
+//     writes(r)                use r assigns: `x = 1`, `x += 1`, `x++`, `for (x of xs)`, `[x] = a`, `({ x } = o)`
+//     reads(r)                 use r reads: every use but a plain assignment target (`x += 1` both reads and writes)
+//     initialised(id)          binding id is written where it is declared: `let x = 1`, a for-in/of head, a
+//                              parameter default (eslint-scope's init write reference)
+//
+// Examples, one per rule:
+//   no-shadow                     let a; function f() { let a; }     two variables a, in nested scopes
+//   no-redeclare                  var a; var a;                        one variable, two declaring identifiers
+//   no-use-before-define          f(); const f = () => 1;              the use resolves to a later identifier
+//   no-unused-vars                let a = 1; a = 2;                    a is written, never read
+//   no-unsafe-declaration-merging interface A {} class A {}            two kinds in one scope
+//   no-non-null-asserted-nullish-coalescing   let a: T; a! ?? b        a declared, never written before
+//
+// The scope manager's semantics, in short. `var` belongs to the nearest function, static block, namespace or the
+// program; `let`, `const`, classes, functions, enums, namespaces, interfaces and type aliases to the nearest block
+// (a function's body block is the function's own scope). A class declaration's name is declared twice: around the
+// class and inside it; a named function expression's name only in a scope of its own between the function and
+// its surroundings. Values and types are separate: `type T` is invisible to `f(T)`, `const T` to `let x: T`;
+// classes, enums, namespaces and imports are both. Lookup climbs from the innermost scope to the first that
+// declares the name in the right space, whatever the order of declaration and use (hoisting and TDZ aside).
+//
+// Builds on tsx/ts-b (type_ref, ts_namespace), tsx/statements (var_decl, for_head), tsx/names (pattern_name,
+// bound_name), tsx/eslint-a-common (deparen) and core.
+#include "tsx/ts-b.rr"
+#include "tsx/statements.rr"
+#include "tsx/eslint-a-common.rr"
+
+// ---- scopes ------------------------------------------------------------------------------------------------------
+.decl scope_kind(k: symbol)
+scope_kind("program"). scope_kind("function_declaration"). scope_kind("function_expression").
+scope_kind("generator_function"). scope_kind("generator_function_declaration"). scope_kind("arrow_function").
+scope_kind("method_definition"). scope_kind("function_signature"). scope_kind("method_signature").
+scope_kind("abstract_method_signature"). scope_kind("call_signature"). scope_kind("construct_signature").
+scope_kind("function_type"). scope_kind("constructor_type"). scope_kind("for_statement").
+scope_kind("for_in_statement"). scope_kind("switch_body"). scope_kind("catch_clause").
+scope_kind("class_declaration"). scope_kind("class"). scope_kind("abstract_class_declaration").
+scope_kind("class_static_block"). scope_kind("internal_module"). scope_kind("module").
+scope_kind("enum_declaration"). scope_kind("type_alias_declaration"). scope_kind("interface_declaration").
+scope_kind("conditional_type").
+// fn_owner(k): kinds whose parameters and body block are one scope.
+.decl fn_owner(k: symbol)
+fn_owner("function_declaration"). fn_owner("function_expression"). fn_owner("generator_function").
+fn_owner("generator_function_declaration"). fn_owner("arrow_function"). fn_owner("method_definition").
+.decl sig_owner(k: symbol)  // type signatures: their parameters are declared, but nothing runs
+sig_owner("function_signature"). sig_owner("method_signature"). sig_owner("abstract_method_signature").
+sig_owner("call_signature"). sig_owner("construct_signature"). sig_owner("function_type"). sig_owner("constructor_type").
+.decl scope_node(s: node)
+scope_node(s) :- kind(s, k), scope_kind(k).
+scope_node(b) :- kind(b, "statement_block"), child(p, b, _), kind(p, k), !fn_owner(k), k != "internal_module",
+    k != "module", k != "class_static_block".
+scope_node(s) :- kind(s, "index_signature"), child(s, c, _), kind(c, "mapped_type_clause").
+scope_node(n) :- fexpr_name(_, n).
+scope_node(v) :- field_value(v).
+// field_value(v): a class field's value, the scope manager's class-field-initializer scope (a function value is
+// already a scope of its own, and the same variable scope). A computed key stays in the class scope.
+.decl field_value(v: node)
+field_value(v) :- kind(f, "public_field_definition"), field(f, "value", v), kind(v, k), !fn_owner(k).
+.decl fexpr_name(f: node, n: node)  // n names function expression f: `function g() {}` as a value
+fexpr_name(f, n) :- (kind(f, "function_expression") ; kind(f, "generator_function")), field(f, "name", n).
+.decl scope_up(s: node, p: node)
+scope_up(f, n) :- fexpr_name(f, n).
+scope_up(n, p) :- fexpr_name(f, n), nearest(f, p, scope_node).
+scope_up(s, p) :- scope_node(s), !fexpr_name(_, s), !fexpr_name(s, _), nearest(s, p, scope_node).
+.decl scope_of(n: node, s: node)
+scope_of(n, s) :- (use(n, _, _) ; variable(_, _, n, _)), !field_value(n), nearest(n, s, scope_node).
+scope_of(n, n) :- use(n, _, _), field_value(n).
+.decl scope_type(s: node, t: symbol)
+scope_type(s, "global") :- kind(s, "program").
+scope_type(s, "function") :- kind(s, k), fn_owner(k).
+scope_type(s, "functionType") :- kind(s, k), sig_owner(k).
+scope_type(s, "block") :- kind(s, "statement_block"), scope_node(s).
+scope_type(s, "for") :- kind(s, "for_statement") ; kind(s, "for_in_statement").
+scope_type(s, "switch") :- kind(s, "switch_body").
+scope_type(s, "catch") :- kind(s, "catch_clause").
+scope_type(s, "class") :- kind(s, k), (k = "class_declaration" ; k = "class" ; k = "abstract_class_declaration").
+scope_type(s, "class-static-block") :- kind(s, "class_static_block").
+scope_type(s, "tsModule") :- kind(s, "internal_module") ; kind(s, "module").
+scope_type(s, "tsEnum") :- kind(s, "enum_declaration").
+scope_type(s, "type") :- kind(s, "type_alias_declaration") ; kind(s, "interface_declaration").
+scope_type(s, "conditionalType") :- kind(s, "conditional_type").
+scope_type(s, "mappedType") :- kind(s, "index_signature"), scope_node(s).
+scope_type(n, "function-expression-name") :- fexpr_name(_, n).
+scope_type(v, "class-field-initializer") :- field_value(v).
+// variable_scope(s, f): f is the function, static block, namespace or program scope whose `var`s scope s shares
+// (the scope manager's variableScope).
+.decl variable_scope(s: node, f: node)
+variable_scope(s, s) :- scope_node(s), kind(s, k), var_home(k).
+variable_scope(v, v) :- field_value(v).
+variable_scope(s, f) :- scope_node(s), kind(s, k), !var_home(k), !field_value(s), scope_up(s, u), variable_scope(u, f).
+.decl var_home(k: symbol)  // where `var` lands: names.rr's fn_scope, and a namespace (the scope manager's)
+var_home(k) :- fn_scope(k).
+var_home("internal_module"). var_home("module").
+
+// ---- variables ---------------------------------------------------------------------------------------------------
+.decl variable(s: node, x: symbol, id: node, k: symbol)
+// Declarations: `var a`, `let [b, { c }] = o`, `for (const d of ds)`.
+variable(s, x, id, "var") :- kind(v, "variable_declaration"), child(v, d, _), declarator_name(d, id, x),
+    nearest(v, s, var_home).
+variable(s, x, id, k) :- kind(v, "lexical_declaration"), var_decl(v, k), child(v, d, _), declarator_name(d, id, x),
+    nearest(v, s, scope_node).
+variable(s, x, id, "var") :- for_head(f, "var"), field(f, "left", l), target_name(l, id, x), nearest(f, s, var_home).
+variable(f, x, id, k) :- for_head(f, k), k != "var", field(f, "left", l), target_name(l, id, x).
+.decl declarator_name(d: node, id: node, x: symbol)
+declarator_name(d, id, x) :- kind(d, "variable_declarator"), field(d, "name", id), kind(id, "identifier"), text(id, x).
+declarator_name(d, id, x) :- pattern_name(id, x, d).
+// target_name(l, id, x): the names a binding target binds: an identifier, or a pattern's names.
+.decl target_name(l: node, id: node, x: symbol)
+target_name(l, l, x) :- kind(l, "identifier"), text(l, x).
+target_name(l, id, x) :- (kind(l, "object_pattern") ; kind(l, "array_pattern")), within(id, l), bound_name(id, x),
+    !fn_between(id, l).
+.decl fn_between(id: node, l: node)  // a function inside pattern l holds id: `{ a = (b) => b }` binds a, not b
+fn_between(id, l) :- (kind(l, "object_pattern") ; kind(l, "array_pattern")), within(id, l), bound_name(id, _),
+    inside(id, f, fn_owner), within(f, l).
+// Functions and classes.
+variable(s, x, id, "function") :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration") ;
+    kind(f, "function_signature")), field(f, "name", id), text(id, x), nearest(f, s, scope_node).
+variable(s, x, id, "class") :- (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")),
+    field(c, "name", id), text(id, x), nearest(c, s, scope_node).
+variable(c, x, id, "class-name") :- (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration") ;
+    kind(c, "class")), field(c, "name", id), text(id, x).
+variable(n, x, n, "function-name") :- fexpr_name(_, n), text(n, x).
+// Parameters: `function f(a, b = 1, { c }, ...d)`, `x => x`; in a signature `(a: T) => U` they are signature-params.
+// `this: T` declares nothing.
+variable(f, x, id, k) :- kind(f, fk), (fn_owner(fk), k = "param" ; sig_owner(fk), k = "signature-param"),
+    field(f, "parameters", ps), child(ps, p, _), param_target(p, l), target_name(l, id, x).
+variable(f, x, p, "param") :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"), text(p, x).
+.decl param_target(p: node, l: node)  // the binding of parameter p, without its type, default or rest
+param_target(p, p) :- kind(p, "identifier").
+param_target(p, l) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", q),
+    rest_free(q, l).
+param_target(p, l) :- kind(p, "assignment_pattern"), field(p, "left", q), rest_free(q, l).
+param_target(p, l) :- (kind(p, "object_pattern") ; kind(p, "array_pattern") ; kind(p, "rest_pattern")), rest_free(p, l).
+.decl rest_free(q: node, l: node)
+rest_free(q, q) :- (kind(q, "identifier") ; kind(q, "object_pattern") ; kind(q, "array_pattern")).
+rest_free(q, l) :- kind(q, "rest_pattern"), child(q, l, 0).
+variable(c, x, id, "catch") :- kind(c, "catch_clause"), field(c, "parameter", l), target_name(l, id, x).
+// Imports: `import D, { a as b, type C } from "m"`, `import * as NS from "n"`, `import E = require("e")`.
+variable(s, x, id, k) :- import_name(i, id), text(id, x), nearest(i, s, scope_node),
+    (type_only(i, id), k = "import-type" ; !type_only(i, id), k = "import").
+variable(s, x, id, "import-equals") :- (kind(c, "import_require_clause") ; kind(c, "import_alias")), child(c, id, 0),
+    kind(id, "identifier"), text(id, x), nearest(c, s, scope_node).
+.decl import_name(i: node, id: node)
+import_name(i, id) :- kind(sp, "import_specifier"), field(sp, "alias", id), nearest(sp, i, "import_statement").
+import_name(i, id) :- kind(sp, "import_specifier"), !field(sp, "alias", _), field(sp, "name", id), kind(id, "identifier"),
+    nearest(sp, i, "import_statement").
+import_name(i, id) :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"), nearest(c, i, "import_statement").
+import_name(i, id) :- kind(n, "namespace_import"), child(n, id, 0), nearest(n, i, "import_statement").
+.decl type_only(i: node, id: node)  // `import type …`, or `type` on the specifier
+type_only(i, id) :- import_name(i, id), op(i, "type").
+type_only(i, id) :- import_name(i, id), child(sp, id, _), kind(sp, "import_specifier"), op(sp, "type").
+// TypeScript declarations.
+variable(s, x, id, "type") :- kind(t, "type_alias_declaration"), field(t, "name", id), text(id, x),
+    nearest(t, s, scope_node).
+variable(s, x, id, "interface") :- kind(t, "interface_declaration"), field(t, "name", id), text(id, x),
+    nearest(t, s, scope_node).
+variable(s, x, id, "enum") :- kind(e, "enum_declaration"), field(e, "name", id), text(id, x), nearest(e, s, scope_node).
+variable(e, x, id, "enum-member") :- enum_member(e, id, _, x), kind(id, "property_identifier").
+variable(e, x, id, "enum-member") :- enum_member(e, m, _, x), kind(m, "enum_assignment"), field(m, "name", id),
+    kind(id, "property_identifier").
+// `namespace A.B {}` declares nothing (the scope manager's TSModuleName wants a plain name).
+variable(s, x, id, "namespace") :- ts_namespace(m), field(m, "name", id), kind(id, "identifier"), text(id, x),
+    nearest(m, s, scope_node).
+variable(o, x, id, "type-param") :- kind(p, "type_parameter"), field(p, "name", id), text(id, x), child(tp, p, _),
+    child(o, tp, _), scope_node(o).
+variable(c, x, id, "type-param") :- kind(i, "infer_type"), child(i, id, 0), text(id, x), nearest(i, c, "conditional_type").
+variable(s, x, id, "type-param") :- kind(c, "mapped_type_clause"), field(c, "name", id), text(id, x), child(s, c, _).
+
+.decl space(k: symbol, sp: symbol)
+space("var", "value"). space("let", "value"). space("const", "value"). space("using", "value").
+space("await using", "value"). space("function", "value"). space("function-name", "value"). space("param", "value").
+space("signature-param", "value"). space("catch", "value"). space("class", "both"). space("class-name", "both").
+space("import", "both"). space("import-equals", "both"). space("enum", "both"). space("namespace", "both").
+space("enum-member", "value"). space("import-type", "both"). space("type", "type"). space("interface", "type").
+space("type-param", "type").
+.decl declares(s: node, x: symbol, sp: symbol)
+declares(s, x, sp) :- variable(s, x, _, k), space(k, sp).
+declares(s, x, sp) :- variable(s, x, _, k), space(k, "both"), (sp = "value" ; sp = "type").
+declares(s, x, "both") :- variable(s, x, _, _).
+// first_decl(s, x, id, k): the scope manager's `defs[0]`, which no-shadow, no-use-before-define and no-unused-vars
+// report at or compare with.
+.decl first_decl(s: node, x: symbol, id: node, k: symbol)
+first_decl(s, x, id, k) :- variable(s, x, id, k), node(_, id, _, a, _),
+    a = min b : { variable(s, x, i, _), node(_, i, _, b, _) }.
+// declaring_stmt(id, n): a declarator's name gives its `const`/`let`/`var`/`using` statement; a named declaration
+// (function, class, interface, type, enum, namespace) gives itself; `import A = B` its alias or import statement.
+.decl declaring_stmt(id: node, n: node)
+declaring_stmt(id, n) :- variable(_, _, id, k), (k = "var" ; k = "let" ; k = "const" ; k = "using"), declarator_name(d, id, _),
+    child(n, d, _).
+declaring_stmt(id, n) :- variable(_, _, id, k), k != "param", field(n, "name", id), !kind(n, "variable_declarator"),
+    !kind(n, "import_specifier"), !kind(n, "type_parameter"), !kind(n, "mapped_type_clause").
+declaring_stmt(id, n) :- variable(_, _, id, "import-equals"), child(n, id, 0), kind(n, "import_alias").
+declaring_stmt(id, n) :- variable(_, _, id, "import-equals"), child(c, id, 0), kind(c, "import_require_clause"),
+    nearest(c, n, "import_statement").
+
+// ---- references --------------------------------------------------------------------------------------------------
+// use(r, x, sp): an identifier that is not a binding, a declaration's name, a property or a JSX intrinsic tag.
+.decl use(r: node, x: symbol, sp: symbol)
+use(r, x, "value") :- kind(r, "identifier"), text(r, x), !variable(_, _, r, _), !named_here(r), !jsx_intrinsic(r),
+    !export_local(r), !in_predicate(r), !type_head(r), !export_whole(r).
+use(r, x, "type") :- type_head(r), text(r, x).
+use(r, x, "both") :- export_whole(r), text(r, x).
+// A JSX element reads React (the parser's default jsxPragma): `<div />` keeps `import React from "react"` used.
+use(e, "React", "value") :- kind(e, "jsx_opening_element") ; kind(e, "jsx_self_closing_element").
+use(r, x, "value") :- kind(r, "shorthand_property_identifier"), text(r, x).
+use(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, x), !variable(_, _, r, _).
+use(r, x, "both") :- export_local(r), text(r, x).
+use(r, x, "type") :- type_ref(r, x).
+// export_whole(r): `export = r` and `export default r` export a value, a type or both.
+.decl export_whole(r: node)
+export_whole(r) :- kind(r, "identifier"), child(e, r, _), kind(e, "export_statement"), !field(e, "declaration", _).
+// type_head(r): r starts a qualified type name, `r.Foo` or `r.a.Foo` as a type (not in `typeof r.a`).
+.decl type_head(r: node)
+type_head(r) :- kind(r, "identifier"), child(n, r, 0), qualified_type(n).
+.decl qualified_type(n: node)
+qualified_type(n) :- kind(n, "nested_type_identifier").
+qualified_type(m) :- (kind(m, "member_expression") ; kind(m, "nested_identifier")), child(n, m, 0), qualified_type(n).
+// named_here(r): r is the `name` of a declaration (namespaces, enums, imports, …) or the imported name of
+// `import { a as b }`; the binding, if any, is a variable already.
+.decl named_here(r: node)
+named_here(r) :- kind(r, "identifier"), field(p, "name", r), !kind(p, "export_specifier"), !jsx_tag(p).
+named_here(r) :- kind(r, "identifier"), field(p, "alias", r), kind(p, "export_specifier").
+named_here(r) :- kind(r, "identifier"), child(p, r, _), kind(p, "namespace_export").
+named_here(r) :- kind(r, "identifier"), ts_namespace(m), field(m, "name", n), kind(n, "nested_identifier"), within(r, n).
+// export_local(r): `export { x }` and `export { x as y }` read the local x; `export { x } from "m"` reads nothing here.
+.decl export_local(r: node)
+export_local(r) :- kind(sp, "export_specifier"), field(sp, "name", r), kind(r, "identifier"), nearest(sp, e, "export_statement"),
+    !field(e, "source", _).
+.decl in_predicate(r: node)  // the x of a type predicate `x is T` names a parameter, not a reference
+in_predicate(r) :- child(p, r, 0), (kind(p, "type_predicate") ; kind(p, "asserts")).
+.decl jsx_intrinsic(r: node)  // <div>: a lower-case plain tag is an element name, not a variable
+jsx_intrinsic(r) :- kind(r, "identifier"), field(o, "name", r), jsx_tag(o), match("[a-z].*", r).
+.decl jsx_tag(o: node)
+jsx_tag(o) :- kind(o, "jsx_opening_element") ; kind(o, "jsx_closing_element") ; kind(o, "jsx_self_closing_element").
+// Lookup, outwards from the use's own scope.
+.decl look_out(r: node, x: symbol, sp: symbol, s: node)
+look_out(r, x, sp, s) :- use(r, x, sp), scope_of(r, s).
+look_out(r, x, sp, p) :- look_out(r, x, sp, s), !declares(s, x, sp), scope_up(s, p).
+look_out(r, x, sp, p) :- look_out(r, x, sp, s), body_only(r, s, x, sp), scope_up(s, p).
+.decl resolves(r: node, s: node, x: symbol)
+resolves(r, s, x) :- look_out(r, x, sp, s), declares(s, x, sp), !body_only(r, s, x, sp).
+// body_only(r, f, x, sp): use r is in function f's parameters, and f declares x only in its body, not as a
+// parameter or type parameter (or r is in a parameter's decorator). A default does not see the body's
+// declarations: `var v; function f(p = v) { let v; }` reads the outer v.
+.decl body_only(r: node, f: node, x: symbol, sp: symbol)
+body_only(r, f, x, sp) :- use(r, x, sp), field(f, "parameters", ps), within(r, ps), declares(f, x, sp), !param_named(f, x).
+// A parameter's decorator is evaluated outside the function: `bar(@deco() deco)` reads the outer deco.
+body_only(r, f, x, sp) :- use(r, x, sp), field(f, "parameters", ps), inside(r, d, "decorator"), within(d, ps),
+    declares(f, x, sp).
+.decl param_named(f: node, x: symbol)
+param_named(f, x) :- variable(f, x, _, k), (k = "param" ; k = "signature-param" ; k = "type-param").
+.decl unresolved(r: node, x: symbol)
+unresolved(r, x) :- use(r, x, _), !resolves(r, _, x).
+
+// ---- reads and writes --------------------------------------------------------------------------------------------
+// A use's ESTree parent, parentheses aside, decides. Destructuring assignment targets are patterns in
+// tree-sitter, as in ESTree.
+.decl writes(r: node)
+writes(r) :- use(r, _, "value"), assigned_to(r, _).
+.decl reads(r: node)
+reads(r) :- use(r, _, _), !assigned_to(r, "=").
+// assigned_to(r, o): r is written by operator o: "=" (only written), "op" (`x += 1`, `x++`: read too).
+.decl assigned_to(r: node, o: symbol)
+assigned_to(r, "=") :- use(r, _, "value"), deparen(w, r), field(a, "left", w), kind(a, "assignment_expression").
+assigned_to(r, "op") :- use(r, _, "value"), deparen(w, r), field(a, "left", w), kind(a, "augmented_assignment_expression").
+assigned_to(r, "op") :- use(r, _, "value"), deparen(w, r), field(a, "argument", w), kind(a, "update_expression").
+assigned_to(r, "=") :- use(r, _, "value"), field(f, "left", r), kind(f, "for_in_statement"), !for_head(f, _).
+assigned_to(r, "=") :- use(r, _, "value"), in_target(r).
+// in_target(r): r is a name inside the pattern of a destructuring assignment or a for-in/of head without
+// a declaration: `[a, b] = c`, `({ a, b: c } = d)`, `for ([k, v] of es)`. Defaults and computed keys are reads.
+.decl in_target(r: node)
+in_target(r) :- kind(a, "assignment_expression"), field(a, "left", l), (kind(l, "object_pattern") ; kind(l, "array_pattern")),
+    within(r, l), bound_name(r, _), use(r, _, "value").
+in_target(r) :- kind(f, "for_in_statement"), !for_head(f, _), field(f, "left", l),
+    (kind(l, "object_pattern") ; kind(l, "array_pattern")), within(r, l), bound_name(r, _), use(r, _, "value").
+// initialised(id): eslint-scope's init write: a declarator with a value, a for-in/of head, a parameter default.
+.decl initialised(id: node)
+initialised(id) :- variable(_, _, id, k), (k = "var" ; k = "let" ; k = "const" ; k = "using"), declarator_name(d, id, _),
+    field(d, "value", _).
+initialised(id) :- for_head(f, _), field(f, "left", l), target_name(l, id, _).
+initialised(id) :- variable(_, _, id, "param"), child(p, id, _), (kind(p, "assignment_pattern") ; field(p, "value", _)).

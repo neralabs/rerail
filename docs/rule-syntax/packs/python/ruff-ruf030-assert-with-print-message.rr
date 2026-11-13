@@ -1,0 +1,16 @@
+.policy "ruff-ruf030-assert-with-print-message" revision 2
+.description "Pass the message itself as the assert message instead of a print call; print returns None, so the assertion error is empty."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF030: `assert cond, print(…)` with the builtin print. print writes when the assert fails and returns
+// None, so the AssertionError has no message.
+//   assert ok, print("not ok")        ← RUF030  `assert ok, "not ok"`
+//   assert ok, "not ok"               not reported
+#include "python/ruff.rr"
+
+.violation RUF030(at: node) code "RUF030"
+    "Replace the `print(...)` message with the text itself, as in `assert cond, \"text\"`, or drop the message when `print` has no arguments; `print` returns None."
+    suppress ruff "RUF030"
+RUF030(c) :- kind(a, "assert_statement"), child(a, m, 1), unparen(m, c), call_q(c, "builtins.print").

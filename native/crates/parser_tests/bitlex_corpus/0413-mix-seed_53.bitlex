@@ -1,0 +1,17 @@
+# corpus: mix: seed 53
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = (lasts(next(lasts(op), 3)) ^ lasts(~toggle(op)))
+mask m1 = toggle(nul)
+mask m2 = starts(x)
+mask m3 = escaped(toggle((m1 ^ fill(op, quote))))
+mask m4 = after(m3)

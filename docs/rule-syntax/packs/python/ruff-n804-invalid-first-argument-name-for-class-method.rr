@@ -1,0 +1,21 @@
+.policy "ruff-n804-invalid-first-argument-name-for-class-method" revision 2
+.description "Name the first parameter of class methods cls, as PEP 8 recommends, so it reads as the class and not as an instance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N804 (pep8-naming): a class method whose first positional parameter is not named `cls`. Class methods
+// are those decorated @classmethod or @abc.abstractclassmethod (or a `pep8-naming.classmethod-decorators`
+// entry), `__init_subclass__` and `__class_getitem__`, and every plain method of a metaclass (a class deriving
+// from type, abc.ABCMeta or enum.EnumMeta). Names matching `pep8-naming.ignore-names` are exempt.
+//   class C:
+//       @classmethod
+//       def make(self): ...          ← N804 at `self`
+//   class Meta(type):
+//       def m(cls): ...              not reported
+#include "python/naming.rr"
+
+.violation N804(at: node, x: symbol) code "N804"
+    "Rename this class method's first parameter `{x}` to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
+    suppress ruff "N804"
+N804(nm, x) :- naming_method_kind(f, "classmethod"), naming_first_param(f, nm, x), x != "cls", !naming_ignored(x).

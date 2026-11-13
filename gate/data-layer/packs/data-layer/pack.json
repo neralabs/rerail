@@ -1,0 +1,190 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "data-layer",
+  "name": "Data-layer architecture rules",
+  "category": "repository",
+  "covers": "30 shipped data-layer architecture rules. Seventy earlier ports remain candidates.",
+  "reason": "Repository-specific rules for explicit installation in nera-data-layer.",
+  "rules": [
+    {
+      "id": "data-layer-readthrough-authority-architecture",
+      "document": "rules/data-layer-readthrough-authority-architecture.json",
+      "title": "Readthrough authority architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-authentication-plan-purity",
+      "document": "rules/data-layer-authentication-plan-purity.json",
+      "title": "Authentication plan purity",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-legacy-callback-quarantine",
+      "document": "rules/data-layer-legacy-callback-quarantine.json",
+      "title": "Legacy callback quarantine",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-adapter-ownership",
+      "document": "rules/data-layer-lazy-adapter-ownership.json",
+      "title": "Lazy adapter ownership",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-plan-helpers-allowlist",
+      "document": "rules/data-layer-plan-helpers-allowlist.json",
+      "title": "Plan helpers allowlist",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-sql-surface",
+      "document": "rules/data-layer-lazy-sql-surface.json",
+      "title": "Lazy sql surface",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-pure-lazy-runtime-purity",
+      "document": "rules/data-layer-pure-lazy-runtime-purity.json",
+      "title": "Pure lazy runtime purity",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-eager-resolve",
+      "document": "rules/data-layer-eager-resolve.json",
+      "title": "Eager resolve",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-lazy-architecture",
+      "document": "rules/data-layer-lazy-architecture.json",
+      "title": "Lazy architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-cached-pure-lazy-allowlist",
+      "document": "rules/data-layer-cached-pure-lazy-allowlist.json",
+      "title": "Cached pure lazy allowlist",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-connection-mode-split",
+      "document": "rules/data-layer-connection-mode-split.json",
+      "title": "Connection mode split",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-schema-architecture",
+      "document": "rules/data-layer-schema-architecture.json",
+      "title": "Schema architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bootstrap-lazy-sql",
+      "document": "rules/data-layer-bootstrap-lazy-sql.json",
+      "title": "Bootstrap lazy sql",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bootstrap-eager-resolve",
+      "document": "rules/data-layer-bootstrap-eager-resolve.json",
+      "title": "Bootstrap eager resolve",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bootstrap-cache-health",
+      "document": "rules/data-layer-bootstrap-cache-health.json",
+      "title": "Bootstrap cache health",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-plan-composition-architecture",
+      "document": "rules/data-layer-plan-composition-architecture.json",
+      "title": "Plan composition architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-schema-bootstrap-contracts",
+      "document": "rules/data-layer-schema-bootstrap-contracts.json",
+      "title": "Schema bootstrap contracts",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-connection-structural-boundaries",
+      "document": "rules/data-layer-connection-structural-boundaries.json",
+      "title": "Connection structural boundaries",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-connection-service-architecture",
+      "document": "rules/data-layer-connection-service-architecture.json",
+      "title": "Connection service architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bootstrap-engine-invariants",
+      "document": "rules/data-layer-bootstrap-engine-invariants.json",
+      "title": "Bootstrap engine invariants",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-graph-lazy-sql-plan",
+      "document": "rules/data-layer-graph-lazy-sql-plan.json",
+      "title": "Graph lazy sql plan",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bounded-composed-graph-paths",
+      "document": "rules/data-layer-bounded-composed-graph-paths.json",
+      "title": "Bounded composed graph paths",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-graphql-plan-ownership",
+      "document": "rules/data-layer-graphql-plan-ownership.json",
+      "title": "Graphql plan ownership",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-plan-optimizer-v2",
+      "document": "rules/data-layer-plan-optimizer-v2.json",
+      "title": "Plan optimizer v2",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-conditional-architecture",
+      "document": "rules/data-layer-conditional-architecture.json",
+      "title": "Conditional architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-schema-introspection-data-paths",
+      "document": "rules/data-layer-schema-introspection-data-paths.json",
+      "title": "Schema introspection data paths",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-matching-architecture",
+      "document": "rules/data-layer-matching-architecture.json",
+      "title": "Matching architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-hnsw-architecture",
+      "document": "rules/data-layer-hnsw-architecture.json",
+      "title": "Hnsw architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-embedding-vector-orchestration",
+      "document": "rules/data-layer-embedding-vector-orchestration.json",
+      "title": "Embedding vector orchestration",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-generated-index-sources",
+      "document": "rules/data-layer-generated-index-sources.json",
+      "title": "Generated index sources",
+      "group": "Data-layer architecture"
+    }
+  ]
+}

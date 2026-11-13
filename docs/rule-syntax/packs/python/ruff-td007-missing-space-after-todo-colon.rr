@@ -1,0 +1,17 @@
+.policy "ruff-td007-missing-space-after-todo-colon" revision 2
+.description "Put a space after the colon that follows a TODO, FIXME or XXX tag, so the tag and its description stay readable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TD007 (flake8-todos): the colon after a TODO, FIXME or XXX tag (and its author) is followed by text
+// with no space.
+//   # TODO(charlie):fix this       ← TD007
+//   # TODO: fix this               not reported
+//   # TODO:                        not reported here (TD005)
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+
+.violation TD007(at: span, tag: symbol) code "TD007"
+    "Put a space between the colon after `{tag}` (and its author, if any) and the description."
+    suppress ruff "TD007"
+TD007(t, D) :- todo_item(c, D, _), todo_shape(c, "colon-tight"), todo_at(c, t).

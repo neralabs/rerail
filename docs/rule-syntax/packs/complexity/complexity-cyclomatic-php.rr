@@ -1,0 +1,20 @@
+.policy "complexity-cyclomatic-php" revision 2
+.description "Keep PHP functions at cyclomatic complexity 6 or below, counting each if, elseif, loop, catch, switch, match, ternary and && or || (and, or); branch-heavy functions are hard to follow and test."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php", "**/vendor/**", "**/node_modules/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/test/**", "**/tests/**", "**/Test/**", "**/Tests/**", "**/spec/**", "**/*Test.php", "**/*TestCase.php"
+
+#include "complexity/php.rr"
+//   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
+
+// The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, elseif, for, foreach, while, do,
+// catch, &&, ||, and, or, `c ? x : y`, and switch (with a case) or match once. Functions, methods and closures are
+// scored each on their own; an arrow function's conditions count toward its function. Reported over the function:
+//   function grade($s) { if ($a) … elseif ($b && $c) … foreach (…) … while (…) … try {…} catch (E $e) {…} }
+//   -> `grade` has cyclomatic complexity 7, over the ceiling of 6.
+// lizard counts a nullable type's `?` and a method named match, and not `and`/`or`; this follows the pack's
+// README (Deviations).
+.violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
+complexity(f, msg) :- cc_report(f, msg).

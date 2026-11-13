@@ -1,0 +1,71 @@
+.policy "eslint-no-dupe-else-if" revision 5
+.description "Don't repeat a condition already covered earlier in an if-else-if chain; the repeated branch can never run."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   deparen, token_text, else_of
+
+// ESLint's no-dupe-else-if: an `else if` whose condition can only be true when an earlier condition of the same
+// chain was, so its branch never runs.
+//   if (a) f(); else if (a) g();               → the second `a`
+//   if (a || b) f(); else if (a) g();          → `a` is covered by `a || b`
+//   if (a) f(); else if (b) g(); else if (a && b || b) h();   → every `||` part is covered
+//   if (a && b) f(); else if (a) g();          fine: a may hold without b
+// ESLint's test: split a condition at `||`, and each part at `&&`. A part is covered by an earlier condition when
+// some `||` part of that condition has all its `&&` operands among the part's. The branch is dead when every
+// part is covered. A top-level `&&` is also checked operand by operand: `if (a) f(); else if (a && b) g();`
+// is dead, since its `a` is. Operands are compared token for token, and `||`/`&&` also with their sides
+// swapped. No options.
+.violation no_dupe_else_if(at: node) code "no-dupe-else-if"
+    "This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain."
+    suppress eslint "no-dupe-else-if"
+    suppress oxlint "no-dupe-else-if"
+    suppress biome "lint/suspicious/noDuplicateElseIf"
+no_dupe_else_if(t) :- test(s, t), cond(s, c), count : { leaf(c, "||", o), !covered_part(s, o) } = 0.
+
+// test(s, t): if s's test, without parentheses. above(s, p): p is an earlier if of s's chain.
+.decl test(s: node, t: node)
+test(s, t) :- kind(s, "if_statement"), field(s, "condition", c), deparen(c, t).
+.decl above(s: node, p: node)
+above(s, p) :- else_of(p, s), kind(s, "if_statement").
+above(s, p) :- above(s, q), else_of(p, q).
+// cond(s, c): what is checked: the test, and each operand of a top-level `&&`.
+.decl cond(s: node, c: node)
+cond(s, t) :- above(s, _), test(s, t).
+cond(s, x) :- above(s, _), test(s, t), logic(t, "&&", _, _), leaf(t, "&&", x).
+
+// logic(e, op, l, r): e is `l op r` for op `||` or `&&`, sides without parentheses.
+.decl logic(e: node, op: symbol, l: node, r: node)
+logic(e, o, l, r) :- kind(e, "binary_expression"), op(e, o), (o = "||" ; o = "&&"), field(e, "left", a), deparen(a, l),
+    field(e, "right", b), deparen(b, r).
+// leaf(e, op, x): x is an operand of e split at op: `a || (b || c)` at "||" gives a, b and c.
+.decl split(e: node, op: symbol)  // the expressions to split
+split(c, "||") :- cond(_, c).
+split(t, "||") :- above(_, p), test(p, t).
+split(o, "&&") :- split(e, "||"), leaf(e, "||", o).
+split(x, o) :- split(e, o), logic(e, o, x, _).
+split(x, o) :- split(e, o), logic(e, o, _, x).
+.decl leaf(e: node, op: symbol, x: node)
+leaf(e, o, e) :- split(e, o), !logic(e, o, _, _).
+leaf(e, o, x) :- split(e, o), logic(e, o, l, r), (leaf(l, o, x) ; leaf(r, o, x)).
+
+// covered_part(s, o): `||` part o of a condition of s is covered by an earlier test of the chain.
+.decl covered_part(s: node, o: node)
+covered_part(s, o) :- cand(s, o, q), count : { leaf(q, "&&", a), !in_part(a, o) } = 0.
+.decl cand(s: node, o: node, q: node)
+cand(s, o, q) :- cond(s, c), leaf(c, "||", o), above(s, p), test(p, t), leaf(t, "||", q).
+.decl in_part(a: node, o: node)  // a equals some `&&` operand of o
+in_part(a, o) :- cand(_, o, q), leaf(q, "&&", a), leaf(o, "&&", b), same(a, b).
+
+// same(a, b): ESLint's equal: `||`/`&&` compare side by side or crosswise, anything else token by token.
+.decl ask(a: node, b: node)
+ask(a, b) :- cand(_, o, q), leaf(q, "&&", a), leaf(o, "&&", b).
+ask(x, y) :- ask(a, b), logic(a, o, l1, r1), logic(b, o, l2, r2), (x = l1, y = l2 ; x = r1, y = r2 ;
+    x = l1, y = r2 ; x = r1, y = l2).
+token_text_ask(a) :- (ask(a, _) ; ask(_, a)).
+.decl same(a: node, b: node)
+same(a, b) :- ask(a, b), !logic(a, _, _, _), token_text(a, s), token_text(b, s).
+same(a, b) :- ask(a, b), logic(a, o, l1, r1), logic(b, o, l2, r2),
+    (same(l1, l2), same(r1, r2) ; same(l1, r2), same(r1, l2)).

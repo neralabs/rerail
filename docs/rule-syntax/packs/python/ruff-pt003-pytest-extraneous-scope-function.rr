@@ -1,0 +1,19 @@
+.policy "ruff-pt003-pytest-extraneous-scope-function" revision 2
+.description "Remove an explicit function scope from a pytest fixture decorator; function scope is already the default."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT003 (flake8-pytest-style): `scope="function"` on a fixture decorator; function scope is the default.
+// Only a function's first fixture decorator is read, and only a str literal counts.
+//   @pytest.fixture(scope="function")    ← PT003, at the keyword
+//   @pytest.fixture(scope="module")      not reported
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), plain_str(s, v)
+
+.violation PT003(at: node, f: symbol) code "PT003"
+    "Delete this `scope=\"function\"` argument from `{f}(...)`, since function scope is the default; drop the parentheses too if no arguments remain."
+    suppress ruff "PT003"
+PT003(k, x) :- pytest_fixture(_, _, e), field(e, "arguments", l), child(l, k, _), kind(k, "keyword_argument"),
+    field(k, "name", n), text(n, "scope"), field(k, "value", v), plain_str(v, "function"),
+    field(e, "function", g), text(g, x).

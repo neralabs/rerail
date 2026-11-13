@@ -209,7 +209,7 @@ pub fn open_git_ignore_matcher(root: String) -> Result<Option<GitIgnoreMatcher>>
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::path::PathBuf;
 

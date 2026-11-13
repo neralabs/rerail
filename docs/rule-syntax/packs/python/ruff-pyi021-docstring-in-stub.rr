@@ -1,0 +1,14 @@
+.policy "ruff-pyi021-docstring-in-stub" revision 2
+.description "Remove docstrings from stub files; stubs exist to carry type information, not documentation."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI021 (flake8-pyi), stubs only: a docstring of the module, a class or a def. Reported at the string.
+//   def f():
+//       """Doc."""         ← PYI021
+#include "python/typing.rr"
+
+.violation PYI021(at: node) code "PYI021" "Remove this docstring from the stub; if it is the only statement in the body, replace it with `...`. Keep it if this stub package ships docstrings on purpose."
+    suppress ruff "PYI021"
+PYI021(e) :- docstring(_, e), in_stub(e).

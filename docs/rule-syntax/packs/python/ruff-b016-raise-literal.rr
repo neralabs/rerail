@@ -1,0 +1,15 @@
+.policy "ruff-b016-raise-literal" revision 2
+.description "Raise an exception instance instead of a literal like a string or number; raising a literal fails with a TypeError."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B016 (flake8-bugbear): `raise` of a literal: a string, bytes, number, True/False, None or `...`. Raising
+// anything but an exception is a TypeError at run time. Only the raised value is checked, not the `from` cause.
+//   raise "string"             ← B016 at the literal
+//   raise Exception("string")  not reported
+#include "python/bugbear.rr"
+
+.violation B016(at: node) code "B016" "Cannot raise a literal. Did you intend to return it or raise an Exception?"
+    suppress ruff "B016"
+B016(m) :- kind(r, "raise_statement"), child(r, e, 0), !field(r, "cause", e), ruff_literal(e), unparen(e, m).

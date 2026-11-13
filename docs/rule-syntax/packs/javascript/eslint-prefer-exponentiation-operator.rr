@@ -1,0 +1,74 @@
+.policy "eslint-prefer-exponentiation-operator" revision 3
+.description "Use the ** exponentiation operator instead of calling Math.pow(); it is shorter and reads like the math it expresses."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   global_member, call_arg, call_arg_count, precedence, touching, cannot_touch, deparen, estree_parent, tagged
+
+// ESLint's prefer-exponentiation-operator: a call of the global Math.pow. ES2016's `**` says the same.
+//   Math.pow(a, b)    Math["pow"](a, b)    globalThis.Math.pow(a, b)    → reported; fix a**b
+//   Math.max(a, b)    foo.Math.pow(a, b)   with `let Math = m;` in scope   fine
+// The fix is ESLint's: none with other than two arguments, a spread or a comment inside. Parentheses go where
+// the precedence needs them (`**` is right-associative and takes no unary operand on its left):
+//   Math.pow(a + b, c) → (a + b)**c    Math.pow(-a, b) → (-a)**b    Math.pow(a, b ** c) → a**b ** c
+//   Math.pow(a, b).toFixed() → (a**b).toFixed()    a+Math.pow(++b, c) → a+ ++b**c
+// No options.
+.violation prefer_exponentiation_operator(at: node) code "prefer-exponentiation-operator"
+    "Use the '**' operator instead of 'Math.pow'."
+    suppress eslint "prefer-exponentiation-operator"
+    suppress oxlint "prefer-exponentiation-operator"
+    suppress biome "lint/style/useExponentiationOperator"
+    fix to_operator "Replace with the '**' operator."
+prefer_exponentiation_operator(c) :- kind(c, "call_expression"), field(c, "function", f), deparen(f, m),
+    global_member(m, "Math", "pow"), !tagged(c).
+// tagged(c) is tsx/values': Math.pow`x` is a tagged template, which tree-sitter writes as a call.
+
+// ---- the fix -------------------------------------------------------------------------------------------------------
+.decl pow(c: node, b: node, x: node)  // a fixable call: Math.pow(b, x)
+pow(c, b, x) :- prefer_exponentiation_operator(c), call_arg_count(c, 2), call_arg(c, b, 0), call_arg(c, x, 1),
+    !kind(b, "spread_element"), !kind(x, "spread_element"), !has(c, _, "comment").
+prec_ask(b) :- pow(_, b, _).
+prec_ask(x) :- pow(_, _, x).
+prec_ask(p) :- pow(c, _, _), estree_parent(c, p).
+// The base needs parentheses at or below `**`, or when it is a unary or await expression; the exponent below it.
+.decl wrapped(e: node, s: symbol)  // e's text, parenthesised as the operand needs
+wrapped(e, cat("(", cat(t, ")"))) :- needs_parens(e), text(e, t).
+wrapped(e, t) :- (pow(_, e, _) ; pow(_, _, e)), text(e, t), !needs_parens(e).
+.decl needs_parens(e: node)
+needs_parens(b) :- pow(_, b, _), !kind(b, "parenthesized_expression"),
+    (precedence(b, p), p <= 15 ; kind(b, "unary_expression") ; kind(b, "await_expression")).
+needs_parens(x) :- pow(_, _, x), !kind(x, "parenthesized_expression"), precedence(x, p), p < 15.
+// The whole `a**b` needs parentheses where its parent binds tighter and holds it as an operand: `-Math.pow(a, b)`,
+// `Math.pow(a, b)()`, `Math.pow(a, b).x`, `Math.pow(a, b) ** c`, `class A extends Math.pow(a, b) {}`; not as an
+// argument, an index, an array element, or the right side of `**`. Already parenthesised: nothing to add.
+.decl tight(c: node)
+tight(c) :- pow(c, _, _), estree_parent(c, p), !paren_wrapped(c), operand_of(c, p).
+.decl paren_wrapped(c: node)
+paren_wrapped(c) :- child(q, c, _), kind(q, "parenthesized_expression").
+.decl operand_of(c: node, p: node)
+operand_of(c, p) :- estree_parent(c, p), (kind(p, "unary_expression") ; kind(p, "await_expression") ;
+    kind(p, "update_expression") ; kind(p, k), ts_expression(k)).
+operand_of(c, p) :- estree_parent(c, p), (field(p, "function", c) ; field(p, "constructor", c) ; field(p, "object", c)).
+operand_of(c, p) :- estree_parent(c, p), kind(p, "binary_expression"), op(p, "**"), field(p, "left", c).
+operand_of(c, p) :- estree_parent(c, p), (kind(p, "class_heritage") ; kind(p, "extends_clause")).
+
+// The replacement, with a space where its first or last token would join the token next to the call.
+.decl power(c: node, s: symbol)  // `b**x`
+power(c, cat(bs, cat("**", xs))) :- pow(c, b, x), wrapped(b, bs), wrapped(x, xs).
+to_operator(c) :- tight(c), power(c, s), t = cat("(", cat(s, ")")) => replace(c, `$t`).
+to_operator(c) :- pow(c, _, _), !tight(c), power(c, s), pow_lead(c, l), pow_trail(c, r), t = cat(l, cat(s, r))
+    => replace(c, `$t`).
+.decl pow_lead(c: node, l: symbol)
+pow_lead(c, " ") :- space_before(c).
+pow_lead(c, "") :- pow(c, _, _), !space_before(c).
+.decl space_before(c: node)
+space_before(c) :- pow(c, b, _), touching(c, a), text(b, x), cannot_touch(a, x).
+layout_at(c) :- pow(c, _, _).
+.decl pow_trail(c: node, r: symbol)
+pow_trail(c, " ") :- space_after(c).
+pow_trail(c, "") :- pow(c, _, _), !space_after(c).
+.decl space_after(c: node)
+space_after(c) :- pow(c, _, x), touch_after(c, a), text(x, y), cannot_touch(y, a).
+touch_pair(a, x) :- pow(c, b, _), touching(c, a), text(b, x).
+touch_pair(y, a) :- pow(c, _, x), touch_after(c, a), text(x, y).

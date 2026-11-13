@@ -1,0 +1,600 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl decorator_classes(kind: symbol)
+decorator_classes("class_definition").
+.decl decorator_fn_scopes(kind: symbol)
+decorator_fn_scopes("function_definition"). decorator_fn_scopes("lambda").
+.decl k0(kind: symbol)
+k0("class_definition"). k0("function_definition"). k0("lambda").
+.decl k1(kind: symbol)
+k1("module").
+.decl k2(kind: symbol)
+k2("function_definition"). k2("lambda").
+.decl k3(kind: symbol)
+k3("class_definition").
+.decl list_modules(kind: symbol)
+list_modules("module").
+.decl list_scopes(kind: symbol)
+list_scopes("class_definition"). list_scopes("function_definition"). list_scopes("lambda").
+.decl child(p: node, c: node, i: number)
+.decl decorator_cache(n: node)
+.decl decorator_in_function(n: node)
+.decl decorator_in_nested_class(n: node)
+.decl decorator_skipped(p: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl list_cache_value(n: node)
+.decl list_constant(v: node)
+.decl list_empty(n: node)
+.decl list_file(i: number, p: symbol, x: symbol)
+.decl list_gated(n: node)
+.decl list_l1000(p: symbol)
+.decl list_nested(n: node)
+.decl list_skipped(p: symbol)
+.decl list_target(n: node, v: node)
+.decl m100(n: node)
+.decl m101(n: node)
+.decl m104(n: node)
+.decl m108(n: node)
+.decl m112(n: node)
+.decl m116(n: node)
+.decl m117(n: node)
+.decl m12(n: node)
+.decl m120(n: node)
+.decl m121(n: node)
+.decl m13(n: node)
+.decl m132(n: node)
+.decl m136(n: node)
+.decl m140(n: node)
+.decl m144(n: node)
+.decl m145(n: node)
+.decl m148(n: node)
+.decl m149(n: node)
+.decl m156(n: node)
+.decl m16(n: node)
+.decl m160(n: node)
+.decl m164(n: node)
+.decl m168(n: node)
+.decl m169(n: node)
+.decl m172(n: node)
+.decl m173(n: node)
+.decl m176(n: node)
+.decl m18(n: node)
+.decl m180(n: node)
+.decl m184(n: node)
+.decl m188(n: node)
+.decl m189(n: node)
+.decl m192(n: node)
+.decl m193(n: node)
+.decl m196(n: node)
+.decl m20(n: node)
+.decl m200(n: node)
+.decl m204(n: node)
+.decl m208(n: node)
+.decl m209(n: node)
+.decl m21(n: node)
+.decl m212(n: node)
+.decl m213(n: node)
+.decl m216(n: node)
+.decl m220(n: node)
+.decl m224(n: node)
+.decl m228(n: node)
+.decl m229(n: node)
+.decl m232(n: node)
+.decl m233(n: node)
+.decl m236(n: node)
+.decl m240(n: node)
+.decl m244(n: node)
+.decl m248(n: node)
+.decl m249(n: node)
+.decl m25(n: node)
+.decl m255(n: node)
+.decl m257(n: node)
+.decl m258(n: node)
+.decl m262(n: node)
+.decl m267(n: node)
+.decl m271(n: node)
+.decl m272(n: node)
+.decl m275(n: node)
+.decl m276(n: node)
+.decl m281(n: node)
+.decl m285(n: node)
+.decl m289(n: node)
+.decl m293(n: node)
+.decl m294(n: node)
+.decl m297(n: node)
+.decl m298(n: node)
+.decl m3(n: node)
+.decl m30(n: node)
+.decl m303(n: node)
+.decl m307(n: node)
+.decl m311(n: node)
+.decl m315(n: node)
+.decl m316(n: node)
+.decl m319(n: node)
+.decl m320(n: node)
+.decl m323(n: node)
+.decl m327(n: node)
+.decl m331(n: node)
+.decl m335(n: node)
+.decl m336(n: node)
+.decl m339(n: node)
+.decl m34(n: node)
+.decl m340(n: node)
+.decl m343(n: node)
+.decl m347(n: node)
+.decl m35(n: node)
+.decl m351(n: node)
+.decl m355(n: node)
+.decl m356(n: node)
+.decl m363(n: node)
+.decl m364(n: node)
+.decl m366(n: node)
+.decl m372(n: node)
+.decl m378(n: node)
+.decl m379(n: node)
+.decl m38(n: node)
+.decl m381(n: node)
+.decl m383(n: node)
+.decl m384(n: node)
+.decl m388(n: node)
+.decl m39(n: node)
+.decl m393(n: node)
+.decl m397(n: node)
+.decl m398(n: node)
+.decl m401(n: node)
+.decl m402(n: node)
+.decl m405(n: node)
+.decl m409(n: node)
+.decl m413(n: node)
+.decl m417(n: node)
+.decl m418(n: node)
+.decl m42(n: node)
+.decl m421(n: node)
+.decl m422(n: node)
+.decl m425(n: node)
+.decl m429(n: node)
+.decl m432(n: node)
+.decl m433(n: node)
+.decl m436(n: node)
+.decl m446(n: node)
+.decl m448(n: node)
+.decl m452(n: node)
+.decl m456(n: node)
+.decl m457(n: node)
+.decl m46(n: node)
+.decl m461(n: node)
+.decl m463(n: node)
+.decl m464(n: node)
+.decl m467(n: node)
+.decl m474(n: node)
+.decl m475(n: node)
+.decl m479(n: node)
+.decl m50(n: node)
+.decl m54(n: node)
+.decl m55(n: node)
+.decl m58(n: node)
+.decl m59(n: node)
+.decl m64(n: node)
+.decl m68(n: node)
+.decl m7(n: node)
+.decl m72(n: node)
+.decl m76(n: node)
+.decl m77(n: node)
+.decl m8(n: node)
+.decl m80(n: node)
+.decl m81(n: node)
+.decl m84(n: node)
+.decl m88(n: node)
+.decl m92(n: node)
+.decl m96(n: node)
+.decl m97(n: node)
+.decl name(n: node, s: symbol)
+.decl named_list_name(v: node)
+.decl named_list_value(n: node)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl t109(s: symbol)
+.decl t137(s: symbol)
+.decl t161(s: symbol)
+.decl t181(s: symbol)
+.decl t201(s: symbol)
+.decl t221(s: symbol)
+.decl t241(s: symbol)
+.decl t26(s: symbol)
+.decl t263(s: symbol)
+.decl t264(s: symbol)
+.decl t27(s: symbol)
+.decl t286(s: symbol)
+.decl t308(s: symbol)
+.decl t328(s: symbol)
+.decl t348(s: symbol)
+.decl t389(s: symbol)
+.decl t390(s: symbol)
+.decl t410(s: symbol)
+.decl t430(s: symbol)
+.decl t47(s: symbol)
+.decl t69(s: symbol)
+.decl t89(s: symbol)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl u10(n: node)
+.decl u251(n: node)
+.decl u358(n: node)
+.decl u440(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, name, line, syntax_error, node_text
+.output violation
+list_file(0, "impl/browser/sqljs_sqlite3.py", "_memory_database_pool").
+list_file(1, "impl/common/l2210_planner_stats/config.py", "_default_config_holder").
+list_file(2, "l1000_schema/expression_function_registry.py", "_registered_functions_holder").
+list_file(3, "l4100_queue/insert_auth.py", "_queue_auth_secrets_holder").
+list_file(4, "l5200_vector_index/embedding_vector_store.py", "_embedding_collision_cache_holder").
+option_on("sourceGate").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
+m3(n) :- node(_, n, "identifier", _, _), text(n, v2), v2 = "__all__".
+m7(n) :- name(n, v6), glob("*[a-z]*", v6).
+m8(n) :- name(n, v5), glob("[!_]*_*", v5), !m7(n).
+m12(n) :- node(_, n, "pair", _, _).
+m12(n) :- node(_, n, "dictionary_splat", _, _).
+m13(n) :- child(n, v11, _), m12(v11).
+m16(n) :- node(_, n, "dictionary", _, _), !m13(n).
+m16(n) :- node(_, n, "call", _, _), child(n, v14, 0), node(_, v14, "identifier", _, _), text(v14, "dict"), child(n, v15, 1), node(_, v15, "argument_list", _, _), !child(v15, _, 0), !child(n, _, 2).
+m18(n) :- m16(n).
+m18(n) :- node(_, n, "assignment", _, _), field(n, "right", v17), u10(v17).
+u10(n) :- m18(n).
+m20(n) :- node(_, n, "class_definition", _, _).
+m20(n) :- node(_, n, "function_definition", _, _).
+m20(n) :- node(_, n, "lambda", _, _).
+m21(n) :- inside(n, v19, k0), m20(v19).
+m25(n) :- node(_, n, "module", _, _), node_text(n, v22), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v22).
+m25(n) :- inside(n, v23, k1), node(_, v23, "module", _, _), node_text(v23, v24), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v24).
+t26(s) :- doc(_, s, _), (s = "impl/common/l2070_server_plan/steps/_versioned_staging.py" ; s = "impl/common/l2070_server_plan/steps/intent_versioning_extended.py" ; s = "impl/common/l2200_sql_dialect/sql_connection.py" ; s = "impl/common/l2400_blob_serialization/blob_serialization.py" ; s = "l1000_schema/reflection_cache.py" ; s = "l1000_schema/table_registry.py" ; s = "l1050_polymorphism/type_registry.py" ; s = "l2050_transaction/transaction.py" ; s = "l2060_query_builder/tuple_query.py" ; s = "l2070_batching/executor.py").
+t26(s) :- doc(_, _, s), (s = "impl/common/l2070_server_plan/steps/_versioned_staging.py" ; s = "impl/common/l2070_server_plan/steps/intent_versioning_extended.py" ; s = "impl/common/l2200_sql_dialect/sql_connection.py" ; s = "impl/common/l2400_blob_serialization/blob_serialization.py" ; s = "l1000_schema/reflection_cache.py" ; s = "l1000_schema/table_registry.py" ; s = "l1050_polymorphism/type_registry.py" ; s = "l2050_transaction/transaction.py" ; s = "l2060_query_builder/tuple_query.py" ; s = "l2070_batching/executor.py").
+t26(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t26(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t27(s) :- doc(_, s, _), t26(s).
+t27(s) :- doc(_, _, s), t26(s).
+violation("data-layer-module-level-caches", "dict_cache", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v1), node(_, v1, "identifier", _, _), !m3(v1), !m8(v1), field(n, "right", v9), u10(v9), !m21(n), m25(n), doc(d, p, m), !t27(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m30(n) :- node(_, n, "identifier", _, _), text(n, v29), v29 = "__all__".
+m34(n) :- name(n, v33), glob("*[a-z]*", v33).
+m35(n) :- name(n, v32), glob("[!_]*_*", v32), !m34(n).
+m38(n) :- node(_, n, "class_definition", _, _).
+m38(n) :- node(_, n, "function_definition", _, _).
+m38(n) :- node(_, n, "lambda", _, _).
+m39(n) :- inside(n, v37, k0), m38(v37).
+m42(n) :- field(n, "left", v40), node(_, v40, "identifier", _, _), text(v40, v41), v41 = "_VERSIONED_STAGING_MODEL_FACTS_CACHE".
+m46(n) :- node(_, n, "module", _, _), node_text(n, v43), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v43).
+m46(n) :- inside(n, v44, k1), node(_, v44, "module", _, _), node_text(v44, v45), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v45).
+t47(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t47(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-0", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v28), node(_, v28, "identifier", _, _), !m30(v28), !m35(v28), field(n, "right", v36), u10(v36), !m39(n), !m42(n), m46(n), doc(d, p, m), p = "impl/common/l2070_server_plan/steps/_versioned_staging.py", !t47(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m50(n) :- node(_, n, "identifier", _, _), text(n, v49), v49 = "__all__".
+m54(n) :- name(n, v53), glob("*[a-z]*", v53).
+m55(n) :- name(n, v52), glob("[!_]*_*", v52), !m54(n).
+m58(n) :- node(_, n, "class_definition", _, _).
+m58(n) :- node(_, n, "function_definition", _, _).
+m58(n) :- node(_, n, "lambda", _, _).
+m59(n) :- inside(n, v57, k0), m58(v57).
+m64(n) :- field(n, "left", v60), node(_, v60, "identifier", _, _), text(v60, v61), v61 = "_VERSIONED_POST_WRITE_SIDE_EFFECTS_CACHE".
+m64(n) :- field(n, "left", v62), node(_, v62, "identifier", _, _), text(v62, v63), v63 = "_VERSIONED_BATCH_DATA_COLUMNS_CACHE".
+m68(n) :- node(_, n, "module", _, _), node_text(n, v65), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v65).
+m68(n) :- inside(n, v66, k1), node(_, v66, "module", _, _), node_text(v66, v67), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v67).
+t69(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t69(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-1", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v48), node(_, v48, "identifier", _, _), !m50(v48), !m55(v48), field(n, "right", v56), u10(v56), !m59(n), !m64(n), m68(n), doc(d, p, m), p = "impl/common/l2070_server_plan/steps/intent_versioning_extended.py", !t69(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m72(n) :- node(_, n, "identifier", _, _), text(n, v71), v71 = "__all__".
+m76(n) :- name(n, v75), glob("*[a-z]*", v75).
+m77(n) :- name(n, v74), glob("[!_]*_*", v74), !m76(n).
+m80(n) :- node(_, n, "class_definition", _, _).
+m80(n) :- node(_, n, "function_definition", _, _).
+m80(n) :- node(_, n, "lambda", _, _).
+m81(n) :- inside(n, v79, k0), m80(v79).
+m84(n) :- field(n, "left", v82), node(_, v82, "identifier", _, _), text(v82, v83), v83 = "_SQL_TYPE_AFFINITY".
+m88(n) :- node(_, n, "module", _, _), node_text(n, v85), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v85).
+m88(n) :- inside(n, v86, k1), node(_, v86, "module", _, _), node_text(v86, v87), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v87).
+t89(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t89(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-2", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v70), node(_, v70, "identifier", _, _), !m72(v70), !m77(v70), field(n, "right", v78), u10(v78), !m81(n), !m84(n), m88(n), doc(d, p, m), p = "impl/common/l2200_sql_dialect/sql_connection.py", !t89(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m92(n) :- node(_, n, "identifier", _, _), text(n, v91), v91 = "__all__".
+m96(n) :- name(n, v95), glob("*[a-z]*", v95).
+m97(n) :- name(n, v94), glob("[!_]*_*", v94), !m96(n).
+m100(n) :- node(_, n, "class_definition", _, _).
+m100(n) :- node(_, n, "function_definition", _, _).
+m100(n) :- node(_, n, "lambda", _, _).
+m101(n) :- inside(n, v99, k0), m100(v99).
+m104(n) :- field(n, "left", v102), node(_, v102, "identifier", _, _), text(v102, v103), v103 = "_BINARY_COLUMNS_CACHE".
+m108(n) :- node(_, n, "module", _, _), node_text(n, v105), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v105).
+m108(n) :- inside(n, v106, k1), node(_, v106, "module", _, _), node_text(v106, v107), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v107).
+t109(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t109(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-3", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v90), node(_, v90, "identifier", _, _), !m92(v90), !m97(v90), field(n, "right", v98), u10(v98), !m101(n), !m104(n), m108(n), doc(d, p, m), p = "impl/common/l2400_blob_serialization/blob_serialization.py", !t109(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m112(n) :- node(_, n, "identifier", _, _), text(n, v111), v111 = "__all__".
+m116(n) :- name(n, v115), glob("*[a-z]*", v115).
+m117(n) :- name(n, v114), glob("[!_]*_*", v114), !m116(n).
+m120(n) :- node(_, n, "class_definition", _, _).
+m120(n) :- node(_, n, "function_definition", _, _).
+m120(n) :- node(_, n, "lambda", _, _).
+m121(n) :- inside(n, v119, k0), m120(v119).
+m132(n) :- field(n, "left", v122), node(_, v122, "identifier", _, _), text(v122, v123), v123 = "_TYPE_HINTS_CACHE".
+m132(n) :- field(n, "left", v124), node(_, v124, "identifier", _, _), text(v124, v125), v125 = "_TYPE_HINTS_EXTRAS_CACHE".
+m132(n) :- field(n, "left", v126), node(_, v126, "identifier", _, _), text(v126, v127), v127 = "_MODEL_FIELDS_CACHE".
+m132(n) :- field(n, "left", v128), node(_, v128, "identifier", _, _), text(v128, v129), v129 = "_CLASS_FLAG_CACHE".
+m132(n) :- field(n, "left", v130), node(_, v130, "identifier", _, _), text(v130, v131), v131 = "_SCHEMA_CONTRACT_PAYLOAD_CACHE".
+m136(n) :- node(_, n, "module", _, _), node_text(n, v133), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v133).
+m136(n) :- inside(n, v134, k1), node(_, v134, "module", _, _), node_text(v134, v135), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v135).
+t137(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t137(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-4", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v110), node(_, v110, "identifier", _, _), !m112(v110), !m117(v110), field(n, "right", v118), u10(v118), !m121(n), !m132(n), m136(n), doc(d, p, m), p = "l1000_schema/reflection_cache.py", !t137(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m140(n) :- node(_, n, "identifier", _, _), text(n, v139), v139 = "__all__".
+m144(n) :- name(n, v143), glob("*[a-z]*", v143).
+m145(n) :- name(n, v142), glob("[!_]*_*", v142), !m144(n).
+m148(n) :- node(_, n, "class_definition", _, _).
+m148(n) :- node(_, n, "function_definition", _, _).
+m148(n) :- node(_, n, "lambda", _, _).
+m149(n) :- inside(n, v147, k0), m148(v147).
+m156(n) :- field(n, "left", v150), node(_, v150, "identifier", _, _), text(v150, v151), v151 = "_TABLE_CONFIGS".
+m156(n) :- field(n, "left", v152), node(_, v152, "identifier", _, _), text(v152, v153), v153 = "_TABLE_MODELS_BY_PLURAL".
+m156(n) :- field(n, "left", v154), node(_, v154, "identifier", _, _), text(v154, v155), v155 = "_TABLE_MODELS_BY_CLASS_NAME".
+m160(n) :- node(_, n, "module", _, _), node_text(n, v157), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v157).
+m160(n) :- inside(n, v158, k1), node(_, v158, "module", _, _), node_text(v158, v159), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v159).
+t161(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t161(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-5", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v138), node(_, v138, "identifier", _, _), !m140(v138), !m145(v138), field(n, "right", v146), u10(v146), !m149(n), !m156(n), m160(n), doc(d, p, m), p = "l1000_schema/table_registry.py", !t161(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m164(n) :- node(_, n, "identifier", _, _), text(n, v163), v163 = "__all__".
+m168(n) :- name(n, v167), glob("*[a-z]*", v167).
+m169(n) :- name(n, v166), glob("[!_]*_*", v166), !m168(n).
+m172(n) :- node(_, n, "class_definition", _, _).
+m172(n) :- node(_, n, "function_definition", _, _).
+m172(n) :- node(_, n, "lambda", _, _).
+m173(n) :- inside(n, v171, k0), m172(v171).
+m176(n) :- field(n, "left", v174), node(_, v174, "identifier", _, _), text(v174, v175), v175 = "_registries".
+m180(n) :- node(_, n, "module", _, _), node_text(n, v177), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v177).
+m180(n) :- inside(n, v178, k1), node(_, v178, "module", _, _), node_text(v178, v179), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v179).
+t181(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t181(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-6", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v162), node(_, v162, "identifier", _, _), !m164(v162), !m169(v162), field(n, "right", v170), u10(v170), !m173(n), !m176(n), m180(n), doc(d, p, m), p = "l1050_polymorphism/type_registry.py", !t181(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m184(n) :- node(_, n, "identifier", _, _), text(n, v183), v183 = "__all__".
+m188(n) :- name(n, v187), glob("*[a-z]*", v187).
+m189(n) :- name(n, v186), glob("[!_]*_*", v186), !m188(n).
+m192(n) :- node(_, n, "class_definition", _, _).
+m192(n) :- node(_, n, "function_definition", _, _).
+m192(n) :- node(_, n, "lambda", _, _).
+m193(n) :- inside(n, v191, k0), m192(v191).
+m196(n) :- field(n, "left", v194), node(_, v194, "identifier", _, _), text(v194, v195), v195 = "_INTERNAL_CALLER_CACHE".
+m200(n) :- node(_, n, "module", _, _), node_text(n, v197), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v197).
+m200(n) :- inside(n, v198, k1), node(_, v198, "module", _, _), node_text(v198, v199), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v199).
+t201(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t201(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-7", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v182), node(_, v182, "identifier", _, _), !m184(v182), !m189(v182), field(n, "right", v190), u10(v190), !m193(n), !m196(n), m200(n), doc(d, p, m), p = "l2050_transaction/transaction.py", !t201(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m204(n) :- node(_, n, "identifier", _, _), text(n, v203), v203 = "__all__".
+m208(n) :- name(n, v207), glob("*[a-z]*", v207).
+m209(n) :- name(n, v206), glob("[!_]*_*", v206), !m208(n).
+m212(n) :- node(_, n, "class_definition", _, _).
+m212(n) :- node(_, n, "function_definition", _, _).
+m212(n) :- node(_, n, "lambda", _, _).
+m213(n) :- inside(n, v211, k0), m212(v211).
+m216(n) :- field(n, "left", v214), node(_, v214, "identifier", _, _), text(v214, v215), v215 = "_PROJECTED_FIELD_ADAPTER_CACHE".
+m220(n) :- node(_, n, "module", _, _), node_text(n, v217), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v217).
+m220(n) :- inside(n, v218, k1), node(_, v218, "module", _, _), node_text(v218, v219), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v219).
+t221(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t221(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-8", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v202), node(_, v202, "identifier", _, _), !m204(v202), !m209(v202), field(n, "right", v210), u10(v210), !m213(n), !m216(n), m220(n), doc(d, p, m), p = "l2060_query_builder/tuple_query.py", !t221(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m224(n) :- node(_, n, "identifier", _, _), text(n, v223), v223 = "__all__".
+m228(n) :- name(n, v227), glob("*[a-z]*", v227).
+m229(n) :- name(n, v226), glob("[!_]*_*", v226), !m228(n).
+m232(n) :- node(_, n, "class_definition", _, _).
+m232(n) :- node(_, n, "function_definition", _, _).
+m232(n) :- node(_, n, "lambda", _, _).
+m233(n) :- inside(n, v231, k0), m232(v231).
+m236(n) :- field(n, "left", v234), node(_, v234, "identifier", _, _), text(v234, v235), v235 = "_LOWER_OPTIMIZE_AGGREGATES".
+m240(n) :- node(_, n, "module", _, _), node_text(n, v237), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v237).
+m240(n) :- inside(n, v238, k1), node(_, v238, "module", _, _), node_text(v238, v239), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v239).
+t241(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t241(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "dict_cache-file-9", "dict_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v222), node(_, v222, "identifier", _, _), !m224(v222), !m229(v222), field(n, "right", v230), u10(v230), !m233(n), !m236(n), m240(n), doc(d, p, m), p = "l2070_batching/executor.py", !t241(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m244(n) :- node(_, n, "identifier", _, _), text(n, v243), v243 = "__all__".
+m248(n) :- name(n, v247), glob("*[a-z]*", v247).
+m249(n) :- name(n, v246), glob("[!_]*_*", v246), !m248(n).
+m255(n) :- node(_, n, "call", _, _), child(n, v252, 0), node(_, v252, "identifier", _, _), text(v252, "set"), child(n, v253, 1), node(_, v253, "argument_list", _, _), !child(v253, _, 0), !child(n, _, 2).
+m255(n) :- node(_, n, "assignment", _, _), field(n, "right", v254), u251(v254).
+u251(n) :- m255(n).
+m257(n) :- node(_, n, "class_definition", _, _).
+m257(n) :- node(_, n, "function_definition", _, _).
+m257(n) :- node(_, n, "lambda", _, _).
+m258(n) :- inside(n, v256, k0), m257(v256).
+m262(n) :- node(_, n, "module", _, _), node_text(n, v259), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v259).
+m262(n) :- inside(n, v260, k1), node(_, v260, "module", _, _), node_text(v260, v261), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v261).
+t263(s) :- doc(_, s, _), (s = "impl/common/l2050_sql_types/sql_branded_types.py" ; s = "impl/common/l2100_sql_grammar/identifiers.py" ; s = "l1050_polymorphism/type_registry.py" ; s = "l3200_metadata/schema_evolution.py").
+t263(s) :- doc(_, _, s), (s = "impl/common/l2050_sql_types/sql_branded_types.py" ; s = "impl/common/l2100_sql_grammar/identifiers.py" ; s = "l1050_polymorphism/type_registry.py" ; s = "l3200_metadata/schema_evolution.py").
+t263(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t263(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t264(s) :- doc(_, s, _), t263(s).
+t264(s) :- doc(_, _, s), t263(s).
+violation("data-layer-module-level-caches", "set_cache", "set_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v242), node(_, v242, "identifier", _, _), !m244(v242), !m249(v242), field(n, "right", v250), u251(v250), !m258(n), m262(n), doc(d, p, m), !t264(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m267(n) :- node(_, n, "identifier", _, _), text(n, v266), v266 = "__all__".
+m271(n) :- name(n, v270), glob("*[a-z]*", v270).
+m272(n) :- name(n, v269), glob("[!_]*_*", v269), !m271(n).
+m275(n) :- node(_, n, "class_definition", _, _).
+m275(n) :- node(_, n, "function_definition", _, _).
+m275(n) :- node(_, n, "lambda", _, _).
+m276(n) :- inside(n, v274, k0), m275(v274).
+m281(n) :- field(n, "left", v277), node(_, v277, "identifier", _, _), text(v277, v278), v278 = "_VALIDATED_IDENTIFIERS".
+m281(n) :- field(n, "left", v279), node(_, v279, "identifier", _, _), text(v279, v280), v280 = "_VALIDATED_IDENTIFIERS_STRICT".
+m285(n) :- node(_, n, "module", _, _), node_text(n, v282), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v282).
+m285(n) :- inside(n, v283, k1), node(_, v283, "module", _, _), node_text(v283, v284), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v284).
+t286(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t286(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "set_cache-file-0", "set_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v265), node(_, v265, "identifier", _, _), !m267(v265), !m272(v265), field(n, "right", v273), u251(v273), !m276(n), !m281(n), m285(n), doc(d, p, m), p = "impl/common/l2050_sql_types/sql_branded_types.py", !t286(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m289(n) :- node(_, n, "identifier", _, _), text(n, v288), v288 = "__all__".
+m293(n) :- name(n, v292), glob("*[a-z]*", v292).
+m294(n) :- name(n, v291), glob("[!_]*_*", v291), !m293(n).
+m297(n) :- node(_, n, "class_definition", _, _).
+m297(n) :- node(_, n, "function_definition", _, _).
+m297(n) :- node(_, n, "lambda", _, _).
+m298(n) :- inside(n, v296, k0), m297(v296).
+m303(n) :- field(n, "left", v299), node(_, v299, "identifier", _, _), text(v299, v300), v300 = "_GRAMMAR_VALIDATED_IDS".
+m303(n) :- field(n, "left", v301), node(_, v301, "identifier", _, _), text(v301, v302), v302 = "_GRAMMAR_VALIDATED_IDS_STRICT".
+m307(n) :- node(_, n, "module", _, _), node_text(n, v304), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v304).
+m307(n) :- inside(n, v305, k1), node(_, v305, "module", _, _), node_text(v305, v306), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v306).
+t308(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t308(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "set_cache-file-1", "set_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v287), node(_, v287, "identifier", _, _), !m289(v287), !m294(v287), field(n, "right", v295), u251(v295), !m298(n), !m303(n), m307(n), doc(d, p, m), p = "impl/common/l2100_sql_grammar/identifiers.py", !t308(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m311(n) :- node(_, n, "identifier", _, _), text(n, v310), v310 = "__all__".
+m315(n) :- name(n, v314), glob("*[a-z]*", v314).
+m316(n) :- name(n, v313), glob("[!_]*_*", v313), !m315(n).
+m319(n) :- node(_, n, "class_definition", _, _).
+m319(n) :- node(_, n, "function_definition", _, _).
+m319(n) :- node(_, n, "lambda", _, _).
+m320(n) :- inside(n, v318, k0), m319(v318).
+m323(n) :- field(n, "left", v321), node(_, v321, "identifier", _, _), text(v321, v322), v322 = "_verified_types".
+m327(n) :- node(_, n, "module", _, _), node_text(n, v324), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v324).
+m327(n) :- inside(n, v325, k1), node(_, v325, "module", _, _), node_text(v325, v326), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v326).
+t328(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t328(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "set_cache-file-2", "set_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v309), node(_, v309, "identifier", _, _), !m311(v309), !m316(v309), field(n, "right", v317), u251(v317), !m320(n), !m323(n), m327(n), doc(d, p, m), p = "l1050_polymorphism/type_registry.py", !t328(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m331(n) :- node(_, n, "identifier", _, _), text(n, v330), v330 = "__all__".
+m335(n) :- name(n, v334), glob("*[a-z]*", v334).
+m336(n) :- name(n, v333), glob("[!_]*_*", v333), !m335(n).
+m339(n) :- node(_, n, "class_definition", _, _).
+m339(n) :- node(_, n, "function_definition", _, _).
+m339(n) :- node(_, n, "lambda", _, _).
+m340(n) :- inside(n, v338, k0), m339(v338).
+m343(n) :- field(n, "left", v341), node(_, v341, "identifier", _, _), text(v341, v342), v342 = "_converter_registry_fields".
+m347(n) :- node(_, n, "module", _, _), node_text(n, v344), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v344).
+m347(n) :- inside(n, v345, k1), node(_, v345, "module", _, _), node_text(v345, v346), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v346).
+t348(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t348(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "set_cache-file-3", "set_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v329), node(_, v329, "identifier", _, _), !m331(v329), !m336(v329), field(n, "right", v337), u251(v337), !m340(n), !m343(n), m347(n), doc(d, p, m), p = "l3200_metadata/schema_evolution.py", !t348(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m351(n) :- node(_, n, "identifier", _, _), text(n, v350), v350 = "__all__".
+m355(n) :- name(n, v354), glob("*[a-z]*", v354).
+m356(n) :- name(n, v353), glob("[!_]*_*", v353), !m355(n).
+m363(n) :- node(_, n, "identifier", _, _), text(n, v360), (v360 = "OrderedDict" ; v360 = "WeakKeyDictionary").
+m363(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v361), node(_, v361, "identifier", _, _), text(v361, v362), (v362 = "OrderedDict" ; v362 = "WeakKeyDictionary").
+m364(n) :- node(_, n, "identifier", _, _).
+m364(n) :- node(_, n, "attribute", _, _).
+m366(n) :- m363(n).
+m366(n) :- m364(n), name(n, v365), suffix("Cache", v365).
+m372(n) :- node(_, n, "identifier", _, _), text(n, v368), (glob("IdentityTokenCache", v368) ; glob("LocalMetadataCache", v368) ; glob("ObjectCache", v368) ; glob("WeakLocalMetadataCache", v368) ; glob("_IdentityTokenCache", v368) ; glob("_LocalMetadataCache", v368) ; glob("_ObjectCache", v368) ; glob("_WeakLocalMetadataCache", v368) ; glob("__IdentityTokenCache", v368) ; glob("__LocalMetadataCache", v368) ; glob("__ObjectCache", v368) ; glob("__WeakLocalMetadataCache", v368) ; glob("___IdentityTokenCache", v368) ; glob("___LocalMetadataCache", v368) ; glob("___ObjectCache", v368) ; glob("___WeakLocalMetadataCache", v368)).
+m372(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v369), name(v369, v371), (glob("IdentityTokenCache", v371) ; glob("LocalMetadataCache", v371) ; glob("ObjectCache", v371) ; glob("WeakLocalMetadataCache", v371) ; glob("_IdentityTokenCache", v371) ; glob("_LocalMetadataCache", v371) ; glob("_ObjectCache", v371) ; glob("_WeakLocalMetadataCache", v371) ; glob("__IdentityTokenCache", v371) ; glob("__LocalMetadataCache", v371) ; glob("__ObjectCache", v371) ; glob("__WeakLocalMetadataCache", v371) ; glob("___IdentityTokenCache", v371) ; glob("___LocalMetadataCache", v371) ; glob("___ObjectCache", v371) ; glob("___WeakLocalMetadataCache", v371)).
+m378(n) :- node(_, n, "call", _, _), field(n, "arguments", v373), child(v373, v374, _), node(_, v374, "keyword_argument", _, _), field(v374, "name", v375), node(_, v375, "identifier", _, _), text(v375, v376), v376 = "register_with_manager", field(v374, "value", v377), node(_, v377, "false", _, _).
+m379(n) :- field(n, "function", v367), m372(v367), !m378(n).
+m381(n) :- node(_, n, "call", _, _), field(n, "function", v359), m366(v359), !m379(n).
+m381(n) :- node(_, n, "assignment", _, _), field(n, "right", v380), u358(v380).
+u358(n) :- m381(n).
+m383(n) :- node(_, n, "class_definition", _, _).
+m383(n) :- node(_, n, "function_definition", _, _).
+m383(n) :- node(_, n, "lambda", _, _).
+m384(n) :- inside(n, v382, k0), m383(v382).
+m388(n) :- node(_, n, "module", _, _), node_text(n, v385), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v385).
+m388(n) :- inside(n, v386, k1), node(_, v386, "module", _, _), node_text(v386, v387), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v387).
+t389(s) :- doc(_, s, _), (s = "impl/common/l2070_server_plan/optimizers/batch_fusion.py" ; s = "l2070_batching/executor.py").
+t389(s) :- doc(_, _, s), (s = "impl/common/l2070_server_plan/optimizers/batch_fusion.py" ; s = "l2070_batching/executor.py").
+t389(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t389(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t390(s) :- doc(_, s, _), t389(s).
+t390(s) :- doc(_, _, s), t389(s).
+violation("data-layer-module-level-caches", "constructor", "constructor_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v349), node(_, v349, "identifier", _, _), !m351(v349), !m356(v349), field(n, "right", v357), u358(v357), !m384(n), m388(n), doc(d, p, m), !t390(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m393(n) :- node(_, n, "identifier", _, _), text(n, v392), v392 = "__all__".
+m397(n) :- name(n, v396), glob("*[a-z]*", v396).
+m398(n) :- name(n, v395), glob("[!_]*_*", v395), !m397(n).
+m401(n) :- node(_, n, "class_definition", _, _).
+m401(n) :- node(_, n, "function_definition", _, _).
+m401(n) :- node(_, n, "lambda", _, _).
+m402(n) :- inside(n, v400, k0), m401(v400).
+m405(n) :- field(n, "left", v403), node(_, v403, "identifier", _, _), text(v403, v404), v404 = "_BOUNDARY_CACHE".
+m409(n) :- node(_, n, "module", _, _), node_text(n, v406), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v406).
+m409(n) :- inside(n, v407, k1), node(_, v407, "module", _, _), node_text(v407, v408), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v408).
+t410(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t410(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "constructor-file-0", "constructor_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v391), node(_, v391, "identifier", _, _), !m393(v391), !m398(v391), field(n, "right", v399), u358(v399), !m402(n), !m405(n), m409(n), doc(d, p, m), p = "impl/common/l2070_server_plan/optimizers/batch_fusion.py", !t410(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m413(n) :- node(_, n, "identifier", _, _), text(n, v412), v412 = "__all__".
+m417(n) :- name(n, v416), glob("*[a-z]*", v416).
+m418(n) :- name(n, v415), glob("[!_]*_*", v415), !m417(n).
+m421(n) :- node(_, n, "class_definition", _, _).
+m421(n) :- node(_, n, "function_definition", _, _).
+m421(n) :- node(_, n, "lambda", _, _).
+m422(n) :- inside(n, v420, k0), m421(v420).
+m425(n) :- field(n, "left", v423), node(_, v423, "identifier", _, _), text(v423, v424), v424 = "_SHAPE_FACT_CACHES".
+m429(n) :- node(_, n, "module", _, _), node_text(n, v426), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v426).
+m429(n) :- inside(n, v427, k1), node(_, v427, "module", _, _), node_text(v427, v428), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v428).
+t430(s) :- doc(_, s, _), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+t430(s) :- doc(_, _, s), (prefix("impl/common/l1000_cache/", s) ; prefix("l1000_cache/", s)).
+violation("data-layer-module-level-caches", "constructor-file-1", "constructor_cache", p, l) :- node(_, n, "assignment", _, _), field(n, "left", v411), node(_, v411, "identifier", _, _), !m413(v411), !m418(v411), field(n, "right", v419), u358(v419), !m422(n), !m425(n), m429(n), doc(d, p, m), p = "l2070_batching/executor.py", !t430(p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m432(n) :- node(_, n, "function_definition", _, _).
+m432(n) :- node(_, n, "lambda", _, _).
+m433(n) :- inside(n, v431, k2), m432(v431).
+m436(n) :- inside(n, v434, k3), node(_, v434, "class_definition", _, _), inside(v434, v435, k3), node(_, v435, "class_definition", _, _).
+m446(n) :- node(_, n, "identifier", _, _), text(n, v441), (v441 = "cache" ; v441 = "lru_cache").
+m446(n) :- node(_, n, "attribute", _, _), field(n, "object", v442), node(_, v442, "identifier", _, _), text(v442, v443), v443 = "functools", field(n, "attribute", v444), node(_, v444, "identifier", _, _), text(v444, v445), (v445 = "cache" ; v445 = "lru_cache").
+m448(n) :- m446(n).
+m448(n) :- node(_, n, "call", _, _), field(n, "function", v447), u440(v447).
+u440(n) :- m448(n).
+m452(n) :- inside(n, v451, k3), node(_, v451, "class_definition", _, _).
+m456(n) :- inside(n, v455, k3), node(_, v455, "class_definition", _, _).
+m457(n) :- field(n, "name", v449), node(_, v449, "identifier", _, _), text(v449, v450), v450 = "_commit_branch_domain_metadata", !m452(n).
+m457(n) :- field(n, "name", v453), node(_, v453, "identifier", _, _), text(v453, v454), v454 = "_commit_branch_tree_validation_type_filters", !m456(n).
+m461(n) :- node(_, n, "module", _, _), node_text(n, v458), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v458).
+m461(n) :- inside(n, v459, k1), node(_, v459, "module", _, _), node_text(v459, v460), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v460).
+violation("data-layer-module-level-caches", "decorator-file-0", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m433(n), !m436(n), child(v437, n, _), node(_, v437, "decorated_definition", _, _), child(v437, v438, _), node(_, v438, "decorator", _, _), child(v438, v439, _), u440(v439), !m457(n), m461(n), doc(d, p, m), p = "impl/common/l2070_server_plan/steps/intent_transaction.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m463(n) :- node(_, n, "function_definition", _, _).
+m463(n) :- node(_, n, "lambda", _, _).
+m464(n) :- inside(n, v462, k2), m463(v462).
+m467(n) :- inside(n, v465, k3), node(_, v465, "class_definition", _, _), inside(v465, v466, k3), node(_, v466, "class_definition", _, _).
+m474(n) :- inside(n, v473, k3), node(_, v473, "class_definition", _, _).
+m475(n) :- field(n, "name", v471), node(_, v471, "identifier", _, _), text(v471, v472), v472 = "_get_sql_branded_types", !m474(n).
+m479(n) :- node(_, n, "module", _, _), node_text(n, v476), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v476).
+m479(n) :- inside(n, v477, k1), node(_, v477, "module", _, _), node_text(v477, v478), match("(?s:.*)(?:Cache|cache|holder|lru_cache|memo|registry)(?s:.*)", v478).
+violation("data-layer-module-level-caches", "decorator-file-1", "lru_cache", p, l) :- node(_, n, "function_definition", _, _), !m464(n), !m467(n), child(v468, n, _), node(_, v468, "decorated_definition", _, _), child(v468, v469, _), node(_, v469, "decorator", _, _), child(v469, v470, _), u440(v470), !m475(n), m479(n), doc(d, p, m), p = "impl/common/l2100_sql_grammar/fast_params.py", node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+decorator_cache(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "cache" ; s = "lru_cache").
+decorator_cache(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "functools"), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "cache" ; s = "lru_cache").
+decorator_cache(n) :- node(_, n, "call", _, _), field(n, "function", f), decorator_cache(f).
+decorator_in_function(n) :- node(_, n, "function_definition", _, _), inside(n, _, decorator_fn_scopes).
+decorator_in_nested_class(n) :- node(_, n, "function_definition", _, _), inside(n, c, decorator_classes), inside(c, _, decorator_classes).
+decorator_skipped(p) :- doc(_, p, _), (p = "impl/common/l2100_sql_grammar/fast_params.py" ; p = "impl/common/l2070_server_plan/steps/intent_transaction.py").
+violation("data-layer-module-level-caches", "decorator", "lru_cache", p, l) :- node(d, n, "function_definition", _, _), !decorator_in_function(n), !decorator_in_nested_class(n), child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), decorator_cache(e), doc(d, p, _), !decorator_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+list_gated(n) :- node(_, n, "assignment", _, _), !option_on("sourceGate").
+list_gated(n) :- option_on("sourceGate"), node(_, n, "assignment", _, _), inside(n, m, list_modules), node_text(m, s), (contains("Cache", s) ; contains("cache", s) ; contains("holder", s) ; contains("memo", s) ; contains("registry", s)).
+list_nested(n) :- node(_, n, "assignment", _, _), inside(n, _, list_scopes).
+list_constant(v) :- text(v, s), glob("[!_]*_*", s), !glob("*[a-z]*", s).
+list_target(n, v) :- node(_, n, "assignment", _, _), field(n, "left", v), node(_, v, "identifier", _, _), text(v, s), s != "__all__", !list_constant(v), !list_nested(n), list_gated(n).
+list_empty(n) :- node(_, n, "list", _, _), node_text(n, s), match("(?s)^\\[\\s*(?:#[^\\n]*\\n\\s*)*\\]$", s).
+list_cache_value(n) :- list_empty(n).
+list_cache_value(n) :- node(_, n, "call", _, _), child(n, f, 0), node(_, f, "identifier", _, _), text(f, "list"), child(n, a, 1), node(_, a, "argument_list", _, _), !child(a, _, 0), !child(n, _, 2).
+list_cache_value(n) :- node(_, n, "assignment", _, _), field(n, "right", r), list_cache_value(r).
+named_list_value(n) :- node(_, n, "list", _, _), !list_empty(n).
+named_list_value(n) :- node(_, n, "assignment", _, _), field(n, "right", r), named_list_value(r).
+named_list_name(v) :- text(v, s), (icontains("cache", s) ; icontains("holder", s) ; icontains("memo", s) ; icontains("pool", s) ; icontains("registry", s) ; icontains("token", s)).
+list_l1000(p) :- doc(_, p, _), (prefix("impl/common/l1000_cache/", p) ; prefix("l1000_cache/", p)).
+list_skipped(p) :- list_l1000(p).
+list_skipped(p) :- doc(_, p, _), (p = "impl/browser/sqljs_sqlite3.py" ; p = "impl/common/l2210_planner_stats/config.py" ; p = "l1000_schema/expression_function_registry.py" ; p = "l4100_queue/insert_auth.py" ; p = "l5200_vector_index/embedding_vector_store.py").
+violation("data-layer-module-level-caches", "raw-list_cache", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), node(d, n, _, _, _), doc(d, p, _), !list_l1000(p), option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "raw-named-list", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), node(d, n, _, _, _), doc(d, p, _), !list_l1000(p), option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), node(d, n, _, _, _), doc(d, p, _), !list_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), node(d, n, _, _, _), doc(d, p, _), !list_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-0", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(0, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-0", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(0, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-1", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(1, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-1", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(1, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-2", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(2, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-2", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(2, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-3", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(3, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-3", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(3, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-4", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(4, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-4", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(4, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !tape_syntax_error(d), line(n, l).

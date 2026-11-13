@@ -1,0 +1,55 @@
+.policy "eslint-no-self-assign" revision 6
+.description "Remove assignments of a variable or property to itself, including inside destructuring; they do nothing and usually hide a typo."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-b-control.rr"
+//   deparen, slot, slot_count, ref_same
+
+// ESLint's no-self-assign: `x = x`, with `=`, `&&=`, `||=` or `??=`, also where destructuring pairs a target
+// with the same name on the right. Reported at the right-hand side, named by its text without spaces.
+//   a = a;   [a, b] = [a, c];   ({ a, b: c } = { a, b: c });   [a, ...b] = [a, ...b];   → a; a; a and c; a and b
+//   [a, b] = [b, a];   a += a;   ({ a } = { ...x, b: a });                              fine
+// props (default true) also reports members: `a.b = a.b`, `a[0] = a["0"]`, `this.x ??= this.x`.
+.violation no_self_assign(at: node, x: symbol) code "no-self-assign" "'{x}' is assigned to itself."
+    suppress eslint "no-self-assign"
+    suppress oxlint "no-self-assign"
+    suppress biome "lint/correctness/noSelfAssign"
+no_self_assign(r, @replace_all(t, "\\s+", "")) :- pair(l, r), self(l, r), text(r, t).
+
+// pair(l, r): ESLint's eachSelfAssignment compares l with r. Parentheses do not count.
+.decl pair(l: node, r: node)
+pair(x, y) :- kind(a, "assignment_expression"), field(a, "left", l), deparen(l, x), field(a, "right", r), deparen(r, y).
+pair(x, y) :- kind(a, "augmented_assignment_expression"), (op(a, "&&=") ; op(a, "||=") ; op(a, "??=")),
+    field(a, "left", l), deparen(l, x), field(a, "right", r), deparen(r, y).
+// Arrays, slot by slot, up to the shorter one. A spread on the right ends the comparison after it, and a rest
+// on the left is compared only with the last slot.   [a, ...b] = [a, ...b]
+pair(x, y) :- pair(l, r), kind(l, "array_pattern"), kind(r, "array"), slot(l, e, i), slot(r, f, i),
+    count : { slot(r, s, j), j < i, kind(s, "spread_element") } = 0,
+    (!kind(e, "rest_pattern") ; slot_count(r, k), i >= k - 1), deparen(e, x), deparen(f, y).
+pair(x, y) :- pair(l, r), kind(l, "rest_pattern"), kind(r, "spread_element"), child(l, e, 0), deparen(e, x),
+    child(r, f, 0), deparen(f, y).
+// Objects: each property against each property after the right's last spread, by static name.
+pair(x, y) :- pair(l, r), kind(l, "object_pattern"), kind(r, "object"), child(l, p, _), key(p, n, v),
+    child(r, q, _), key(q, n, w), !kind(q, "shorthand_property_identifier_pattern"), !spread_after(r, q),
+    deparen(v, x), deparen(w, y).
+.decl spread_after(o: node, q: node)  // a spread follows property q
+spread_after(o, q) :- child(o, q, _), child(o, s, _), kind(s, "spread_element"), precedes(q, s).
+// key(p, x, v): a property with static name x and value v; `{ a }` is its own value.
+.decl key(p: node, x: symbol, v: node)
+key(p, x, p) :- (kind(p, "shorthand_property_identifier_pattern") ; kind(p, "shorthand_property_identifier")), text(p, x).
+key(p, x, v) :- (kind(p, "pair_pattern") ; kind(p, "pair")), field(p, "key", k), field(p, "value", v), prop_key_name(k, x).
+.decl prop_key_name(k: node, x: symbol)  // a, "a", 1, ["a"]
+prop_key_name(k, x) :- kind(k, "property_identifier"), text(k, x).
+prop_key_name(k, x) :- lit_val(k, _, x).
+prop_key_name(k, x) :- kind(k, "computed_property_name"), child(k, e, 0), deparen(e, s), lit_val(s, _, x).
+
+// self(l, r): the two sides are the same name, or with props the same member.
+.decl self(l: node, r: node)
+self(l, r) :- pair(l, r), (kind(l, "identifier") ; kind(l, "shorthand_property_identifier_pattern")),
+    (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(l, x), text(r, x).
+self(l, r) :- !option("props", "false"), member_access(l), member_access(r), ref_same(l, r, "static").
+ref_same_ask(l, r, "static") :- pair(l, r), member_access(l), member_access(r).
+.decl member_access(m: node)
+member_access(m) :- kind(m, "member_expression") ; kind(m, "subscript_expression").

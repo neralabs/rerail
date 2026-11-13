@@ -1,0 +1,65 @@
+.policy "next-no-location-assign-relative-destination" revision 2
+.description "Don't navigate to internal pages by setting location.href or calling location.assign with a relative URL; use redirect() or the router for client-side navigation."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-location-assign-relative-destination. Setting location.href, or calling
+// location.assign, with a URL that is relative (no scheme, not //host) is a full page load to an internal page:
+//   location.href = "/dashboard"                    reported
+//   window.location.assign(`/users/${id}`)          reported
+//   location.href = "https://example.com"           fine: absolute
+//   location.href += "/a"                           reported: any assignment operator
+//   location.href = url                             reported when url's last value before here is relative
+// location is the global (also as window.location, globalThis.location, document.location, self.location),
+// not a local or imported name; ["href"] and ["assign"] count as .href and .assign.
+
+#include "tsx/names.rr"
+
+.violation relative(at: node, what: symbol) code "@next/next/no-location-assign-relative-destination"
+    "Replace this {what} with redirect() during render or useRouter().push() in a client event handler."
+    suppress eslint "@next/next/no-location-assign-relative-destination"
+relative(a, "location.href assignment") :- assign(a, l, v), location_member(l, "href"), relative_url(v).
+relative(c, "location.assign call") :- kind(c, "call_expression"), field(c, "function", f),
+    location_member(f, "assign"), field(c, "arguments", args), child(args, v, 0), !kind(v, "spread_element"),
+    relative_url(v).
+
+// location_member(m, x): m is location.x or location["x"], location being the browser's.
+.decl location_member(m: node, x: symbol)
+location_member(m, x) :- member(m, o, x), location(o).
+.decl location(o: node)
+location(o) :- browser_global(o, "location").
+location(o) :- member(o, g, "location"), browser_global(g, w), w != "location".
+.decl member(m: node, o: node, x: symbol)  // o.x or o["x"]
+member(m, o, x) :- kind(m, "member_expression"), field(m, "object", o), field(m, "property", p),
+    kind(p, "property_identifier"), text(p, x).
+member(m, o, x) :- kind(m, "subscript_expression"), field(m, "object", o), field(m, "index", i), kind(i, "string"),
+    str(i, x).
+// browser_global(r, x): r is the global x: nothing in the file declares it (a parameter or import shadows it).
+.decl browser_global(r: node, x: symbol)
+browser_global(r, x) :- kind(r, "identifier"), ref(r, x, "value"), !ref_site(r, _), window_name(x).
+.decl window_name(x: symbol)
+window_name("location"). window_name("window"). window_name("globalThis"). window_name("document").
+window_name("self").
+
+// relative_url(v): v is, or starts with, a URL with no scheme and no //: "/a", `/u/${id}`, "/a/" + id,
+// and a variable whose last value before the read is one.
+.decl relative_url(v: node)
+relative_url(v) :- static_value(v, s), !match("(?:[A-Za-z][0-9+.A-Za-z-]*:|//)[\\s\\S]*", s).   // 5 is "5"
+relative_url(v) :- kind(v, "template_string"), child(v, t, _), kind(t, "template_substitution"),
+    !match("`(?:[A-Za-z][0-9+.A-Za-z-]*:|//)[\\s\\S]*", v).
+relative_url(v) :- kind(v, "binary_expression"), op(v, "+"), field(v, "left", l), relative_url(l).
+relative_url(v) :- kind(v, "parenthesized_expression"), child(v, e, 0), relative_url(e).
+relative_url(v) :- write_before(v, o, e), !later_write(v, o), relative_url(e).
+relative_url(v) :- kind(v, "identifier"), ref_site(v, s), binding_value(s, e), !write_before(v, _, _),
+    relative_url(e).
+// write_before(v, o, e): before the read v, its variable is assigned e at o. The plugin takes the last such
+// write, by position, and the initialiser only when there is none:
+//   let u = "/a"; u = "https://x"; location.href = u      fine
+//   let u = "https://x"; location.href = u; u = "/a"      fine
+.decl write_before(v: node, o: node, e: node)
+write_before(v, o, e) :- kind(v, "identifier"), ref_site(v, s), site_occurrence(s, o), assign(_, o, e), earlier(o, v).
+.decl later_write(v: node, o: node)
+later_write(v, o) :- write_before(v, o, _), write_before(v, p, _), earlier(o, p).
+.decl assign(a: node, l: node, e: node)  // l = e, l += e, …
+assign(a, l, e) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), field(a, "right", e).

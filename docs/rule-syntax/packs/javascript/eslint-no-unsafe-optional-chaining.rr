@@ -1,0 +1,64 @@
+.policy "eslint-no-unsafe-optional-chaining" revision 4
+.description "Don't use an optional chain where undefined would throw, such as calling, destructuring, spreading or constructing from it; check for undefined first."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-b-control.rr"
+//   deparen, chain_at
+
+// ESLint's no-unsafe-optional-chaining: an optional chain that can short-circuit to undefined, used where
+// undefined throws a TypeError: called, constructed, read from, destructured, spread into an array or call,
+// iterated with for-of, extended, used with `in` / `instanceof` or as a `with` object. The value may come
+// through `||` / `??` (their right side), `&&` (either side), `a ? b : c` (either branch), a comma (the last)
+// and `await`.
+//   (a?.b)();   (a?.b).c;   new (a?.b)();   const { x } = a?.b;   [...a?.b];   1 in (a && a?.b)   → reported
+//   a?.b();   a?.b.c;   (a?.b)?.();   ({ ...a?.b });   const x = a?.b;                           fine
+// disallowArithmeticOperators: true also reports operands of + - * / % **, unary + and -, and +=, -=, … :
+//   a?.b + 1   → reported ("unsafe-arithmetic")
+.violation no_unsafe_optional_chaining(at: node, msg: symbol) code "no-unsafe-optional-chaining" "{msg}"
+    suppress eslint "no-unsafe-optional-chaining"
+    suppress oxlint "no-unsafe-optional-chaining"
+    suppress biome "lint/correctness/noUnsafeOptionalChaining"
+no_unsafe_optional_chaining(x, "Unsafe usage of optional chaining. If it short-circuits with 'undefined' the evaluation will throw TypeError.") :-
+    unsafe(e), value_of(e, x), chain_at(x).
+no_unsafe_optional_chaining(x, "Default this optional chain, as in (a?.b ?? 0), before doing arithmetic with it; undefined gives NaN.") :-
+    option("disallowArithmeticOperators", "true"), arithmetic(e), value_of(e, x), chain_at(x).
+
+// value_of(e, x): x is a value expression e may evaluate to, parentheses removed (checkUndefinedShortCircuit).
+.decl value_of(e: node, x: node)
+value_of(e, x) :- (unsafe(e) ; arithmetic(e)), deparen(e, x).
+value_of(e, y) :- value_of(e, x), kind(x, "binary_expression"), (op(x, "||") ; op(x, "??") ; op(x, "&&")),
+    field(x, "right", r), deparen(r, y).
+value_of(e, y) :- value_of(e, x), kind(x, "binary_expression"), op(x, "&&"), field(x, "left", l), deparen(l, y).
+value_of(e, y) :- value_of(e, x), kind(x, "ternary_expression"), (field(x, "consequence", c) ; field(x, "alternative", c)),
+    deparen(c, y).
+value_of(e, y) :- value_of(e, x), kind(x, "sequence_expression"), last_expr(x, c), deparen(c, y).
+.decl last_expr(s: node, c: node)  // the last expression of a comma sequence
+last_expr(s, c) :- kind(s, "sequence_expression"), child(s, c, _), !kind(c, "comment"),
+    count : { child(s, d, _), !kind(d, "comment"), precedes(c, d) } = 0.
+value_of(e, y) :- value_of(e, x), kind(x, "await_expression"), child(x, c, 0), deparen(c, y).
+
+// unsafe(e): the positions. A member's object and a callee count only in parentheses: unparenthesised, ESTree
+// continues the chain (a?.b.c), and an optional `?.` link of its own makes it safe.
+.decl unsafe(e: node)
+unsafe(o) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), !field(m, "optional_chain", _),
+    field(m, "object", o), kind(o, "parenthesized_expression").
+unsafe(f) :- kind(c, "call_expression"), !field(c, "optional_chain", _), field(c, "function", f),
+    kind(f, "parenthesized_expression").
+unsafe(f) :- kind(n, "new_expression"), field(n, "constructor", f).
+unsafe(t) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string"), field(c, "function", t).
+unsafe(r) :- (kind(a, "assignment_expression") ; kind(a, "assignment_pattern") ; kind(a, "variable_declarator")),
+    (field(a, "left", l) ; field(a, "name", l)), (kind(l, "object_pattern") ; kind(l, "array_pattern")),
+    (field(a, "right", r) ; field(a, "value", r)).
+unsafe(r) :- kind(s, "for_in_statement"), op(s, "of"), field(s, "right", r).
+unsafe(x) :- kind(h, "class_heritage"), child(h, x, _), !kind(x, "comment").
+unsafe(x) :- kind(s, "spread_element"), child(p, s, _), !kind(p, "object"), child(s, x, 0).
+unsafe(r) :- kind(b, "binary_expression"), (op(b, "in") ; op(b, "instanceof")), field(b, "right", r).
+unsafe(o) :- kind(w, "with_statement"), field(w, "object", o).
+.decl arithmetic(e: node)
+arithmetic(x) :- kind(b, "binary_expression"), op(b, o), (o = "+" ; o = "-" ; o = "*" ; o = "/" ; o = "%" ; o = "**"),
+    (field(b, "left", x) ; field(b, "right", x)).
+arithmetic(x) :- kind(u, "unary_expression"), (op(u, "+") ; op(u, "-")), field(u, "argument", x).
+arithmetic(r) :- kind(a, "augmented_assignment_expression"), op(a, o),
+    (o = "+=" ; o = "-=" ; o = "*=" ; o = "/=" ; o = "%=" ; o = "**="), field(a, "right", r).

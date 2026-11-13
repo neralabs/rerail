@@ -1,0 +1,204 @@
+# The executor coverage gate (plan/coverage.rs; RERAIL_BLESS_COVERAGE=1 writes this): per probe, where it ran.
+# probe	native	device	rule
+cmp =: numbers	native	device	p(x, y) :- n(x), n(y), x = y.
+cmp =: number and constant	native	device	p(x) :- n(x), x = 2.
+cmp =: symbols	native	device	p(a, b) :- s(a), t(b), a = b.
+cmp =: symbol and constant	native	device	p(a) :- s(a), a = "alpha".
+cmp =: computed number	native	device	p(x) :- n(x), x + 1 = 3.
+cmp =: computed symbol	native	device	p(a) :- s(a), cat(a, "!") = "alpha!".
+cmp !=: numbers	native	device	p(x, y) :- n(x), n(y), x != y.
+cmp !=: number and constant	native	device	p(x) :- n(x), x != 2.
+cmp !=: symbols	native	device	p(a, b) :- s(a), t(b), a != b.
+cmp !=: symbol and constant	native	device	p(a) :- s(a), a != "alpha".
+cmp !=: computed number	native	device	p(x) :- n(x), x + 1 != 3.
+cmp !=: computed symbol	native	device	p(a) :- s(a), cat(a, "!") != "alpha!".
+cmp <: numbers	native	device	p(x, y) :- n(x), n(y), x < y.
+cmp <: number and constant	native	device	p(x) :- n(x), x < 2.
+cmp <: symbols	native	device	p(a, b) :- s(a), t(b), a < b.
+cmp <: symbol and constant	native	device	p(a) :- s(a), a < "alpha".
+cmp <: computed number	native	device	p(x) :- n(x), x + 1 < 3.
+cmp <: computed symbol	native	device	p(a) :- s(a), cat(a, "!") < "alpha!".
+cmp <=: numbers	native	device	p(x, y) :- n(x), n(y), x <= y.
+cmp <=: number and constant	native	device	p(x) :- n(x), x <= 2.
+cmp <=: symbols	native	device	p(a, b) :- s(a), t(b), a <= b.
+cmp <=: symbol and constant	native	device	p(a) :- s(a), a <= "alpha".
+cmp <=: computed number	native	device	p(x) :- n(x), x + 1 <= 3.
+cmp <=: computed symbol	native	device	p(a) :- s(a), cat(a, "!") <= "alpha!".
+cmp >: numbers	native	device	p(x, y) :- n(x), n(y), x > y.
+cmp >: number and constant	native	device	p(x) :- n(x), x > 2.
+cmp >: symbols	native	device	p(a, b) :- s(a), t(b), a > b.
+cmp >: symbol and constant	native	device	p(a) :- s(a), a > "alpha".
+cmp >: computed number	native	device	p(x) :- n(x), x + 1 > 3.
+cmp >: computed symbol	native	device	p(a) :- s(a), cat(a, "!") > "alpha!".
+cmp >=: numbers	native	device	p(x, y) :- n(x), n(y), x >= y.
+cmp >=: number and constant	native	device	p(x) :- n(x), x >= 2.
+cmp >=: symbols	native	device	p(a, b) :- s(a), t(b), a >= b.
+cmp >=: symbol and constant	native	device	p(a) :- s(a), a >= "alpha".
+cmp >=: computed number	native	device	p(x) :- n(x), x + 1 >= 3.
+cmp >=: computed symbol	native	device	p(a) :- s(a), cat(a, "!") >= "alpha!".
+arithmetic +	native	device	p(x, y, z) :- n(x), n(y), z = x + y.
+arithmetic -	native	device	p(x, y, z) :- n(x), n(y), z = x - y.
+arithmetic *	native	device	p(x, y, z) :- n(x), n(y), z = x * y.
+arithmetic /	native	device	p(x, y, z) :- n(x), n(y), z = x / y.
+arithmetic %	native	device	p(x, y, z) :- n(x), n(y), z = x % y.
+arithmetic of floats	native	no computed term	p(z) :- s(a), z = to_float("1.5") + 2.25, a = "alpha".
+builtin strlen/1	native	device	p(v) :- t(a), v = strlen(a).
+builtin to_string/1	native	device	p(v) :- m(x), v = to_string(x).
+builtin to_number/1	native	no computed term	p(v) :- t(a), v = to_number(a).
+builtin substr/3	native	device	p(v) :- t(a), m(y), m(w), v = substr(a, y, w).
+builtin max/2	native	device	p(v) :- m(x), m(y), v = max(x, y).
+builtin min/2	native	device	p(v) :- m(x), m(y), v = min(x, y).
+builtin cat/2	native	device	p(v) :- t(a), t(b), v = cat(a, b).
+functor @dot/2	native	device	p(v) :- t(a), t(b), v = @dot(a, b).
+functor @concat/2	native	device	p(v) :- t(a), t(b), v = @concat(a, b).
+functor @replace_all/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @replace_all(a, b, c).
+functor @json_str/1	native	no computed term	p(v) :- t(a), v = @json_str(a).
+functor @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
+functor @py_repr/1	native	no computed term	p(v) :- t(a), v = @py_repr(a).
+functor @ed25519_ok/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @ed25519_ok(a, b, c).
+functor @rx_replace/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @rx_replace(a, b, c).
+functor @rx_group/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @rx_group(a, b, c).
+function @qname/2	native	no computed term	p(v) :- t(a), t(b), v = @qname(a, b).
+function @pkg_up/2	native	no computed term	p(v) :- t(a), m(y), v = @pkg_up(a, y).
+function @head/1	native	device	p(v) :- t(a), v = @head(a).
+function @dir/1	native	device	p(v) :- t(a), v = @dir(a).
+function @join/2	native	no computed term	p(v) :- t(a), t(b), v = @join(a, b).
+function @glob_sub/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @glob_sub(a, b, c).
+function @package_of/1	native	no computed term	p(v) :- t(a), v = @package_of(a).
+function @replace_all/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @replace_all(a, b, c).
+function @convert/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @convert(a, b, c).
+function @slice/3	native	device	p(v) :- t(a), m(y), m(w), v = @slice(a, y, w).
+function @count_matches/2	native	no computed term	p(v) :- t(a), t(b), v = @count_matches(a, b).
+function @sha256/1	native	no computed term	p(v) :- t(a), v = @sha256(a).
+function @git_commit/1	native	no computed term	p(v) :- t(a), v = @git_commit(a).
+function @git_has/2	native	no computed term	p(v) :- t(a), t(b), v = @git_has(a, b).
+function @git_tracked/1	native	no computed term	p(v) :- t(a), v = @git_tracked(a).
+function @json_str/1	native	no computed term	p(v) :- t(a), v = @json_str(a).
+function @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
+function @to_precision/2	native	no computed term	p(v) :- t(a), m(y), v = @to_precision(a, y).
+function @lower/1	native	device	p(v) :- t(a), v = @lower(a).
+function @str_concat/2	native	no computed term	p(v) :- t(a), t(b), v = @str_concat(a, b).
+function @str_between/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @str_between(a, b, c).
+function @str_cmp/2	native	device	p(v) :- t(a), t(b), v = @str_cmp(a, b).
+function @to_number/1	native	no computed term	p(v) :- t(a), v = @to_number(a).
+function @max/2	native	device	p(v) :- m(x), m(y), v = @max(x, y).
+function @min/2	native	device	p(v) :- m(x), m(y), v = @min(x, y).
+function @mod/2	native	device	p(v) :- m(x), m(y), v = @mod(x, y).
+function @to_float/1	native	no computed term	p(v) :- t(a), v = @to_float(a).
+function @float_add/2	native	no computed term	p(v) :- m(x), m(y), v = @float_add(x, y).
+function @float_sub/2	native	no computed term	p(v) :- m(x), m(y), v = @float_sub(x, y).
+function @float_mul/2	native	no computed term	p(v) :- m(x), m(y), v = @float_mul(x, y).
+function @float_div/2	native	no computed term	p(v) :- m(x), m(y), v = @float_div(x, y).
+function @float_str/1	native	no computed term	p(v) :- m(x), v = @float_str(x).
+function @rx_group/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @rx_group(a, b, c).
+function @sql_instr/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_instr(a, b).
+function @sql_substr/3	native	device	p(v) :- t(a), m(y), m(w), v = @sql_substr(a, y, w).
+function @sql_substr2/2	native	no computed term	p(v) :- t(a), m(y), v = @sql_substr2(a, y).
+function @sql_substr_bytes/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = @sql_substr_bytes(a, y, w).
+function @sql_length/1	native	no computed term	p(v) :- t(a), v = @sql_length(a).
+function @sql_trim/1	native	no computed term	p(v) :- t(a), v = @sql_trim(a).
+function @sql_trim2/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_trim2(a, b).
+function @sql_ltrim/1	native	no computed term	p(v) :- t(a), v = @sql_ltrim(a).
+function @sql_ltrim2/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_ltrim2(a, b).
+function @sql_rtrim2/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_rtrim2(a, b).
+function @sql_upper/1	native	device	p(v) :- t(a), v = @sql_upper(a).
+function @sql_lower/1	native	device	p(v) :- t(a), v = @sql_lower(a).
+function @sql_replace/3	native	device	p(v) :- t(a), t(b), t(c), v = @sql_replace(a, b, c).
+function @sql_like/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_like(a, b).
+function @sql_cast_int/1	native	no computed term	p(v) :- t(a), v = @sql_cast_int(a).
+function @sql_char/1	native	no computed term	p(v) :- m(x), v = @sql_char(x).
+function @rx_extract/3	native	no computed term	p(v) :- t(a), t(b), m(w), v = @rx_extract(a, b, w).
+function @rx_replace/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @rx_replace(a, b, c).
+function @semver_valid/1	native	no computed term	p(v) :- t(a), v = @semver_valid(a).
+function @semver_subset/2	native	no computed term	p(v) :- t(a), t(b), v = @semver_subset(a, b).
+function @py_repr/1	native	no computed term	p(v) :- t(a), v = @py_repr(a).
+function @ed25519_ok/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @ed25519_ok(a, b, c).
+shipped functor @cast_int/1	native	no computed term	p(v) :- t(a), v = @cast_int(a).
+shipped functor @char/1	native	no computed term	p(v) :- m(x), v = @char(x).
+shipped functor @class_path/1	sqlite: error: no SQL for @class_path($a)	sqlite: error: no SQL for @class_path($a)	p(v) :- t(a), v = @class_path(a).
+shipped functor @class_prefix/1	sqlite: error: no SQL for @class_prefix($a)	sqlite: error: no SQL for @class_prefix($a)	p(v) :- t(a), v = @class_prefix(a).
+shipped functor @drop_components/2	sqlite: error: no SQL for @drop_components($a, $b)	sqlite: error: no SQL for @drop_components($a, $b)	p(v) :- t(a), t(b), v = @drop_components(a, b).
+shipped functor @instr/2	native	no computed term	p(v) :- t(a), t(b), v = @instr(a, b).
+shipped functor @join_nonempty/4	sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	p(v) :- t(a), t(b), t(c), t(a), v = @join_nonempty(a, b, c, a).
+shipped functor @length/1	native	no computed term	p(v) :- t(a), v = @length(a).
+shipped functor @like/2	native	no computed term	p(v) :- t(a), t(b), v = @like(a, b).
+shipped functor @ltrim/2	native	no computed term	p(v) :- t(a), t(b), v = @ltrim(a, b).
+shipped functor @printf/2	sqlite: error: no SQL for @printf($a, $b)	sqlite: error: no SQL for @printf($a, $b)	p(v) :- t(a), t(b), v = @printf(a, b).
+shipped functor @printf/3	sqlite: error: no SQL for @printf($a, $b, $c)	sqlite: error: no SQL for @printf($a, $b, $c)	p(v) :- t(a), t(b), t(c), v = @printf(a, b, c).
+shipped functor @printf/4	sqlite: error: no SQL for @printf($a, $b, $c, $a)	sqlite: error: no SQL for @printf($a, $b, $c, $a)	p(v) :- t(a), t(b), t(c), t(a), v = @printf(a, b, c, a).
+shipped functor @printf/5	sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	sqlite: error: no SQL for @printf($a, $b, $c, $a, $b)	p(v) :- t(a), t(b), t(c), t(a), t(b), v = @printf(a, b, c, a, b).
+shipped functor @qualdepth/1	sqlite: error: no SQL for @qualdepth($a)	sqlite: error: no SQL for @qualdepth($a)	p(v) :- t(a), v = @qualdepth(a).
+shipped functor @qualname/1	sqlite: error: no SQL for @qualname($a)	sqlite: error: no SQL for @qualname($a)	p(v) :- t(a), v = @qualname(a).
+shipped functor @replace/3	native	device	p(v) :- t(a), t(b), t(c), v = @replace(a, b, c).
+shipped functor @rx_matches/2	sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	not native	p(v) :- t(a), t(b), v = @rx_matches(a, b).
+shipped functor @substr_bytes/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = @substr_bytes(a, y, w).
+shipped functor @trim/1	native	no computed term	p(v) :- t(a), v = @trim(a).
+shipped functor @trim/2	native	no computed term	p(v) :- t(a), t(b), v = @trim(a, b).
+shipped functor @upper/1	native	device	p(v) :- t(a), v = @upper(a).
+text test glob: a constant pattern	native	device	p(a) :- s(a), glob("a", a).
+text test glob: negated	native	device	p(a) :- s(a), !glob("a", a).
+text test glob: a set of patterns	native	device	p(a) :- s(a), (glob("a", a) ; glob("B", a)).
+text test glob: a bound pattern	native	refused: the text test @glob of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), glob(b, a).
+text test iglob: a constant pattern	native	device	p(a) :- s(a), iglob("a", a).
+text test iglob: negated	native	device	p(a) :- s(a), !iglob("a", a).
+text test iglob: a set of patterns	native	device	p(a) :- s(a), (iglob("a", a) ; iglob("B", a)).
+text test iglob: a bound pattern	native	refused: the text test @iglob of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iglob(b, a).
+text test prefix: a constant pattern	native	device	p(a) :- s(a), prefix("a", a).
+text test prefix: negated	native	device	p(a) :- s(a), !prefix("a", a).
+text test prefix: a set of patterns	native	device	p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
+text test prefix: a bound pattern	native	device	p(a, b) :- s(a), t(b), prefix(b, a).
+text test iprefix: a constant pattern	native	device	p(a) :- s(a), iprefix("a", a).
+text test iprefix: negated	native	device	p(a) :- s(a), !iprefix("a", a).
+text test iprefix: a set of patterns	native	device	p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
+text test iprefix: a bound pattern	native	refused: the text test @iprefix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iprefix(b, a).
+text test suffix: a constant pattern	native	device	p(a) :- s(a), suffix("a", a).
+text test suffix: negated	native	device	p(a) :- s(a), !suffix("a", a).
+text test suffix: a set of patterns	native	device	p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
+text test suffix: a bound pattern	native	device	p(a, b) :- s(a), t(b), suffix(b, a).
+text test isuffix: a constant pattern	native	device	p(a) :- s(a), isuffix("a", a).
+text test isuffix: negated	native	device	p(a) :- s(a), !isuffix("a", a).
+text test isuffix: a set of patterns	native	device	p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
+text test isuffix: a bound pattern	native	refused: the text test @isuffix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), isuffix(b, a).
+text test contains: a constant pattern	native	device	p(a) :- s(a), contains("a", a).
+text test contains: negated	native	device	p(a) :- s(a), !contains("a", a).
+text test contains: a set of patterns	native	device	p(a) :- s(a), (contains("a", a) ; contains("B", a)).
+text test contains: a bound pattern	native	refused: the text test @contains of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), contains(b, a).
+text test icontains: a constant pattern	native	device	p(a) :- s(a), icontains("a", a).
+text test icontains: negated	native	device	p(a) :- s(a), !icontains("a", a).
+text test icontains: a set of patterns	native	device	p(a) :- s(a), (icontains("a", a) ; icontains("B", a)).
+text test icontains: a bound pattern	native	refused: the text test @icontains of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), icontains(b, a).
+text test word: a constant pattern	native	device	p(a) :- s(a), word("a", a).
+text test word: negated	native	device	p(a) :- s(a), !word("a", a).
+text test word: a set of patterns	native	device	p(a) :- s(a), (word("a", a) ; word("B", a)).
+text test word: a bound pattern	native	refused: the text test @word of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), word(b, a).
+text test iword: a constant pattern	native	device	p(a) :- s(a), iword("a", a).
+text test iword: negated	native	device	p(a) :- s(a), !iword("a", a).
+text test iword: a set of patterns	native	device	p(a) :- s(a), (iword("a", a) ; iword("B", a)).
+text test iword: a bound pattern	native	refused: the text test @iword of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), iword(b, a).
+text test match: a constant pattern	native	device	p(a) :- s(a), match("a", a).
+text test match: negated	native	device	p(a) :- s(a), !match("a", a).
+text test match: a set of patterns	native	device	p(a) :- s(a), (match("a", a) ; match("B", a)).
+text test match: a bound pattern	native	refused: a cat's text read by rx has no device form	p(a, b) :- s(a), t(b), match(b, a).
+aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
+aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
+aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.
+aggregate max	native	device	p(a, c) :- t(a), c = max v : { p(a, v) }.
+aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	p(a, c) :- s(a), c = product v : { p(a, v) }.
+aggregate join	native	no string join	p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
+membership of a constant set	native	device	p(a) :- s(a), (a = "alpha" ; a = "x_1").
+lattice relation (shortest)	sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	not native	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
+aggregate count = 0 (a negation)	native	device	p(a) :- s(a), count : { p(a, _) } = 0.
+aggregate over two atoms' bag	native	device	p(a, c) :- t(a), c = count : { q(a, _) }.
+join	native	device	p(x, y) :- e(x, y), n(y).
+join of three	native	device	p(x, z) :- e(x, y), e(y, z), n(z).
+negation	native	device	p(x) :- n(x), !m(x).
+negation of a pair	native	device	p(x, y) :- n(x), n(y), !e(x, y).
+semi-join (a column unread)	native	device	p(x) :- n(x), e(x, _).
+constant in an atom	native	device	p(y) :- e(2, y).
+constant in a head	native	device	p(x, 7) :- n(x).
+recursion (closure)	native	device	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z).
+recursion with a negation	native	device	p(x, y) :- e(x, y), !m(y). p(x, z) :- p(x, y), e(y, z), !m(z).
+recursion with a comparison	native	device	p(x, y) :- e(x, y). p(x, z) :- p(x, y), e(y, z), z < 5.
+recursion with a computed term	native	device	p(x, 0) :- n(x). p(y, d + 1) :- p(x, d), e(x, y), d < 4.
+computed head	native	device	p(x + 1) :- n(x).
+computed symbol head	native	device	p(@dot(a, "x")) :- s(a).

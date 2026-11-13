@@ -1,0 +1,27 @@
+.policy "eslint-no-case-declarations" revision 4
+.description "Wrap let, const, function and class declarations inside a switch case in braces; otherwise they leak into the whole switch."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   block_declaration (let, const, using, function, class), case_stmt
+
+// ESLint's no-case-declarations: a lexical declaration directly in a `case` or `default` clause. Its name is
+// in scope for the whole switch, but only initialised when that case runs.
+//   switch (a) { case 1: let x = f(); break; }      → `let x = f();`; suggestion: `case 1: { let x = f(); break; }`
+//   switch (a) { case 1: { let x = f(); break; } }  fine
+//   switch (a) { case 1: var x = f(); }             fine: var is function-scoped anyway
+// No options.
+.violation no_case_declarations(at: node) code "no-case-declarations"
+    "Wrap this case's body in braces so the declaration stays scoped to it."
+    suppress eslint "no-case-declarations"
+    suppress oxlint "no-case-declarations"
+    suppress biome "lint/correctness/noSwitchDeclarations"
+    fix add_braces "Add {} brackets around the case block."
+no_case_declarations(x) :- case_stmt(_, x, _), block_declaration(x).
+
+// The suggestion braces the clause's statements, first to last.
+add_braces(x) :- case_stmt(c, x, _), case_stmt(c, f, 0), case_last(c, f) => replace(f, `{ $f }`).
+add_braces(x) :- case_stmt(c, x, _), case_stmt(c, f, 0), case_last(c, l), f != l
+    => replace(f, `{ $f`), replace(l, `$l }`).

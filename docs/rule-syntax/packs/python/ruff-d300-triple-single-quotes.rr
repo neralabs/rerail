@@ -1,0 +1,18 @@
+.policy "ruff-d300-triple-single-quotes" revision 2
+.description "Use triple double quotes for docstrings, or triple single quotes when the text itself contains triple double quotes."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D300 (pydocstyle): a docstring not written with triple double quotes, or, when its text contains `"""`,
+// not with `'''`. Single-quoted docstrings (`"doc"`) are reported too. Text with both `"""` and `'''` is left.
+//   '''Summary.'''           ← D300
+//   "Summary."               ← D300
+//   '''Says """ here.'''     not reported
+#include "python/docstrings.rr"
+
+.violation D300(at: node) code "D300"
+    "Rewrite this docstring with triple double quotes `\"\"\"`; if its text ends with a double quote, escape that quote or reword it."
+    suppress ruff "D300"
+D300(s) :- doc_checked(s), doc_body(s, b), !contains("\"\"\"", b), doc_opener(s, _, q), q != "\"\"\"".
+D300(s) :- doc_checked(s), doc_body(s, b), contains("\"\"\"", b), !contains("'''", b), doc_opener(s, _, q), q != "'''".

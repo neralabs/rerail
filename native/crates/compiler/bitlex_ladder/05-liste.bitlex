@@ -1,0 +1,25 @@
+# Step 5: a flat list in parentheses, `(vrai; nul)`, or one value.
+#
+# New: brackets, so the tree has a node with its own start and end tokens.
+
+lexer ladder05
+
+class ws    = ' ' '\t' '\n' '\r'
+class alpha = 'a'..'z'
+class op    = '(' ')' ';'
+mask code   = ~empty
+
+token word = start starts(alpha) last lasts(alpha)
+keywords word { "vrai" "fausse" "nul" } required
+token punctuation = start code & op
+keywords punctuation { "(" ")" ";" } required
+
+skip ws
+error "a byte no token takes" when ~ws & ~alpha & ~op
+
+tree ladder {
+  node document = valeur
+  choice valeur = liste | scalaire
+  node liste = '(' [scalaire (';' scalaire)*] ')'
+  choice scalaire = vrai | fausse | nul
+}

@@ -1,0 +1,249 @@
+// data-layer-serverplan-quality's relational clauses in Rerail logic, on the final shape's path.
+//
+// The policy below holds each clause's anchor: a forbid clause whose matcher finds the nodes a violation can
+// be reported at, with the clause's code and message. The rules give the violations; they replace the
+// one-line rule the policy's forbid clause would give. An `ast` atom that is no clause's matcher is a helper
+// of the wave. Rules read the base relations as bound: `core_node(d, t, n)` turns a matched tape node `t`
+// into the syntax node `n` that `node`, `text`, `child` and `field` key on.
+//
+// Source: the relational clauses of gate/data-layer/final-shape/data-layer-serverplan-quality.json
+// (the PIAT port of nera-data-layer serverplan_quality).
+
+.policy {"format": "rerail.policy/v1", "id": "data-layer-serverplan-quality-logic", "revision": 1, "mode": "block", "description": "serverplan_quality's relational clauses in Rerail logic: anchor clauses here, violations in the rules.", "scope": {"include": ["**/*.py"], "exclude": ["**/.git/**", "**/.venv/**", "**/venv/**", "**/tmp/**", "**/__pycache__/**"]}, "clauses": [{"id": "shared", "define": {"options": {"oracleAnalyzer": {"type": "boolean", "default": false}, "entryPoint": {"type": "string", "default": "all"}}, "language": "python"}}, {"id": "spq-vector-filter-constants", "forbid": {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$"}}, {"any": [{"all": [{"nthChild": {"position": 1, "ofRule": {"all": [{"not": {"kind": "comment"}}, {"not": {"kind": "keyword_argument"}}, {"not": {"kind": "list_splat"}}, {"not": {"kind": "dictionary_splat"}}]}}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}], "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:column)$"}], "stopBy": "neighbor", "field": "name"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}], "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor", "field": "value"}}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "QueryFilter"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_vector_scope_filters_use_expressions": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}}, "violation": {"code": "SPQ-042", "message": "Architecture contract violation", "anchor": "witness.span"}}, {"id": "spq-runtime-state-annotations", "forbid": {"ast": {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "assignment"}, {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}], "stopBy": "neighbor", "field": "left"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_serverplan_runtime_state_ingress": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}}, "violation": {"code": "SPQ-050", "message": "Architecture contract violation", "anchor": "witness.span"}}]}
+
+// ---- spq-vector-filter-constants (SPQ-042) ----
+// A QueryFilter column named by a module constant whose (latest) value is "branch_id" or "revision_id".
+// The SQL took the constant's last string assignment per name (max start); here a flagged assignment that
+// a later one to the same name supersedes does not count.
+
+// Module-level `NAME = "<string>"` in the file: the name's text and the assignment's start.
+.decl constant(d: number, s: symbol, b: number)
+constant(D, S, B) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$"}}, {"inside": {"all": [{"kind": "assignment"}, {"not": {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}}, {"has": {"all": [{"any": [{"all": [{"kind": "string"}, {"regex": "(?i)^[ru]*['\"]"}, {"not": {"inside": {"kind": "concatenated_string", "stopBy": "neighbor"}}}]}, {"all": [{"kind": "concatenated_string"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}, {"not": {"has": {"all": [{"kind": "string"}, {"regex": "(?i)^(?:fr|rf|f)['\"]"}], "stopBy": "end"}}}]}]}], "stopBy": "neighbor", "field": "right"}}, {"inside": {"all": [{"kind": "expression_statement"}, {"inside": {"kind": "module", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor", "field": "left"}}]}}), core_node(D, T, N), text(N, S), node(D, N, _, B, _).
+
+// Those whose value is a branch or revision id.
+.decl id_constant(d: number, s: symbol, b: number)
+id_constant(D, S, B) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$"}}, {"inside": {"all": [{"kind": "assignment"}, {"not": {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}}, {"has": {"all": [{"any": [{"all": [{"kind": "string"}, {"regex": "(?i)^[ru]*['\"]"}, {"not": {"inside": {"kind": "concatenated_string", "stopBy": "neighbor"}}}]}, {"all": [{"kind": "concatenated_string"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}, {"not": {"has": {"all": [{"kind": "string"}, {"regex": "(?i)^(?:fr|rf|f)['\"]"}], "stopBy": "end"}}}]}]}, {"regex": "^[rRuU]*['\"](?:branch_id|revision_id)['\"]$"}], "stopBy": "neighbor", "field": "right"}}, {"inside": {"all": [{"kind": "expression_statement"}, {"inside": {"kind": "module", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor", "field": "left"}}]}}), core_node(D, T, N), text(N, S), node(D, N, _, B, _).
+
+.decl superseded(d: number, s: symbol, b: number)
+superseded(D, S, B) :- id_constant(D, S, B), constant(D, S, C), C > B.
+
+violation("data-layer-serverplan-quality-logic", "spq-vector-filter-constants", D, T) :-
+    ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"filePath": {"regex": "^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$"}}, {"any": [{"all": [{"nthChild": {"position": 1, "ofRule": {"all": [{"not": {"kind": "comment"}}, {"not": {"kind": "keyword_argument"}}, {"not": {"kind": "list_splat"}}, {"not": {"kind": "dictionary_splat"}}]}}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}], "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "keyword_argument"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:column)$"}], "stopBy": "neighbor", "field": "name"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:QueryFilter)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}], "stopBy": "neighbor", "field": "arguments"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor", "field": "value"}}]}, {"inside": {"all": [{"kind": "module"}, {"regex": "QueryFilter"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_vector_scope_filters_use_expressions": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}),
+    core_node(D, T, N), text(N, S),
+    id_constant(D, S, B), !superseded(D, S, B).
+
+// ---- spq-runtime-state-annotations (SPQ-050) ----
+// An annotated assignment whose annotation names, as Python resolves the name, `Callable` or a runtime-state
+// type (a connection, cursor, transaction, executor, token service or store, hydrator, runtime bundle).
+// A name resolves through the imports of its scope chain: the annotation's scope, the functions around it,
+// then the module. An atom inside `Literal[...]`, or inside `Annotated[...]` with metadata, does not count
+// where the base resolves to typing's (trusted: not shadowed, one origin). `ConnectionId` from the data
+// layer's types is no runtime state.
+//
+// The SQL built each origin as a string (`module.name` + the atom's tail) and matched it with regexes. Here
+// an origin is its pieces, the identifiers of its module, imported name or dotted name, and the atom's
+// tail: it names Callable where a piece is `Callable`, a runtime-state type where a piece's text holds one
+// (no piece holds a dot, so no match spans two). Scopes are byte ranges: the nearest is the innermost.
+// Not covered yet: quoted annotations (their atoms, `parse` with the annotation grammar), and a member
+// atom's tail naming ConnectionId, Literal or Annotated through a module import other than typing's.
+
+// Scopes: functions (f 1) and classes; a scope is its start byte, the module -1.
+.decl def(d: number, x: number, s: number, e: number, f: number)
+def(D, X, S, E, 1) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, X), node(D, X, _, S, E).
+def(D, X, S, E, 0) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "class_definition"}, {"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, X), node(D, X, _, S, E).
+
+// The byte ranges whose scope the clause reads, and each one's scope.
+.decl ann(d: number, a: number, s: number, e: number)
+ann(D, A, S, E) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "assignment"}, {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}], "stopBy": "neighbor", "field": "left"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_serverplan_runtime_state_ingress": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}), core_node(D, T, A), node(D, A, _, S, E).
+.decl from_stmt(d: number, st: number, s: number, e: number)
+from_stmt(D, St, S, E) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "import_from_statement"}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, St), node(D, St, _, S, E).
+.decl import_stmt(d: number, st: number, s: number, e: number)
+import_stmt(D, St, S, E) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "import_statement"}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, St), node(D, St, _, S, E).
+.decl binder(d: number, n: number, s: number, e: number, h: symbol)
+binder(D, N, S, E, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"not": {"inside": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}, {"kind": "keyword_argument"}], "stopBy": "neighbor", "field": "name"}}}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor", "field": "attribute"}}}, {"any": [{"inside": {"kind": "assignment", "stopBy": "end", "field": "left"}}, {"inside": {"kind": "augmented_assignment", "stopBy": "end", "field": "left"}}, {"inside": {"kind": "for_statement", "stopBy": "end", "field": "left"}}, {"inside": {"kind": "for_in_clause", "stopBy": "end", "field": "left"}}, {"inside": {"kind": "named_expression", "stopBy": "end", "field": "name"}}, {"inside": {"kind": "delete_statement", "stopBy": "end"}}]}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E), text(N, H).
+.decl param(d: number, n: number, s: number, e: number, h: symbol)
+param(D, N, S, E, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"inside": {"all": [{"kind": "parameters"}, {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$FN"}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E), text(N, H).
+param(D, N, S, E, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"nthChild": 1}, {"inside": {"all": [{"any": [{"kind": "typed_parameter"}, {"kind": "default_parameter"}, {"kind": "typed_default_parameter"}]}, {"inside": {"all": [{"kind": "parameters"}, {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$FN"}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E), text(N, H).
+
+.decl spot(d: number, s: number, e: number)
+spot(D, S, E) :- ann(D, _, S, E).
+spot(D, S, E) :- from_stmt(D, _, S, E).
+spot(D, S, E) :- import_stmt(D, _, S, E).
+spot(D, S, E) :- binder(D, _, S, E, _).
+spot(D, S, E) :- param(D, _, S, E, _).
+spot(D, S, E) :- def(D, _, S, E, _).
+.decl around(d: number, s: number, e: number, x: number)
+around(D, S, E, X) :- spot(D, S, E), def(D, _, X, XE, _), X < S, XE >= E.
+.decl outer(d: number, s: number, e: number, x: number)
+outer(D, S, E, X) :- around(D, S, E, X), around(D, S, E, Y), Y > X.
+.decl enclosed(d: number, s: number, e: number)
+enclosed(D, S, E) :- around(D, S, E, _).
+.decl scope_at(d: number, s: number, e: number, x: number)
+scope_at(D, S, E, X) :- around(D, S, E, X), !outer(D, S, E, X).
+scope_at(D, S, E, -1) :- spot(D, S, E), !enclosed(D, S, E).
+
+// An annotation's scope, and the scopes its names are looked up in: its own, the functions around it
+// (a class's scope is not seen from inside its methods), the module.
+.decl ann_scope(d: number, a: number, x: number)
+ann_scope(D, A, X) :- ann(D, A, S, E), scope_at(D, S, E, X).
+.decl chain(d: number, x: number, y: number)
+chain(D, X, X) :- ann_scope(D, _, X).
+chain(D, X, -1) :- ann_scope(D, _, X).
+chain(D, X, F) :- ann_scope(D, _, X), def(D, _, X, XE, _), def(D, _, F, FE, 1), F < X, FE >= XE.
+
+// Names bound in a scope other than by an import: assignments and the like, parameters, definitions,
+// `global` (at the module).
+.decl shadow(d: number, x: number, h: symbol)
+shadow(D, X, H) :- binder(D, _, S, E, H), scope_at(D, S, E, X).
+shadow(D, X, H) :- param(D, _, S, E, H), scope_at(D, S, E, X).
+// (A definition's name is a relation of its own: in one rule with scope_at, the planner scanned every
+// first child in the chunk and joined scope_at to each.)
+.decl def_name(d: number, s: number, e: number, h: symbol)
+def_name(D, S, E, H) :- def(D, N, S, E, _), child(N, I, 0), text(I, H).
+shadow(D, X, H) :- def_name(D, S, E, H), scope_at(D, S, E, X).
+shadow(D, -1, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"inside": {"kind": "global_statement", "stopBy": "neighbor"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), text(N, H).
+// `nonlocal` binds the name in each function around the statement.
+shadow(D, F, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}, {"inside": {"kind": "nonlocal_statement", "stopBy": "neighbor"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), text(N, H), node(D, N, _, S, E), def(D, _, F, FE, 1), F < S, FE >= E.
+
+// Imports: each binding identifier, its statement and name; the byte ranges of its origin's pieces.
+.decl aliased(d: number, n: number)
+aliased(D, N) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "aliased_import"}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N).
+.decl bind(d: number, b: number, st: number, h: symbol)
+.decl origin_in(d: number, b: number, s: number, e: number)
+.decl imported(d: number, b: number, h: symbol)
+.decl direct(d: number, b: number)
+// from m import name
+bind(D, B, St, H) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, !aliased(D, En), child(En, B, 0), text(B, H).
+imported(D, B, H) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, !aliased(D, En), child(En, B, 0), text(B, H).
+origin_in(D, B, S, E) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, !aliased(D, En), child(En, B, 0), node(D, En, _, S, E).
+// from m import name as alias
+bind(D, B, St, H) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, aliased(D, En), child(En, B, 1), text(B, H).
+imported(D, B, H) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, aliased(D, En), child(En, B, 1), child(En, Dn, 0), child(Dn, J, 0), text(J, H).
+origin_in(D, B, S, E) :- from_stmt(D, St, _, _), child(St, En, I), I > 0, aliased(D, En), child(En, B, 1), child(En, Dn, 0), node(D, Dn, _, S, E).
+// ... and the module
+origin_in(D, B, S, E) :- bind(D, B, St, _), from_stmt(D, St, _, _), child(St, M, 0), node(D, M, _, S, E).
+// import a.b (binds a, whose origin is a)
+bind(D, B, St, H) :- import_stmt(D, St, _, _), child(St, En, _), !aliased(D, En), child(En, B, 0), text(B, H).
+direct(D, B) :- import_stmt(D, St, _, _), child(St, En, _), !aliased(D, En), child(En, B, 0).
+origin_in(D, B, S, E) :- direct(D, B), node(D, B, _, S, E).
+// import a.b as alias (origin a.b)
+bind(D, B, St, H) :- import_stmt(D, St, _, _), child(St, En, _), aliased(D, En), child(En, B, 1), text(B, H).
+origin_in(D, B, S, E) :- import_stmt(D, St, _, _), child(St, En, _), aliased(D, En), child(En, B, 1), child(En, Dn, 0), node(D, Dn, _, S, E).
+
+.decl stmt_scope(d: number, st: number, x: number)
+stmt_scope(D, St, X) :- from_stmt(D, St, S, E), scope_at(D, S, E, X).
+stmt_scope(D, St, X) :- import_stmt(D, St, S, E), scope_at(D, S, E, X).
+
+// An origin's module, where it is one or two identifiers.
+.decl long(m: number, i: number)
+long(M, I) :- child(M, _, I).
+.decl module1(d: number, b: number, m: symbol)
+module1(D, B, Mt) :- bind(D, B, St, _), from_stmt(D, St, _, _), child(St, M, 0), child(M, J, 0), text(J, Mt), !long(M, 1).
+.decl module2(d: number, b: number, m: symbol, n: symbol)
+module2(D, B, M1, M2) :- bind(D, B, St, _), from_stmt(D, St, _, _), child(St, M, 0), child(M, J, 0), text(J, M1), child(M, K, 1), text(K, M2), !long(M, 2).
+
+// The pieces that name Callable or a runtime-state type.
+.decl callable_piece(d: number, s: number, e: number)
+callable_piece(D, S, E) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"regex": "^Callable$"}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E).
+.decl service_piece(d: number, s: number, e: number)
+service_piece(D, S, E) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"regex": "AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E).
+.decl bind_callable(d: number, b: number)
+bind_callable(D, B) :- origin_in(D, B, S, E), callable_piece(D, PS, PE), PS >= S, PE <= E.
+.decl bind_service(d: number, b: number)
+bind_service(D, B) :- origin_in(D, B, S, E), service_piece(D, PS, PE), PS >= S, PE <= E.
+
+// Origins named exactly: typing's Literal and Annotated, the data layer's ConnectionId.
+.decl literal_origin(d: number, b: number)
+literal_origin(D, B) :- imported(D, B, "Literal"), module1(D, B, "typing").
+literal_origin(D, B) :- imported(D, B, "Literal"), module1(D, B, "typing_extensions").
+.decl annotated_origin(d: number, b: number)
+annotated_origin(D, B) :- imported(D, B, "Annotated"), module1(D, B, "typing").
+annotated_origin(D, B) :- imported(D, B, "Annotated"), module1(D, B, "typing_extensions").
+.decl typing_module(d: number, b: number)
+typing_module(D, B) :- direct(D, B), text(B, "typing").
+typing_module(D, B) :- direct(D, B), text(B, "typing_extensions").
+// The data layer's types modules, and a binding whose origin is one: `import m` (a two-identifier module
+// binds its first) or `import m as alias`.
+.decl types_module(m: symbol)
+types_module("l1350_foundational_types").
+types_module("l1400_types").
+.decl connection_id(d: number, b: number)
+connection_id(D, B) :- imported(D, B, "ConnectionId"), module2(D, B, "data_layer", "types").
+connection_id(D, B) :- imported(D, B, "ConnectionId"), module1(D, B, M), types_module(M).
+.decl alias_origin1(d: number, b: number, m: symbol)
+alias_origin1(D, B, M) :- import_stmt(D, St, _, _), child(St, En, _), aliased(D, En), child(En, B, 1), child(En, Dn, 0), child(Dn, J, 0), text(J, M), !long(Dn, 1).
+.decl alias_origin2(d: number, b: number, m: symbol, n: symbol)
+alias_origin2(D, B, M1, M2) :- import_stmt(D, St, _, _), child(St, En, _), aliased(D, En), child(En, B, 1), child(En, Dn, 0), child(Dn, J, 0), text(J, M1), child(Dn, K, 1), text(K, M2), !long(Dn, 2).
+
+// An annotation's atoms: the atom's node, its head name, and whether it is a member (m 1).
+.decl head(d: number, s: number, h: symbol)
+head(D, S, H) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"inside": {"kind": "attribute", "stopBy": "neighbor", "field": "object"}}, {"inside": {"kind": "assignment", "stopBy": "end", "field": "type"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, _), text(N, H).
+.decl atom(d: number, a: number, n: number, h: symbol, m: number)
+atom(D, A, N, H, 0) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "identifier"}, {"pattern": "$ATOM"}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor"}}}, {"inside": {"all": [{"kind": "assignment"}, {"pattern": "$ANN"}], "stopBy": "end", "field": "type"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), text(N, H), node(D, N, _, S, E), ann(D, A, AS, AE), S >= AS, E <= AE.
+atom(D, A, N, H, 1) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "attribute"}, {"not": {"inside": {"kind": "attribute", "stopBy": "neighbor"}}}, {"regex": "^[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*$"}, {"inside": {"kind": "assignment", "stopBy": "end", "field": "type"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, N), node(D, N, _, S, E), head(D, S, H), ann(D, A, AS, AE), S >= AS, E <= AE.
+// A member atom's tail (after its head) names Callable or a runtime-state type; any atom's text does.
+.decl tail_callable(d: number, n: number)
+tail_callable(D, N) :- atom(D, _, N, _, 1), node(D, N, _, S, E), callable_piece(D, PS, PE), PS > S, PE <= E.
+.decl tail_service(d: number, n: number)
+tail_service(D, N) :- atom(D, _, N, _, 1), node(D, N, _, S, E), service_piece(D, PS, PE), PS > S, PE <= E.
+.decl text_callable(d: number, n: number)
+text_callable(D, N) :- atom(D, _, N, _, _), node(D, N, _, S, E), callable_piece(D, PS, PE), PS >= S, PE <= E.
+.decl text_service(d: number, n: number)
+text_service(D, N) :- atom(D, _, N, _, _), node(D, N, _, S, E), service_piece(D, PS, PE), PS >= S, PE <= E.
+
+// Resolution: the imports of the atom's head in the nearest scope of the chain that has one.
+.decl visible(d: number, a: number, n: number, x: number, b: number)
+visible(D, A, N, X, B) :- atom(D, A, N, H, _), ann_scope(D, A, Y), chain(D, Y, X), bind(D, B, St, H), stmt_scope(D, St, X).
+.decl nearer(d: number, a: number, n: number, x: number)
+nearer(D, A, N, X) :- visible(D, A, N, X, _), visible(D, A, N, Z, _), Z > X.
+.decl resolved(d: number, a: number, n: number, x: number, b: number)
+resolved(D, A, N, X, B) :- visible(D, A, N, X, B), !nearer(D, A, N, X).
+.decl bound(d: number, a: number, n: number)
+bound(D, A, N) :- resolved(D, A, N, _, _).
+// Trusted: no other binding of the head in the chain between the annotation and the import, and one import.
+.decl shadowed(d: number, a: number, n: number)
+shadowed(D, A, N) :- resolved(D, A, N, X, _), atom(D, A, N, H, _), ann_scope(D, A, Y), chain(D, Y, Z), Z >= X, shadow(D, Z, H).
+.decl ambiguous(d: number, a: number, n: number)
+ambiguous(D, A, N) :- resolved(D, A, N, _, B), resolved(D, A, N, _, C), B != C.
+.decl trusted(d: number, a: number, n: number, b: number)
+trusted(D, A, N, B) :- resolved(D, A, N, _, B), !shadowed(D, A, N), !ambiguous(D, A, N).
+
+// What an atom names.
+.decl names_callable(d: number, a: number, n: number)
+names_callable(D, A, N) :- resolved(D, A, N, _, B), bind_callable(D, B).
+names_callable(D, A, N) :- resolved(D, A, N, _, _), tail_callable(D, N).
+names_callable(D, A, N) :- atom(D, A, N, _, _), !bound(D, A, N), text_callable(D, N).
+// ConnectionId from the data layer's types: imported by name, or a member of the module.
+.decl exempt(d: number, a: number, n: number)
+exempt(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 0), connection_id(D, B).
+// m.ConnectionId: `import m` or `import m as alias`
+exempt(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, M, 1), direct(D, B), types_module(M), child(N, O, 0), text(O, _), child(N, L, 1), text(L, "ConnectionId").
+exempt(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 1), alias_origin1(D, B, M), types_module(M), child(N, O, 0), text(O, _), child(N, L, 1), text(L, "ConnectionId").
+// data_layer.types.ConnectionId: `import data_layer.types`, or `import data_layer.types as alias` and alias.ConnectionId
+exempt(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, "data_layer", 1), direct(D, B), child(N, O, 0), child(O, I, 0), text(I, "data_layer"), child(O, J, 1), text(J, "types"), child(N, L, 1), text(L, "ConnectionId").
+exempt(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 1), alias_origin2(D, B, "data_layer", "types"), child(N, O, 0), text(O, _), child(N, L, 1), text(L, "ConnectionId").
+.decl names_service(d: number, a: number, n: number)
+names_service(D, A, N) :- resolved(D, A, N, _, B), bind_service(D, B), !exempt(D, A, N).
+names_service(D, A, N) :- resolved(D, A, N, _, _), tail_service(D, N), !exempt(D, A, N).
+names_service(D, A, N) :- atom(D, A, N, _, _), !bound(D, A, N), text_service(D, N).
+
+// Literal[...]'s arguments and Annotated[...]'s metadata (its arguments after the first), where the base
+// is typing's: atoms inside do not count.
+.decl literal_base(d: number, a: number, n: number)
+literal_base(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 0), literal_origin(D, B).
+literal_base(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 1), typing_module(D, B), child(N, L, 1), text(L, "Literal").
+.decl annotated_base(d: number, a: number, n: number)
+annotated_base(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 0), annotated_origin(D, B).
+annotated_base(D, A, N) :- trusted(D, A, N, B), atom(D, A, N, _, 1), typing_module(D, B), child(N, L, 1), text(L, "Annotated").
+.decl generic(d: number, g: number)
+generic(D, G) :- ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "generic_type"}, {"inside": {"kind": "assignment", "stopBy": "end", "field": "type"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}}), core_node(D, T, G).
+.decl inert(d: number, a: number, s: number, e: number)
+inert(D, A, S, E) :- generic(D, G), child(G, N, 0), literal_base(D, A, N), child(G, P, 1), child(P, R, _), node(D, R, _, S, E).
+inert(D, A, S, E) :- generic(D, G), child(G, N, 0), annotated_base(D, A, N), child(G, P, 1), child(P, R, I), I > 0, node(D, R, _, S, E).
+.decl ignored(d: number, a: number, n: number)
+ignored(D, A, N) :- atom(D, A, N, _, _), node(D, N, _, S, E), inert(D, A, IS, IE), S >= IS, E <= IE.
+
+violation("data-layer-serverplan-quality-logic", "spq-runtime-state-annotations", D, T) :-
+    ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "assignment"}, {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}], "stopBy": "neighbor", "field": "left"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_serverplan_runtime_state_ingress": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}), core_node(D, T, A), names_callable(D, A, N), !ignored(D, A, N).
+violation("data-layer-serverplan-quality-logic", "spq-runtime-state-annotations", D, T) :-
+    ast(D, T, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "assignment"}, {"has": {"pattern": "$_", "stopBy": "neighbor", "field": "type"}}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$NAME"}], "stopBy": "neighbor", "field": "left"}}, {"filePath": {"notRegex": "(?:^|/)tests(?:/|$)"}}, {"inside": {"all": [{"kind": "module"}, {"regex": "Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction"}], "stopBy": "end"}}]}, "file": {"$option": "entryPoint", "cases": {"_check_serverplan_runtime_state_ingress": {"path": {"regex": "(?s).*"}}, "_check_serverplan_quality_source": {"path": {"regex": "(?s).*"}}, "all": {"$option": "oracleAnalyzer", "cases": {"true": {"path": {"regex": "(?s).*"}}, "false": {"path": {"regex": "^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$)", "notRegex": "(?:^|/)__init__\\.py$"}}}}}, "default": {"path": {"regex": "\\b\\B"}}}}), core_node(D, T, A), names_service(D, A, N), !ignored(D, A, N).

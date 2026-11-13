@@ -1,0 +1,32 @@
+{
+  "base": "85098ee3",
+  "binary": "/tmp/rerail-data-layer-target/release/deps/rerail_engine-910f4dc49f69b5fb",
+  "binary_sha256": "428f8329ccf03a62bd02a67d8dbfbc76f8f0d1c762ccaca73c88c78ae84dc296",
+  "build": {
+    "opt_level": 3,
+    "local_codegen_units": 16,
+    "lto": false,
+    "dependencies": "release",
+    "sqlite_flags": "-DSQLITE_DEFAULT_MEMSTATUS=0 -USQLITE_ENABLE_MEMORY_MANAGEMENT"
+  },
+  "source_sha256": {
+    "native/src/code_rule_dsl/query/plan.rs": "8469e457f74ef7d388a3798a4a81eb6da97bab95348ad9d0f9ab906d2ca6bcc1",
+    "native/src/code_rule_dsl/query/plan/contract.rs": "a846c968e721cf00f1fe1722a8f9d0d5238648076110da715a3eeb09be9b90cf",
+    "native/src/code_rule_dsl/query/plan/relation.rs": "b29f76024cb17495ce7aa61dd60478296bb89aa9e5246bdad0d314ff2876fe1e",
+    "native/src/code_rule_dsl/query/plan/python_structure.rs": "e9b25334cf04321f03f1f1bf80610f1d820dc04cb87ddabf7c5af07c3fcb01af",
+    "native/src/code_rule_dsl/query/plan/async_reference.rs": "611b912ff5b9f21029508b1dcd2dfd10cce00c637e802ce53cddd8c5722ef2d8",
+    "native/src/code_rule_dsl/query/plan/async_reference/tests.rs": "a469f0e85ea17a93d71b4708483b173ece18bb986289944c87bd18b71e72a59a",
+    "native/src/code_rule_dsl/matcher/python_facts.rs": "2cd7d093a5d7b6a3cb443645ea969b88d4be99c69d4925f94c4cc686e99548a2",
+    "Cargo.lock": "8de501573f8d98e67b22947e317a642a00ab745a58b6698773b5973cd6759c22",
+    "native/src/code_rule_dsl/query/plan/call_batch.rs": "43f1570b5d90dbeaa964738302bcbd47a4e88a2439e3466d834701416c411494",
+    "native/src/code_rule_dsl/query/plan/async_reference/native_oracle.rs": "2b35ee1eede870f00495b58272f1f0fee8ccf7b571f2c3979c4e167672234fc5"
+  },
+  "corpus_commit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.8\n",
+  "parent_commit": "9214ea94d4f3a566ec6cd168b16a944ea149196e",
+  "artifacts": [
+    "reference-v2-500.json",
+    "reference-v2-full.json"
+  ],
+  "qualification": "Complete four-rule async family only; zero corpus findings; positive fixtures separately. Indexed native first selection and cached matching reported separately."
+}

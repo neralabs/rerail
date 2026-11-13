@@ -1,0 +1,255 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-lazy-sql-surface",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer lazy_sql_surface at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "entry",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "scan_repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "sql-surface",
+      "relational": {
+        "inputs": {
+          "syntax_gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "functions",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='function_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT \"__path\",NULL AS \"__start\",NULL AS \"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",\"name\" FROM (SELECT n.*,n.name_source AS name FROM nodes n WHERE n.kind='class_definition')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "attributes",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",\"attr\",\"object\",NULL AS \"object_text\" FROM (SELECT n.*,n.attribute_source AS attr,n.object_id AS object,n.object_source AS object_text FROM nodes n WHERE n.kind='attribute')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",NULL AS \"parent\",NULL AS \"edge_parent\",NULL AS \"kind\",NULL AS \"line\",NULL AS \"text\",NULL AS \"ordinal\",NULL AS \"parent_start\",NULL AS \"parent_end\",NULL AS \"parent_kind\",NULL AS \"ancestor_start\",NULL AS \"ancestor_end\",NULL AS \"ancestor_kind\",NULL AS \"name_id\",NULL AS \"name_source\",NULL AS \"function_id\",NULL AS \"function_start\",NULL AS \"function_end\",NULL AS \"function_kind\",NULL AS \"object_id\",NULL AS \"object_start\",NULL AS \"object_end\",NULL AS \"object_kind\",NULL AS \"object_source\",NULL AS \"attribute_id\",NULL AS \"attribute_source\",NULL AS \"callee_id\",\"callee_kind\",NULL AS \"full_callee\",\"callee\",\"receiver\" FROM (SELECT n.*,f.id AS callee_id,f.kind AS callee_kind,f.text AS full_callee,coalesce(a.attr,f.text) AS callee,a.object AS receiver FROM nodes n JOIN nodes f ON f.__path=n.__path AND f.id=n.function_id LEFT JOIN attributes a ON a.__path=f.__path AND a.id=f.id WHERE n.kind='call')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ]
+            ]
+          },
+          {
+            "name": "terminal_names",
+            "query": "SELECT \"__path\",\"root\",\"name\" FROM (WITH RECURSIVE head(__path,root,node) AS (\n        SELECT __path,id,id FROM nodes WHERE kind IN ('call','attribute','identifier','as_pattern','parenthesized_expression')\n        UNION ALL SELECT h.__path,h.root,c.id FROM head h JOIN nodes n ON n.__path=h.__path AND n.id=h.node JOIN nodes c ON c.__path=n.__path AND c.parent=n.id AND c.ordinal=0 WHERE n.kind IN ('as_pattern','parenthesized_expression')\n        UNION ALL SELECT h.__path,h.root,n.function_id FROM head h JOIN nodes n ON n.__path=h.__path AND n.id=h.node WHERE n.kind='call')\n        SELECT h.__path,h.root,coalesce(a.attr,n.text) name FROM head h JOIN nodes n ON n.__path=h.__path AND n.id=h.node LEFT JOIN attributes a ON a.__path=n.__path AND a.id=n.id WHERE n.kind IN ('attribute','identifier'))",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "authority_regions",
+            "query": "SELECT \"__path\",NULL AS \"id\",\"__start\",\"__end\" FROM (SELECT w.__path,w.id,w.__start,w.__end FROM nodes w WHERE w.kind='with_statement' AND EXISTS(SELECT 1 FROM nodes clause JOIN nodes item ON item.__path=clause.__path AND item.parent=clause.id JOIN nodes value ON value.__path=item.__path AND value.parent=item.id JOIN terminal_names t ON t.__path=value.__path AND t.root=value.id WHERE clause.__path=w.__path AND clause.parent=w.id AND clause.kind='with_clause' AND item.kind='with_item' AND t.name='explicit_execution_authority' AND NOT EXISTS(SELECT 1 FROM nodes attr WHERE attr.__path=value.__path AND attr.kind='attribute' AND attr.__start>=value.__start AND attr.__end<=value.__end)))",
+            "indexes": [
+              [
+                "__path",
+                "__start",
+                "__end"
+              ]
+            ]
+          },
+          {
+            "name": "peeled",
+            "query": "SELECT \"__path\",\"root\",\"id\",\"kind\",\"text\" FROM (WITH RECURSIVE peel(__path,root,id) AS (SELECT __path,id,id FROM nodes UNION ALL SELECT p.__path,p.root,c.id FROM peel p JOIN nodes n ON n.__path=p.__path AND n.id=p.id JOIN nodes c ON c.__path=n.__path AND c.parent=n.id AND c.kind!='comment' WHERE n.kind IN ('type','type_parameter','parenthesized_expression') AND (SELECT count(*) FROM nodes s WHERE s.__path=n.__path AND s.parent=n.id AND s.kind!='comment')=1) SELECT p.__path,p.root,p.id,n.kind,n.text FROM peel p JOIN nodes n ON n.__path=p.__path AND n.id=p.id WHERE n.kind NOT IN ('type','type_parameter','parenthesized_expression'))",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "subscripts",
+            "query": "SELECT \"__path\",\"id\",\"__start\",\"__end\",\"name\",\"argument\",\"argument_kind\",\"argument_text\" FROM (SELECT g.__path,g.id,g.__start,g.__end,h.text name,p.id argument,p.kind argument_kind,p.text argument_text FROM nodes g JOIN nodes head ON head.__path=g.__path AND head.parent=g.id AND head.ordinal=0 JOIN peeled h ON h.__path=head.__path AND h.root=head.id JOIN nodes sub ON sub.__path=g.__path AND sub.parent=g.id AND sub.ordinal=1 JOIN peeled p ON p.__path=sub.__path AND p.root=sub.id WHERE g.kind IN ('generic_type','subscript') AND h.kind='identifier' AND (SELECT count(*) FROM nodes sibling WHERE sibling.__path=g.__path AND sibling.parent=g.id AND sibling.kind!='comment')=2)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "bad_annotations",
+            "query": "SELECT \"__path\",\"id\",\"rendered\" FROM (SELECT __path,id,text rendered FROM nodes WHERE kind='identifier' AND text IN ('object','DatabaseRow') OR kind='none'\n       UNION SELECT __path,id,'list[DatabaseRow]' FROM subscripts WHERE name='list' AND argument_kind='identifier' AND argument_text='DatabaseRow'\n       UNION SELECT n.__path,n.id,'DatabaseRow | None' FROM nodes n JOIN nodes l ON l.__path=n.__path AND l.parent=n.id AND l.ordinal=0 JOIN peeled lp ON lp.__path=l.__path AND lp.root=l.id JOIN nodes r ON r.__path=n.__path AND r.parent=n.id AND r.ordinal=1 JOIN peeled rp ON rp.__path=r.__path AND rp.root=r.id WHERE n.kind IN ('union_type','binary_operator') AND lp.kind='identifier' AND lp.text='DatabaseRow' AND rp.kind='none' AND rx_matches(substr(n.text,l.__end-n.__start+1,r.__start-l.__end),'\\|'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "diagnostics",
+            "query": "SELECT \"__path\",\"__start\",\"__end\",\"id\",\"message\" FROM (SELECT c.__path,c.__start,c.__end,c.id,'connection grammar lazy terminal call: '||c.callee message FROM calls c WHERE c.callee_kind='attribute' AND c.callee IN ('_grammar_effect_lazy','_grammar_row_lazy','_grammar_rows_lazy','_grammar_value_lazy') UNION ALL SELECT c.__path,c.__start,c.__end,c.id,'ServerPlan '||c.callee||'() outside execution boundary' FROM calls c JOIN terminal_names r ON r.__path=c.__path AND r.root=c.receiver WHERE c.callee_kind='attribute' AND c.callee IN ('execute','execute_async') AND (trim(lower(r.name),'_') IN ('plan','plan_executor') OR trim(lower(r.name),'_') GLOB '*plan') AND c.__path NOT IN ('impl/common/l2070_server_plan/base_server_plan.py','impl/common/l2070_server_plan/plan_helpers.py','impl/common/l5150_fts_polyfill/searcher/sql_helpers.py','impl/common/l5200_sql_query/_read_ops.py','impl/common/l5200_sql_query/_write_ops.py','impl/doltdb/query.py','l2050_transaction/legacy_wrappers.py','l2050_transaction/single_intent_execution.py','l2070_batching/plan_flush_operation.py','l7000_versioned_schema/versioned_connection.py','l7800_versioned_merge/merge.py','l9750_graphql/executor.py','l9900_auto_api/sparql_router.py') AND NOT EXISTS(SELECT 1 FROM authority_regions a WHERE a.__path=c.__path AND a.__start<=c.__start AND a.__end>=c.__end) UNION ALL SELECT a.__path,a.__start,a.__end,a.id,'step compile() reads ctx.'||a.attr FROM attributes a JOIN nodes object ON object.__path=a.__path AND object.id=a.object JOIN ownership o ON o.__path=a.__path AND o.id=a.id JOIN functions f ON f.__path=o.__path AND f.id=o.fn WHERE object.kind='identifier' AND object.text='ctx' AND f.name='compile' AND a.attr IN ('branch_id','materialized_pipeline','sql_connection','txn') UNION ALL SELECT f.__path,f.__start,f.__end,f.id,'SyncSqlConnection defines forbidden grammar terminal: '||f.name FROM functions f JOIN ownership o ON o.__path=f.__path AND o.id=f.id JOIN classes c ON c.__path=o.__path AND c.id=o.cls WHERE c.name='SyncSqlConnection' AND f.name IN ('_grammar_effect_lazy','_grammar_row_lazy','_grammar_rows_lazy','_grammar_value_lazy') UNION ALL SELECT s.__path,s.__start,s.__end,s.id,'untyped LazyResult['||a.rendered||']' FROM subscripts s JOIN bad_annotations a ON a.__path=s.__path AND a.id=s.argument WHERE s.name='LazyResult' AND rx_matches(s.__path,'^(?:impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/)'))"
+          }
+        ],
+        "query": "SELECT __path path,__start start_byte,__end end_byte,message issue,id identity,message FROM diagnostics d WHERE EXISTS(SELECT 1 FROM nodes n WHERE n.__path=d.__path AND n.kind='module' AND rx_matches(n.text,'LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|legacy_sync')) AND NOT rx_matches(__path,'(?:^|/)(?:tests|conform)(?:/|$)')",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "partitionBy": "file",
+        "syntax": {
+          "columns": [
+            "__path",
+            "__start",
+            "__end",
+            "id",
+            "parent",
+            "edge_parent",
+            "ordinal",
+            "text",
+            "kind",
+            "line",
+            "parent_start",
+            "parent_end",
+            "parent_kind",
+            "ancestor_start",
+            "ancestor_end",
+            "ancestor_kind",
+            "name_source",
+            "function_start",
+            "function_end",
+            "function_kind",
+            "object_start",
+            "object_end",
+            "object_kind",
+            "object_source",
+            "attribute_source",
+            "name_id",
+            "function_id",
+            "object_id",
+            "attribute_id"
+          ],
+          "name": "nodes",
+          "gate": "syntax_gate",
+          "fields": [
+            "name",
+            "function",
+            "object",
+            "attribute"
+          ],
+          "excludeKinds": [
+            "comment",
+            "string_start",
+            "string_content",
+            "string_end",
+            "escape_sequence",
+            "line_continuation"
+          ],
+          "edges": "edges",
+          "ownership": "ownership",
+          "owners": {
+            "fn": {
+              "kind": "function_definition"
+            },
+            "cls": {
+              "kind": "class_definition"
+            },
+            "top_fn": {
+              "kind": "function_definition",
+              "outermost": true
+            }
+          }
+        },
+        "requireNonemptyInput": "syntax_gate",
+        "message": "message"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

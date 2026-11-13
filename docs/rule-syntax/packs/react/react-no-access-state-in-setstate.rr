@@ -1,0 +1,84 @@
+.policy "react-no-access-state-in-setstate" revision 2
+.description "Compute class component state updates from the updater callback's previous-state argument instead of this.state; setState batches updates, so this.state may be stale."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-access-state-in-setstate: in a class component or createReactClass spec, a read of this.state that
+// reaches the first argument of this.setState(…):
+//   this.setState({ value: this.state.value + 1 });                        directly
+//   const next = this.state.value + 1; this.setState({ value: next });     through a variable in the same scope
+//   const { state } = this; this.setState({ value: state.value + 1 });     through `state` destructured from this
+//   getNext() { return this.state.value; }  …  this.setState(getNext());    through a method, called by bare name
+// The plugin walks the file once, in order, so a variable or method counts only once its this.state read has
+// been seen; and only a bare call `getNext()` is matched to a method, `this.getNext()` is not.
+//   this.setState(s => ({ value: s.value + 1 }));                           not reported
+#include "tsx/react-class.rr"
+//   comp_owner(n, k)  n is in class component or spec k;  this_call(c, x, f): c calls this.x(…)
+
+.violation direct(at: node)
+    code "react/no-access-state-in-setstate"
+    "Pass setState an updater function and read the previous state from its argument instead of this.state."
+    suppress eslint "react/no-access-state-in-setstate"
+.violation variable(at: node, decl: symbol)
+    code "react/no-access-state-in-setstate"
+    "This this.state read reaches setState through {decl}; pass setState an updater function and read the previous state from its argument."
+    suppress eslint "react/no-access-state-in-setstate"
+.violation destructured_state(at: node)
+    code "react/no-access-state-in-setstate"
+    "The state destructured from this here reaches setState; pass setState an updater function and read the previous state from its argument."
+    suppress eslint "react/no-access-state-in-setstate"
+.violation method_call(at: node, callee: symbol)
+    code "react/no-access-state-in-setstate"
+    "This this.state read reaches a setState call through {callee}(); pass setState an updater function and read the previous state from its argument."
+    suppress eslint "react/no-access-state-in-setstate"
+
+// read(m, s): this.state m in a component, and s the first of these above it: a setState call whose first argument
+// holds m, a method, a function keyed by a property or field, or a variable declarator.
+.decl read(m: node, s: node)
+read(m, s) :- state_read(m), comp_owner(m, _), docof(m, d), react_doc(d),
+    k = max j : { stop(m, t), ast_depth(t, j) }, stop(m, s), ast_depth(s, k).
+.decl stop(m: node, s: node)
+stop(m, c) :- state_read(m), this_call(c, "setState", _), in_first_arg(m, c).
+stop(m, f) :- state_read(m), inside(m, f, "method_definition").
+stop(m, f) :- state_read(m), inside(m, f, "function_expression"), estree_parent(f, p), kind(p, k), keyed_kind(k).
+stop(m, v) :- state_read(m), inside(m, v, "variable_declarator").
+.decl in_first_arg(n: node, c: node)  // n is c's first argument or inside it
+in_first_arg(n, c) :- call_arg(c, a, 0), (n = a ; within(n, a)), this_call(c, "setState", _).
+
+direct(m) :- read(m, c), kind(c, "call_expression").
+// Through a variable: `next` read as an object (next.x) or a property value ({ value: next }), maybe inside
+// a binary expression, in a setState's first argument, in the scope the read was in.
+variable(m, x) :- read(m, v), kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), text(n, x),
+    use_in_set_state(u, x), same_scope(m, u), earlier(m, u).
+destructured_state(k) :- kind(o, "object_pattern"), estree_parent(o, v), kind(v, "variable_declarator"),
+    field(v, "value", t), kind(t, "this"), comp_owner(o, _), child(o, p, _), state_key(p, k), docof(o, d), react_doc(d),
+    use_in_set_state(u, "state"), same_scope(o, u), earlier(o, u).
+.decl state_key(p: node, k: node)  // { state }, { state: s }, { state = x }: the key named state
+state_key(p, p) :- kind(p, "shorthand_property_identifier_pattern"), text(p, "state").
+state_key(p, k) :- kind(p, "pair_pattern"), field(p, "key", k), estree_name(k, "state").
+state_key(p, l) :- kind(p, "object_assignment_pattern"), field(p, "left", l), text(l, "state").
+.decl use_in_set_state(u: node, x: symbol)
+use_in_set_state(u, x) :- used_as_value(u, x), this_call(c, "setState", _), in_first_arg(u, c).
+.decl used_as_value(u: node, x: symbol)
+used_as_value(u, x) :- kind(u, "identifier"), text(u, x), above_binary(u, t), estree_parent(t, p),
+    (kind(p, "pair"), field(p, "value", v), deparen(v, t) ; kind(p, "member_expression"), field(p, "object", o),
+    deparen(o, t)).
+used_as_value(u, x) :- kind(u, "shorthand_property_identifier"), text(u, x).
+.decl above_binary(u: node, t: node)  // t is u or a binary expression u sits in (through binary expressions only)
+above_binary(u, u) :- kind(u, "identifier").
+above_binary(u, b) :- above_binary(u, t), estree_parent(t, b), kind(b, "binary_expression").
+
+// Through a method: a method whose this.state read was seen, called by its bare name inside a setState's first
+// argument; and a method that calls such a method (by bare name) inherits it.
+method_call(m, x) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    text(f, x), comp_owner(c, _), this_call(sc, "setState", _), in_first_arg(c, sc), earlier(t, c).
+.decl holds_read(x: symbol, m: node, t: node)  // method x holds this.state read m, known from node t on
+holds_read(x, m, m) :- read(m, s), (kind(s, "method_definition") ; kind(s, "function_expression")), method_name_of(s,
+    x).
+holds_read(y, m, c) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    text(f, x), comp_owner(c, _), earlier(t, c), inside(c, g, "method_definition"), child(b, g, _),
+    kind(b, "class_body"), method_key(g, y).
+.decl method_name_of(s: node, x: symbol)  // the key of method s, or of the property or field holding function s
+method_name_of(s, x) :- kind(s, "method_definition"), method_key(s, x).
+method_name_of(s, x) :- kind(s, "function_expression"), estree_parent(s, p), method_key(p, x).

@@ -1,0 +1,49 @@
+.policy "eslint-no-warning-comments" revision 5
+.description "Remove comments that start with TODO, FIXME or XXX; track unfinished work in an issue instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-text.rr"
+//   js_comment, eslint_directive
+
+// ESLint's no-warning-comments: a comment holding a warning term, case-insensitive, as a whole word where the
+// term starts or ends with a word character. One finding per term found.
+//   // TODO: fix this     /* FIXME */     // xxx      → reported (defaults)
+//   // todos      // see the TODO list   (not at the start)                fine
+// Options: terms, a list (default todo, fixme, xxx); location "start" (the default: the term opens the comment,
+// after spaces and the decoration characters) or "anywhere"; decoration, a list of characters skipped before the
+// term at the start (`//// TODO`, `/** TODO`). An ESLint directive naming this rule is not reported.
+.violation no_warning_comments(at: node, term: symbol, shown: symbol) code "no-warning-comments"
+    "Unexpected '{term}' comment: '{shown}'."
+    suppress eslint "no-warning-comments"
+    suppress oxlint "no-warning-comments"
+no_warning_comments(c, term, shown) :- js_comment(c, _, v), warn_term(term, re), match(re, v),
+    !names_this_rule(c), shown_text(v, shown).
+// names_this_rule(c): c is an ESLint directive that names this rule (`/* eslint-disable no-warning-comments */`).
+.decl names_this_rule(c: node)
+names_this_rule(c) :- eslint_directive(c), js_comment(c, _, v), match("[\\s\\S]*\\bno-warning-comments\\b[\\s\\S]*", v).
+
+// warn_term(t, re): ESLint's convertToRegExp, as a whole-text match: the term with regex characters escaped,
+// \b on a word-character end, and at "start" only spaces and decoration before it.
+//   "todo" at start → (?i)[\s]*todo\b[\s\S]*        "!fix" anywhere → (?i)[\s\S]*!fix[\s\S]*
+.decl warn_term(t: symbol, re: symbol)
+warn_term(t, cat("(?i)", cat(lead, cat(@replace_all(t, "([-|\\\\{}()\\[\\]^$+*?.])", "\\${1}"), cat(tail, "[\\s\\S]*"))))) :-
+    term(t), lead(t, lead), (match("[\\s\\S]*\\w", t), tail = "\\b" ; !match("[\\s\\S]*\\w", t), tail = "").
+.decl term(t: symbol)
+term(t) :- option_item("terms", _, t).
+term(t) :- !option_item("terms", _, _), (t = "todo" ; t = "fixme" ; t = "xxx").
+.decl lead(t: symbol, l: symbol)  // what may come before the term
+lead(t, cat("[\\s", cat(d, "]*"))) :- term(t), !option("location", "anywhere"), decoration(d).
+lead(t, "[\\s\\S]*\\b") :- term(t), option("location", "anywhere"), match("\\w[\\s\\S]*", t).
+lead(t, "[\\s\\S]*") :- term(t), option("location", "anywhere"), !match("\\w[\\s\\S]*", t).
+.decl decoration(d: symbol)  // the decoration characters, escaped for a character class
+decoration(@replace_all(s, "([-\\\\\\]^])", "\\${1}")) :- s = join x by i sep "" : { option_item("decoration", i, x) }.
+
+// shown_text(v, s): the comment's words joined by single spaces, cut to the words that fit in 40 characters,
+// with "..." when cut (ESLint's CHAR_LIMIT).
+.decl shown_text(v: symbol, s: symbol)
+shown_text(v, w) :- words(v, w), strlen(w) <= 40.
+shown_text(v, cat(P, "...")) :- words(v, w), strlen(w) > 40, match("(?<P>.{0,40})(?: .*)?", w).
+shown_text(v, "...") :- words(v, w), strlen(w) > 40, !match(".{0,40}(?: .*)?", w).  // a first word over 40
+.decl words(v: symbol, w: symbol)
+words(v, @replace_all(@replace_all(v, "^\\s+|\\s+$", ""), "\\s+", " ")) :- js_comment(_, _, v).

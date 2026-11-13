@@ -1,7 +1,8 @@
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::test_support::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{FileScopeSlot, UtilLimit};
-use crate::code_rule_dsl::test_support::*;
+// cratify: a re-export of rerail-engine's, which its facades of this module make
 use ast_grep_core::tree_sitter::LanguageExt;
 use napi::Result;
 use serde_json::{Value, json};
@@ -216,7 +217,7 @@ fn parse_rules_are_checked() {
         ),
         (
             json!({ "parse": { "grammar": "yaml", "kind": "text" } }),
-            "/clauses/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, rustFormat, testChars",
+            "/clauses/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, identifierWords, pythonFString, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, rustFormat, testChars",
         ),
         (
             json!({ "parse": { "grammar": "ecmaRegex", "kind": "text" } }),

@@ -1,0 +1,23 @@
+.policy "ruff-pyi059-generic-not-last-base-class" revision 2
+.description "Put Generic last in a class's list of base classes; earlier in the list it can give the class an unexpected method resolution order."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI059 (flake8-pyi), every file: a class whose positional bases include `Generic` (bare or `Generic[…]`)
+// but do not end with it. Generic last keeps a consistent method resolution order. Reported at the base list.
+//   class C(Generic[T], int): ...     ← PYI059: write `class C(int, Generic[T])`
+#include "python/typing.rr"
+
+.violation PYI059(at: node) code "PYI059" "Move `Generic[...]` after the other positional base classes, keeping keyword arguments last; this changes the method resolution order, so check nothing relied on the old one."
+    suppress ruff "PYI059"
+PYI059(al) :- kind(c, "class_definition"), field(c, "superclasses", al), base(al, g, i), generic(g), base(al, _, j), j > i,
+    !last_generic(al).
+.decl base(al: node, b: node, i: number)  // the i-th positional base, unparenthesised
+base(al, b, i) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, b0, i),
+    !kind(b0, "keyword_argument"), !kind(b0, "comment"), unparen(b0, b).
+.decl generic(b: node)  // `Generic` or `Generic[…]`
+generic(b) :- typing_sym(b, "Generic").
+generic(b) :- kind(b, "subscript"), field(b, "value", v), typing_sym(v, "Generic").
+.decl last_generic(al: node)  // the first Generic base is the last base: Ruff compares the two
+last_generic(al) :- f = min i : { base(al, g, i), generic(g) }, l = max j : { base(al, b, j) }, base(al, _, f), f = l.

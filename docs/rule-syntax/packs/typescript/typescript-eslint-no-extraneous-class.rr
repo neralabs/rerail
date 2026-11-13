@@ -1,0 +1,58 @@
+.policy "typescript-eslint-no-extraneous-class" revision 3
+.description "Avoid classes that are empty, hold only a constructor, or hold only static members; use plain functions, objects or modules instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   ts_member(b, m, i), ts_ctor(m), param_property(p), class_of(b, c), extends_of(c)
+
+// typescript-eslint's no-extraneous-class: a class used as a namespace. A class that extends nothing (and,
+// with allowWithDecorator, has no decorator) is reported when it is
+//   empty                class A {}                                       (allowEmpty)
+//   only a constructor   class A { constructor() { f(); } }               (allowConstructorOnly)
+//   only static          class A { static x = 1; static f() {} }          (allowStaticOnly)
+// A constructor with parameter properties, an instance member or an abstract one makes it a real class. A
+// constructor without them and a static block do not count against "only static".
+// Reported at the class's name, or at `class` when it has none.
+.violation no_extraneous_class(at: node, id: symbol, msg: symbol) code "@typescript-eslint/no-extraneous-class"
+    "{msg}"
+    suppress eslint "@typescript-eslint/no-extraneous-class"
+    suppress oxlint "no-extraneous-class"
+    suppress biome "lint/complexity/noStaticOnlyClass"
+no_extraneous_class(at, id, m) :- checked(b, at), shape(b, id), !allowed(id), says(id, m).
+
+.decl checked(b: node, at: node)  // class body b, reported at at
+checked(b, at) :- class_of(b, c), !extends_of(c), !(option("allowWithDecorator", "true"), decorated(c)),
+    (field(c, "name", at) ; !field(c, "name", _), at = c).
+.decl decorated(c: node)
+decorated(c) :- child(c, d, _), kind(d, "decorator").
+
+// shape(b, id): the plugin's onlyConstructor wins over onlyStatic.
+.decl shape(b: node, id: symbol)
+shape(b, "empty") :- checked(b, _), !ts_member(b, _, _).
+shape(b, "onlyConstructor") :- checked(b, _), ts_member(b, _, _), count : { ts_member(b, m, _), !plain_ctor(m) } = 0.
+shape(b, "onlyStatic") :- checked(b, _), ts_member(b, m, _), !plain_ctor(m), !instance_like(b).
+.decl plain_ctor(m: node)  // a constructor (or its overload) without parameter properties
+plain_ctor(m) :- ts_ctor(m), !ctor_with_properties(m).
+.decl ctor_with_properties(m: node)
+ctor_with_properties(m) :- ts_ctor(m), field(m, "parameters", ps), child(ps, p, _), param_property(p).
+// instance_like(b): a member that makes b more than a namespace: a constructor with parameter properties, a
+// method, field, accessor, overload or index signature that is not static, or an abstract member. (The recorded
+// 8.70 counts `[k: string]: T` as an instance member; 8.56 did not.)
+.decl instance_like(b: node)
+instance_like(b) :- ts_member(b, m, _), ctor_with_properties(m).
+instance_like(b) :- ts_member(b, m, _), !ts_ctor(m), !op(m, "static"),
+    (kind(m, "method_definition") ; kind(m, "method_signature") ; kind(m, "public_field_definition") ;
+     kind(m, "index_signature")).
+instance_like(b) :- ts_member(b, m, _), (kind(m, "abstract_method_signature") ; kind(m, "public_field_definition"),
+    op(m, "abstract") ; kind(m, "method_definition"), op(m, "abstract")).
+
+.decl allowed(id: symbol)
+allowed("empty") :- option("allowEmpty", "true").
+allowed("onlyConstructor") :- option("allowConstructorOnly", "true").
+allowed("onlyStatic") :- option("allowStaticOnly", "true").
+.decl says(id: symbol, msg: symbol)
+says("empty", "Unexpected empty class. Remove it, or replace it with a plain object.").
+says("onlyConstructor", "Unexpected class with only a constructor. Replace it with a plain function.").
+says("onlyStatic", "Unexpected class with only static properties. Use module-level functions and constants.").

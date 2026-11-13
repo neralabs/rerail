@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// `embedded`: a rule over the program a file embeds through `via`, compiled for each dialect the
 /// program may be written in.
 #[derive(Clone)]
-pub(crate) struct EmbeddedTest {
+pub struct EmbeddedTest {
     pub(crate) via: Via,
     pub(crate) rules: Vec<(GrammarDialect, AstMatcher)>,
     /// The captures the rule binds, which the host's environment receives.
@@ -79,7 +79,7 @@ impl Drop for Hosted {
 /// bounds`: a node's range, an interval, holds them all exactly when it holds that), by the
 /// half-open rule (`segments::holds`: a zero-width range at a boundary is the node's starting
 /// there; the file's end, the node's ending there).
-fn innermost<'r, D: Doc>(root: Node<'r, D>, at: &Range<usize>) -> Node<'r, D> {
+pub fn innermost<'r, D: Doc>(root: Node<'r, D>, at: &Range<usize>) -> Node<'r, D> {
     let end = root.range().end;
     let mut node = root;
     loop {
@@ -224,5 +224,4 @@ pub(super) fn document_host<D: Doc>(
     }))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

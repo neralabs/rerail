@@ -1,0 +1,21 @@
+.policy "ruff-n805-invalid-first-argument-name-for-method" revision 2
+.description "Use self as the name of the first parameter of instance methods, as PEP 8 recommends."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N805 (pep8-naming): an instance method whose first positional parameter is not named `self`. A def
+// directly in a class body is an instance method unless it is a static or class method (decorators, configurable
+// with `pep8-naming.staticmethod-decorators` / `classmethod-decorators`; `__init_subclass__` and
+// `__class_getitem__` implicitly), `__new__`, or a method of a metaclass (N804 checks those). Names matching
+// `pep8-naming.ignore-names` are exempt.
+//   class C:
+//       def m(this): ...            ← N805 at `this`
+//       @staticmethod
+//       def s(x): ...               not reported
+#include "python/naming.rr"
+
+.violation N805(at: node, x: symbol) code "N805"
+    "Name the first parameter `self` instead of `{x}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+    suppress ruff "N805"
+N805(nm, x) :- naming_method_kind(f, "method"), naming_first_param(f, nm, x), x != "self", !naming_ignored(x).

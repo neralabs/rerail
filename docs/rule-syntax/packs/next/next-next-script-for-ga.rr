@@ -1,0 +1,31 @@
+.policy "next-next-script-for-ga" revision 3
+.description "Use the Google helpers from @next/third-parties instead of raw script tags for Google Analytics or Tag Manager; they load the tags without slowing the page."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's next-script-for-ga. A <script> that loads Google Analytics or Tag Manager, by src or as
+// inline HTML:
+//   <script src="https://www.googletagmanager.com/gtag/js?id=G-1" />                          reported
+//   <script dangerouslySetInnerHTML={{ __html: `…www.googletagmanager.com/gtm.js…` }} />   reported
+// For the inline form the plugin reads the first property of the object, and of its template literal only the
+// text before the first ${…}.
+
+#include "tsx/next.rr"
+
+.violation ga(at: node) code "@next/next/next-script-for-ga"
+    "Prefer `next/script` component when using the inline script for Google Analytics. See: https://nextjs.org/docs/messages/next-script-for-ga"
+    suppress eslint "@next/next/next-script-for-ga"
+    suppress oxlint "next-script-for-ga"
+ga(o) :- tag_of(o, "script"), attr_str(o, "src", s), ga_src(u), contains(u, s).
+ga(o) :- tag_of(o, "script"), attr(o, "dangerouslySetInnerHTML", a), child(a, c, 1), kind(c, "jsx_expression"),
+    child(c, ob, _), kind(ob, "object"), first_prop(ob, p), kind(p, "pair"), field(p, "value", t),
+    kind(t, "template_string"), match("`(?<q>(?:[^$]|\\$+[^${])*\\$*)(?:\\$\\{[\\s\\S]*|`)", t), ga_html(u),
+    contains(u, q).
+// first_prop(ob, p): p is the object's first property; comments are no properties.
+.decl first_prop(ob: node, p: node)
+first_prop(ob, p) :- child(ob, p, i), !kind(p, "comment"),
+    count : { child(ob, q, j), j < i, !kind(q, "comment") } = 0.
+.decl ga_src(u: symbol)
+ga_src("www.google-analytics.com/analytics.js"). ga_src("www.googletagmanager.com/gtag/js").
+.decl ga_html(u: symbol)
+ga_html("www.google-analytics.com/analytics.js"). ga_html("www.googletagmanager.com/gtm.js").

@@ -1,0 +1,837 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 5,
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "base_commit": "66f075e0",
+  "engine_commit": "7dd15e1f",
+  "state": "All ten source-detection candidates pass native source and repository parity. Model adapters and signed reporter contracts remain separate.",
+  "linear_issues_created": [],
+  "linear_issues_amended": [],
+  "oracle": {
+    "pytest_exit_code": 0,
+    "collected_tests": 646,
+    "loaded_source_files_checked": 1514,
+    "source_mismatches": [],
+    "missing_test_modules": [
+      "scripts/tests/test_check_layer_violations.py"
+    ]
+  },
+  "source_corpus": {
+    "nativeCalls": 312,
+    "replayedCalls": 312,
+    "positiveCalls": 198,
+    "cleanCalls": 114,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "coverage": [
+      {
+        "check": "missing_async_pairs",
+        "positive": 6,
+        "clean": 9
+      },
+      {
+        "check": "sync_async_signatures",
+        "positive": 4,
+        "clean": 6
+      },
+      {
+        "check": "async_sync_delegation",
+        "positive": 13,
+        "clean": 24
+      },
+      {
+        "check": "public_api_triples",
+        "positive": 23,
+        "clean": 15
+      },
+      {
+        "check": "data_layer_facade_purity",
+        "positive": 8,
+        "clean": 4
+      },
+      {
+        "check": "data_layer_compat_aliases",
+        "positive": 5,
+        "clean": 6
+      },
+      {
+        "check": "layer_violations",
+        "positive": 7,
+        "clean": 4
+      },
+      {
+        "check": "backend_coupling",
+        "positive": 33,
+        "clean": 29
+      },
+      {
+        "check": "internal_dead_code",
+        "positive": 31,
+        "clean": 12
+      },
+      {
+        "check": "imperative_private_functions",
+        "positive": 68,
+        "clean": 5
+      }
+    ],
+    "compilationMs": 2298.9186690000006,
+    "elapsedMs": 7537.8725,
+    "nativeSha256": "2e9a596ac617390d1bfbd7962ab90f4b16b63c7575d1f0dd1d1320de3b5fde9e"
+  },
+  "source_recordings": [
+    {
+      "path": "fixtures/host/data-layer-port/batch-05-recording.json",
+      "sha256": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-05-probes.json",
+      "sha256": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-05-graph-probes.json",
+      "sha256": "7ab886576c3199c32d136560cf20b05de990f8945cd28ebeed4a3797e2c508ec"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json",
+      "sha256": "61a4090d2593fcc12cc2e8aef800e5fa4005f43021fc90e9aef2a8e79173f82c"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-05-relational-probes.json",
+      "sha256": "002c7960b067af0c7d9bbb849d2068979e24d6e57fee87643b049b79513858c4"
+    }
+  ],
+  "checks": [
+    {
+      "check": "missing_async_pairs",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-missing-async-pairs.json",
+      "policy_sha256": "5d2bdf11502aa39982bfc6ea19a4e6cd91e7ddf1f6d63b75fdcaaa392c290bee",
+      "compiled_digest": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "sync_async_signatures",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json",
+      "policy_sha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
+      "compiled_digest": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "async_sync_delegation",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-async-sync-delegation.json",
+      "policy_sha256": "fec7c4bd3e7d6ea27e522f2da3aa18436599d6cc6cbdc170af8d1102ef6c96f8",
+      "compiled_digest": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "public_api_triples",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-public-api-triples.json",
+      "policy_sha256": "523e2fe8cf563b7f86c5476b9085902fc6ce7aaf10830ef9f0d9885878d7fefc",
+      "compiled_digest": "sha256:2973bb9b656e8da482d573f642843355278e5c99b9d29fa8fda9dc31af96a841",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-data-layer-facade-purity.json",
+      "policy_sha256": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
+      "compiled_digest": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-data-layer-compat-aliases.json",
+      "policy_sha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
+      "compiled_digest": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "layer_violations",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-layer-violations.json",
+      "policy_sha256": "7e6429288e52ee44640555298374c589b7a66cc777f9bceb4416320ef1302f32",
+      "compiled_digest": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "backend_coupling",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-backend-coupling.json",
+      "policy_sha256": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
+      "compiled_digest": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "internal_dead_code",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-internal-dead-code.json",
+      "policy_sha256": "939faa74d24c6054b47cd250e45d33882ec7814a06a542d9fbe403759444b074",
+      "compiled_digest": "sha256:e3067d346b2fc950f1747e3acfce2540f4822e16e364fa8a02cfd9f1c7852bfd",
+      "status": "repository detector parity and positive/clean native source coverage"
+    },
+    {
+      "check": "imperative_private_functions",
+      "candidate": "packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json",
+      "policy_sha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
+      "compiled_digest": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+      "status": "repository detector parity and positive/clean native source coverage"
+    }
+  ],
+  "repository": {
+    "files": 5914,
+    "bytes": 106201417,
+    "oracleMs": 47002.6200840075,
+    "oracleWorkers": 1,
+    "nativeWorkers": 4,
+    "compilationMs": 1027.853125,
+    "coldMs": 168778.315334,
+    "unchangedFileMs": 1577.31158400001,
+    "editedFileMs": 32251.75354199999,
+    "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+    "expected": 23835,
+    "actual": 23835,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "incrementalDifferences": [],
+    "allocator": "system-shim",
+    "nativeSha256": "2e9a596ac617390d1bfbd7962ab90f4b16b63c7575d1f0dd1d1320de3b5fde9e",
+    "recording": "/tmp/rerail-b5-all-suite.json",
+    "result": "/tmp/rerail-b5-all-measured.json",
+    "source_recording_sha256": "b91ad03200fd0da38e2a08b9b05f3113c8ebe88f140816d1cc94bee9fd91ca40",
+    "build_features": [
+      "code-rule-profile"
+    ],
+    "build_options": [
+      "thin LTO",
+      "256 code-generation units"
+    ],
+    "interpretation": "All ten detectors have parity. Timing uses unequal worker counts, a shared machine, and the system-allocator shim. No other task-owned test or build job ran during this sample.",
+    "relational_stage_profiles": [
+      {
+        "phase": "cold dead-code",
+        "stages": [
+          {
+            "elapsedMs": 133.453541,
+            "failed": false,
+            "stage": "inventory",
+            "workLeft": 14511480
+          },
+          {
+            "elapsedMs": 296.998084,
+            "failed": false,
+            "stage": "declarations",
+            "workLeft": 14300786
+          },
+          {
+            "elapsedMs": 7.6058330000000005,
+            "failed": false,
+            "stage": "decorators",
+            "workLeft": 14294005
+          },
+          {
+            "elapsedMs": 156.102,
+            "failed": false,
+            "stage": "parameters",
+            "workLeft": 14201472
+          },
+          {
+            "elapsedMs": 250.53158399999998,
+            "failed": false,
+            "stage": "annotation_names",
+            "workLeft": 14054938
+          },
+          {
+            "elapsedMs": 779.13225,
+            "failed": false,
+            "stage": "imports",
+            "workLeft": 13053435
+          },
+          {
+            "elapsedMs": 484.260458,
+            "failed": false,
+            "stage": "resolved_names",
+            "workLeft": 12923346
+          },
+          {
+            "elapsedMs": 39.420291000000006,
+            "failed": false,
+            "stage": "base_edges",
+            "workLeft": 12873503
+          },
+          {
+            "elapsedMs": 113.192292,
+            "failed": false,
+            "stage": "hierarchy",
+            "workLeft": 12814129
+          },
+          {
+            "elapsedMs": 1184.4185,
+            "failed": false,
+            "stage": "public_methods",
+            "workLeft": 12083848
+          },
+          {
+            "elapsedMs": 3.270375,
+            "failed": false,
+            "stage": "all_names",
+            "workLeft": 12081084
+          },
+          {
+            "elapsedMs": 0.436167,
+            "failed": false,
+            "stage": "explicit_exports",
+            "workLeft": 12080940
+          },
+          {
+            "elapsedMs": 27.081750000000003,
+            "failed": false,
+            "stage": "export_names",
+            "workLeft": 11953599
+          },
+          {
+            "elapsedMs": 61.471625,
+            "failed": false,
+            "stage": "exported_roots",
+            "workLeft": 11859304
+          },
+          {
+            "elapsedMs": 3.1783330000000003,
+            "failed": false,
+            "stage": "bases",
+            "workLeft": 11855905
+          },
+          {
+            "elapsedMs": 28.296959,
+            "failed": false,
+            "stage": "function_headers",
+            "workLeft": 11831495
+          },
+          {
+            "elapsedMs": 684.713708,
+            "failed": false,
+            "stage": "dead_traits",
+            "workLeft": 10521083
+          },
+          {
+            "elapsedMs": 176.07041700000002,
+            "failed": false,
+            "stage": "class_names",
+            "workLeft": 10467444
+          },
+          {
+            "elapsedMs": 177.31254199999998,
+            "failed": false,
+            "stage": "module_names",
+            "workLeft": 10171668
+          },
+          {
+            "elapsedMs": 50.876583000000004,
+            "failed": false,
+            "stage": "imported_modules",
+            "workLeft": 10063156
+          },
+          {
+            "elapsedMs": 13.497333000000001,
+            "failed": false,
+            "stage": "dead_roots",
+            "workLeft": 10049803
+          },
+          {
+            "elapsedMs": 18118.760583,
+            "failed": false,
+            "stage": "reach_edges",
+            "workLeft": 3797217
+          },
+          {
+            "elapsedMs": 6204.216084,
+            "failed": false,
+            "stage": "reachable",
+            "workLeft": 2467794
+          },
+          {
+            "elapsedMs": 208.35424999999998,
+            "failed": false,
+            "stage": "annotation_reachable",
+            "workLeft": 2398389
+          },
+          {
+            "elapsedMs": 55.902375,
+            "failed": false,
+            "stage": "high_confidence",
+            "workLeft": 2286384
+          }
+        ]
+      },
+      {
+        "phase": "cold public triples",
+        "stages": [
+          {
+            "elapsedMs": 124.400875,
+            "failed": false,
+            "stage": "inventory",
+            "workLeft": 8109955
+          },
+          {
+            "elapsedMs": 278.30929199999997,
+            "failed": false,
+            "stage": "declarations",
+            "workLeft": 7899261
+          },
+          {
+            "elapsedMs": 6.022708,
+            "failed": false,
+            "stage": "decorators",
+            "workLeft": 7892480
+          },
+          {
+            "elapsedMs": 131.610208,
+            "failed": false,
+            "stage": "parameters",
+            "workLeft": 7799947
+          },
+          {
+            "elapsedMs": 208.706,
+            "failed": false,
+            "stage": "annotation_names",
+            "workLeft": 7653413
+          },
+          {
+            "elapsedMs": 651.9664160000001,
+            "failed": false,
+            "stage": "imports",
+            "workLeft": 6651910
+          },
+          {
+            "elapsedMs": 380.44800000000004,
+            "failed": false,
+            "stage": "resolved_names",
+            "workLeft": 6521821
+          },
+          {
+            "elapsedMs": 34.089166999999996,
+            "failed": false,
+            "stage": "base_edges",
+            "workLeft": 6471978
+          },
+          {
+            "elapsedMs": 94.690667,
+            "failed": false,
+            "stage": "hierarchy",
+            "workLeft": 6412604
+          },
+          {
+            "elapsedMs": 1017.970625,
+            "failed": false,
+            "stage": "public_methods",
+            "workLeft": 5682323
+          },
+          {
+            "elapsedMs": 3.308708,
+            "failed": false,
+            "stage": "all_names",
+            "workLeft": 5679559
+          },
+          {
+            "elapsedMs": 0.40700000000000003,
+            "failed": false,
+            "stage": "explicit_exports",
+            "workLeft": 5679415
+          },
+          {
+            "elapsedMs": 22.114959,
+            "failed": false,
+            "stage": "export_names",
+            "workLeft": 5552074
+          },
+          {
+            "elapsedMs": 56.798458000000004,
+            "failed": false,
+            "stage": "exported_roots",
+            "workLeft": 5457779
+          },
+          {
+            "elapsedMs": 0.086833,
+            "failed": false,
+            "stage": "execution_calls",
+            "workLeft": 5457772
+          },
+          {
+            "elapsedMs": 1267.503416,
+            "failed": false,
+            "stage": "traits",
+            "workLeft": 2747985
+          },
+          {
+            "elapsedMs": 1032.837708,
+            "failed": false,
+            "stage": "surfaces",
+            "workLeft": 916870
+          },
+          {
+            "elapsedMs": 38.439959,
+            "failed": false,
+            "stage": "slots",
+            "workLeft": 881236
+          },
+          {
+            "elapsedMs": 27.109083,
+            "failed": false,
+            "stage": "family_groups",
+            "workLeft": 860012
+          },
+          {
+            "elapsedMs": 10.052958,
+            "failed": false,
+            "stage": "eligible_groups",
+            "workLeft": 834778
+          },
+          {
+            "elapsedMs": 1.6438329999999999,
+            "failed": false,
+            "stage": "families",
+            "workLeft": 833764
+          },
+          {
+            "elapsedMs": 2.5620830000000003,
+            "failed": false,
+            "stage": "triple_violations",
+            "workLeft": 832841
+          }
+        ]
+      },
+      {
+        "phase": "edit dead-code",
+        "stages": [
+          {
+            "elapsedMs": 128.25583300000002,
+            "failed": false,
+            "stage": "inventory",
+            "workLeft": 14511480
+          },
+          {
+            "elapsedMs": 328.53883299999995,
+            "failed": false,
+            "stage": "declarations",
+            "workLeft": 14300786
+          },
+          {
+            "elapsedMs": 7.804417,
+            "failed": false,
+            "stage": "decorators",
+            "workLeft": 14294005
+          },
+          {
+            "elapsedMs": 149.869917,
+            "failed": false,
+            "stage": "parameters",
+            "workLeft": 14201472
+          },
+          {
+            "elapsedMs": 243.911709,
+            "failed": false,
+            "stage": "annotation_names",
+            "workLeft": 14054938
+          },
+          {
+            "elapsedMs": 840.751875,
+            "failed": false,
+            "stage": "imports",
+            "workLeft": 13053435
+          },
+          {
+            "elapsedMs": 478.85733400000004,
+            "failed": false,
+            "stage": "resolved_names",
+            "workLeft": 12923346
+          },
+          {
+            "elapsedMs": 41.435334,
+            "failed": false,
+            "stage": "base_edges",
+            "workLeft": 12873503
+          },
+          {
+            "elapsedMs": 117.851834,
+            "failed": false,
+            "stage": "hierarchy",
+            "workLeft": 12814129
+          },
+          {
+            "elapsedMs": 1263.513333,
+            "failed": false,
+            "stage": "public_methods",
+            "workLeft": 12083848
+          },
+          {
+            "elapsedMs": 4.288459,
+            "failed": false,
+            "stage": "all_names",
+            "workLeft": 12081084
+          },
+          {
+            "elapsedMs": 0.604083,
+            "failed": false,
+            "stage": "explicit_exports",
+            "workLeft": 12080940
+          },
+          {
+            "elapsedMs": 26.358,
+            "failed": false,
+            "stage": "export_names",
+            "workLeft": 11953599
+          },
+          {
+            "elapsedMs": 68.642584,
+            "failed": false,
+            "stage": "exported_roots",
+            "workLeft": 11859304
+          },
+          {
+            "elapsedMs": 3.8293329999999997,
+            "failed": false,
+            "stage": "bases",
+            "workLeft": 11855905
+          },
+          {
+            "elapsedMs": 28.231790999999998,
+            "failed": false,
+            "stage": "function_headers",
+            "workLeft": 11831495
+          },
+          {
+            "elapsedMs": 729.121,
+            "failed": false,
+            "stage": "dead_traits",
+            "workLeft": 10521083
+          },
+          {
+            "elapsedMs": 180.18045899999998,
+            "failed": false,
+            "stage": "class_names",
+            "workLeft": 10467444
+          },
+          {
+            "elapsedMs": 174.89179199999998,
+            "failed": false,
+            "stage": "module_names",
+            "workLeft": 10171668
+          },
+          {
+            "elapsedMs": 49.95249999999999,
+            "failed": false,
+            "stage": "imported_modules",
+            "workLeft": 10063156
+          },
+          {
+            "elapsedMs": 13.4925,
+            "failed": false,
+            "stage": "dead_roots",
+            "workLeft": 10049803
+          },
+          {
+            "elapsedMs": 13831.0335,
+            "failed": false,
+            "stage": "reach_edges",
+            "workLeft": 3797217
+          },
+          {
+            "elapsedMs": 4612.64275,
+            "failed": false,
+            "stage": "reachable",
+            "workLeft": 2467794
+          },
+          {
+            "elapsedMs": 180.32762499999998,
+            "failed": false,
+            "stage": "annotation_reachable",
+            "workLeft": 2398389
+          },
+          {
+            "elapsedMs": 50.953958,
+            "failed": false,
+            "stage": "high_confidence",
+            "workLeft": 2286384
+          }
+        ]
+      },
+      {
+        "phase": "edit public triples",
+        "stages": [
+          {
+            "elapsedMs": 99.771875,
+            "failed": false,
+            "stage": "inventory",
+            "workLeft": 8109955
+          },
+          {
+            "elapsedMs": 232.87574999999998,
+            "failed": false,
+            "stage": "declarations",
+            "workLeft": 7899261
+          },
+          {
+            "elapsedMs": 5.610875,
+            "failed": false,
+            "stage": "decorators",
+            "workLeft": 7892480
+          },
+          {
+            "elapsedMs": 115.41154200000001,
+            "failed": false,
+            "stage": "parameters",
+            "workLeft": 7799947
+          },
+          {
+            "elapsedMs": 190.67775,
+            "failed": false,
+            "stage": "annotation_names",
+            "workLeft": 7653413
+          },
+          {
+            "elapsedMs": 564.344916,
+            "failed": false,
+            "stage": "imports",
+            "workLeft": 6651910
+          },
+          {
+            "elapsedMs": 325.58587500000004,
+            "failed": false,
+            "stage": "resolved_names",
+            "workLeft": 6521821
+          },
+          {
+            "elapsedMs": 27.3655,
+            "failed": false,
+            "stage": "base_edges",
+            "workLeft": 6471978
+          },
+          {
+            "elapsedMs": 79.636709,
+            "failed": false,
+            "stage": "hierarchy",
+            "workLeft": 6412604
+          },
+          {
+            "elapsedMs": 880.415667,
+            "failed": false,
+            "stage": "public_methods",
+            "workLeft": 5682323
+          },
+          {
+            "elapsedMs": 2.871667,
+            "failed": false,
+            "stage": "all_names",
+            "workLeft": 5679559
+          },
+          {
+            "elapsedMs": 0.392042,
+            "failed": false,
+            "stage": "explicit_exports",
+            "workLeft": 5679415
+          },
+          {
+            "elapsedMs": 20.861458,
+            "failed": false,
+            "stage": "export_names",
+            "workLeft": 5552074
+          },
+          {
+            "elapsedMs": 52.137,
+            "failed": false,
+            "stage": "exported_roots",
+            "workLeft": 5457779
+          },
+          {
+            "elapsedMs": 0.075042,
+            "failed": false,
+            "stage": "execution_calls",
+            "workLeft": 5457772
+          },
+          {
+            "elapsedMs": 1012.0255,
+            "failed": false,
+            "stage": "traits",
+            "workLeft": 2747985
+          },
+          {
+            "elapsedMs": 894.0834159999999,
+            "failed": false,
+            "stage": "surfaces",
+            "workLeft": 916870
+          },
+          {
+            "elapsedMs": 37.725583,
+            "failed": false,
+            "stage": "slots",
+            "workLeft": 881236
+          },
+          {
+            "elapsedMs": 25.024749999999997,
+            "failed": false,
+            "stage": "family_groups",
+            "workLeft": 860012
+          },
+          {
+            "elapsedMs": 7.896875,
+            "failed": false,
+            "stage": "eligible_groups",
+            "workLeft": 834778
+          },
+          {
+            "elapsedMs": 1.584667,
+            "failed": false,
+            "stage": "families",
+            "workLeft": 833764
+          },
+          {
+            "elapsedMs": 2.266625,
+            "failed": false,
+            "stage": "triple_violations",
+            "workLeft": 832841
+          }
+        ]
+      }
+    ],
+    "cold_relational_stage_ms": 34649.632873,
+    "edit_relational_stage_ms": 28133.981837
+  },
+  "earlier_validation_run": {
+    "coldMs": 204898.81274999998,
+    "unchangedFileMs": 1617.8834169999755,
+    "editedFileMs": 38518.16266599999,
+    "expected": 23835,
+    "actual": 23835,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "incrementalDifferences": []
+  },
+  "retained_graph_model_observations": {
+    "public_api_triples": 70,
+    "imperative_private_functions": 44,
+    "counted_as_native_passes": false
+  },
+  "retained_io_observations": 1,
+  "retained_reporter_contracts": [
+    "async_sync_delegation signed category/total baseline reporter",
+    "public_api_triples signed total baseline reporter"
+  ],
+  "validation": [
+    "646 unchanged upstream tests passed",
+    "312 native source comparisons: 198 positive and 114 clean",
+    "23835 repository findings match across all ten checks; unchanged and edited results also match",
+    "75 TypeScript regressions passed across eight files, including all data-layer conformance gates",
+    "1347 native DSL tests passed; 22 ignored",
+    "TypeScript typecheck and repository checks passed",
+    "Native formatting and all-target Clippy passed",
+    "38 reference grammar productions checked; no differences",
+    "Ten generated policies identical across two Python hash seeds",
+    "Production dependency and repository license checks passed"
+  ],
+  "previous_incomplete_checkpoint": {
+    "commit": "66f075e0",
+    "state": "Work in progress: seven repository detectors match; imperative propagation and two symbol-graph checks remain incomplete",
+    "false_positives": 26,
+    "false_negatives": 1904
+  }
+}

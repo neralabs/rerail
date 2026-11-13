@@ -4,7 +4,7 @@
 
 /// Every diagnostic category: a suppression comment's category must be one of them (or
 /// `lint/plugin/<name>`).
-pub(super) const CATEGORIES: &[&str] = &[
+pub const CATEGORIES: &[&str] = &[
     "args/fileNotFound",
     "assist",
     "assist/source/noDuplicateClasses",
@@ -649,7 +649,7 @@ pub(super) const CATEGORIES: &[&str] = &[
 
 /// The JavaScript analyzer's `MetadataRegistry`: each rule's group, name and category (`assist`,
 /// `lint` or `syntax`), sorted by group and name.
-pub(super) const JS_RULES: &[(&str, &str, &str)] = &[
+pub const JS_RULES: &[(&str, &str, &str)] = &[
     ("a11y", "noAccessKey", "lint"),
     ("a11y", "noAmbiguousAnchorText", "lint"),
     ("a11y", "noAriaHiddenOnFocusable", "lint"),

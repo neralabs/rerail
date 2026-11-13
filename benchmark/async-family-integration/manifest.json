@@ -1,0 +1,70 @@
+{
+  "schema": "async-family-comparison-provenance-v1",
+  "date": "2026-11-08",
+  "integration_base": "49035cc9098d3cafb19a1e4c33bc45ab796dce28",
+  "integration_newer_observed": "6ae30c48a7d9c7cde74248ccecc0c4835ba54308",
+  "reference_branch_tip": "e1ffeaf254bc52133fd6edc8f721b2a7258f24a6",
+  "historical_measured_source": "a55956e3334864451e89c68ec7199beb38f5fc8d",
+  "original_experiment_branch": "jeremy/sql-capture-demand-spikes",
+  "original_experiment_tip": "b3e97cd47",
+  "corpus_commit": "fce4dc7208c0b892c11a549c8be43fc285580d6b",
+  "files": 5725,
+  "bytes": 95697853,
+  "host": {
+    "system": "macOS-26.4.1-arm64-arm-64bit-Mach-O",
+    "memory_bytes": 137438953472,
+    "logical_cpus": 18,
+    "isolated": false
+  },
+  "build": {
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "profile": "profiling",
+    "opt_level": 3,
+    "codegen_units": 256,
+    "incremental": true,
+    "lto": false
+  },
+  "binaries": {
+    "v1": {
+      "path": "/Users/jeremy/orca/artifacts/async-family-comparison/bench-v1",
+      "sha256": "43d890b82d5177828b514d83f5d76b8e5a92c5b017d802752873de426e7df691"
+    },
+    "v2": {
+      "path": "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-4f1d47ecdb5c7ca6",
+      "sha256": "02ee97e3498adce26000c0b0cbcd90d3623fe7ed1987717c4ee189daa3d099bc"
+    }
+  },
+  "assignments": {
+    "v1": [
+      "reference-before-adapter-fix.json",
+      "rr.json",
+      "rr-positive.json",
+      "profile-rr-profile.json.gz",
+      "producers.json",
+      "edge-parity.json"
+    ],
+    "v2": [
+      "reference-full.json",
+      "admission.json",
+      "reference-positive.log"
+    ]
+  },
+  "v1_source_reconstruction": "Use these comparison source files except tests.rs from measured-tests.rs.gz, and s_native_oracle.rs from integration_base. Later differences affect only oracle plan lifetime and measurement metadata. Production engine code is identical.",
+  "final_test_source_sha256": {
+    "native/src/code_rule_dsl/findings/tests/async_reference.rs": "d06226fc133bbfca47eebdf1ecdf3b15fe33d4b3d01dd3bea9da45dde6e9f190",
+    "native/src/code_rule_dsl/findings/tests/compiler_admission.rs": "54f04856e47424cecc1a47b1d61bc8cb9eb9bd852408241fe6d95f440c5b1f28",
+    "native/src/code_rule_dsl/findings/tests/native_oracle.rs": "777b6546cfc1cd7997364d595c7f01f59ddcf180e7b3abf443e938ff72d4b574",
+    "native/src/code_rule_dsl/findings/tests/rr_comparison.rs": "962bacdeaef640367f898f9967de97ade12420998930c4b4aabb3b1cb3dcaa8b",
+    "native/src/code_rule_dsl/findings/tests/s_native_oracle.rs": "faf212d95328bf67098d1d8a3491e3dd345bd48f71b9149d351ac6d69c8fefa9",
+    "native/src/code_rule_dsl/findings/tests/tests.rs": "0cb602fd1e23884b65ef4a7dd4d850e525db9bbb34759e2ee475ce0df13472bf"
+  },
+  "cache_boundary": "Private shared tape cache; program preparation store warm for full rr; per-file and cross result memo disabled. Profiled rr follows timed rr; chunk count differs.",
+  "port_audit_scope": "Destination hashes in port-audit.json describe pinned integration base, before comparison edits.",
+  "notes": [
+    "Historical release and current profiling builds differ. Do not attribute absolute timing differences solely to code.",
+    "Reference phase-sum job totals exclude source reading, suppressions and payloads. They are not an end-to-end CLI benchmark.",
+    "Newer integration commits through d8fad367b were source-reviewed but not timed; the sibling was clean at final check.",
+    "Two native oracle fixtures and Ruff expose semantic differences; the full corpus has zero findings."
+  ],
+  "integration_latest_reviewed": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df"
+}

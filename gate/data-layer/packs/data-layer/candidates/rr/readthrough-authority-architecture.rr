@@ -1,0 +1,96 @@
+.policy "data-layer:readthrough-authority-architecture" revision 1
+.description "Closed-plan read-through authority: overlays are read inside the plan, cleanup compares the full authority identity."
+.language python
+.mode block
+.scope dirs "impl/read_through"
+.scope tests false
+.on syntax_error report RTA000
+// Python linter: scripts/lint_readthrough_authority_architecture.py. Presence and absence tests on named
+// definitions, by spelling, anywhere in a file:
+//   RTA001  a call of _restore_persisted_local_overlays[_async]; or a def _bind_cache_to_current_authority[_native]
+//           that calls _load_local_row_overlays[_async]
+//   RTA002  the str constant "__readthrough_local_overlays", docstrings and f-string pieces included
+//   RTA003  def _authority_transition_models names _cached_tables or _tables_with_local_writes
+//   RTA004  class ReadThroughLocalOverlayRecord has no `principal_user_id: …` field
+//   RTA005  def _local_overlay_record_steps passes no `after_refs=` whose value names proposed_lease_ref
+//   RTA006  class ReadThroughDeleteChangedPrincipalRowsStep: its compile method does not name
+//           ReadThroughAuthorityOwnedTableRecord (or there is no compile method)
+//   RTA008  … nor holds every column of the authority identity as a str constant
+//   RTA009  def _remote_authority_lease_steps has no `lease_conflict_update = {…}` that names last_authenticated
+//           and not established_at
+//   RTA007  def _lower_generic_cache_first_object / _lower_generic_rowset_merge never calls
+//           require_publication_precondition
+//   RTA000  the file does not parse
+// "Names" is the linter's _names: Name ids and Attribute attrs in ast.walk of the def (purity-ast's walk_name).
+// A call's name is its function's Name id or Attribute attr (rta_call). Nothing is resolved.
+
+#include "data-layer/purity-ast.rr"
+
+// rta_call(c, x): call c is `x(…)` or `….x(…)`, as _call_name has it (a call of a call has no name).
+.decl rta_call(c: node, x: symbol)
+rta_call(c, x) :- kind(c, "call"), field(c, "function", e), (kind(e, "identifier"), text(e, x) ; attr_of(e, _, x)).
+// rta_def(f, x): a def named x, anywhere (methods and nested defs too).
+.decl rta_def(f: node, x: symbol)
+rta_def(f, x) :- kind(f, "function_definition"), def_name(f, x).
+// rta_calls(f, x): def f calls x somewhere in its ast.walk.
+.decl rta_calls(f: node, x: symbol)
+rta_calls(f, x) :- rta_def(f, _), ast_walk(f, c), rta_call(c, x).
+
+.violation RTA001(at: node) "Read durable overlays inside the admitted application plan"
+RTA001(c) :- rta_call(c, x), glob("_restore_persisted_local_overlays{,_async}", x).
+RTA001(f) :- rta_def(f, x), glob("_bind_cache_to_current_authority{,_native}", x),
+    rta_calls(f, y), glob("_load_local_row_overlays{,_async}", y).
+
+// Each str Constant piece: a plain literal (adjacent ones joined) is one; an f-string has one per literal run.
+.violation RTA002(at: node) "Do not pass authority-scoped overlays through runtime seeds"
+RTA002(at) :- str_part(_, _, "__readthrough_local_overlays", at, _).
+
+.violation RTA003(at: node) "Gate authority cleanup with ReadThroughAuthorityOwnedTableRecord, not cache-state heuristics"
+RTA003(f) :- rta_def(f, "_authority_transition_models"), walk_name(f, x),
+    (x = "_cached_tables" ; x = "_tables_with_local_writes").
+
+.violation RTA004(at: node) "Durable overlay evidence must include principal_user_id"
+RTA004(c) :- kind(c, "class_definition"), def_name(c, "ReadThroughLocalOverlayRecord"),
+    !class_field(c, "principal_user_id").
+
+// `after_refs=frozenset({proposed_lease_ref})`: a keyword argument anywhere in the def.
+.violation RTA005(at: node) "Read overlay evidence after the same-plan proposed lease"
+RTA005(f) :- rta_def(f, "_local_overlay_record_steps"), !rta_after_lease(f).
+.decl rta_after_lease(f: node)
+rta_after_lease(f) :- rta_def(f, "_local_overlay_record_steps"), ast_walk(f, k), kind(k, "keyword_argument"),
+    field(k, "name", nm), text(nm, "after_refs"), field(k, "value", v), walk_name(v, "proposed_lease_ref").
+
+// The step class and its compile method: the first `def compile` of its own body, as _function takes it.
+.decl rta_step(c: node)
+rta_step(c) :- kind(c, "class_definition"), def_name(c, "ReadThroughDeleteChangedPrincipalRowsStep").
+.decl rta_compile(c: node, f: node)
+rta_compile(c, f) :- rta_step(c), body_def(c, f, "compile"),
+    count : { body_def(c, g, "compile"), precedes_def(g, f) } = 0.
+.decl precedes_def(g: node, f: node)  // g's statement comes before f's in the same body
+precedes_def(g, f) :- body_def_at(c, s, f), body_def_at(c, t, g), precedes(t, s).
+
+.violation RTA006(at: node) "Principal-change row deletion must require persistent ownership evidence"
+RTA006(c) :- rta_step(c), !rta_owned(c).
+.decl rta_owned(c: node)
+rta_owned(c) :- rta_compile(c, f), walk_name(f, "ReadThroughAuthorityOwnedTableRecord").
+
+// The six identity columns, each of which must be a str constant somewhere in compile.
+.decl rta_identity(x: symbol)
+rta_identity("upstream_namespace"). rta_identity("authority_namespace"). rta_identity("authorization_epoch").
+rta_identity("catalog_fingerprint"). rta_identity("admitted_session_id"). rta_identity("principal_user_id").
+.violation RTA008(at: node) "Lease transition cleanup must compare the complete authority identity"
+RTA008(c) :- rta_step(c), rta_identity(x), !rta_const(c, x).
+.decl rta_const(c: node, v: symbol)
+rta_const(c, v) :- rta_compile(c, f), ast_walk(f, lit), str_part(lit, _, v, _, _), rta_identity(v).
+
+// `lease_conflict_update = {…}` (one of the targets of a chained assignment too), its dict value.
+.violation RTA009(at: node) "Exact lease renewal must update only last_authenticated_at"
+RTA009(f) :- rta_def(f, "_remote_authority_lease_steps"), !rta_renews(f).
+.decl rta_renews(f: node)
+rta_renews(f) :- rta_def(f, "_remote_authority_lease_steps"), ast_walk(f, a), assign_target(a, t),
+    kind(t, "identifier"), text(t, "lease_conflict_update"), assign_value(a, v), kind(v, "dictionary"),
+    walk_name(v, "last_authenticated"), !walk_name(v, "established_at").
+
+.violation RTA007(at: node) "Validate admitted overlays before authority and cache publication"
+RTA007(f) :- rta_def(f, x), glob("_lower_generic_{cache_first_object,rowset_merge}", x),
+    !rta_calls(f, "require_publication_precondition").

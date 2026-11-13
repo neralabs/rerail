@@ -1,0 +1,41 @@
+.policy "clippy-single-component-path-imports" revision 2
+.description "Remove private imports of a bare crate name in Rust 2018 and later; the crate is already in scope without them."
+.language rust
+.mode steer
+.scope include "**/*"
+
+// Clippy's single_component_path_imports (style, Rust 2018 and later): a private `use` of a bare crate name,
+// which is in scope already. Reported at the `use`, or at the name in a braced list.
+//   use regex;   use {regex, serde};   pub(crate) use regex;        reported
+//   pub use serde;   use serde as s;   use std::io;                 not reported
+// Clippy keeps the import when the module names it as `self::regex` (in another private `use`, or in
+// code: `self::std::io::stdout()`), or when an earlier macro_rules! of that name makes it a macro import.
+.violation single_component_path_imports(at: node, msg: symbol) code "single_component_path_imports" "{msg}"
+    suppress clippy "clippy::single_component_path_imports", "clippy::all", "clippy::style", "warnings"
+single_component_path_imports(u, "Remove this use of a bare crate name; the crate is already in scope.") :-
+    module_use(m, u), field(u, "argument", a), kind(a, "identifier"), text(a, x), !kept(m, u, x).
+single_component_path_imports(i, "Remove this bare crate name from the use list; the crate is already in scope.") :-
+    module_use(m, u), field(u, "argument", l), kind(l, "use_list"), child(l, i, _), kind(i, "identifier"),
+    text(i, x), !kept(m, u, x).
+
+// module_use(m, u): u is a private use item directly in module m (the file, or a `mod { … }` body).
+.decl module_use(m: node, u: node)
+module_use(m, u) :- kind(u, "use_declaration"), child(m, u, _), module(m), !public(u).
+.decl module(m: node)
+module(m) :- kind(m, "source_file").
+module(m) :- kind(m, "declaration_list"), child(i, m, _), kind(i, "mod_item").
+.decl public(u: node)
+public(u) :- child(u, v, _), kind(v, "visibility_modifier"), text(v, "pub").
+.decl kept(m: node, u: node, x: symbol)
+kept(m, u, x) :- module_use(m, u), self_path(m, x).
+kept(m, u, x) :- module_use(m, u), child(m, d, _), kind(d, "macro_definition"), field(d, "name", n), text(n, x),
+    precedes(d, u).
+
+// self_path(m, x): module m names `self::x`: in a private use (`use self::x::Y;`), or in code outside any
+// use. `use self::{x::Y}` does not keep it (Clippy reads only a path that starts `self::x`).
+.decl self_path(m: node, x: symbol)
+self_path(m, x) :- module_use(m, u), kind(s, "scoped_identifier"), within(s, u), self_head(s, x).
+self_path(m, x) :- module(m), kind(s, "scoped_identifier"), self_head(s, x), within(s, m),
+    !inside(s, _, "use_declaration").
+.decl self_head(s: node, x: symbol)  // s is `self::x`
+self_head(s, x) :- field(s, "path", p), kind(p, "self"), field(s, "name", n), text(n, x).

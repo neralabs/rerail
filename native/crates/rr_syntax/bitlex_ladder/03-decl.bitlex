@@ -1,0 +1,135 @@
+# `.rr`, step 3: declarations, `.decl r(a: number, b: flat<x>) inline`.
+#
+# The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
+#   - `.decl`: a `.` and the word `decl` make one leaf, `.decl`, and the statement is a
+#     `declaration`, not a setting. Only after a statement's `.`: elsewhere `decl` is a word
+#     (`decl(x)` is an atom's name). So `decl` is a soft keyword, taken where the grammar can
+#     take it; the node opened at the `.` is retagged by it, and the two leaves merged. A line
+#     break or a comment may come between the `.` and `decl`: a comment there is the leaf's
+#     text, as the engine has it.
+#   - Its name, its columns `( name: type, … )`, each type a word with an optional `<word>`,
+#     and its tail: the words left on the line of its `)` (a `,` does not go on to the next).
+# The rest is step 2's: settings, their arguments and line breaks.
+#
+# Not in this step yet: the other directives (`.edit`, `.type`, `.input`, …), floats, `{ … }`
+# arguments, backtick literals, block comments.
+
+lexer rr
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class dot       = '.'
+class comma     = ','
+class u         = 'u'
+class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&'
+class colon     = ':'
+class minus     = '-'
+class eq        = '='
+class lt        = '<'
+class gt        = '>'
+class bang      = '!'
+
+mask last_byte  = ~next(~empty)
+
+# --- Strings -----------------------------------------------------------------------------------
+
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask inside     = toggle(q)                     # the opening quote, not the closing one
+mask opening    = q & inside
+mask closing    = q & ~inside
+error "a string open at the end of the file" when inside & last_byte
+# `\u{…}` and `\uXXXX` are checked by the engine's lexer, which refuses some: the file goes to it.
+escape "a \\u escape in a string" when inside & ~opening & escaped & u
+
+# --- Comments and code -------------------------------------------------------------------------
+
+mask outside    = ~inside & ~closing
+mask line       = fill(outside & slash & next(slash), lf)
+mask code       = outside & ~line
+escape "a quote in a comment" when line & quote
+escape "a block comment" when code & slash & next(star)
+
+# `#` and its word.
+mask directive  = code & hash
+mask hashword   = fill(directive, ~(code & word))
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word & ~hashword
+mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
+mask num        = w & ~ident                    # the digits before it
+# A float, `1.5`: a '.' after a number's digits and before a digit.
+escape "a float" when code & dot & prev(num) & next(digit)
+# The engine reads a number as an i64: one of 19 or more digits (leading zeros aside) is
+# checked by it.
+mask sig        = fill(num & nonzero, ~num)
+mask sig2       = sig & prev(sig)
+mask sig4       = sig2 & prev(sig2, 2)
+mask sig8       = sig4 & prev(sig4, 4)
+mask sig16      = sig8 & prev(sig8, 8)
+escape "a number of 19 digits or more" when sig16 & prev(sig2, 16) & prev(sig, 18)
+
+# --- Punctuation -------------------------------------------------------------------------------
+
+# A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
+mask two        = code & ((colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt)))
+mask two_start  = two & ~escaped(two)
+mask second     = prev(two_start)
+mask p          = code & punct
+mask p_start    = p & ~second
+mask p_last     = (p_start & ~two_start) | second
+
+error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+token string     = start quote & opening last closing
+token comment    = start slash & starts(line) last lasts(line)
+token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
+keywords hash_word { "#include" } required
+token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
+token number     = start digit & num & ~prev(num) last num & ~next(num)
+token punct      = start punct & p_start last p_last
+# `decl` is a word, a keyword only where a statement's `.` comes before it. The other
+# directives' words, which later steps parse: reserved, so a file with one goes to the engine's
+# parser.
+keywords identifier { "edit" -> reserved "functor" -> reserved "type" -> reserved "input" -> reserved "output" -> reserved "lattice" -> reserved "pragma" -> reserved "violation" -> reserved "policy" -> reserved } soft { "decl" }
+keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
+
+skip code & ws
+
+# --- Line breaks -------------------------------------------------------------------------------
+
+# Every grammar token's start (the comments' left out): a mark goes before the next one.
+mask starts_g   = opening | (directive) | (alpha & ident & ~prev(ident)) | (digit & num & ~prev(num)) | p_start
+mask after_comma = fill(code & comma & p_start, starts_g)
+# The file's end ends a line too: a setting ends there.
+mark line        = lf, end
+mark newline     = lf & ~after_comma, end
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree rr {
+  node source_file whole = (include | setting)*
+  node include          = '#include' path: string
+  node setting          = '.' (declaration_tail | line (declaration_tail | name: identifier) | name: identifier (argument: value | punctuation)* newline)
+  # A `.decl`: the node opened as a setting at the `.` is a declaration.
+  choice declaration_tail = retag declaration merge '.decl' 'decl' name: identifier columns: column_list (modifier: value | punctuation)* line
+  node column_list      = '(' [column: column (',' column: column)*] ')'
+  node column           = name: identifier ':' type: type
+  node type             = name: identifier ['<' [argument: identifier] '>']
+  choice value          = identifier | number | string
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  hidden line newline
+  extra comment
+}

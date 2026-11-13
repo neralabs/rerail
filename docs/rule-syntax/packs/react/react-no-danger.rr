@@ -1,0 +1,19 @@
+.policy "react-no-danger" revision 2
+.description "Avoid dangerouslySetInnerHTML on DOM elements; injecting raw HTML opens the door to cross-site scripting."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-danger: a DOM element's dangerouslySetInnerHTML prop is reported, at the prop.
+//   <div dangerouslySetInnerHTML={{ __html: html }} />    reported
+//   <Html dangerouslySetInnerHTML={…} />                   not: a component decides what the prop does
+// The rule's one option, customComponentNames, is not in the JSON: components are never checked.
+#include "tsx/react.rr"
+
+.violation no_danger(at: node)
+    code "react/no-danger"
+    "Render this content as JSX instead of dangerouslySetInnerHTML; raw HTML from data opens the door to cross-site scripting."
+    suppress eslint "react/no-danger"
+    suppress oxlint "no-danger"
+    suppress biome "lint/security/noDangerouslySetInnerHtml"
+no_danger(a) :- jsx_prop(o, "dangerouslySetInnerHTML", a), dom_open(o), docof(o, d), react_doc(d).

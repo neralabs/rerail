@@ -1,0 +1,171 @@
+[
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow",
+    "mode": "native",
+    "exit": 0,
+    "wall": 5.472487207967788,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_inserts_only_rows_new_against_the_survivors",
+    "mode": "native",
+    "exit": 0,
+    "wall": 3.8528885419946164,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_a_negation_that_still_fails",
+    "mode": "native",
+    "exit": 0,
+    "wall": 5.029820000054315,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_its_part_around_an_inlined_relation",
+    "mode": "native",
+    "exit": 0,
+    "wall": 4.947513709077612,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_cross_file_aggregate",
+    "mode": "native",
+    "exit": 0,
+    "wall": 4.772251083049923,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_recursive_cross_file_stratum",
+    "mode": "native",
+    "exit": 0,
+    "wall": 5.448872750042938,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_passes_on_a_quiet_stratum",
+    "mode": "native",
+    "exit": 0,
+    "wall": 4.414966540993191,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_reruns_what_an_edit_changed",
+    "mode": "native",
+    "exit": 0,
+    "wall": 4.927116165985353,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "code_rule_dsl::logic::plan::corpus::session::tests::a_session_runs_the_cross_file_strata_an_edit_changed",
+    "mode": "native",
+    "exit": 0,
+    "wall": 4.848129416001029,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again",
+    "mode": "native",
+    "exit": 0,
+    "wall": 2.8705174579517916,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "a_cache_is_facts_and_a_version_bump_derives_it_again",
+    "mode": "native",
+    "exit": 0,
+    "wall": 2.516827250015922,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "cross_file_strata_are_kept_across_runs_in_the_tape_cache",
+    "mode": "native",
+    "exit": 0,
+    "wall": 2.641800833051093,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  },
+  {
+    "test": "a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers",
+    "mode": "native",
+    "exit": 0,
+    "wall": 0.4502439999487251,
+    "counts": [
+      [
+        "1",
+        "0",
+        "0"
+      ]
+    ]
+  }
+]

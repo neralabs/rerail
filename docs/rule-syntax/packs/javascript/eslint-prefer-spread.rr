@@ -1,0 +1,19 @@
+.policy "eslint-prefer-spread" revision 5
+.description "Use spread syntax instead of .apply() to call a function with an array of arguments."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   forwarding, natural_this, call_arg_count, call_arg, deparen
+
+// ESLint's prefer-spread: `f.apply(t, args)` where t is the `this` f gets anyway, so `f(...args)` is the same.
+//   foo.apply(undefined, args)    foo.apply(null, args)    obj.foo.apply(obj, args)    → reported
+//   obj.foo.apply(other, args)    foo.apply(null, [1, 2])  foo.apply(null, ...xs)      fine
+// The list must be neither an array literal (no-useless-call's case) nor a spread; exactly two arguments.
+// `foo["apply"](null, args)` counts too. No options.
+.violation prefer_spread(at: node) code "prefer-spread" "Use the spread operator instead of '.apply()'."
+    suppress eslint "prefer-spread"
+    suppress oxlint "prefer-spread"
+    suppress biome "lint/style/useSpreadOverApply"
+prefer_spread(c) :- forwarding(c, _, "apply", _), natural_this(c), call_arg_count(c, 2), call_arg(c, l, 1), deparen(l, r),
+    !kind(r, "array"), !kind(r, "spread_element").

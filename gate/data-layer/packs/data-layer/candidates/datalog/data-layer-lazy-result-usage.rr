@@ -1,0 +1,101 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl lazy_result_class_kind(kind: symbol)
+lazy_result_class_kind("class_definition").
+.decl lazy_result_def_kind(kind: symbol)
+lazy_result_def_kind("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl lazy_result_base(n: node)
+.decl lazy_result_class(c: node)
+.decl lazy_result_deco(s: symbol)
+.decl lazy_result_deco_name(x: node)
+.decl lazy_result_deco_ref(x: node)
+.decl lazy_result_def(f: node, m: symbol)
+.decl lazy_result_exempt(s: symbol)
+.decl lazy_result_exempt_decorator(f: node)
+.decl lazy_result_has_lazy(c: node, m: symbol)
+.decl lazy_result_hit(d: number, f: node, m: symbol)
+.decl lazy_result_lazy(m: symbol, z: symbol)
+.decl lazy_result_lazy_bases(c: node)
+.decl lazy_result_lazy_def(x: node, m: symbol)
+.decl lazy_result_lazy_return(f: node)
+.decl lazy_result_skip(p: symbol)
+.decl lazy_result_stub(f: node)
+.decl lazy_result_stub_statement(s: node)
+.decl lazy_result_uses_lazy(f: node, m: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+lazy_result_deco("abstractmethod").
+lazy_result_deco("legacy_async").
+lazy_result_deco("legacy_sync").
+lazy_result_exempt("AsyncConnectionWrapper").
+lazy_result_exempt("AsyncCursor").
+lazy_result_exempt("BaseDeferredQuery").
+lazy_result_exempt("Connection").
+lazy_result_exempt("Cursor").
+lazy_result_exempt("DeferredInsertFromQueryBuilder").
+lazy_result_exempt("InProcessExecutor").
+lazy_result_exempt("JobExecutor").
+lazy_result_exempt("MigrationExecutorProtocol").
+lazy_result_exempt("SyncExecutor").
+lazy_result_lazy("execute", "execute_lazy").
+lazy_result_lazy("first", "execute_lazy").
+lazy_result_lazy("first", "first_lazy").
+lazy_result_lazy("one", "execute_lazy").
+lazy_result_lazy("one", "one_lazy").
+lazy_result_lazy("one_or_none", "execute_lazy").
+lazy_result_lazy("one_or_none", "one_or_none_lazy").
+lazy_result_lazy("select_one", "execute_lazy").
+lazy_result_lazy("select_one", "select_one_lazy").
+lazy_result_lazy("select_one_or_raise", "select_one_or_raise_lazy").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
+lazy_result_base(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "ABC" ; s = "Protocol").
+lazy_result_base(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "ABC" ; s = "Protocol").
+lazy_result_base(n) :- node(_, n, "subscript", _, _), child(n, c, _), lazy_result_base(c).
+lazy_result_base(n) :- node(_, n, "generic_type", _, _), child(n, c, _), lazy_result_base(c).
+lazy_result_lazy_bases(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), lazy_result_base(b).
+lazy_result_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), text(i, s), (contains("Query", s) ; contains("Table", s) ; contains("Transaction", s)), !lazy_result_exempt(s), !match("_*(Async|Lazy).*", s), !lazy_result_lazy_bases(c).
+lazy_result_lazy_def(x, m) :- node(_, x, "function_definition", _, _), field(x, "name", i), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_lazy_def(x, m) :- node(_, x, "decorated_definition", _, _), child(x, y, _), node(_, y, "function_definition", _, _), field(y, "name", i), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_has_lazy(c, m) :- lazy_result_class(c), field(c, "body", b), child(b, x, _), lazy_result_lazy_def(x, m).
+lazy_result_def(f, m) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, m), lazy_result_lazy(m, _), nearest(f, c, lazy_result_class_kind), lazy_result_class(c), !lazy_result_has_lazy(c, m).
+lazy_result_lazy_return(f) :- lazy_result_def(f, _), field(f, "return_type", r), node_text(r, s), (contains("LazyResult", s) ; contains("LazySeq", s) ; contains("DeferredFuture", s)).
+lazy_result_stub_statement(s) :- node(_, s, "pass_statement", _, _).
+lazy_result_stub_statement(s) :- node(_, s, "expression_statement", _, _), child(s, e, _), node(_, e, "ellipsis", _, _).
+lazy_result_stub(f) :- lazy_result_def(f, _), field(f, "body", b), node(_, b, "block", _, _), child(b, s, _), lazy_result_stub_statement(s), !child(b, _, 1).
+lazy_result_deco_ref(x) :- node(_, x, "identifier", _, _), text(x, s), lazy_result_deco(s).
+lazy_result_deco_ref(x) :- node(_, x, "attribute", _, _), field(x, "attribute", a), node(_, a, "identifier", _, _), text(a, s), lazy_result_deco(s).
+lazy_result_deco_name(x) :- lazy_result_deco_ref(x).
+lazy_result_deco_name(x) :- node(_, x, "call", _, _), field(x, "function", g), lazy_result_deco_ref(g).
+lazy_result_exempt_decorator(f) :- lazy_result_def(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), lazy_result_deco_name(x).
+lazy_result_uses_lazy(f, m) :- lazy_result_def(f, m), inside(i, f, lazy_result_def_kind), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_skip(p) :- doc(_, p, _), (contains("tests/", p) ; contains("test_", p) ; contains("__pycache__", p) ; contains("l2055_lazy_result/", p) ; contains("l2070_batching/", p)).
+lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f), !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !tape_syntax_error(d).
+violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "one_or_none", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one_or_none"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "select_one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "select_one_or_raise", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one_or_raise"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).

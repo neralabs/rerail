@@ -1,0 +1,33 @@
+.policy "typescript-eslint-no-misused-new" revision 2
+.description "Don't declare a new method on a class or a constructor or construct signature on an interface; define a real class constructor instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+// typescript-eslint's no-misused-new: three ways to mistake a declaration for a constructor.
+//   class C { new(): C; }                   a method named `new` returning its own class: `new C()` never calls it
+//   interface I { new (): I; }              a construct signature returning the interface: no class implements it
+//   interface I { constructor(): void; }    a method named `constructor`: interfaces have no constructors
+// The first two compare the return type's plain name with the class's or interface's name (`C<T>` counts); a
+// method with a body, and `constructor` in a class, are fine. No options.
+.violation no_misused_new(at: node, msg: symbol) code "@typescript-eslint/no-misused-new" "{msg}"
+    suppress eslint "@typescript-eslint/no-misused-new"
+    suppress oxlint "no-misused-new"
+    suppress biome "lint/suspicious/noMisleadingInstantiator"
+no_misused_new(m, "Replace this method named `new` with a constructor; `new` on the class never calls it.") :-
+    kind(m, "method_signature"), member_name(m, "new"), child(b, m, _), kind(b, "class_body"), field(c, "body", b),
+    field(m, "return_type", t), returns_own(c, t, _).
+no_misused_new(s, cat("Declare ", cat(x, " as a class with a constructor instead of giving the interface a construct signature that returns itself."))) :-
+    kind(s, "construct_signature"), child(b, s, _), kind(b, "interface_body"), field(i, "body", b),
+    field(s, "type", t), returns_own(i, t, x).
+no_misused_new(m, "Remove this constructor method from the interface; declare a class with a real constructor if you need one.") :-
+    kind(m, "method_signature"), member_name(m, "constructor"), child(b, m, _), !kind(b, "class_body").
+
+.decl member_name(m: node, x: symbol)  // m's key is the plain identifier x (not a string or computed key)
+member_name(m, x) :- field(m, "name", k), kind(k, "property_identifier"), text(k, x).
+// returns_own(c, t, x): annotation t is `: x` or `: x<…>`, where x is the name of class or interface c.
+.decl returns_own(c: node, t: node, x: symbol)
+returns_own(c, t, x) :- kind(t, "type_annotation"), child(t, r, 0), own_name(r, x), field(c, "name", n), text(n, x).
+.decl own_name(r: node, x: symbol)
+own_name(r, x) :- kind(r, "type_identifier"), text(r, x).
+own_name(r, x) :- kind(r, "generic_type"), field(r, "name", n), kind(n, "type_identifier"), text(n, x).

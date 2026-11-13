@@ -1,0 +1,18 @@
+
+running 13 tests
+test code_rule_dsl::logic::plan::compose::tests::a_constant_split_prefix_does_not_enumerate_positions ... ok
+test code_rule_dsl::logic::plan::compose::tests::closure_uses_a_recursive_cte_and_terminates_on_cycles ... ok
+test code_rule_dsl::logic::plan::compose::tests::composed_queries_read_adopted_inputs_and_replace_their_versions ... ok
+test code_rule_dsl::logic::plan::compose::tests::constants_fanout_and_fanin_execute_one_query ... ok
+test code_rule_dsl::logic::plan::compose::tests::demanded_aggregates_and_negation_preserve_empty_groups_and_set_semantics ... ok
+test code_rule_dsl::logic::plan::compose::tests::empty_extremum_has_no_binding_even_when_its_value_is_discarded ... ok
+test code_rule_dsl::logic::plan::compose::tests::exponentially_shared_ctes_use_bounded_bulk_stages ... ok
+test code_rule_dsl::logic::plan::compose::tests::nonlinear_recursion_requires_an_explicit_physical_plan ... ok
+test code_rule_dsl::logic::plan::compose::tests::partial_scalars_cannot_publish_null_or_survive_projection ... ok
+test code_rule_dsl::logic::plan::compose::tests::pruning_dead_native_producers_removes_their_dependency_edges ... ok
+test code_rule_dsl::logic::plan::compose::tests::quiet_composed_maintenance_keeps_the_same_resident_fact ... ok
+test code_rule_dsl::logic::plan::compose::tests::relation_names_are_case_sensitive_through_joins_aggregates_and_negation ... ok
+test code_rule_dsl::logic::plan::compose::tests::restored_case_distinct_inputs_keep_their_own_bindings ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 3134 filtered out; finished in 2.25s
+

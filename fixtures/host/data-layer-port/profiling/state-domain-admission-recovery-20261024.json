@@ -1,0 +1,442 @@
+{
+  "format": "rerail.state-domain-admission-recovery/v1",
+  "date": "2026-10-24",
+  "baselineCommit": "24998a39",
+  "redCommit": "1459c56c",
+  "scope": "Complete unchanged fixed state-tripwire guard, snapshot and workspace paths. Counts and timings do not describe the full data-layer repository. Broader parity uses recorded test observations.",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "requiredRemoval": 1261,
+  "requiredCeiling": 989,
+  "before": {
+    "engine": 2250,
+    "sqliteInternal": 181,
+    "unknown": 0
+  },
+  "after": {
+    "engine": 975,
+    "sqliteInternal": 106,
+    "unknown": 0
+  },
+  "netEngineRemoval": 1275,
+  "fullTargetMet": true,
+  "fixedLimit": 100,
+  "fixedLimitAccepted": false,
+  "remainingExcess": 875,
+  "recordingBytesMatchBaseline": true,
+  "afterByPhase": {
+    "connectionSetup": 229,
+    "filePublication": 36,
+    "catalogPublication": 12,
+    "candidatePreparation": 308,
+    "cleanup": 24,
+    "relationalEvaluation": 366
+  },
+  "componentAccounting": {
+    "frontendExperimentRemoval": 761,
+    "emptyRuntimeSqlRemoval": 500,
+    "readerPragmaRemovalBeyondModel": 14,
+    "readerPragmas": "Seven fewer PRAGMA temp_store=MEMORY and seven fewer PRAGMA analysis_limit=1000 executions relative to the frontend experiment.",
+    "modelTargetRetained": 1261
+  },
+  "clauses": [
+    "state-signatures-1",
+    "state-flow-1",
+    "state-projection-recovery-2",
+    "state-flow-project-1"
+  ],
+  "implementation": {
+    "frontends": "Production generator reuses whole-file tape-backed nodes, fields, edges and ownership. Detector decisions remain SQL. Only four of 32 state clauses change.",
+    "admission": "relational.requireNonemptyInput names one declared input. Complete empty evidence skips the reader and body preparation. Nonempty evidence transfers to import without another extraction. Incomplete evidence, budgets and cancellation remain failures.",
+    "preparation": "Gate/body phases use the existing scheduler and candidate frontier. Repository syntax restores only eligible current documents in bounded metadata/source/tape batches. Each logical file is charged against the byte limit.",
+    "cache": "Existing document-version and syntax-fact lifetime. No new row-vector store or configuration switch.",
+    "sourceRegeneration": "Full pinned-source generator matches all ten generated policies byte for byte. Two clauses retain repository partitioning for scan_project_sources."
+  },
+  "cpuControl": {
+    "scope": "Five alternating fresh-process B/C pairs on the unchanged guard. CPU interval includes compilation, snapshot/workspace execution and cleanup after module imports. Node maxRSS covers the whole process.",
+    "workers": 4,
+    "instrumentation": "Tracing, phase profiling, SQL capture, census and external sampling disabled in every control child.",
+    "build": "Both addons use release opt-level=1 for rerail-engine, lto=false, codegen-units=256 and code-rule-profile. The same accepted allocator archive and DYLD shim apply.",
+    "memoryUnit": "KiB (Node resourceUsage maxRSS); high-water process RSS, not live exclusive allocations.",
+    "trials": {
+      "before": [
+        {
+          "passed": true,
+          "userMs": 1456.36,
+          "systemMs": 78.543,
+          "cpuMs": 1534.903,
+          "wallMs": 2797.514416,
+          "maxRSSKiB": 330528,
+          "trial": 1
+        },
+        {
+          "passed": true,
+          "userMs": 1483.362,
+          "systemMs": 73.32,
+          "cpuMs": 1556.682,
+          "wallMs": 3452.6207080000004,
+          "maxRSSKiB": 341824,
+          "trial": 2
+        },
+        {
+          "passed": true,
+          "userMs": 1536.776,
+          "systemMs": 75.281,
+          "cpuMs": 1612.057,
+          "wallMs": 3296.7972499999996,
+          "maxRSSKiB": 328864,
+          "trial": 3
+        },
+        {
+          "passed": true,
+          "userMs": 1518.935,
+          "systemMs": 83.745,
+          "cpuMs": 1602.68,
+          "wallMs": 3750.034125,
+          "maxRSSKiB": 337616,
+          "trial": 4
+        },
+        {
+          "passed": true,
+          "userMs": 1518.909,
+          "systemMs": 67.312,
+          "cpuMs": 1586.221,
+          "wallMs": 2475.129375,
+          "maxRSSKiB": 364464,
+          "trial": 5
+        }
+      ],
+      "after": [
+        {
+          "passed": true,
+          "userMs": 477.733,
+          "systemMs": 50.198,
+          "cpuMs": 527.931,
+          "wallMs": 1162.4546670000002,
+          "maxRSSKiB": 298784,
+          "trial": 1
+        },
+        {
+          "passed": true,
+          "userMs": 498.472,
+          "systemMs": 41.761,
+          "cpuMs": 540.233,
+          "wallMs": 1178.973334,
+          "maxRSSKiB": 292400,
+          "trial": 2
+        },
+        {
+          "passed": true,
+          "userMs": 514.763,
+          "systemMs": 55.096,
+          "cpuMs": 569.859,
+          "wallMs": 1022.7134579999997,
+          "maxRSSKiB": 294272,
+          "trial": 3
+        },
+        {
+          "passed": true,
+          "userMs": 504.594,
+          "systemMs": 45.458,
+          "cpuMs": 550.052,
+          "wallMs": 1474.0521669999998,
+          "maxRSSKiB": 301904,
+          "trial": 4
+        },
+        {
+          "passed": true,
+          "userMs": 495.93,
+          "systemMs": 55.987,
+          "cpuMs": 551.917,
+          "wallMs": 1045.7635830000002,
+          "maxRSSKiB": 303120,
+          "trial": 5
+        }
+      ]
+    },
+    "summary": {
+      "before": {
+        "medianCpuMs": 1586.221,
+        "medianPeakRSSKiB": 337616,
+        "cpuRangeMs": [
+          1534.903,
+          1612.057
+        ]
+      },
+      "after": {
+        "medianCpuMs": 550.052,
+        "medianPeakRSSKiB": 298784,
+        "cpuRangeMs": [
+          527.931,
+          569.859
+        ]
+      },
+      "cpuReductionPercent": 65.32311701837259
+    }
+  },
+  "validation": {
+    "nativeFacing": 323,
+    "nativeTestFiles": 18,
+    "rustPassed": 1604,
+    "rustIgnored": 23,
+    "rustFailed": 0,
+    "generatorTests": 12,
+    "budgetRegressionTests": 14,
+    "referenceExamples": {
+      "compile": 98,
+      "fail": 0,
+      "fragments": 8
+    },
+    "referenceGrammar": "38 productions, zero differences",
+    "parity": {
+      "delivery-state": {
+        "nativeCalls": 77,
+        "positiveCalls": 64,
+        "cleanCalls": 13,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0
+      },
+      "delivery-source": {
+        "nativeCalls": 120,
+        "positiveCalls": 60,
+        "cleanCalls": 60,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "engineFailures": 0,
+        "executionPathDifferences": 0
+      }
+    },
+    "static": "TypeScript, boundaries, structure, Windows paths, formatting and all-target Clippy with and without profiling pass.",
+    "gate": "C progress passes. The mandatory complete-job 100 limit correctly exits 1 after complete findings, with budget-exceeded and zero coverage problems."
+  },
+  "remainingWork": "975 actual submissions, 875 above the final 100 limit. The inventory retains candidate preparation (308), relational evaluation (366) and setup/compiler work (229). No next chunk savings are priced here.",
+  "artifacts": [
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-addon/engine.node",
+      "sha256": "335879ddae6bdb92e13b99f0ea707f00d722f175dfd19b5b73b7d93f5d086010"
+    },
+    {
+      "path": ".rerail/profiles/chunk-b-20261024/final-addon/engine.node",
+      "sha256": "67183d22e1d3baf644a24c1bce2e03142a88335b5a5ebe031307bbcc6576464a"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/before-policies/data-layer-serverplan-state-tripwires.json",
+      "sha256": "afbf31c97bf395fd31e498bf324b87812256dc6d496150ea3fb1650d81c879c2"
+    },
+    {
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json",
+      "sha256": "dcc7a0915537565204b7b99066001f7fd39dd04520a8ea15af317f3ee7243e37"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/recording.json",
+      "sha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/chunk-c-budget.json",
+      "sha256": "e05af0331fa635e5d87e72cee168470edd67a1b800e8af572aeadaafdcaa553b"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/capture/sql/profile.json",
+      "sha256": "11da8bb1f60b0cc5602c6deecb8e669d5659072635528733c09125c31a297063"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/capture/sql/execution-inventory.json",
+      "sha256": "571644dedd3acd183f705ab11fe84d43cf8f64883fc5f7f83687b60a8f457781"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-acceptance/capture/parity.json",
+      "sha256": "400e9d3d3ee5df701818bf5ccc4b160322e17296405fccb9bd397907d4d2863d"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-native/profile.json",
+      "sha256": "4c36019096471a78b01f4edeae3ad207ca75a9a9f0a44b639c1588610b37c405"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-rust/stdout.log",
+      "sha256": "dfbbe4967eb1690e22f5e7c9d052cc9194dcd69ce202a2a1c8f0e8135b740f98"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/controls/summary.json",
+      "sha256": "848aea8d44101d072328b12e0d4d2b4a6f2258474c17e5f7388f37ffddd080c1"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/control.mjs",
+      "sha256": "0e1d6ec833cf517c75e1cc5d97f285bc0fffe53a88492c77420a05c195330ef1"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/run-controls.py",
+      "sha256": "98a29c44875ca4a6b43ef6e5cea6ec2972c3c8a91ae65abc5b309ff49b945c20"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/regeneration.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-state/parity.json",
+      "sha256": "19a07ccaa429e06f74eba6332d397a901d025872246614270e3f5f634a4a96a6"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-source/parity.json",
+      "sha256": "b2fa1a5af04c656b89afadd3de0e27cc9df5217342c5806d01be46058c6aa0d1"
+    },
+    {
+      "path": ".rerail/profiles/chunk-c-20261024/delivery-external/profile.json",
+      "sha256": "a12e31ad3fdbc5b3f2a06e8eaf196a49ac507d4520a34d47be26ae8b45389cfa"
+    }
+  ],
+  "implementationSourceHashes": [
+    {
+      "path": "native/src/code_rule_dsl/compile/relational.rs",
+      "sha256": "015ef98882b1efb2f395ffa366bd70a46305389a87c8ad24909d23dc6a2c9afc"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/mod.rs",
+      "sha256": "0d370fefd690e0f034ceb11a3b67eb06f0aa6fb93eeef5807dfa655be1a34daa"
+    },
+    {
+      "path": "native/src/code_rule_dsl/relational.rs",
+      "sha256": "9e875ae6f649626d86ba8b9fb7955e159a1d6f57055b5b3238e6bfb7f74ddf31"
+    },
+    {
+      "path": "native/src/code_rule_dsl/relational/admission.rs",
+      "sha256": "9dcfa6a662c2103981be99f3e44316b1f8bd4136e67f9edbddc0fac9afbd0006"
+    },
+    {
+      "path": "native/src/code_rule_dsl/relational/batch.rs",
+      "sha256": "6800910860224a7ffbf2f52c82571f3bd31c94536953e2db54c8c844abab0a90"
+    },
+    {
+      "path": "native/src/code_rule_dsl/relational/batch/tests.rs",
+      "sha256": "b44109aaed552316a8493f546c4ae8fd6b8146be4543a42323ae04c6727649d6"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/documents.rs",
+      "sha256": "6d0c4acf285898d4fa673a52241be56e3c1387d3c6221fa50fef17394369048e"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/global.rs",
+      "sha256": "eda49e799aaaf98d734072d687444e7547233714890c2159726d0d707bfedbda"
+    },
+    {
+      "path": "native/src/content_store/mod.rs",
+      "sha256": "3b89f26ba4027b6a35f533c4b2e0e8dfb8c0abca76749a54fe7259c64598e023"
+    },
+    {
+      "path": "native/src/content_store/objects.rs",
+      "sha256": "6a5303c4ab5d442b76f8849ec9252cb3fbc4bb53c2eb605efcff48113d66ba03"
+    },
+    {
+      "path": "native/src/content_store/tests.rs",
+      "sha256": "c45b5566ed11160ff4008ed6bd6bc67a4bf222ab4fcbc42d1c021cef49a26054"
+    },
+    {
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json",
+      "sha256": "dcc7a0915537565204b7b99066001f7fd39dd04520a8ea15af317f3ee7243e37"
+    },
+    {
+      "path": "scripts/dsl/data_layer_six/ast_relations.py",
+      "sha256": "994bc5f8c96a904fcdde8d6b24f52f1e82cab2a56289536bb960643550f1a7ed"
+    },
+    {
+      "path": "scripts/dsl/data_layer_six/common.py",
+      "sha256": "31c8d4254a848831bb9c733159ae7801756ef65d7db034a5c253305c960dc495"
+    },
+    {
+      "path": "scripts/profiling/producer-shape.mjs",
+      "sha256": "1c037c5078ce01d46913eaead356e68a230b89cce0e28320b4946ae3e2b086a8"
+    },
+    {
+      "path": "scripts/profiling/sql-budget.mjs",
+      "sha256": "8683707e20417af9e5b799a344ac4a5a2edd63f3d7a8b68da696ad3466173f87"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-schema.ts",
+      "sha256": "8b1c54143d9315e790d65d1d9b5478251f6f4933e2cf44e5ad75b9d9b22f42c7"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule.ts",
+      "sha256": "20caa56512738400fc6a06301bf1514e3fe9504a0a7f1b821bb05fed276a6495"
+    },
+    {
+      "path": "test/engine/native/recovery/input-admission.test.ts",
+      "sha256": "c9add33a8e631608194d86684ccfde95f8c71a96723c57aea15e7156a1ac1324"
+    },
+    {
+      "path": "test/engine/native/recovery/state-syntax-domain.test.ts",
+      "sha256": "50c4a9fe9786391fd21ef95d0d42919f1eb45657c5a39c81f34bc2b24cf16568"
+    },
+    {
+      "path": "test/scripts/sql-execution-budget.test.mjs",
+      "sha256": "b8119841628e21c2b07d026ed1980b35f272f35c92d5d90d5544b5a0a1734eff"
+    },
+    {
+      "path": "test/scripts/test_shared_sql.py",
+      "sha256": "46e96b74a5457ede75f694aa8c40d137066bca757dc35c3ade4583cee4c301e9"
+    }
+  ],
+  "externalProfile": {
+    "scope": "Separate broader 77-observation state corpus; not a matched CPU control.",
+    "trace": "off",
+    "samples": 2,
+    "memorySnapshots": 1,
+    "parityPassed": true,
+    "leaders": "Regex search, SQL preparation/parsing, hashing, allocation and copies appear in bottom-up self frames. Scheduling and I/O also appear. Wall-stack observations are not CPU shares.",
+    "vmmap": {
+      "roundedValues": true,
+      "regions": {
+        "MALLOC guard page": {
+          "virtualBytesApprox": 3506176,
+          "residentBytesApprox": 0,
+          "dirtyBytesApprox": 0,
+          "swappedBytesApprox": 0
+        },
+        "MALLOC metadata": {
+          "virtualBytesApprox": 901120,
+          "residentBytesApprox": 737280,
+          "dirtyBytesApprox": 737280,
+          "swappedBytesApprox": 0
+        },
+        "MALLOC_LARGE (empty)": {
+          "virtualBytesApprox": 43935334,
+          "residentBytesApprox": 43935334,
+          "dirtyBytesApprox": 43935334,
+          "swappedBytesApprox": 0
+        },
+        "MALLOC_SMALL": {
+          "virtualBytesApprox": 58720256,
+          "residentBytesApprox": 32820428,
+          "dirtyBytesApprox": 32820428,
+          "swappedBytesApprox": 0
+        },
+        "MALLOC_SMALL (empty)": {
+          "virtualBytesApprox": 37748736,
+          "residentBytesApprox": 25060966,
+          "dirtyBytesApprox": 25060966,
+          "swappedBytesApprox": 0
+        },
+        "MALLOC_TINY": {
+          "virtualBytesApprox": 4194304,
+          "residentBytesApprox": 294912,
+          "dirtyBytesApprox": 294912,
+          "swappedBytesApprox": 0
+        }
+      },
+      "allocatorZones": [
+        {
+          "name": "DefaultMallocZone_0x1060f4000",
+          "virtualBytesApprox": 101502156,
+          "residentBytesApprox": 58929971,
+          "dirtyBytesApprox": 58929971,
+          "swappedBytesApprox": 0,
+          "allocationCount": 20075,
+          "allocatedBytesApprox": 9450496
+        }
+      ],
+      "physicalFootprintBytesApprox": 296013004,
+      "peakPhysicalFootprintBytesApprox": 296851865,
+      "recognized": true
+    },
+    "rawDirectory": ".rerail/profiles/chunk-c-20261024/delivery-external"
+  }
+}

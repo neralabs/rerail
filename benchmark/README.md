@@ -6,6 +6,9 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
 - `query-parity.ts` (`just rerail-query-parity`) runs the same code-rule workloads through two or more native engine
   builds, each in its own process. It reports every section where their findings, failures or coverage differ.
 - `query-parity-semantic.ts` names the semantic-resolution workloads (`resolves`, `usage`) that `query-parity.ts` runs.
+- `sql-executor.py` runs recursive rules, aggregation, component boundaries, fact queries, and CPython workloads.
+  It checks results and records CPU time, SQLite work counters, emitted SQL, and expected feature failures.
+  It uses the development driver in `native/examples/sql-executor-bench.rs`.
 - `dashboard-history.ts` (`just rerail-dashboard-history`) seeds a throwaway database with a long audit history (`--audits`,
   `--rules`, `--backlog`, `--sessions`), serves the daemon's API over it, and times what the dashboard reads: each history
   read computed and repeated, one poll while a session keeps committing, recording one repository audit, and how long
@@ -16,6 +19,29 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
 needs them. For the engine's own micro-benchmark, see `npm run bench:code-rule-dsl` (`scripts/dsl/`).
+
+## SQL execution
+
+Build the optimized driver and engine, then select a results directory outside the repository:
+
+```sh
+cargo build --locked --profile profiling --example sql-executor-bench --bin rerail-engine
+python3 benchmark/sql-executor.py \
+  --runner target/profiling/examples/sql-executor-bench \
+  --engine target/profiling/rerail-engine \
+  --out /tmp/rerail-sql-examples --repeats 3 --timeout 45
+```
+
+Python 3, Node, and `zstd` are required. The runner expands the existing CPython fixture into the results directory.
+Use `--only closure`, `--only inlined`, or `--only corpus` to select cases.
+Each process has a timeout. Requests, answers, traces, and validation results stay in the results directory.
+Use a new directory for each run.
+
+Session timings include SQLite profiling overhead. The corpus comparison profiles its first trial only.
+Compare later corpus trials for timings, and use the first trial to locate expensive statements.
+Corpus SQL and native runs use the same bounded cross-file rounds. Session programs run to a global fixpoint.
+The original CPython cases run unchanged programs and cover projection binding.
+The renamed and inlined cases measure projection overhead separately.
 
 ## Steer strategies
 
@@ -100,3 +126,15 @@ Caveats:
 - A single trial is an anecdote. Use `--trials` and report means with the harness versions and models.
 - `--keep` leaves each sandbox in `/tmp` for inspection. The access token imported into it is deleted when the
   trial ends either way, so a kept sandbox cannot rerun the harness.
+
+The `update-closure` SQL cases retain 130,816 and 523,776 rows, then apply five fact batches.
+They check disconnected insertions, deletion, path extension, and retraction against exact counts and sums.
+The driver records each update's SQL VM work and CPU separately from initial execution.
+Use `--only update-closure` to run these cases. Raw profiles belong outside the repository.
+
+The `update-reducers` cases retain global and grouped count/sum/min/max state plus negation contexts.
+They run at 10,000 and 100,000 facts and outer candidates, then check seven edit batches against exact output oracles.
+The `update-aggregate` cases retain the earlier grouped count/sum/negation workload for comparison.
+Both cases require empty `refreshed_strata` reports. First edits include support initialization.
+The oracles also require an initialization report on the first edit and none on later edits.
+Use `--only update-reducers` or `--only update-aggregate` to select them.

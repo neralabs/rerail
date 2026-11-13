@@ -1,0 +1,14 @@
+.policy "eslint-no-eq-null" revision 4
+.description "Use strict equality when comparing with null; loose equality also matches undefined."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-eq-null: `==` or `!=` with the literal null on either side.
+//   if (x == null)   null != y      → reported;   x === null   x == undefined   → not
+.violation no_eq_null(at: node) code "no-eq-null" "Use '===' to compare with null."
+    suppress eslint "no-eq-null"
+    suppress oxlint "no-eq-null"
+    suppress biome "lint/suspicious/noEqualsToNull"
+no_eq_null(n) :- binop(n, o, l, r), equality(o, "false"), (null_lit(l) ; null_lit(r)).

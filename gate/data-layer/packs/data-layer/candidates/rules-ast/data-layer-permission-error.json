@@ -1,0 +1,121 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-permission-error",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer permission_error at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "api/**/*.py",
+      "impl/**/*.py",
+      "l1100_exceptions/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/test/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "raise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "raise_statement",
+            "any": [
+              {
+                "pattern": "raise PermissionError($$$ARGS)"
+              },
+              {
+                "pattern": "raise PermissionError"
+              }
+            ],
+            "not": {
+              "inside": {
+                "kind": "module",
+                "has": {
+                  "kind": "import_from_statement",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "module_name",
+                        "regex": "l1100_exceptions"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "name",
+                        "any": [
+                          {
+                            "kind": "dotted_name",
+                            "regex": "^PermissionError$"
+                          },
+                          {
+                            "kind": "aliased_import",
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "regex": "^PermissionError$"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "alias",
+                                  "regex": "^PermissionError$"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "layout": {
+                    "after": {
+                      "to": "capture.RAISE",
+                      "breaks": {
+                        "min": 0
+                      }
+                    }
+                  },
+                  "stopBy": "end"
+                },
+                "stopBy": "end"
+              }
+            },
+            "all": [
+              {
+                "not": {
+                  "layout": {
+                    "line": "lint: allow-builtin-permission-error"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "layout": {
+                    "previousLine": "lint: allow-builtin-permission-error"
+                  }
+                }
+              }
+            ],
+            "pattern": "$RAISE"
+          },
+          "syntax": "valid"
+        }
+      },
+      "violation": {
+        "code": "builtin_permission_error",
+        "anchor": "witness.span",
+        "message": "Raises built-in PermissionError instead of l1100_exceptions.PermissionError"
+      }
+    }
+  ]
+}

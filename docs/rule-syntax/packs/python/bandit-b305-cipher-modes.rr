@@ -1,0 +1,17 @@
+.policy "bandit-b305-cipher-modes" revision 2
+.description "Avoid the ECB cipher mode; it encrypts identical blocks to identical output and leaks patterns in the data, so use an authenticated mode such as GCM."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B305 (its B001 blacklist): a call to cryptography's modes.ECB.
+//   from cryptography.hazmat.primitives.ciphers import modes
+//   modes.ECB()                                B305
+//   modes.GCM(iv)                              not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B305(at: node) code "B305"
+    "Replace ECB with an authenticated mode such as GCM; ECB leaks patterns in the data."
+    suppress nosec "B305"
+B305(n) :- blacklisted(n, "B305").

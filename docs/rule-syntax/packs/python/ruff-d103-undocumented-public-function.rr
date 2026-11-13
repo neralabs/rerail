@@ -1,0 +1,18 @@
+.policy "ruff-d103-undocumented-public-function" revision 2
+.description "Document each public Python function with a docstring describing its behavior, arguments and return value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D103 (pydocstyle): a public module-level function with no docstring. Public: the module is, the
+// function is listed in `__all__` when there is one, and its name does not start with `_`. `@overload`
+// signatures, defs decorated with a `pydocstyle.ignore-decorators` entry and `.pyi` stubs are not checked.
+//   def run(): pass            ← D103 at `run`
+//   @overload
+//   def run(x: int): ...       not reported
+#include "python/docstrings.rr"
+
+.violation D103(at: node, x: symbol) code "D103"
+    "Add a docstring as the first statement of function `{x}`, describing what it does, its arguments and its return value."
+    suppress ruff "D103"
+D103(nm, x) :- doc_missing(_, "function", nm, x).

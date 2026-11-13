@@ -66,6 +66,7 @@ import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { ENGINE_USAGE, runEngineCommand } from "./engine-cli.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
@@ -194,6 +195,7 @@ function usage(): string {
     "  rerail remote remove <name|url>",
     "  rerail remote push [--json]",
     "  rerail remote exclude|include [--repo <dir>]",
+    ...ENGINE_USAGE,
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -771,6 +773,7 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "packs": return await runPacksCommand(args, usage);
     case "reset": return runResetCommand(args, usage);
     case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
+    case "engine": return runEngineCommand(args, usage);
     case "scrub": return await runScrubCommand(args, usage);
     case "start":
     case "stop":

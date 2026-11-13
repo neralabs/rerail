@@ -1,0 +1,148 @@
+# converted_rules_give_the_recorded_findings (RERAIL_REPLAY_BLESS=1 writes this): per group and check,
+# `count | <group> | <check> | events replayable run exact errors`; then each replayable event that is not
+# exact, `miss | <event>` or `error | <event>`, an event `<group> | <check> | <n> | <test>`.
+count | batches 7-8 and probes | admin_async_purity | 8 8 8 8 0
+count | batches 7-8 and probes | async_executor | 8 8 8 8 0
+count | batches 7-8 and probes | async_patterns | 26 26 26 26 0
+count | batches 7-8 and probes | async_sync_boundary | 12 12 12 12 0
+count | batches 7-8 and probes | async_sync_delegation | 1 1 1 1 0
+count | batches 7-8 and probes | authentication_plan_purity | 10 10 10 10 0
+count | batches 7-8 and probes | cached_pure_lazy_allowlist | 60 59 59 59 0
+count | batches 7-8 and probes | classvar_check | 8 8 8 8 0
+count | batches 7-8 and probes | conn_or_txn_union | 10 10 10 10 0
+count | batches 7-8 and probes | connection_caches | 12 12 12 12 0
+count | batches 7-8 and probes | data_layer_compat_aliases | 4 4 4 4 0
+count | batches 7-8 and probes | data_layer_facade_purity | 5 5 5 5 0
+count | batches 7-8 and probes | declared_fact_interrogation | 42 42 42 42 0
+count | batches 7-8 and probes | dynamic_module_loading | 12 12 12 10 0
+count | batches 7-8 and probes | eager_resolve | 77 77 77 77 0
+count | batches 7-8 and probes | error_handling | 10 10 10 10 0
+count | batches 7-8 and probes | executor_publication_repairs | 5 5 5 5 0
+count | batches 7-8 and probes | forwardref | 10 10 10 10 0
+count | batches 7-8 and probes | grammar_allowlist_burndown | 8 8 8 8 0
+count | batches 7-8 and probes | grammar_callable_constructors | 24 24 24 24 0
+count | batches 7-8 and probes | grammar_fragment_usage | 44 44 44 44 0
+count | batches 7-8 and probes | grammar_mutation_invalidation | 45 45 45 45 0
+count | batches 7-8 and probes | grammar_render_methods | 30 30 30 30 0
+count | batches 7-8 and probes | grammar_str_params | 14 14 14 14 0
+count | batches 7-8 and probes | history_serverplan_projection | 12 12 12 12 0
+count | batches 7-8 and probes | imperative_private_functions | 73 73 73 73 0
+count | batches 7-8 and probes | internal_dead_code | 43 43 43 43 0
+count | batches 7-8 and probes | layer_violations | 11 11 11 11 0
+count | batches 7-8 and probes | lazy_adapter_ownership | 11 11 11 11 0
+count | batches 7-8 and probes | lazy_architecture | 205 205 205 205 0
+count | batches 7-8 and probes | lazy_result_usage | 12 12 12 12 0
+count | batches 7-8 and probes | lazy_sql_surface | 36 36 36 36 0
+count | batches 7-8 and probes | legacy_callback_quarantine | 11 11 11 11 0
+count | batches 7-8 and probes | legacy_execution_surfaces | 5 5 5 5 0
+count | batches 7-8 and probes | missing_async_pairs | 8 8 8 8 0
+count | batches 7-8 and probes | module_level_caches | 18 18 18 18 0
+count | batches 7-8 and probes | plan_helpers_allowlist | 82 82 82 82 0
+count | batches 7-8 and probes | plan_scope_ownership | 16 16 16 16 0
+count | batches 7-8 and probes | plan_scope_side_effects | 22 22 22 22 0
+count | batches 7-8 and probes | post_op_no_internal_dispatch | 18 18 18 18 0
+count | batches 7-8 and probes | post_op_side_effects | 22 22 22 22 0
+count | batches 7-8 and probes | public_api_triples | 38 38 38 38 0
+count | batches 7-8 and probes | publication_registry_writes | 24 0 0 0 0
+count | batches 7-8 and probes | pure_lazy_runtime_purity | 54 54 54 54 0
+count | batches 7-8 and probes | readthrough_authority_architecture | 12 12 12 12 0
+count | batches 7-8 and probes | regex_sql_parsing | 42 42 42 42 0
+count | batches 7-8 and probes | render_fstrings | 32 32 32 32 0
+count | batches 7-8 and probes | render_raw_strings | 48 48 48 48 0
+count | batches 7-8 and probes | revision_ancestry_invariants | 6 6 6 6 0
+count | batches 7-8 and probes | rust_sql_grammar_boundary | 14 14 14 12 0
+count | batches 7-8 and probes | serverplan_dispatch_architecture | 10 10 10 10 0
+count | batches 7-8 and probes | serverplan_quality | 8 8 8 8 0
+count | batches 7-8 and probes | serverplan_state_tripwires | 2 2 2 2 0
+count | batches 7-8 and probes | sql_grammar_escape_hatches | 111 107 107 106 0
+count | batches 7-8 and probes | swallowed_exceptions | 9 9 9 9 0
+count | batches 7-8 and probes | sync_async_signatures | 5 5 5 5 0
+count | batches 7-8 and probes | transaction_callback_wrappers | 16 16 16 16 0
+count | batches 7-8 and probes | transaction_closures | 28 28 28 28 0
+count | batches 7-8 and probes | transaction_patterns | 24 24 24 24 0
+count | batches 7-8 and probes | type_safety_patterns | 10 10 10 10 0
+count | batches 7-8 and probes | unknown_contract_defaults | 30 30 30 30 0
+count | batches 7-8 and probes | unresolved_forward_refs | 12 12 12 12 0
+count | batches 7-8 and probes | versioned_merged_identity | 13 13 13 13 0
+count | batches 9-10 API records | bootstrap_cache_health | 16 16 16 16 0
+count | batches 9-10 API records | bootstrap_eager_resolve | 2 2 2 2 0
+count | batches 9-10 API records | bootstrap_engine_invariants | 91 90 90 90 0
+count | batches 9-10 API records | bootstrap_lazy_sql | 3 2 2 2 0
+count | batches 9-10 API records | bounded_composed_graph_paths | 79 79 79 79 0
+count | batches 9-10 API records | conditional_architecture | 77 77 77 76 0
+count | batches 9-10 API records | connection_mode_split | 13 13 13 13 0
+count | batches 9-10 API records | connection_service_architecture | 33 29 29 29 0
+count | batches 9-10 API records | connection_structural_boundaries | 15 15 15 15 0
+count | batches 9-10 API records | embedding_vector_orchestration | 74 74 74 74 0
+count | batches 9-10 API records | generated_index_sources | 39 16 16 16 0
+count | batches 9-10 API records | graph_lazy_sql_plan | 105 105 105 105 0
+count | batches 9-10 API records | graphql_plan_ownership | 54 54 54 54 0
+count | batches 9-10 API records | hnsw_architecture | 62 62 62 62 0
+count | batches 9-10 API records | matching_architecture | 398 398 398 398 0
+count | batches 9-10 API records | plan_composition_architecture | 12 11 11 11 0
+count | batches 9-10 API records | plan_optimizer_v2 | 136 136 136 136 0
+count | batches 9-10 API records | schema_architecture | 11 10 10 10 0
+count | batches 9-10 API records | schema_bootstrap_contracts | 17 16 16 16 0
+count | batches 9-10 API records | schema_introspection_data_paths | 59 59 59 59 0
+count | recordings 1-6 | admin_async_purity | 40 40 40 40 0
+count | recordings 1-6 | async_executor | 39 39 39 39 0
+count | recordings 1-6 | async_patterns | 12 12 12 12 0
+count | recordings 1-6 | async_sync_boundary | 5 5 5 5 0
+count | recordings 1-6 | async_sync_delegation | 36 36 36 36 0
+count | recordings 1-6 | backend_coupling | 62 62 62 62 0
+count | recordings 1-6 | backend_type_strings | 60 60 60 60 0
+count | recordings 1-6 | classvar_check | 8 8 8 8 0
+count | recordings 1-6 | conn_or_txn_union | 5 5 5 5 0
+count | recordings 1-6 | connection_caches | 38 38 38 38 0
+count | recordings 1-6 | data_layer_compat_aliases | 7 7 7 7 0
+count | recordings 1-6 | data_layer_facade_purity | 7 7 7 7 0
+count | recordings 1-6 | dynamic_module_loading | 54 54 54 54 0
+count | recordings 1-6 | error_handling | 3 3 3 3 0
+count | recordings 1-6 | execution_authority_bypass | 5 5 5 5 0
+count | recordings 1-6 | forwardref | 5 5 5 5 0
+count | recordings 1-6 | grammar_callable_constructors | 3 3 3 3 0
+count | recordings 1-6 | grammar_fragment_usage | 36 36 36 36 0
+count | recordings 1-6 | grammar_render_methods | 45 45 45 45 0
+count | recordings 1-6 | grammar_str_params | 5 5 5 5 0
+count | recordings 1-6 | hasattr_async | 33 33 33 33 0
+count | recordings 1-6 | impl_direct_execution | 68 68 68 68 0
+count | recordings 1-6 | lazy_result_usage | 5 5 5 5 0
+count | recordings 1-6 | legacy_execution_surfaces | 75 75 75 75 0
+count | recordings 1-6 | missing_async_pairs | 7 7 7 7 0
+count | recordings 1-6 | module_level_caches | 5 5 5 5 0
+count | recordings 1-6 | no_api_root_imports | 4 4 4 4 0
+count | recordings 1-6 | no_blanket_grammar_bypass | 121 121 121 120 0
+count | recordings 1-6 | no_source_inspection | 72 72 72 71 0
+count | recordings 1-6 | permission_error | 5 5 5 5 0
+count | recordings 1-6 | plan_scope_ownership | 14 14 14 14 0
+count | recordings 1-6 | plan_scope_side_effects | 7 7 7 7 0
+count | recordings 1-6 | raw_execute_regression | 4 4 4 4 0
+count | recordings 1-6 | regex_sql_parsing | 55 55 55 55 0
+count | recordings 1-6 | removed_compat_surfaces | 4 4 4 4 0
+count | recordings 1-6 | render_fstrings | 5 5 5 5 0
+count | recordings 1-6 | render_raw_strings | 5 5 5 5 0
+count | recordings 1-6 | serverplan_bypass | 6 6 6 6 0
+count | recordings 1-6 | serverplan_dispatch_architecture | 49 49 49 49 0
+count | recordings 1-6 | serverplan_grammar_surface | 7 7 7 7 0
+count | recordings 1-6 | serverplan_name_inference | 8 8 8 8 0
+count | recordings 1-6 | serverplan_quality | 192 192 192 192 0
+count | recordings 1-6 | serverplan_state_tripwires | 77 77 77 77 0
+count | recordings 1-6 | serverplan_steps | 746 746 746 746 0
+count | recordings 1-6 | serverplan_target_architecture | 12 12 12 12 0
+count | recordings 1-6 | sql_grammar_escape_hatches | 52 52 52 52 0
+count | recordings 1-6 | swallowed_exceptions | 16 16 16 16 0
+count | recordings 1-6 | sync_async_signatures | 5 5 5 5 0
+count | recordings 1-6 | transaction_callback_wrappers | 4 4 4 4 0
+count | recordings 1-6 | transaction_closures | 76 76 76 76 0
+count | recordings 1-6 | transaction_patterns | 26 26 26 26 0
+count | recordings 1-6 | type_safety_patterns | 46 46 46 46 0
+count | recordings 1-6 | unresolved_forward_refs | 61 61 61 61 0
+count | recordings 1-6 | versioned_lifecycle_legacy_surfaces | 3 3 3 3 0
+miss | batches 7-8 and probes | dynamic_module_loading | 0 | probe:dynamic_module_loading:trigger-is-literal:analyzer
+miss | batches 7-8 and probes | dynamic_module_loading | 0 | probe:dynamic_module_loading:trigger-is-literal:plugin
+miss | batches 7-8 and probes | rust_sql_grammar_boundary | 0 | probe:rust_sql_grammar_boundary:comment:analyzer
+miss | batches 7-8 and probes | rust_sql_grammar_boundary | 0 | probe:rust_sql_grammar_boundary:comment:production
+miss | batches 7-8 and probes | sql_grammar_escape_hatches | 0 | probe:sql_grammar_escape_hatches:tampered-signed-allowlist:plugin
+miss | batches 9-10 API records | conditional_architecture | 0 | conditional_architecture:7
+miss | recordings 1-6 | no_blanket_grammar_bypass | 0 | scripts/tests/test_lint_no_blanket_grammar_bypass.py::test_no_bypass_references_in_string_literal_flagged
+miss | recordings 1-6 | no_source_inspection | 0 | scripts/tests/test_lint_no_source_inspection.py::test_find_violations_pattern_inside_string_literal_flagged

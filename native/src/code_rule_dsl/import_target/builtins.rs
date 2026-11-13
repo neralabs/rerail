@@ -260,12 +260,12 @@ pub(super) const PLUGIN_BUILTINS: &[&str] = &[
 ];
 
 /// Node's `module.isBuiltin(name)`.
-pub(crate) fn is_builtin(name: &str) -> bool {
+pub fn is_builtin(name: &str) -> bool {
     NODE_BUILTINS.binary_search(&name).is_ok()
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn the_builtin_list_is_sorted_and_reads_as_node_does() {
         assert!(

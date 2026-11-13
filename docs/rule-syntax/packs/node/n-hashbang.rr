@@ -1,0 +1,48 @@
+.policy "n-hashbang" revision 2
+.description "Start the files that package.json lists as bin executables with a node shebang line, and leave the shebang off every other file."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/hashbang: a file package.json's `bin` names (or additionalExecutables lists) needs the
+// shebang `#!/usr/bin/env node`, with LF line ends and no byte order mark; any other file needs no shebang.
+//   bin/cli.js, bin: "./bin/cli.js":  no shebang, or #!/usr/bin/node     reported
+//                                     #!/usr/bin/env -S node --flag      fine (env's flags and VAR=x are skipped)
+//   lib/a.js:                         #!/usr/bin/env node                reported
+// Options: executableMap { ".ts": "ts-node" } (the interpreter per extension), additionalExecutables (patterns
+// of more files that need one, as gitignore reads them), ignoreUnpublished (skip files npm does not publish). A
+// file no package.json governs is skipped; a `#!` line with no line break after it is no shebang. Every finding
+// is on line 1, so the four cases share one key. Not read: convertPath.
+
+#include "tsx/node-package.rr"   // pkg_file, pkg_bin_file, src_shebang, src_bom, npm_ignored
+
+// needs(d): d must start with a node shebang. additionalExecutables are gitignore patterns (pkg_listed); a file
+// they match is checked even where npm leaves it out.
+.decl needs(d: number)
+needs(d) :- pkg_bin_file(d), checked(d).
+needs(d) :- pkg_listed(d, "additionalExecutables").
+.decl checked(d: number)  // a file of a package, published or not looked at
+checked(d) :- pkg_file(d, _, _), !option("ignoreUnpublished", "true").
+checked(d) :- pkg_file(d, _, _), doc(d, f, _), !npm_ignored(f).
+checked(d) :- pkg_listed(d, "additionalExecutables").
+// runner(d, x): the interpreter d's shebang must name: executableMap[extension], else node.
+.decl runner(d: number, x: symbol)
+runner(d, x) :- needs(d), doc(d, f, _), match(".*(?<e>\\.[^./]+)", f), option(cat("executableMap/", e), x).
+runner(d, "node") :- needs(d), doc(d, f, _), !mapped(f).
+.decl mapped(f: symbol)
+mapped(f) :- doc(_, f, _), match(".*(?<e>\\.[^./]+)", f), option(cat("executableMap/", e), _).
+// node_shebang(d): isNodeShebang: after `/usr/bin/env`, env's flags (-S, -i, --x, -u NAME, -P DIR, each ending
+// in a space) and assignments (NODE_ENV=production) are skipped, and the first word is the interpreter.
+.decl node_shebang(d: number)
+node_shebang(d) :- runner(d, x), src_shebang(d, t), match(cat(cat("#!.*/usr/bin/env(\\s*(-(-\\S*|[ivS]+|[Pu](\\s+|=)\\S+)(\\s+|$)|\\w+=(\"([^\"\\\\]|\\\\.)*\"|\\w+)))*\\s*",
+    x), "( .*)?\\s*"), t).
+
+.violation hashbang(at: loc, msg: symbol) code "n/hashbang" "{msg}"
+    suppress eslint "n/hashbang"
+hashbang(@place(f, 1), "Remove the byte order mark before the shebang; a bin executable's first bytes must be #!, or the system cannot run it.") :-
+    node_shebang(d), src_bom(d), doc(d, f, _).
+hashbang(@place(f, 1), "End the shebang line with LF, not CRLF; the system reads the carriage return as part of the interpreter's name and cannot run the file.") :-
+    node_shebang(d), src_shebang(d, t), suffix("\r", t), doc(d, f, _).
+hashbang(@place(f, 1), cat(cat("Add #!/usr/bin/env ", x), " as the first line; package.json lists this file as a bin executable.")) :-
+    runner(d, x), !node_shebang(d), doc(d, f, _).
+hashbang(@place(f, 1), "Remove the shebang line; package.json does not list this file as a bin executable.") :-
+    checked(d), !needs(d), src_shebang(d, _), doc(d, f, _).

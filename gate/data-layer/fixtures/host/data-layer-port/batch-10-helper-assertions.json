@@ -1,0 +1,2880 @@
+{
+  "format": "rerail.data-layer-helper-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "cases": {
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_annassign": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_methods": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative_extra": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive_extra": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_with_multiple_targets": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_attribute": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_call_form": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_empty": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_empty_for_undecorated": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_ignores_unknown_node_types": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_multiple": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_multiple_decorators": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_attribute": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_call": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_call_attribute": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_plain_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_simple": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_found": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_ignores_nested_class": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_ignores_non_classes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_negative": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_not_found": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_picks_first_match_when_multiple": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_positive": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_async": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_distinguishes_methods_by_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_finds_async": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_missing": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_not_found": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_picks_last_duplicate": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_returns_last": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_skips_non_function_nodes": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_any_match": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_empty_tuple": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_no_match": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_single_tuple_false": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_single_tuple_true": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_negative": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_on_async_function": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_positive": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_by_ast_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_by_attribute_attr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_negative": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_on_async_function": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_attribute": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_name": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_filters_all_string_exprs": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_keeps_code_only": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_keeps_expr_non_string_constant": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_no_docstring_returns_all": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_not_tripped_by_numeric_constant_expr": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_only_first_string_stripped": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_strips_leading_docstring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_strips_module_docstring_in_body": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_when_only_docstring": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_raises_on_syntax_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_raises_syntax_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_returns_module": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_returns_module_type": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_matching_architecture.py::test_matching_contract_detection_traverses_each_module_once": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_schema_introspection_data_paths.py::test_approved_internal_impl_callsite_is_rejected": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_schema_introspection_data_paths.py::test_schema_reconciliation_paths_are_not_data_paths": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_schema_introspection_data_paths.py::test_serverplan_tests_are_not_data_paths": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "records": [
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_annassign",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x: int = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "x"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_methods",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def x(self): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_methods",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def x(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_ignores_methods",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def x(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "x"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "anything"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_negative_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "missing"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    __pure_lazy_surface__ = True\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "__pure_lazy_surface__"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_positive_extra",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "x"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_with_multiple_targets",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    a = b = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "a"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_class_has_assignment_with_multiple_targets",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_class_has_assignment",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    a = b = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "b"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@mod.foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@mod.foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_call_form",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo(x)\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_call_form",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo(x)\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_empty",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_empty",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_empty_for_undecorated",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_ignores_unknown_node_types",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@deco[0]\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_multiple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@a\n@b\n@mod.c\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_multiple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@a\n@b\n@mod.c\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_multiple_decorators",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@a\n@b.c\n@d(1)\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "a",
+        "c",
+        "d"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@module.foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_call",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo(1)\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_call_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@module.foo(1)\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_returns_plain_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_simple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_decorator_names_simple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_decorator_names",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "@foo\ndef f(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        "foo"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\nclass B: pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\nclass B: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "B"
+      },
+      "expected": 3
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_ignores_nested_class",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class Outer:\n    class Inner: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "Inner"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_ignores_non_classes",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def A(): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_ignores_non_classes",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def A(): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "A"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "X"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_not_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_not_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "Missing"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_picks_first_match_when_multiple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\nclass A: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "A"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_class_positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class A: pass\nclass B: pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "B"
+      },
+      "expected": 3
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_async",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    async def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 2
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_distinguishes_methods_by_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): return 1\n    def g(self): return 2\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 2
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_distinguishes_methods_by_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): return 1\n    def g(self): return 2\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "g"
+      },
+      "expected": 7
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_finds_async",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    async def f(self): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_finds_async",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    async def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_finds_async",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    async def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 2
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_missing",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "x"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_not_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_not_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_not_found",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "missing"
+      },
+      "expected": null
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_picks_last_duplicate",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): return 1\n    def f(self): return 2\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 7
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_returns_last",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_returns_last",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_class",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0,
+        "symbol": "C"
+      },
+      "expected": 1
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_returns_last",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    def f(self): pass\n    def f(self): pass\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 6
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_find_last_method_skips_non_function_nodes",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_find_last_method",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "class C:\n    x = 1\n    def f(self): return 1\n    y = 2\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "f"
+      },
+      "expected": 6
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x = foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "baz",
+          "foo"
+        ]
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x = foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "baz",
+          "quux"
+        ]
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x = foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": []
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_any_match",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_any_match",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "A",
+          "Foo",
+          "B"
+        ]
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_empty_tuple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_empty_tuple",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": []
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_no_match",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_no_match",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return Foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "A",
+          "B"
+        ]
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_single_tuple_false",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): return foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "bar"
+        ]
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_any_name_single_tuple_true",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_any_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): return foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbols": [
+          "foo"
+        ]
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_attr",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x.some_attr\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "some_attr"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_attr",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x.some_attr\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "missing"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_attr",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "missing"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_on_async_function",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_attr",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "async def f(): x.attr\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "attr"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return self.x\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_attr_positive",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_attr",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return self.x\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "x"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_by_ast_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x = foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "foo"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_by_ast_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x = foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "bar"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_by_attribute_attr",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f(): x.foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "foo"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_negative",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "Missing"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_on_async_function",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "async def f(): return foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "foo"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return mod.Foo\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_attribute",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return mod.Foo\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "Foo"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = Foo()\n    return x\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_function_mentions_name_positive_via_name",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_function_mentions_name",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = Foo()\n    return x\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1,
+        "symbol": "Foo"
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_filters_all_string_exprs",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = 1\n    '''mid string'''\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_filters_all_string_exprs",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = 1\n    '''mid string'''\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        3
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_keeps_code_only",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        3
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_keeps_expr_non_string_constant",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    True\n    1.23\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        3,
+        5
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_no_docstring_returns_all",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_no_docstring_returns_all",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        3
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_not_tripped_by_numeric_constant_expr",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    42\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        3
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_only_first_string_stripped",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    \"\"\"doc\"\"\"\n    \"trailing\"\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_strips_leading_docstring",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    '''doc'''\n    x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_strips_leading_docstring",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    '''doc'''\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        5
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_strips_module_docstring_in_body",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    \"\"\"docstring\"\"\"\n    x = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": [
+        5
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_non_docstring_stmts_when_only_docstring",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_non_docstring_stmts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    \"\"\"doc\"\"\"\n"
+        }
+      ],
+      "parameters": {
+        "owner": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_raises_on_syntax_error",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def broken(\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "exception": {
+          "type": "SyntaxError",
+          "message": "'(' was never closed (<unknown>, line 1)",
+          "msg": "'(' was never closed",
+          "lineno": 1,
+          "offset": 11,
+          "text": "def broken(\n",
+          "end_lineno": 1,
+          "end_offset": 0
+        }
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_raises_syntax_error",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def broken(:\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "exception": {
+          "type": "SyntaxError",
+          "message": "invalid syntax (<unknown>, line 1)",
+          "msg": "invalid syntax",
+          "lineno": 1,
+          "offset": 12,
+          "text": "def broken(:\n",
+          "end_lineno": 1,
+          "end_offset": 13
+        }
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_returns_module",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_parse_source_returns_module_type",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_parse_source",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "x = 1\n"
+        }
+      ],
+      "parameters": {},
+      "expected": {
+        "module": true
+      }
+    },
+    {
+      "test": "scripts/tests/test_lint_matching_architecture.py::test_matching_contract_detection_traverses_each_module_once",
+      "check": "matching_architecture",
+      "entry": "_tree_uses_matching_contracts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "from data_layer.matching import MatchSpec\nspec = MatchSpec\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0
+      },
+      "expected": true
+    },
+    {
+      "test": "scripts/tests/test_lint_schema_introspection_data_paths.py::test_approved_internal_impl_callsite_is_rejected",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "impl/common/l2070_server_plan/steps/table_exists.py:69:SqlTableExists"
+        ]
+      },
+      "expected": [
+        "impl/common/l2070_server_plan/steps/table_exists.py:69:SqlTableExists: approved schema checks must not be internal impl callsites"
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_schema_introspection_data_paths.py::test_schema_reconciliation_paths_are_not_data_paths",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "l2000_connection/schema_transaction.py"
+      },
+      "expected": false
+    },
+    {
+      "test": "scripts/tests/test_lint_schema_introspection_data_paths.py::test_serverplan_tests_are_not_data_paths",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_write.py"
+      },
+      "expected": false
+    }
+  ],
+  "supplemental": [
+    {
+      "test": "supplemental:path-impl/common/l2070_server_plan/steps/write.py",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "impl/common/l2070_server_plan/steps/write.py"
+      },
+      "expected": true
+    },
+    {
+      "test": "supplemental:path-l2070_batching/conditional_step.py",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "l2070_batching/conditional_step.py"
+      },
+      "expected": true
+    },
+    {
+      "test": "supplemental:path-impl/common/l2070_server_plan/steps/tests/test_write.py",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_write.py"
+      },
+      "expected": false
+    },
+    {
+      "test": "supplemental:path-impl/common/l2070_server_plan/schema/metadata.py",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "impl/common/l2070_server_plan/schema/metadata.py"
+      },
+      "expected": false
+    },
+    {
+      "test": "supplemental:path-applications/user.py",
+      "check": "schema_introspection_data_paths",
+      "entry": "_is_data_path",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "path": "applications/user.py"
+      },
+      "expected": false
+    },
+    {
+      "test": "supplemental:approval-0",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": []
+      },
+      "expected": []
+    },
+    {
+      "test": "supplemental:approval-1",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "applications/user.py:1:table_exists"
+        ]
+      },
+      "expected": []
+    },
+    {
+      "test": "supplemental:approval-2",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "scripts/probe.py:2:table_exists"
+        ]
+      },
+      "expected": [
+        "scripts/probe.py:2:table_exists: approved schema checks must be production user-facing callsites"
+      ]
+    },
+    {
+      "test": "supplemental:approval-3",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "impl/common/tests/probe.py:3:table_exists"
+        ]
+      },
+      "expected": [
+        "impl/common/tests/probe.py:3:table_exists: approved schema checks must not be internal impl callsites",
+        "impl/common/tests/probe.py:3:table_exists: approved schema checks must be production user-facing callsites"
+      ]
+    },
+    {
+      "test": "supplemental:approval-4",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "impl/probe.py:1:table_exists",
+          "scripts/tests/probe.py:2:table_exists"
+        ]
+      },
+      "expected": [
+        "impl/probe.py:1:table_exists: approved schema checks must not be internal impl callsites",
+        "scripts/tests/probe.py:2:table_exists: approved schema checks must be production user-facing callsites"
+      ]
+    },
+    {
+      "test": "supplemental:approval-5",
+      "check": "schema_introspection_data_paths",
+      "entry": "_approval_entry_errors",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": ""
+        }
+      ],
+      "parameters": {
+        "entries": [
+          "applications/a\u0000/tests/probe.py:1:table_exists"
+        ]
+      },
+      "expected": [
+        "applications/a\u0000/tests/probe.py:1:table_exists: approved schema checks must be production user-facing callsites"
+      ]
+    },
+    {
+      "test": "supplemental:matching-0",
+      "check": "matching_architecture",
+      "entry": "_tree_uses_matching_contracts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "value = 1\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0
+      },
+      "expected": false
+    },
+    {
+      "test": "supplemental:matching-1",
+      "check": "matching_architecture",
+      "entry": "_tree_uses_matching_contracts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "from data_layer.matching import MatchSpec\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0
+      },
+      "expected": true
+    },
+    {
+      "test": "supplemental:matching-2",
+      "check": "matching_architecture",
+      "entry": "_tree_uses_matching_contracts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "def f():\n    return value.MatchResult\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0
+      },
+      "expected": true
+    },
+    {
+      "test": "supplemental:matching-3",
+      "check": "matching_architecture",
+      "entry": "_tree_uses_matching_contracts",
+      "files": [
+        {
+          "path": "helper.py",
+          "source": "from unrelated import MatchUnknown\n"
+        }
+      ],
+      "parameters": {
+        "owner": 0
+      },
+      "expected": false
+    }
+  ]
+}

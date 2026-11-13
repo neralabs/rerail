@@ -1,0 +1,42 @@
+.policy "n-exports-style" revision 5
+.description "Use module.exports instead of the bare exports shortcut in CommonJS files, for one consistent export style."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/exports-style: use one of `module.exports` and `exports`. Both are the CommonJS globals
+// (cjs_ref): a local variable of either name is left alone.
+//   "module.exports" (the default)  every reference to `exports` is reported:  exports.a = 1
+//   "exports"                       every `module.exports` (also module["exports"]) is reported, and every
+//                                   assignment to `exports` itself:  module.exports.a = 1;  exports = {}
+// allowBatchAssign (default false) lets one chain assign both:  module.exports = exports = {}.
+// The first option is option("option", mode). The fix rewrites `module.exports.a` to `exports.a` in "exports" mode;
+// the plugin's other fix (an object literal assigned to module.exports, split into `exports.k = v;` statements)
+// is not offered.
+
+#include "tsx/node.rr"   // cjs_ref, top_assign, static_prop
+
+.decl exports_mode()  // the "exports" mode
+exports_mode() :- option("option", "exports").
+.decl batch()
+batch() :- option("allowBatchAssign", "true").
+
+// The references: `exports`, and `module.exports` read by a static name.
+.decl exports_ref(r: node)
+exports_ref(r) :- cjs_ref(r, "exports").
+.decl module_exports(n: node)
+module_exports(n) :- static_prop(n, o, "exports"), cjs_ref(o, "module").
+top_assign_ask(n) :- batch(), (exports_ref(n) ; module_exports(n)).
+// paired(n): with allowBatchAssign, n's assignment chain also assigns the other form.
+.decl paired(n: node)
+paired(r) :- exports_ref(r), top_assign(r, t), module_exports(m), top_assign(m, t).
+paired(m) :- module_exports(m), top_assign(m, t), exports_ref(r), top_assign(r, t).
+
+.violation exports_style(at: node, msg: symbol) code "n/exports-style" "{msg}"
+    suppress eslint "n/exports-style"
+    fix to_exports "Use exports"
+exports_style(r, "Replace this bare exports with module.exports.") :- !exports_mode(), exports_ref(r), !paired(r).
+exports_style(n, "Replace this module.exports with exports.") :- exports_mode(), module_exports(n), !paired(n).
+exports_style(r, "Do not assign to exports itself; assign its properties.") :- exports_mode(), exports_ref(r),
+    node_left_of(r, _), !paired(r).
+// module.exports.a -> exports.a: only where module.exports is the object of a member.
+to_exports(n, _) :- module_exports(n), node_obj_of(n, _) => replace(n, `exports`).

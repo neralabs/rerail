@@ -1,0 +1,26 @@
+.policy "typescript-eslint-no-wrapper-object-types" revision 4
+.description "Use the primitive types string, number, boolean, bigint, symbol and object in TypeScript instead of their capitalized wrapper object types."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   type_ref, heritage_ref, type_global
+
+// typescript-eslint's no-wrapper-object-types: `String`, `Number`, `Boolean`, `BigInt`, `Symbol` and `Object` are
+// the global wrapper objects' types; the primitives are `string`, `number`, … Reported where one names a type, an
+// `implements` or an interface's `extends`, unless the file declares its own. The fix lower-cases a type name;
+// a heritage clause is not fixed (`implements string` is no valid class).
+//   let s: String;   Array<Number>;   interface I extends Object {}         → reported
+//   let s: string;   class String {} let t: String;   let v: typeof Number    fine
+// No options.
+.violation no_wrapper_object_types(at: node, x: symbol, p: symbol) code "@typescript-eslint/no-wrapper-object-types" "Prefer using the primitive `{p}` as a type name, rather than the upper-cased `{x}`."
+    suppress eslint "@typescript-eslint/no-wrapper-object-types"
+    suppress oxlint "no-wrapper-object-types"
+    fix safe to_primitive "Use the primitive type"
+no_wrapper_object_types(r, x, p) :- type_global(r, x), wrapper(x, p).
+to_primitive(r, x, p) :- type_global(r, x), wrapper(x, p), !heritage_ref(r) => replace(r, p).
+
+.decl wrapper(x: symbol, p: symbol)
+wrapper("BigInt", "bigint"). wrapper("Boolean", "boolean"). wrapper("Number", "number").
+wrapper("Object", "object"). wrapper("String", "string"). wrapper("Symbol", "symbol").

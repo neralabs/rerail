@@ -1,0 +1,17 @@
+.policy "ruff-d406-missing-new-line-after-section-name" revision 2
+.description "End a NumPy-style section name at the end of its line, with no colon or trailing whitespace after it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D406 (pydocstyle): in a NumPy-style docstring, a section header with anything after the name on its
+// line: a colon, or trailing spaces. Google-style docstrings (by `pydocstyle.convention`, or by their own
+// sections when it is unset) are not checked.
+//   Returns:                 ← D406
+//   -------
+#include "python/docstrings-sections.rr"
+
+.violation D406(at: span, k: symbol) code "D406"
+    "Remove the colon or trailing whitespace after the section name `{k}` so the line holds only the name."
+    suppress ruff "D406"
+D406(at, v) :- doc_style(s, "numpy"), doc_section(s, i, v, _, _, suf), suf != "", doc_at(s, i, at).

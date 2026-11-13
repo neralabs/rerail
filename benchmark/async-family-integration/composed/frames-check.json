@@ -1,0 +1,17 @@
+{
+  "passed": false,
+  "failures": [
+    "Dead native dependencies still export the shared candidate relation."
+  ],
+  "executions": 80,
+  "relational_executions": 73,
+  "chunks": 72,
+  "vm_steps": 5859720,
+  "evaluation_vm_steps": 5785228,
+  "sql_bytes": [
+    1558,
+    16972
+  ],
+  "publication": [],
+  "wave": []
+}

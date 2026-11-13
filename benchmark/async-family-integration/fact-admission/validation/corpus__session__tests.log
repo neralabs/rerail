@@ -1,0 +1,62 @@
+
+running 10 tests
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow' (126272930) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:277:102:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("no such table: CYC")))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_inserts_only_rows_new_against_the_survivors ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_inserts_only_rows_new_against_the_survivors' (126275283) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:469:9:
+the recursive stratum is maintained: (0, 0, 0)
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_a_negation_that_still_fails ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_a_negation_that_still_fails' (126275351) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:597:102:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("no such table: LONE")))
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_its_part_around_an_inlined_relation ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_its_part_around_an_inlined_relation' (126275531) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:402:102:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("duplicate WITH table name: BACK")))
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_cross_file_aggregate ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_cross_file_aggregate' (126275632) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:534:102:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("duplicate WITH table name: LEAF")))
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_recursive_cross_file_stratum ... c.py: None strata run, (0, 0, 0) maintained (recursive); 0 findings
+d.py: None strata run, (0, 0, 0) maintained (recursive); 4 findings
+b.py: None strata run, (0, 0, 0) maintained (recursive); 0 findings
+b.py: None strata run, (0, 0, 0) maintained (recursive); 4 findings
+
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_recursive_cross_file_stratum' (126275703) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:306:9:
+the recursive stratum is maintained
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_passes_on_a_quiet_stratum ... None strata run, (0, 0, 0) maintained; 0 quiet; 2 findings
+
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_passes_on_a_quiet_stratum' (126275903) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:366:9:
+`seen`'s stratum is quiet: nothing deleted, nothing to derive
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_reruns_what_an_edit_changed ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_reruns_what_an_edit_changed' (126275983) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:173:9:
+assertion `left == right` failed: a session's first run evaluates every file
+  left: (2, "bandit-b301-pickle\tB301\tB301\tb.py\t2\n")
+ right: (0, "bandit-b301-pickle\tB301\tB301\tb.py\t2\n")
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::a_session_runs_the_cross_file_strata_an_edit_changed ...
+thread 'code_rule_dsl::logic::plan::corpus::session::tests::a_session_runs_the_cross_file_strata_an_edit_changed' (126276134) panicked at native/src/code_rule_dsl/logic/plan/corpus/session.rs:212:45:
+a session's run
+FAILED
+test code_rule_dsl::logic::plan::corpus::session::tests::session_costs ... ignored
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_derives_again_the_strata_its_deltas_outgrow
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_inserts_only_rows_new_against_the_survivors
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_a_negation_that_still_fails
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_keeps_its_part_around_an_inlined_relation
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_cross_file_aggregate
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_maintains_a_recursive_cross_file_stratum
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_passes_on_a_quiet_stratum
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_reruns_what_an_edit_changed
+    code_rule_dsl::logic::plan::corpus::session::tests::a_session_runs_the_cross_file_strata_an_edit_changed
+
+test result: FAILED. 0 passed; 9 failed; 1 ignored; 0 measured; 3117 filtered out; finished in 10.93s

@@ -1,0 +1,15 @@
+.policy "sqlfluff-st01-structure-else-null" revision 2
+.description "Remove ELSE NULL from SQL CASE expressions; CASE already returns NULL when no branch matches."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's ST01 (structure.else_null). A CASE whose ELSE branch is NULL; the finding is at CASE:
+//   case when x then 1 else null end        reported; the fix drops `else null`
+//   case name when 'a' then 1 else null end  reported
+//   case when x then 1 else /* c */ null end reported: comments do not count
+
+#include "sql/syntax.rr"
+
+.violation ST01(at: node) code "ST01" "Redundant ELSE NULL in a case when statement."
+    suppress sqlfluff "ST01", "L035", "all", "structure", "structure.else_null"
+ST01(c) :- kind(c, "case"), child(c, e, _), kind(e, "keyword_else"), next_code(e, v), null_lit(v).

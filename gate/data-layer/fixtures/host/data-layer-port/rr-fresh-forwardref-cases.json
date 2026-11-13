@@ -1,0 +1,757 @@
+{
+  "format": "rerail.rr-fresh-case-inputs/v1",
+  "cases": [
+    {
+      "id": "fresh:forwardref:all-three",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, type)\nissubclass(annotation)\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-check",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, ForwardRef)\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:tuple-qualified",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, (int, (typing.ForwardRef,)))\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:list-not-tuple",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, [ForwardRef])\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:resets-on-reassignment",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, ForwardRef)\nannotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:ordinary-reassignment-does-not-reset",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, ForwardRef)\nannotation = other\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:annassign-does-not-activate",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation: object = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:chain-does-not-activate",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "a = annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:tuple-target-does-not-activate",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation, a = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:nested-sync-isolated",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ndef f():\n    isinstance(annotation, ForwardRef)\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:sync-restores-parent",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nisinstance(annotation, ForwardRef)\ndef f():\n    annotation = x.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:async-inherits-parent",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nasync def f():\n    callable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:async-check-affects-parent",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nasync def f():\n    isinstance(annotation, ForwardRef)\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:sync-resets",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ndef f():\n    callable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:decorator-after-body",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "@callable(annotation)\ndef f():\n    annotation = field.annotation\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:return-after-body",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "def f() -> callable(annotation):\n    annotation = field.annotation\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:async-return-after-body",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "async def f() -> callable(annotation):\n    annotation = field.annotation\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:dict-keys-before-values",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nx = {0: isinstance(annotation, ForwardRef), callable(annotation): 1}\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:call-positionals-before-keywords",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nf(k=isinstance(annotation, ForwardRef), *(callable(annotation),))\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:parent-call-before-inner",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nissubclass(annotation, isinstance(annotation, ForwardRef))\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:callee-before-args",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\n(isinstance(annotation, ForwardRef))(callable(annotation))\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:assignment-before-value-call",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = (callable(annotation)).annotation\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:if-traversal-not-flow",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nif False:\n    isinstance(annotation, ForwardRef)\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:parenthesized",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\n((callable))(((annotation)))\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:attribute-call-is-not-builtin",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\nx.callable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:no-first-positional",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation=annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:starred-first",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ncallable(*annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:unicode-column",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\né = 0; callable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:unicode-identifiers",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "ａｎｎｏｔａｔｉｏｎ = field.ａｎｎｏｔａｔｉｏｎ\nｃａｌｌａｂｌｅ(ａｎｎｏｔａｔｉｏｎ)\n# ForwardRef\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:call-source-gate",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "fresh:forwardref:call-source-reads-file",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        },
+        "source": "ForwardRef"
+      }
+    },
+    {
+      "id": "fresh:forwardref:invalid-syntax",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:tests/mod.py",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "tests/mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "tests/mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:test/mod.py",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "test/mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "test/mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:conform/mod.py",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "conform/mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "conform/mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:test_mod.py",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "test_mod.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "test_mod.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:mod_test.py",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod_test.py",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod_test.py"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:mod.txt",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.txt",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.txt"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:explicit-path:mod.PY",
+      "check": "forwardref",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "mod.PY",
+          "source": "annotation = field.annotation\ncallable(annotation)\n"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.PY"
+        }
+      }
+    },
+    {
+      "id": "fresh:forwardref:missing-file-source:clean",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "missing.py"
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "fresh:forwardref:missing-file-source:ForwardRef",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [],
+      "arguments": {
+        "filepath": {
+          "path": "missing.py"
+        },
+        "source": "ForwardRef"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:mod.py:clean",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:mod.py:ForwardRef",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.py",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.py"
+        },
+        "source": "ForwardRef"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:tests/mod.py:clean",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "tests/mod.py",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "tests/mod.py"
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:tests/mod.py:ForwardRef",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "tests/mod.py",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "tests/mod.py"
+        },
+        "source": "ForwardRef"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:mod.txt:clean",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.txt",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.txt"
+        },
+        "source": "clean"
+      }
+    },
+    {
+      "id": "fresh:forwardref:binary:mod.txt:ForwardRef",
+      "check": "forwardref",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "mod.txt",
+          "bytesHex": "fffefd"
+        }
+      ],
+      "arguments": {
+        "filepath": {
+          "path": "mod.txt"
+        },
+        "source": "ForwardRef"
+      }
+    }
+  ]
+}

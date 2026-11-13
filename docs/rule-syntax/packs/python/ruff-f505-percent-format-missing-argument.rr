@@ -1,0 +1,17 @@
+.policy "ruff-f505-percent-format-missing-argument" revision 2
+.description "Supply a value for every %(key) placeholder in a %-format string; a missing key raises KeyError at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F505 (pyflakes): a format with only `%(key)` placeholders applied to a dict display that lacks one of the
+// keys. Python raises KeyError. Only a dict whose keys are all str literals can be checked: a `**spread` or a
+// computed key may supply the missing one.
+//   "%(a)s %(b)s" % {"a": 1}      ← F505: no "b"
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
+
+.violation F505(at: node) code "F505" "`%`-format string is missing argument(s) for placeholder(s)"
+    suppress ruff "F505"
+F505(b) :- percent_fmt(b, _, r, v), pct_positional(v, 0), kind(r, "dictionary"), !open_dict(r), pct_key(v, x),
+    !dict_str_key(r, x).

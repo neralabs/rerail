@@ -1,0 +1,1974 @@
+[
+  {
+    "name": "pattern-terminal",
+    "form": "pattern(named terminal)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-terminal",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": "print"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "print\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f315e46ba16e6f4f85319df102f3ffcb90f89c026b8e5084aae01066e30a9596",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-terminal",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "pattern-structural",
+    "form": "pattern(internal tree)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-structural",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": "print($A)"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "print(x)\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 7,
+                  "endColumn": 7,
+                  "endLine": 0,
+                  "startByte": 6,
+                  "startColumn": 6,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:98c49f923660c9e18c8a41d916d2c4bcbdbc8c2278973f71cf1acbdf1f3e7b16",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-structural",
+            "span": {
+              "endByte": 8,
+              "endColumn": 8,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "pattern-single-metavariable",
+    "form": "pattern($NAME)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-single-metavariable",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": "$NAME"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.NAME",
+            "code": "SQL",
+            "message": "$NAME"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "name\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "NAME": [
+                {
+                  "endByte": 5,
+                  "endColumn": 0,
+                  "endLine": 1,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:433672439475e7d5c6e21753dc55a27cbdfacb09a16abcf6021950d3c5e10b1e",
+            "message": "name…",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-single-metavariable",
+            "span": {
+              "endByte": 5,
+              "endColumn": 0,
+              "endLine": 1,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "NAME": [
+                {
+                  "endByte": 4,
+                  "endColumn": 4,
+                  "endLine": 0,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:910bffe24ec6e81e7545697a0ec04e4aa5968bc48d96a1315847ee569221a0f3",
+            "message": "name",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-single-metavariable",
+            "span": {
+              "endByte": 4,
+              "endColumn": 4,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "NAME": [
+                {
+                  "endByte": 4,
+                  "endColumn": 4,
+                  "endLine": 0,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:910bffe24ec6e81e7545697a0ec04e4aa5968bc48d96a1315847ee569221a0f3",
+            "message": "name",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-single-metavariable",
+            "span": {
+              "endByte": 4,
+              "endColumn": 4,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "pattern-multi-metavariable",
+    "form": "pattern($$$ARGS)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-multi-metavariable",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": "f($$$ARGS)"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "$$$ARGS"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "f(a, b)\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "ARGS": [
+                {
+                  "endByte": 3,
+                  "endColumn": 3,
+                  "endLine": 0,
+                  "startByte": 2,
+                  "startColumn": 2,
+                  "startLine": 0
+                },
+                {
+                  "endByte": 6,
+                  "endColumn": 6,
+                  "endLine": 0,
+                  "startByte": 5,
+                  "startColumn": 5,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:b75f26dd9d62094395af8098f42cff223486231ff5a3ff879a1862543a868d69",
+            "message": "a, b",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-multi-metavariable",
+            "span": {
+              "endByte": 7,
+              "endColumn": 7,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "pattern-repeated-capture",
+    "form": "pattern($A + $A)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-repeated-capture",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": "$A + $A"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.A",
+            "code": "SQL",
+            "message": "$A"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "x + x\ny + z\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 5,
+                  "endColumn": 5,
+                  "endLine": 0,
+                  "startByte": 4,
+                  "startColumn": 4,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:ed1d53a928770dbc7a7f98f6413ed9ba262a8ac22b8e16196693245abfa964ed",
+            "message": "x",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-repeated-capture",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 4,
+              "startColumn": 4,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "pattern-context-selector",
+    "form": "pattern(context, selector)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-pattern-context-selector",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "pattern": {
+                  "context": "def $F():\n    $$$BODY",
+                  "selector": "function_definition"
+                }
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.F",
+            "code": "SQL",
+            "message": "$F"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "def work():\n    return 1\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "BODY": [
+                {
+                  "endByte": 24,
+                  "endColumn": 12,
+                  "endLine": 1,
+                  "startByte": 16,
+                  "startColumn": 4,
+                  "startLine": 1
+                }
+              ],
+              "F": [
+                {
+                  "endByte": 8,
+                  "endColumn": 8,
+                  "endLine": 0,
+                  "startByte": 4,
+                  "startColumn": 4,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:2ef90fd1d4fde68c730b548aca4dfb3d4182c86eb88ef20210deb438cb309bd6",
+            "message": "work",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-pattern-context-selector",
+            "span": {
+              "endByte": 8,
+              "endColumn": 8,
+              "endLine": 0,
+              "startByte": 4,
+              "startColumn": 4,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "kind-single",
+    "form": "kind(identifier)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-kind-single",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "kind": "identifier"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "item\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:baf14df4ed56f565fb9b9693a3dc94293897311e96ac63c73fb77b6d8ce0afa6",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-kind-single",
+            "span": {
+              "endByte": 4,
+              "endColumn": 4,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "kind-set",
+    "form": "kind(identifier|string)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-kind-set",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "string"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "item\n\"text\"\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:b85fa564275186015d3b8ce65bc25e390b6ea732e166118c34fbdd02c3435957",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-kind-set",
+            "span": {
+              "endByte": 4,
+              "endColumn": 4,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f3c97b8ef9947d6d560496833eb2eb8d27d6754ac7aad9fd12db585af06ed8eb",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-kind-set",
+            "span": {
+              "endByte": 11,
+              "endColumn": 6,
+              "endLine": 1,
+              "startByte": 5,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "node-regex",
+    "form": "regex(^unsafe$)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-node-regex",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "regex": "^unsafe$"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "unsafe\nsafe\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:164dfea4b8e265944f12fedc5cd5bf51da366b0ea6205eefa73d04a667c9d39d",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-node-regex",
+            "span": {
+              "endByte": 6,
+              "endColumn": 6,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:164dfea4b8e265944f12fedc5cd5bf51da366b0ea6205eefa73d04a667c9d39d",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-node-regex",
+            "span": {
+              "endByte": 6,
+              "endColumn": 6,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "node-text-equality",
+    "form": "text(eq, literal)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-node-text-equality",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "kind": "identifier",
+                "regex": "^unsafe$"
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "unsafe"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "unsafe\nsafe\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:d0e1dce36a7f6ba6b1fc6bb1e0f2e843a1a72d663b770c64fce3007f2f6ccbd2",
+            "message": "unsafe",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-node-text-equality",
+            "span": {
+              "endByte": 6,
+              "endColumn": 6,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "node-value-positive",
+    "form": "value(is, constant)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-node-value-positive",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "kind": "integer",
+                "value": {
+                  "eq": 1
+                }
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "1\n2\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:4185d27d9c3810995eb5eb82eb90968292fd090058b94c908112f0607ebf82b1",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-node-value-positive",
+            "span": {
+              "endByte": 1,
+              "endColumn": 1,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "node-value-unknown",
+    "form": "value(flow-dependent)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-node-value-unknown",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "kind": "identifier",
+                "value": {
+                  "follow": true,
+                  "eq": 1
+                }
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "known = 1\nknown\nunknown\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:7d265e3c0748d46562dbd5973b133867be26d95e32f2ff06bb30ecda5f1febfa",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-node-value-unknown",
+            "span": {
+              "endByte": 15,
+              "endColumn": 5,
+              "endLine": 1,
+              "startByte": 10,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "all-two-positive",
+    "form": "all(kind, regex)",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-all-two-positive",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "^x$"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "x\ny\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:8ad49316d0c6d6bb41dfc7861c91d526ce57298af6170f0ae316d43915448288",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-all-two-positive",
+            "span": {
+              "endByte": 1,
+              "endColumn": 1,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "all-capture-threading",
+    "form": "all(pattern($A), compare($A))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-all-capture-threading",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "all": [
+                  {
+                    "pattern": "$A + $B"
+                  },
+                  {
+                    "compare": {
+                      "left": "A",
+                      "op": "eq",
+                      "right": "B",
+                      "text": "source"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.A",
+            "code": "SQL",
+            "message": "$A equals $B"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "x + x\nx + y\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 1,
+                  "endColumn": 1,
+                  "endLine": 0,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ],
+              "B": [
+                {
+                  "endByte": 5,
+                  "endColumn": 5,
+                  "endLine": 0,
+                  "startByte": 4,
+                  "startColumn": 4,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:1f449e19088b50886844dc2569311c77f7966f240fb7b4ca0224537f1343037c",
+            "message": "x equals x",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-all-capture-threading",
+            "span": {
+              "endByte": 1,
+              "endColumn": 1,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "all-three-valued-false-after-unknown",
+    "form": "all(value(unknown), kind(false))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-all-three-valued-false-after-unknown",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "all": [
+                  {
+                    "kind": "identifier",
+                    "value": {
+                      "follow": true,
+                      "eq": 1
+                    }
+                  },
+                  {
+                    "kind": "comment"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "unknown\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": []
+      }
+    }
+  },
+  {
+    "name": "all-three-valued-withheld-capture",
+    "form": "all(value($A, unknown), compare($A))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-all-three-valued-withheld-capture",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "all": [
+                  {
+                    "pattern": "$A",
+                    "value": {
+                      "follow": true,
+                      "eq": 1
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "A",
+                      "op": "eq",
+                      "right": "A",
+                      "text": "source"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.A",
+            "code": "SQL",
+            "message": "$A"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "known = 1\nknown\nunknown\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 9,
+                  "endColumn": 9,
+                  "endLine": 0,
+                  "startByte": 8,
+                  "startColumn": 8,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:c4ae955c3219293e31c4695866832cd04951888b83f18bb924aa32c2dccc66fc",
+            "message": "1",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-all-three-valued-withheld-capture",
+            "span": {
+              "endByte": 9,
+              "endColumn": 9,
+              "endLine": 0,
+              "startByte": 8,
+              "startColumn": 8,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 15,
+                  "endColumn": 5,
+                  "endLine": 1,
+                  "startByte": 10,
+                  "startColumn": 0,
+                  "startLine": 1
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:dbf0c5c2329ed347fdd1a19ef65d69ce786b4fcb7271985444e1505eb0083c90",
+            "message": "known",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-all-three-valued-withheld-capture",
+            "span": {
+              "endByte": 15,
+              "endColumn": 5,
+              "endLine": 1,
+              "startByte": 10,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "any-first-branch",
+    "form": "any(pattern(a), pattern(b))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-any-first-branch",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "any": [
+                  {
+                    "pattern": "a"
+                  },
+                  {
+                    "pattern": "b"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "a\nb\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:666e912fdd59d02586d8ba75eade5c106d3b89e668f9648471494606b6b15b97",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-first-branch",
+            "span": {
+              "endByte": 1,
+              "endColumn": 1,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:04e96e4ad9f2bfc1ca83aad486aa4fca4bd5cdbb57cd3014132af0e3e4b3d44a",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-first-branch",
+            "span": {
+              "endByte": 3,
+              "endColumn": 1,
+              "endLine": 1,
+              "startByte": 2,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "any-unknown-binding-blocks-later",
+    "form": "any(value($A, unknown), pattern($A))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-any-unknown-binding-blocks-later",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "any": [
+                  {
+                    "pattern": "$A",
+                    "value": {
+                      "follow": true,
+                      "eq": 1
+                    }
+                  },
+                  {
+                    "pattern": "$A"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "capture.A",
+            "code": "SQL",
+            "message": "$A"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "known = 1\nknown\nunknown\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 9,
+                  "endColumn": 9,
+                  "endLine": 0,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:e1c5c23adede981bab4160a7369e8fba7d2261af53f0f34d432deae2337abd0e",
+            "message": "known = 1",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 9,
+              "endColumn": 9,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 9,
+                  "endColumn": 9,
+                  "endLine": 0,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:e1c5c23adede981bab4160a7369e8fba7d2261af53f0f34d432deae2337abd0e",
+            "message": "known = 1",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 9,
+              "endColumn": 9,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 24,
+                  "endColumn": 0,
+                  "endLine": 3,
+                  "startByte": 0,
+                  "startColumn": 0,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:eafc9886c421609e65504e89ffd92cd91ce4ffe53e4b5ac5117c9d6ba52cebc9",
+            "message": "known = 1…",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 24,
+              "endColumn": 0,
+              "endLine": 3,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 9,
+                  "endColumn": 9,
+                  "endLine": 0,
+                  "startByte": 8,
+                  "startColumn": 8,
+                  "startLine": 0
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f063f5ad642b8b1f4f881840815cfc1945392aed0aadb4a8f804738c83156011",
+            "message": "1",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 9,
+              "endColumn": 9,
+              "endLine": 0,
+              "startByte": 8,
+              "startColumn": 8,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 15,
+                  "endColumn": 5,
+                  "endLine": 1,
+                  "startByte": 10,
+                  "startColumn": 0,
+                  "startLine": 1
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:39a3adb6391e711da3ecf18ba5636d8e53d6d906a92fb333760102a295c5faa4",
+            "message": "known",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 15,
+              "endColumn": 5,
+              "endLine": 1,
+              "startByte": 10,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 15,
+                  "endColumn": 5,
+                  "endLine": 1,
+                  "startByte": 10,
+                  "startColumn": 0,
+                  "startLine": 1
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:39a3adb6391e711da3ecf18ba5636d8e53d6d906a92fb333760102a295c5faa4",
+            "message": "known",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 15,
+              "endColumn": 5,
+              "endLine": 1,
+              "startByte": 10,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          },
+          {
+            "captures": {
+              "A": [
+                {
+                  "endByte": 23,
+                  "endColumn": 7,
+                  "endLine": 2,
+                  "startByte": 16,
+                  "startColumn": 0,
+                  "startLine": 2
+                }
+              ]
+            },
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:ac7f61e66ac7e5fe645e81e168936257505d45206a30fa6eb85647512ed7fa5b",
+            "message": "unknown",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-binding-blocks-later",
+            "span": {
+              "endByte": 23,
+              "endColumn": 7,
+              "endLine": 2,
+              "startByte": 16,
+              "startColumn": 0,
+              "startLine": 2
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "any-unknown-without-binding",
+    "form": "any(value(unknown), kind(match))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-any-unknown-without-binding",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "value": {
+                      "follow": true,
+                      "eq": 1
+                    }
+                  },
+                  {
+                    "kind": "identifier"
+                  }
+                ]
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "known = 1\nknown\nunknown\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:167306d6c291a7a13727885adf84d59ff1d0245fd864bf03d73eef80ea0529f9",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-without-binding",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:defcc7b5e647615cdc0cc740d65f3cbdf25b9d472afd002d4a56f556e0fea7e8",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-without-binding",
+            "span": {
+              "endByte": 15,
+              "endColumn": 5,
+              "endLine": 1,
+              "startByte": 10,
+              "startColumn": 0,
+              "startLine": 1
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:f578e31929c49e9feabd016a2e041f04b708a677f44ae66ec5235538e09319c0",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-any-unknown-without-binding",
+            "span": {
+              "endByte": 23,
+              "endColumn": 7,
+              "endLine": 2,
+              "startByte": 16,
+              "startColumn": 0,
+              "startLine": 2
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "not-complete-positive",
+    "form": "not(kind(identifier))",
+    "policy": {
+      "format": "rerail.policy/v1",
+      "id": "sql-contract-not-complete-positive",
+      "revision": 1,
+      "mode": "block",
+      "clauses": [
+        {
+          "id": "contract",
+          "forbid": {
+            "ast": {
+              "language": "python",
+              "rule": {
+                "not": {
+                  "kind": "identifier"
+                }
+              }
+            }
+          },
+          "violation": {
+            "anchor": "witness.span",
+            "code": "SQL",
+            "message": "contract"
+          }
+        }
+      ]
+    },
+    "workspace": {
+      "files": [
+        {
+          "path": "contract.py",
+          "language": "python",
+          "source": "x + 1\n",
+          "module": null
+        }
+      ],
+      "document_maps": [],
+      "capabilities": "default",
+      "failure_injection": null
+    },
+    "expected": {
+      "oracle": {
+        "failures": [],
+        "violations": [
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:8b173373d533d2afcf97309ca76b93ad6dedf2156b8c01e11270fa670ee25462",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-complete-positive",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:8b173373d533d2afcf97309ca76b93ad6dedf2156b8c01e11270fa670ee25462",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-complete-positive",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:c62f76e149f277fee0d7ff5e0bec97a4ee2daecd18f8f33534537d134ebe127c",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-complete-positive",
+            "span": {
+              "endByte": 6,
+              "endColumn": 0,
+              "endLine": 1,
+              "startByte": 0,
+              "startColumn": 0,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:1c33b35a7bac17bd02a48115bcd2f47a5dd470c6022f0858a41e02de6065017e",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-complete-positive",
+            "span": {
+              "endByte": 3,
+              "endColumn": 3,
+              "endLine": 0,
+              "startByte": 2,
+              "startColumn": 2,
+              "startLine": 0
+            },
+            "variables": {}
+          },
+          {
+            "captures": {},
+            "clauseId": "contract",
+            "code": "SQL",
+            "id": "sha256:e541533f54d1565a5b4466b9725bb1d13605d5352e5e1040372a68766a7dd498",
+            "message": "contract",
+            "mode": "block",
+            "path": "contract.py",
+            "ruleId": "sql-contract-not-complete-positive",
+            "span": {
+              "endByte": 5,
+              "endColumn": 5,
+              "endLine": 0,
+              "startByte": 4,
+              "startColumn": 4,
+              "startLine": 0
+            },
+            "variables": {}
+          }
+        ]
+      }
+    }
+  }
+]

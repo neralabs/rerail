@@ -1,0 +1,22 @@
+.policy "clippy-precedence-bits" revision 5
+.description "Parenthesize shifts used as operands of a bitwise AND, OR or XOR in Rust; the precedence is easy to misread."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   binary(e, op, l, r)   e is `l op r`;   arith_op, shift_op, bitwise_op   the operator classes
+
+// Clippy's precedence_bits (restriction): a shift as an operand of a bitwise &, | or ^, with no parentheses.
+// Shifts bind tighter, but the reading is easy to get wrong. Reported at the outer expression.
+//   0x0F00 & 0x00F0 << 4   0x0F00 << 1 | 2   1 & 2 << 3 + 4 (the shift's own + is precedence's)   reported
+//   (1 << 2) | 3   1 << 2 & 3 + 4 (an arithmetic operand makes it precedence's)              not reported
+.violation precedence_bits(at: node) code "precedence_bits"
+    "Add parentheses around the shift in this bitwise expression, e.g. (a << 4) | b."
+    suppress clippy "clippy::precedence_bits", "clippy::restriction", "warnings"
+precedence_bits(e) :- binary(e, op, l, r), bitwise_op(op), (operand(l, s) ; operand(r, s)), shift_op(s),
+    !operand_arith(e).
+.decl operand(e: node, op: symbol)  // e is an unparenthesized binary expression with operator op
+operand(e, op) :- binary(e, op, _, _).
+.decl operand_arith(e: node)
+operand_arith(e) :- binary(e, _, l, r), (operand(l, a) ; operand(r, a)), arith_op(a).

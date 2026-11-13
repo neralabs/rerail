@@ -1,0 +1,52 @@
+// LEG-083 with types: a function reaches an eager lazy-terminal `resolve()` through calls in its own file.
+//
+// LEG-083 (scripts/lint_legacy_execution_surfaces.py) counts every `x.resolve()` and `x.resolve_async()` as eager,
+// by method name. The lazy terminals are LazyResult's and LazySeq's `resolve(self)` and `resolve_async(self)`.
+// A pathlib path resolving itself, or a lookup such as `catalog.resolve(ref)`, is not one
+// (data-layer/upstream/LEG-083.md: all 18 findings at the 2026-10-18 commit are such calls).
+// sketches/transitive-eager.rr's LEG_083_SOUND tells them apart by guessing which names hold a path. This check
+// asks the receiver's type instead, from the Python typing program (python/types.rr):
+//
+//     path = Path(source).resolve()                 # a pathlib path: not a lazy result, not counted
+//     rows = txn.select_one_lazy(User, k).resolve() # select_one_lazy is declared `-> LazyResult[T | None]`: counted
+//     catalog.resolve(ref)                          # has an argument: not counted
+//
+// A receiver whose type the program does not know is not counted (`terminal_unknown` lists them). The call
+// graph is the program's (`calls`), kept within one file as LEG-083's is. Legacy surfaces, where LEG-083's search
+// stops, come from the rest of the LEG port and are not applied here.
+//
+// Interface: LEG_083_TYPED(f), lazy_terminal(c), terminal_unknown(c), lazy_class(t).
+#include "python/calls.rr"
+#include "python/types.rr"
+// attr_of comes from python/names; callee, call_arg, owner and calls from python/calls; possible_type and
+// possible_open from python/types.
+
+// lazy_class(t): the lazy result classes, by qualified name. A subclass counts (`possible_type` is up to subclassing).
+.decl lazy_class(t: symbol)
+lazy_class("l2055_lazy_result.lazy_result.LazyResult").
+lazy_class("l2055_lazy_result.lazy_seq.LazySeq").
+.decl terminal(a: symbol)
+terminal("resolve").
+terminal("resolve_async").
+
+// terminal_call(c, o): `o.resolve()` or `o.resolve_async()`, with no argument.
+.decl terminal_call(c: node, o: node)
+terminal_call(c, o) :- callee(c, m), attr_of(m, o, a), terminal(a), !call_arg(c, _, _, _).
+
+// lazy_terminal(c): the receiver may be a lazy result: one of the classes its type lists is a lazy class or
+// a subclass of one.
+.decl lazy_terminal(c: node)
+lazy_terminal(c) :- terminal_call(c, o), possible_type(o, t), lazy_class(t).
+// terminal_unknown(c): a terminal-shaped call whose receiver's type lists no lazy class but may be another
+// class: not counted, and where more typing would decide.
+.decl terminal_unknown(c: node)
+terminal_unknown(c) :- terminal_call(c, o), !lazy_terminal(c), possible_open(o).
+
+// eager(f): function f makes a lazy-terminal call itself, or calls a function of its own file that is eager.
+.decl eager(f: node)
+eager(f) :- lazy_terminal(c), owner(c, f).
+eager(f) :- calls(f, g), docof(f, d), docof(g, d), eager(g).
+
+.violation LEG_083_TYPED(at: node)
+    "This function reaches an eager lazy-terminal resolve() through calls in this file."
+LEG_083_TYPED(f) :- eager(f).

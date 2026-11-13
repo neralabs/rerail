@@ -1,0 +1,15 @@
+
+running 2 tests
+test code_rule_dsl::logic::plan::corpus::cache_tests::a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again ...
+thread 'code_rule_dsl::logic::plan::corpus::cache_tests::a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again' (126278156) panicked at native/src/code_rule_dsl/logic/plan/corpus/cache_tests.rs:61:100:
+called `Result::unwrap()` on an `Err` value: Sql(SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("no such table: info")))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test code_rule_dsl::logic::plan::corpus::cache_tests::a_cache_is_facts_and_a_version_bump_derives_it_again ... ok
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::corpus::cache_tests::a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 3122 filtered out; finished in 5.64s

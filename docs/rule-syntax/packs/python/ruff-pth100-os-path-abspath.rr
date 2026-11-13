@@ -1,0 +1,20 @@
+.policy "ruff-pth100-os-path-abspath" revision 2
+.description "Use Path.resolve() instead of os.path.abspath(); path objects read better than string-based os.path calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH100 (flake8-use-pathlib): a call of `os.path.abspath`, however it is imported, with exactly one argument:
+// the `path` parameter, by position or by keyword. pathlib's form is `Path(p).resolve()`.
+// Reported at the callee.
+//   os.path.abspath(p)              ← PTH100
+//   from os.path import abspath
+//   abspath(path=p)                 ← PTH100
+//   os.path.abspath(*ps)            not reported: Ruff does not look past `*`
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH100(at: node, s: node) code "PTH100"
+    "Use `Path({s}).resolve()` instead of `os.path.abspath({s})`; it follows symlinks and returns a `Path`, so leave it where unresolved symlinks, a string result or a bytes path is needed."
+    suppress ruff "PTH100"
+PTH100(f, a) :- single_arg(_, "os.path.abspath", "path", f, a).

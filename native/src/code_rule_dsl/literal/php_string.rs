@@ -4,6 +4,7 @@
 //! (tree-sitter-php's `string_content` byte for byte, an `escape_sequence` to the whole escape); a
 //! heredoc or nowdoc, whose indentation PHP strips, maps every node to the whole literal.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::HostMap;
 use super::offsets::{Decoded, Span};
 use crate::code_rule_dsl::value::{Context, MAX_STRING_BYTES, Value, php};
@@ -59,7 +60,7 @@ fn spans<D: Doc>(node: &Node<'_, D>, text: &str, double: bool) -> Option<Decoded
     // The source range of every decoded byte.
     let mut bytes: Vec<u8> = Vec::with_capacity(text.len());
     let mut sources: Vec<Range<usize>> = Vec::with_capacity(text.len());
-    for piece in node.children().filter(|child| child.is_named()) {
+    for piece in node.named() {
         let raw = piece.text();
         let range = piece.range();
         let decoded = match piece.kind().as_ref() {
@@ -98,7 +99,7 @@ fn spans<D: Doc>(node: &Node<'_, D>, text: &str, double: bool) -> Option<Decoded
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
@@ -177,4 +178,53 @@ mod tests {
             assert!(matches!(decode(&node), PhpLiteral::Unknown), "{source}");
         }
     }
+}
+
+/// Parses a PHP string literal with a text grammar (`printfFormat`, `scanfFormat`). Spends one
+/// step of `spend` per byte and tree node; `None` when the budget ran out.
+pub(crate) fn parse_string<D: ast_grep_core::Doc>(
+    node: &ast_grep_core::Node<'_, D>,
+    grammar: super::Grammar,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    let (text, map) = match decode(node) {
+        PhpLiteral::Known(text, map) => (text, map),
+        PhpLiteral::Unknown => return Some(super::Parsed::Unknown),
+        PhpLiteral::NotString => return Some(super::Parsed::NotString),
+    };
+    parse_text(grammar, text, map, spend)
+}
+
+/// Parses the string PHP gives an expression that is no string literal (`value/php.rs`: a
+/// concatenation, a variable followed to its binding) with a text grammar, every node mapped to
+/// `whole`, the expression's range. Bytes that are not UTF-8 and a value past 64 KiB are unknown.
+/// Spends as `parse_php_string` does.
+pub(crate) fn parse_value(
+    bytes: Vec<u8>,
+    whole: std::ops::Range<usize>,
+    grammar: super::Grammar,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    let Some(text) = text(bytes) else {
+        return Some(super::Parsed::Unknown);
+    };
+    parse_text(grammar, text, super::HostMap::Whole(whole), spend)
+}
+
+fn parse_text(
+    grammar: super::Grammar,
+    text: String,
+    map: HostMap,
+    spend: &mut dyn FnMut(usize) -> bool,
+) -> Option<super::Parsed> {
+    if !spend(text.len() + 1) {
+        return None;
+    }
+    let root = grammar.parse(&text);
+    if !spend(root.size()) {
+        return None;
+    }
+    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
+        grammar, text, 0, root, map,
+    ))))
 }

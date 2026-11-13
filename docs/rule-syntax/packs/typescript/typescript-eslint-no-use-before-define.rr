@@ -1,0 +1,85 @@
+.policy "typescript-eslint-no-use-before-define" revision 2
+.description "Declare TypeScript variables, functions and classes before using them; a use earlier in the file can read an undefined or uninitialized binding."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-b-scope.rr"
+//   use, resolves, variable, declarator_name, scope_of, variable_scope, scope_type, export_local
+
+// typescript-eslint's no-use-before-define: a use that comes before the variable's first declaration, or inside
+// its own initialiser, is reported at the use.
+//   f(); function f() {}   a; let a = 1;   const b = b + 1;   new C(); class C {}      → reported
+//   function g() { return a; } let a = 1;     fine with variables false (a is in an outer function scope)
+//   let x: T; type T = string;   let y: typeof z; const z = 1;                       fine: type references
+// Options, each true by default but the last two:
+//   functions   function declarations count (false: never reported). The string option "nofunc" sets it false.
+//   classes, variables, enums   false: only uses from another function than the declaration's are exempt
+//   typedefs    type aliases and interfaces count (they only matter with ignoreTypeReferences false)
+//   ignoreTypeReferences (true)   uses in type positions and `typeof x` types are never reported
+//   allowNamedExports (false)     `export { a }` before `const a` is fine; otherwise it is reported even when a
+//                                 is not declared at all
+// Uses inside a type signature (`(a: typeof b) => void`) and a class's name in its own decorators are exempt.
+.violation no_use_before_define(at: node, x: symbol) code "@typescript-eslint/no-use-before-define" "Move the declaration of '{x}' above this use."
+    suppress eslint "@typescript-eslint/no-use-before-define"
+    suppress biome "lint/correctness/noInvalidUseBeforeDeclaration"
+no_use_before_define(r, x) :- export_local(r), opt("allowNamedExports", "false"), use(r, x, _), !resolves(r, _, x).
+no_use_before_define(r, x) :- export_local(r), opt("allowNamedExports", "false"), use(r, x, _), resolves(r, s, x),
+    !defined_before(r, s, x).
+no_use_before_define(r, x) :- use(r, x, _), !(export_local(r), opt("allowNamedExports", "false")), resolves(r, s, x),
+    !defined_before(r, s, x), forbidden(r, s, x), !in_signature(r), !decorator_self(r, s, x).
+
+// opt(o, d): boolean option o, with the default d.
+.decl opt(o: symbol, v: symbol)
+opt(o, v) :- option(o, v), (v = "true" ; v = "false").
+opt(o, d) :- default(o, d), !option(o, _), !(o = "functions", option("option", "nofunc")).
+opt("functions", "false") :- option("option", "nofunc").
+.decl default(o: symbol, d: symbol)
+default("functions", "true"). default("classes", "true"). default("enums", "true"). default("variables", "true").
+default("typedefs", "true"). default("ignoreTypeReferences", "true"). default("allowNamedExports", "false").
+
+// defined_before(r, s, x): the first identifier ends before use r ends, and r, a value use, is not in its initialiser.
+.decl defined_before(r: node, s: node, x: symbol)
+defined_before(r, s, x) :- resolves(r, s, x), first_decl(s, x, id, _), node(_, id, _, _, e), node(_, r, _, _, f), e <= f,
+    !(use(r, x, "value"), in_initialiser(r, s, id)).
+// in_initialiser(r, s, id): r, in the variable's own scope s, is in the value a declarator, a for-in/of head or a
+// default gives the name id: `const a = a`, `for (const b of b)`, `const { c = c } = o`, `function f(d = d) {}`.
+.decl in_initialiser(r: node, s: node, id: node)
+in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s), declarator_name(d, id, _),
+    field(d, "value", v), (r = v ; within(r, v)).
+in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s), for_head(f, _), field(f, "left", l),
+    (l = id ; within(id, l)), field(f, "right", v), (r = v ; within(r, v)).
+in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s),
+    (kind(p, "object_assignment_pattern") ; kind(p, "assignment_pattern")), field(p, "left", l), (l = id ; within(id, l)),
+    field(p, "right", v), (r = v ; within(r, v)).
+in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s),
+    (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", l), (l = id ; within(id, l)),
+    field(p, "value", v), (r = v ; within(r, v)).
+// forbidden(r, s, x): the options do not exempt use r of x.
+.decl forbidden(r: node, s: node, x: symbol)
+forbidden(r, s, x) :- resolves(r, s, x), !(opt("ignoreTypeReferences", "true"), type_use(r)), first_decl(s, x, _, k),
+    exempt_kind(k, o), !(opt(o, "false"), outer_ok(o, r, s)).
+forbidden(r, s, x) :- resolves(r, s, x), !(opt("ignoreTypeReferences", "true"), type_use(r)), first_decl(s, x, _, k),
+    !exempt_kind(k, _).
+// exempt_kind(k, o): option o can exempt a first declaration of kind k.
+.decl exempt_kind(k: symbol, o: symbol)
+exempt_kind("function", "functions"). exempt_kind("function-name", "functions").
+exempt_kind("class", "classes"). exempt_kind("class-name", "classes").
+exempt_kind("var", "variables"). exempt_kind("let", "variables"). exempt_kind("const", "variables").
+exempt_kind("using", "variables"). exempt_kind("enum", "enums").
+exempt_kind("type", "typedefs"). exempt_kind("interface", "typedefs").
+// outer_ok(o, r, s): option o, when false, exempts r: functions and typedefs always, the others only from another
+// function scope (eslint-scope's variableScope).
+.decl outer_ok(o: symbol, r: node, s: node)
+outer_ok(o, r, s) :- resolves(r, s, _), (o = "functions" ; o = "typedefs").
+outer_ok(o, r, s) :- resolves(r, s, _), (o = "classes" ; o = "variables" ; o = "enums"), scope_of(r, u), variable_scope(u, a),
+    variable_scope(s, b), a != b.
+.decl type_use(r: node)  // a type position, a `typeof x` type, or `export { x }`, `export = x`, `export default x`
+type_use(r) :- use(r, _, "type").
+type_use(r) :- use(r, _, "both").
+type_use(r) :- use(r, _, "value"), inside(r, _, "type_query").
+.decl in_signature(r: node)  // the use's scope is a type signature's
+in_signature(r) :- scope_of(r, s), scope_type(s, "functionType").
+.decl decorator_self(r: node, s: node, x: symbol)  // @dec(C) on class C itself
+decorator_self(r, s, x) :- resolves(r, s, x), first_decl(s, x, id, k), (k = "class" ; k = "class-name"), field(c, "name", id),
+    inside(r, dc, "decorator"), (child(c, dc, _) ; child(b, dc, _), field(c, "body", b)).

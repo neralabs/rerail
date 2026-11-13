@@ -1,0 +1,41 @@
+.policy "eslint-no-console" revision 5
+.description "Remove console calls; use a proper logger instead of leaving debug output in the code."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-globals.rr"
+#include "layout.rr"
+//   free_ref(r, x), static_prop(m, o, x), callee(c, f), estree_parent(n, p), deparen(e, x)
+
+// ESLint's no-console: any member of the global console that the `allow` list does not name.
+//   console.log(x);        console["error"](e);    console.foo;       → reported, at the member access
+//   function f(console) { console.log(x); }                           not reported: console is a parameter
+// allow (a list, default none): methods that may be used, e.g. ["warn", "error"]; the message lists them.
+// A suggestion (not safe) deletes a statement that is only the call, where nothing else would join the next line.
+.violation no_console(at: node, msg: symbol) code "no-console" "{msg}"
+    suppress eslint "no-console"
+    suppress oxlint "no-console"
+    suppress biome "lint/suspicious/noConsole"
+    fix remove_console "Remove the console method call"
+no_console(m, "Unexpected console statement.") :- console_use(m), !option_item("allow", _, _).
+no_console(m, cat("Unexpected console statement. Only these console methods are allowed: ", s, ".")) :-
+    console_use(m), s = join x by i sep ", " : { option_item("allow", i, x) }, s != "".
+// console_use(m): m reads a member of console that is not allowed, parentheses or not: (console).log(x). A computed one with no static name,
+// console[k], is never allowed.
+.decl console_use(m: node)
+console_use(m) :- free_ref(o, "console"), field(m, "object", w), deparen(w, o), (kind(m, "member_expression") ;
+    kind(m, "subscript_expression")), !allowed(m).
+.decl allowed(m: node)
+allowed(m) :- static_prop(m, _, x), option_item("allow", _, x).
+
+// The suggestion: `console.log(x);` alone in a block, program, static block or case: delete it. Not when the
+// statements around it would run together:  a = b; console.log(x)\n(c)()  is left alone (ESLint's
+// maybeAsiHazard: the next token starts with ( [ / + - or ` and the one before is not ; { or :).
+remove_console(m, _) :- callee(c, m), estree_parent(c, s), kind(s, "expression_statement"), estree_parent(s, l),
+    statement_list(l), !asi_risk(s) => delete(s).
+.decl statement_list(l: node)
+statement_list(l) :- kind(l, k), (k = "program" ; k = "statement_block" ; k = "switch_case" ; k = "switch_default").
+.decl asi_risk(s: node)
+asi_risk(s) :- kind(s, "expression_statement"), next_code(s, t), match("(?s)\\s*[-\\[(/+`].*", t),
+    !match("(?s)\\s*(\\+\\+|--).*", t), prev_code(s, b), !match("(?s).*[;{:]\\s*", b).
+layout_at(s) :- callee(c, m), console_use(m), estree_parent(c, s), kind(s, "expression_statement").

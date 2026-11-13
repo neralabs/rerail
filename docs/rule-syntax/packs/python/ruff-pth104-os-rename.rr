@@ -1,0 +1,18 @@
+.policy "ruff-pth104-os-rename" revision 2
+.description "Use Path.rename() instead of os.rename(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH104 (flake8-use-pathlib): a call of `os.rename`, however it is imported, with any arguments, unless
+// `src_dir_fd` or `dst_dir_fd` is passed and not None: pathlib has neither. Reported at the callee.
+//   os.rename("a", "b")                  ← PTH104: `Path("a").rename("b")`
+//   os.rename("a", "b", src_dir_fd=None) ← PTH104
+//   os.rename("a", "b", dst_dir_fd=3)    not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
+
+.violation PTH104(at: node) code "PTH104"
+    "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
+    suppress ruff "PTH104"
+PTH104(f) :- pth_call(c, "os.rename", f), !kw_set(c, "src_dir_fd"), !kw_set(c, "dst_dir_fd").

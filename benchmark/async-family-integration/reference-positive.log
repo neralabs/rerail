@@ -1,0 +1,12 @@
+
+running 8 tests
+test code_rule_dsl::findings::async_reference::tests::batched_positive_documents_preserve_all_four_labels ... ok
+test code_rule_dsl::findings::async_reference::tests::complete_async_family_corpus_profile ... ignored, requires RERAIL_SHARED_CORPUS; complete family, not whole catalog
+test code_rule_dsl::findings::async_reference::tests::complete_async_family_matches_existing_path_fixtures ... ok
+test code_rule_dsl::findings::async_reference::tests::complete_async_family_matches_native_on_binding_and_context_edges ... ok
+test code_rule_dsl::findings::async_reference::tests::complete_async_family_producer_profile ... ignored, requires RERAIL_SHARED_CORPUS; producer boundary comparison
+test code_rule_dsl::findings::async_reference::tests::duplicate_labels_do_not_repeat_producer_work ... ok
+test code_rule_dsl::findings::async_reference::tests::failed_document_does_not_publish_provisional_findings ... ok
+test code_rule_dsl::findings::async_reference::tests::primary_screen_preserves_receiver_demands_and_skips_irrelevant_scopes ... ok
+
+test result: ok. 6 passed; 0 failed; 2 ignored; 0 measured; 3133 filtered out; finished in 0.17s

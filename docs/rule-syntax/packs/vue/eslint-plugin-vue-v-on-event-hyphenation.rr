@@ -1,0 +1,24 @@
+.policy "eslint-plugin-vue-v-on-event-hyphenation" revision 2
+.description "Use hyphenated (kebab-case) event names, not camelCase, in v-on listeners on Vue components."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vdir(e, a, d, arg), vdyn(a), vcustom(e), vtag_ignored(e), vkey_text(a, k)
+
+// eslint-plugin-vue's v-on-event-hyphenation: on a custom component, a v-on listener whose static event name is not
+// kebab-case. Option 1: "always" (the default: a name with an upper-case letter) or "never" (a name with `-`).
+// Option 2: ignore (names; one that contains an item is skipped), ignoreTags, and autofix (off by default; the
+// policy offers no fix).
+//   <my-comp @customEvent="go" v-on:updateValue="set" />     both reported
+//   <my-comp @custom-event="go" />   <div @myEvent="go" />    not reported
+.violation event_hyphenation(at: node, k: symbol, verb: symbol) code "vue/v-on-event-hyphenation"
+    "v-on event '{k}' {verb}."
+    suppress eslint "vue/v-on-event-hyphenation"
+event_hyphenation(a, k, verb) :- vdir(e, a, "on", x), x != "", !vdyn(a), vcustom(e), !vtag_ignored(e),
+    !ignored(x), wrong(x, verb), vkey_text(a, k).
+.decl ignored(x: symbol)
+ignored(x) :- vdir(_, _, "on", x), option_item("ignore", _, p), contains(p, x).
+.decl wrong(x: symbol, verb: symbol)
+wrong(x, "must be hyphenated") :- vdir(_, _, "on", x), !option("option", "never"), @lower(x) != x.
+wrong(x, "can't be hyphenated") :- vdir(_, _, "on", x), option("option", "never"), contains("-", x).

@@ -1,0 +1,21 @@
+.policy "ruff-pth101-os-chmod" revision 2
+.description "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH101 (flake8-use-pathlib): a call of `os.chmod`, however it is imported, with any arguments, unless
+// the path is a file descriptor (pathlib has no chmod on one) or `dir_fd` is passed and not None (pathlib has
+// no `dir_fd`). Reported at the callee.
+//   os.chmod("f", 0o644)                 ← PTH101
+//   os.chmod(3, 0o644)                   not reported: a file descriptor
+//   fd = 3; os.chmod(fd, 0o644)          not reported: fd's only binding is an int
+//   os.chmod("f", 0o644, dir_fd=d)       not reported; `dir_fd=None` is reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
+//   kw_set(c, k)        keyword k is not None        (python/pathlib)
+
+.violation PTH101(at: node) code "PTH101"
+    "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
+    suppress ruff "PTH101"
+PTH101(f) :- pth_call(c, "os.chmod", f), !fd_arg(c, "path"), !kw_set(c, "dir_fd").

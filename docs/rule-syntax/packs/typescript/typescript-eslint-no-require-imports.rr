@@ -1,0 +1,32 @@
+.policy "typescript-eslint-no-require-imports" revision 3
+.description "Use ES import statements instead of require() calls or import-equals-require in TypeScript; they give typed, statically analyzable imports."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-common.rr"
+//   deparen, call_arg, static_string; through tsx/names: ref, ref_site
+
+// typescript-eslint's no-require-imports: `require("m")` and `import x = require("m")` are CommonJS imports; ES
+// `import` is typed and static. A call is reported only when `require` is not declared in the file (a local
+// function of that name is the user's own).
+//   const a = require("a");   require(`b`);   import c = require("c");      → reported (the last at `require`)
+//   import a from "a";   function f(require) { require("x"); }              fine
+// Options: allow, a list of regexes: a specifier (a string, or a template without `${}`) that one of them finds
+// is allowed. allowAsImport (default false): `import x = require("m")` is allowed.
+.violation no_require_imports(at: loc) code "@typescript-eslint/no-require-imports" "A `require()` style import is forbidden."
+    suppress eslint "@typescript-eslint/no-require-imports"
+    suppress oxlint "no-require-imports"
+    suppress biome "lint/style/noCommonJs"
+no_require_imports(c) :- kind(c, "call_expression"), field(c, "function", e), deparen(e, f), kind(f, "identifier"),
+    text(f, "require"), !ref_site(f, _), !allowed_call(c).
+// `import x = require("m")`: ESTree's TSExternalModuleReference starts at `require`, two tokens before the string.
+no_require_imports(t) :- kind(r, "import_require_clause"), field(r, "source", s), !allowed(s),
+    !option("allowAsImport", "true"), match("(?s).*?=\\s*(?<t>require)\\b.*", r).
+
+.decl allowed_call(c: node)
+allowed_call(c) :- call_arg(c, a, 0), allowed(a).
+// allowed(s): specifier s has a static value that an `allow` pattern finds (RegExp.test: anywhere in it).
+.decl allowed(s: node)
+allowed(s) :- static_string(s, v), (kind(s, "string") ; kind(s, "template_string")), option_item("allow", _, p),
+    match(cat(".*(?:", cat(p, ").*")), v).

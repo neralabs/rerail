@@ -95,9 +95,8 @@ impl AsRef<Path> for TemporaryDatabase {
 
 impl Drop for TemporaryDatabase {
     fn drop(&mut self) {
-        ThreadConnection {
-            database_path: self.path.clone(),
-        }
-        .release_all();
+        // A handle of its own, closed at once: when no store handle to the path is left, every thread's idle
+        // connection to it closes.
+        ThreadConnection::new(self.path.clone(), 0).close();
     }
 }

@@ -1,0 +1,14 @@
+
+running 1 test
+test code_rule_dsl::logic::plan::corpus::tests::cross_file_strata_are_kept_across_runs_in_the_tape_cache ...
+thread 'code_rule_dsl::logic::plan::corpus::tests::cross_file_strata_are_kept_across_runs_in_the_tape_cache' (126251851) panicked at native/src/code_rule_dsl/logic/plan/corpus.rs:6431:32:
+a run with a tape cache keeps its cross-file strata
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    code_rule_dsl::logic::plan::corpus::tests::cross_file_strata_are_kept_across_runs_in_the_tape_cache
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3126 filtered out; finished in 2.16s

@@ -1,0 +1,54 @@
+.policy "eslint-plugin-vue-no-dupe-keys" revision 2
+.description "Avoid reusing a name across a Vue component's props, computed, data, methods and setup, or a prop name for a script setup binding; the names collide in the template."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vname(o, g, x, n), vprops_call(c), vprop_name(c, x, n), vscript(p, setup), decl_site(s, x, site, form, space)
+
+// eslint-plugin-vue's no-dupe-keys.
+// Options API: a name that props, computed, data, methods or setup (option groups: more option names) already
+// declared earlier in the same component is reported where it repeats.
+//   props: ['foo'], computed: { foo() {} }                 the computed foo is reported
+// <script setup>: a top-level binding named like a defineProps prop is reported at its declaration, unless it is the
+// destructured prop itself, a renamed one (`{ foo: bar }`), or a variable whose initialiser reads the props.
+//   const props = defineProps(['foo']); const foo = ref(1)                    foo is reported
+//   const props = defineProps(['foo']); const foo = computed(() => props.foo)  not reported
+.violation dupe_key(at: node, x: symbol) code "vue/no-dupe-keys"
+    "Duplicate key '{x}'. May cause name collision in script or template tag."
+    suppress eslint "vue/no-dupe-keys"
+dupe_key(n, x) :- named(o, x, n), named(o, x, m), earlier(m, n).
+dupe_key(site, x) :- vprops_call(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
+    !reads_props(c, site).
+.decl named(o: node, x: symbol, n: node)
+named(o, x, n) :- vname(o, g, x, n), (group(g) ; option_item("groups", _, g)).
+.decl group(g: symbol)
+group("props"). group("computed"). group("data"). group("methods"). group("setup").
+
+// pattern(c, l): `const l = defineProps(…)` or `const l = withDefaults(defineProps(…), …)`.
+.decl pattern(c: node, l: node)
+pattern(c, l) :- vprops_call(c), field(d, "value", w), vunwrap(w, c), kind(d, "variable_declarator"), field(d, "name", l).
+pattern(c, l) :- vprops_call(c), vmacro(w, "withDefaults"), call_arg(w, a, 0), vunwrap(a, c), field(d, "value", v),
+    vunwrap(v, w), kind(d, "variable_declarator"), field(d, "name", l).
+.decl renamed(c: node, x: symbol)  // const { x: y } = defineProps(…)
+renamed(c, x) :- pattern(c, l), kind(l, "object_pattern"), child(l, p, _), kind(p, "pair_pattern"),
+    field(p, "key", k), kind(k, "property_identifier"), text(k, x), field(p, "value", v), kind(v, "identifier"),
+    !text(v, x).
+// top_binding(c, x, site): x is declared at the top of a script of c's file; the site is the declaration.
+.decl top_binding(c: node, x: symbol, site: node)
+top_binding(c, x, at) :- vprop_name(c, x, _), docof(c, d), vscript(p, _), docof(p, d), decl_site(p, x, s, _, "value"),
+    def_node(s, at).
+.decl def_node(s: node, at: node)  // ESLint's def.node: the declarator of a destructured name
+def_node(s, s) :- decl_site(_, _, s, f, _), f != "pattern".
+def_node(s, d) :- decl_site(_, _, s, "pattern", _), nearest(s, d, "variable_declarator").
+// reads_props(c, at): declarator at's initialiser holds the defineProps call, or reads a name the props pattern binds.
+.decl reads_props(c: node, at: node)
+reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), field(at, "value", v), within(c, v).
+reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), field(at, "value", v), c = v.
+reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), field(at, "value", v), read_in(v, r),
+    ref_site(r, s), binds(c, s).
+.decl read_in(v: node, r: node)
+read_in(v, r) :- top_binding(_, _, at), field(at, "value", v), (has(v, r, "identifier") ; kind(v, "identifier"), r = v).
+.decl binds(c: node, s: node)  // s is a declaration site of a name the props pattern binds
+binds(c, d) :- pattern(c, l), field(d, "name", l).
+binds(c, s) :- pattern(c, l), decl_site(_, _, s, "pattern", _), within(s, l).

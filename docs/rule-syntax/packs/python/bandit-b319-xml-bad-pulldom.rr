@@ -1,0 +1,15 @@
+.policy "bandit-b319-xml-bad-pulldom" revision 2
+.description "Use defusedxml instead of xml.dom.pulldom to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B319 (its B001 blacklist): a call to xml.dom.pulldom's parse or parseString.
+//   from xml.dom import pulldom; pulldom.parse(f)              B319
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B319(at: node) code "B319"
+    "Using xml.dom.pulldom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."
+    suppress nosec "B319"
+B319(n) :- blacklisted(n, "B319").

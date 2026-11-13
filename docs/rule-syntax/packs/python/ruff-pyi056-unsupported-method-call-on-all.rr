@@ -1,0 +1,20 @@
+.policy "ruff-pyi056-unsupported-method-call-on-all" revision 2
+.description "Use += to add names to the module's export list instead of calling append, extend or remove on it; type checkers do not all support those method calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI056 (flake8-pyi), every file: `__all__.append(…)`, `.extend(…)` or `.remove(…)`. Type checkers
+// understand `__all__ += […]` but not every method call. Any `__all__` name counts, in any scope; an attribute
+// `m.__all__` does not.
+//   __all__.append("f")       ← PYI056: write `__all__ += ["f"]`
+#include "python/typing.rr"
+
+.violation PYI056(at: node, msg: symbol) code "PYI056" "{msg}"
+    suppress ruff "PYI056"
+PYI056(f, m) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o0, x), unparen(o0, o),
+    kind(o, "identifier"), text(o, "__all__"), says(x, m).
+.decl says(x: symbol, msg: symbol)
+says(x, "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call.") :-
+    (x = "append" ; x = "extend").
+says("remove", "Build `__all__` without that name instead of calling `.remove()`; if it depends on a condition, add the name back with `__all__ += [...]` under the opposite condition.").

@@ -1,0 +1,31 @@
+.policy "phpstan-argument-sprintf" revision 2
+.description "Pass sprintf() exactly as many values as its format string's placeholders, and keep the format valid; too few values throw and extra ones are silently ignored."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/format.rr"
+//   printf_needs(s, k), printf_invalid(s)    what format string s needs, as PHP 8 parses it
+//   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
+
+// PHPStan's PrintfParametersRule and PrintfArrayParametersRule's sprintf half (argument.sprintf, level 0): a
+// sprintf() whose format is a known string and whose value count differs from what the format needs.
+//   sprintf('%s %s', 'a');            more placeholders than values (throws ArgumentCountError)
+//   sprintf('foo %s', 'a', 'b');      fewer placeholders than values (the extra one is ignored)
+//   sprintf('%2$s %1$s', 'a');        2 needed: numbered placeholders count up to their largest number
+//   sprintf('%0$s', $s);              an invalid format (throws ValueError)
+//   $f = '%s %s'; sprintf($f, 'a');   the format followed through a variable with one write
+//   sprintf($msg, 'a');  sprintf('%s %s', ...$xs);     not reported: format or count unknown
+.violation argument_sprintf(at: node, msg: symbol) code "argument.sprintf" "{msg}"
+    suppress phpstan "argument.sprintf"
+argument_sprintf(c, cat("Call to sprintf contains more placeholders (", to_string(k), ") than values given (",
+    to_string(n), ").")) :- sprintf_format(c, s, n), printf_needs(s, k), k > n.
+argument_sprintf(c, cat("Call to sprintf contains fewer placeholders (", to_string(k), ") than values given (",
+    to_string(n), ").")) :- sprintf_format(c, s, n), printf_needs(s, k), k < n.
+argument_sprintf(c, "Fix the invalid placeholder in this sprintf() format, or write a literal percent sign as %%.") :-
+    php_call(c, "sprintf"), php_arg(c, 0, f), php_value(f, "string", s), printf_invalid(s).
+// sprintf_format(c, s, n): sprintf call c has format s and n values.
+.decl sprintf_format(c: node, s: symbol, n: number)
+sprintf_format(c, s, k - 1) :- php_call(c, "sprintf"), php_arg(c, 0, f), php_value(f, "string", s),
+    php_arg_count(c, k), !php_spread_call(c).

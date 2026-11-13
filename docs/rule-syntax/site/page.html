@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rerail Logic Rule Syntax</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: a fixed top bar; each view is a reading column (syntax) or a list + code workbench (library, packs, data-layer). */
+:root {
+  --bg: #f2f3f5;
+  --surface: #ffffff;
+  --ink: #161b22;
+  --muted: #5c6470;
+  --line: #dde1e6;
+  --accent: #8c2a3c;
+  --accent-2: #1c5d8a;
+  --tint: #f7f0f1;
+  --code-bg: #fbfbfc;
+  --t-var: #6a4aa5;
+  --t-str: #2c6b38;
+  --t-builtin: #a3561a;
+  --t-kw: #1c5d8a;
+  --t-num: #9b3c6a;
+  --t-rel: #161b22;
+  --t-pat-bg: #f1ecf8;
+  --t-atom-bg: #fdf3e3;
+  --flash: #fff1b8;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1115; --surface: #151a20; --ink: #e5e8ec; --muted: #98a1ad; --line: #283039;
+    --accent: #e8899a; --accent-2: #74b6e8; --tint: #241a1d; --code-bg: #12161b;
+    --t-var: #bba4f2; --t-str: #93d3a2; --t-builtin: #f0aa6c; --t-kw: #74b6e8; --t-num: #ee9cc2; --t-rel: #e5e8ec;
+    --t-pat-bg: #231e30; --t-atom-bg: #2b2416; --flash: #4a4116;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1115; --surface: #151a20; --ink: #e5e8ec; --muted: #98a1ad; --line: #283039;
+  --accent: #e8899a; --accent-2: #74b6e8; --tint: #241a1d; --code-bg: #12161b;
+  --t-var: #bba4f2; --t-str: #93d3a2; --t-builtin: #f0aa6c; --t-kw: #74b6e8; --t-num: #ee9cc2; --t-rel: #e5e8ec;
+  --t-pat-bg: #231e30; --t-atom-bg: #2b2416; --flash: #4a4116;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body); display: flex; flex-direction: column; }
+a { color: var(--accent-2); }
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+header.top { display: flex; align-items: center; gap: 28px; padding: 0 20px; height: 52px; flex: none;
+  background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { font: 600 18px/1 var(--font-display); letter-spacing: .01em; display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.brand .ext { font: 500 12px var(--font-mono); color: var(--accent); }
+nav.views { display: flex; gap: 4px; overflow-x: auto; }
+nav.views a { text-decoration: none; color: var(--muted); font-weight: 500; padding: 6px 12px; border-radius: 6px; white-space: nowrap; }
+nav.views a[aria-current="page"] { color: var(--ink); background: var(--tint); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 6px 6px 0 0; }
+nav.views a:hover { color: var(--ink); }
+main { flex: 1; min-height: 0; display: flex; }
+.view { display: none; flex: 1; min-height: 0; }
+.view.on { display: flex; }
+
+/* ---- reading column ---- */
+.read { overflow-y: auto; flex: 1; }
+.read .col { max-width: 1500px; margin: 0 auto; padding: 32px 20px 80px; display: grid; gap: 40px; }
+.read h1 { font: 600 32px/1.15 var(--font-display); margin: 0; text-wrap: balance; }
+.read h2 { font: 600 22px/1.2 var(--font-display); margin: 0 0 4px; text-wrap: balance; }
+.read h3 { font: 600 16px/1.3 var(--font-display); margin: 0; }
+.snips .code .cv { max-height: 360px; overflow: auto; }
+.read > .col > h2 { margin-top: 18px; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.pair .cv { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-height: 640px; overflow: auto; }
+@media (max-width: 860px) { .pair { grid-template-columns: 1fr; } }
+.read p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); font-size: 16px; max-width: 70ch; }
+.read p.perf { font-size: 13.5px; color: var(--muted); border-left: 3px solid var(--accent-2); padding: 2px 0 2px 10px; }
+.read p.perf b { color: var(--ink); }
+.stats { display: flex; flex-wrap: wrap; gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; min-width: 150px; }
+.stat b { display: block; font: 600 22px/1.2 var(--font-display); font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 13px; }
+.sect { display: grid; grid-template-columns: minmax(240px, 0.75fr) minmax(0, 2fr); gap: 24px; align-items: start; }
+.sect > .txt { display: grid; gap: 10px; }
+.sect > .code { min-width: 0; }
+@media (max-width: 860px) { .sect { grid-template-columns: 1fr; } }
+table.map { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+table.map th, table.map td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.map th { font: 600 12px var(--font-body); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; background: var(--code-bg); }
+table.map td code, .txt code, p code, li code { font: 13px var(--font-mono); }
+table.map td:first-child { white-space: nowrap; }
+.tablewrap { overflow-x: auto; }
+ul.tight { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 68ch; }
+
+/* ---- workbench ---- */
+.bench { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 0; }
+.side { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.side .head { padding: 14px 14px 10px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
+.side h3 { margin: 0; font: 600 15px var(--font-display); letter-spacing: .02em; }
+.side .list { overflow-y: auto; flex: 1; padding: 6px 0; }
+.item { display: grid; gap: 2px; padding: 7px 14px; cursor: pointer; border-left: 3px solid transparent; }
+.item:hover { background: var(--code-bg); }
+.item[aria-selected="true"] { background: var(--tint); border-left-color: var(--accent); }
+.item .id { font: 13px var(--font-mono); word-break: break-all; }
+.item .meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.pill { font: 500 11px/1 var(--font-body); padding: 3px 6px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.native { color: var(--t-builtin); border-color: currentColor; }
+.pill.datalog { color: var(--accent-2); border-color: currentColor; }
+.pill.atom { color: var(--t-builtin); border-color: currentColor; }
+.pill.hand { color: var(--accent-2); border-color: currentColor; font-weight: 600; }
+.pill.gen { color: var(--muted); border-style: dashed; }
+.pill.mode-block { color: var(--accent); border-color: currentColor; }
+.pill.mode-steer { color: var(--accent-2); border-color: currentColor; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 12.5px var(--font-body); padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.chip .n { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.chip[aria-pressed="true"] .n { color: inherit; opacity: .7; }
+input[type="search"] { width: 100%; font: 14px var(--font-body); padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.work { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.work .bar { padding: 14px 20px 12px; border-bottom: 1px solid var(--line); background: var(--surface); display: grid; gap: 6px; }
+.work .bar h2 { margin: 0; font: 600 19px/1.25 var(--font-display); word-break: break-all; }
+.work .bar p { margin: 0; color: var(--muted); max-width: 90ch; font-size: 14px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tab { font: 500 13px var(--font-body); padding: 5px 10px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--ink); border-color: var(--line); background: var(--bg); }
+.panes { flex: 1; min-height: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.pane:last-child { border-right: 0; }
+.pane .ph { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 14px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--code-bg); }
+.pane .ph b { color: var(--ink); font-weight: 600; }
+.pane .scroll { overflow: auto; flex: 1; background: var(--code-bg); }
+@media (max-width: 900px) {
+  .bench { grid-template-columns: 1fr; grid-template-rows: 38vh minmax(0, 1fr); }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); }
+  .panes { grid-auto-flow: row; grid-auto-rows: minmax(300px, 1fr); }
+}
+
+/* ---- code ---- */
+pre.code { margin: 0; padding: 10px 0; font: 12.8px/1.6 var(--font-mono); counter-reset: ln; tab-size: 4; }
+/* Long lines wrap. A wrapped line continues 4 columns right of where the line's own text starts (--ind is its
+   leading whitespace, set per line), so it reads as one line and only adds height where it is actually too long. */
+pre.code .l { display: block; position: relative; min-height: 1.6em; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 0 16px 0 calc(56px + var(--ind, 0ch) + 4ch); text-indent: calc(-1 * (var(--ind, 0ch) + 4ch)); }
+pre.code .l::before { text-indent: 0; counter-increment: ln; content: counter(ln); position: absolute; left: 0; width: 42px; text-align: right; color: var(--muted); opacity: .55; }
+pre.code .l.flash { background: var(--flash); transition: background 1.2s; }
+.wrap pre.code .l { white-space: pre-wrap; word-break: break-word; }
+.show-all { margin: 8px 16px 16px 56px; font: 500 13px var(--font-body); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.c-com { color: var(--muted); font-style: italic; }
+/* A code box that scrolls gets a map of the whole file on its right, with the visible part outlined, and a bar
+   at the bottom counting the lines below. Click or drag the map to move. */
+.cv { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.cv > pre.code { grid-column: 1; grid-row: 1; min-width: 0; }
+.cv .mm { display: none; grid-column: 2; grid-row: 1 / span 2; position: sticky; top: 0; width: 72px; cursor: pointer;
+  border-left: 1px solid var(--line); background: var(--code-bg); touch-action: none; }
+.cv .more { display: none; grid-column: 1; grid-row: 2; position: sticky; bottom: 0; padding: 5px 16px 5px 56px;
+  font: 500 12px var(--font-body); color: var(--muted); background: var(--surface);
+  border-top: 1px solid var(--line); }
+.cv.scrolls .mm, .cv.scrolls .more.on { display: block; }
+.d-add { background: color-mix(in srgb, var(--t-str) 14%, transparent); display: block; }
+.d-del { background: color-mix(in srgb, var(--accent, #8c2a3c) 12%, transparent); display: block; }
+.c-mark { color: var(--accent, #8c2a3c); font-weight: 600; font-style: normal; }
+.sect > .code > * + * { margin-top: 12px; }
+.cap { font: 600 11px/1.2 var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.c-str { color: var(--t-str); }
+.c-var { color: var(--t-var); }
+.c-bi { color: var(--t-builtin); }
+.c-kw { color: var(--t-kw); font-weight: 500; }
+.c-num { color: var(--t-num); }
+.c-dir { color: var(--accent); font-weight: 600; }
+.c-op { color: var(--muted); }
+.c-rel { color: var(--t-rel); }
+.c-pat { background: var(--t-pat-bg); border-radius: 3px; }
+.c-atom { background: var(--t-atom-bg); border-radius: 3px; color: var(--t-builtin); font-weight: 500; }
+.c-key { color: var(--accent-2); }
+.c-lit { color: var(--t-num); }
+a.rel { color: inherit; text-decoration: underline dotted var(--accent-2); text-underline-offset: 3px; cursor: pointer; }
+a.rel:hover { color: var(--accent-2); text-decoration-style: solid; }
+a.rel.lib { color: var(--accent-2); }
+a.rel.nat { color: var(--t-builtin); text-decoration-color: var(--t-builtin); }
+.sect .code .cv, .snip .cv { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.snip pre.code .l { padding-left: calc(16px + var(--ind, 0ch) + 4ch); }
+.snip pre.code .l::before { display: none; }
+
+/* ---- definition drawer ---- */
+.drawer { position: fixed; top: 52px; right: 0; bottom: 0; width: min(680px, 100vw); background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px rgba(0,0,0,.12); display: flex; flex-direction: column; transform: translateX(105%); transition: transform .18s ease; z-index: 20; }
+.drawer.open { transform: none; }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } pre.code .l.flash { transition: none; } }
+.drawer .dh { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.drawer .dh h3 { margin: 0; font: 600 16px var(--font-mono); flex: 1; word-break: break-all; }
+.drawer .dh button, .btn { font: 500 13px var(--font-body); padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+.drawer .dsub { padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.drawer .dbody { overflow: auto; flex: 1; background: var(--code-bg); }
+.drawer .dbody .grp { padding: 8px 16px 0; font-size: 12px; color: var(--muted); }
+.note { font-size: 13px; color: var(--muted); padding: 10px 16px; }
+.empty { padding: 40px 20px; color: var(--muted); }
+kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Rerail logic <span class="ext">.rr</span></div>
+  <nav class="views" aria-label="Views">
+    <a href="#intro" data-view="intro">Intro</a>
+    <a href="#syntax" data-view="syntax">Syntax</a>
+    <a href="#library" data-view="library">Library</a>
+    <a href="#packs" data-view="packs">Pack rules</a>
+    <a href="#data-layer" data-view="data-layer">Data-layer rules</a>
+    <a href="explorer.html">Explorer</a>
+  </nav>
+</header>
+<main>
+  <section class="view read" id="v-intro" aria-label="Intro"></section>
+  <section class="view read" id="v-syntax" aria-label="Syntax"></section>
+
+  <section class="view" id="v-library" aria-label="Library">
+    <div class="bench">
+      <aside class="side"><div class="head"><h3>Modules</h3></div><div class="list" id="lib-list" role="listbox" aria-label="Modules"></div></aside>
+      <div class="work"><div class="bar" id="lib-bar"></div><div class="panes" id="lib-panes"></div></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-packs" aria-label="Pack rules">
+    <div class="bench">
+      <aside class="side">
+        <div class="head">
+          <h3>Packs</h3>
+          <div class="chips" id="pack-chips"></div>
+          <label for="pack-q" class="note" style="padding:0">Filter by rule id or description</label>
+          <input type="search" id="pack-q" placeholder="e.g. exec, children, sql injection" autocomplete="off">
+        </div>
+        <div class="list" id="pack-list" role="listbox" aria-label="Rules"></div>
+      </aside>
+      <div class="work"><div class="bar" id="pack-bar"></div><div class="panes" id="pack-panes"></div></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-data-layer" aria-label="Data-layer rules">
+    <div class="bench">
+      <aside class="side"><div class="head"><h3>Hand-written rules</h3></div><div class="list" id="dl-list" role="listbox" aria-label="Rules"></div></aside>
+      <div class="work"><div class="bar" id="dl-bar"></div><div class="panes" id="dl-panes"></div></div>
+    </div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" aria-label="Definition" aria-hidden="true">
+  <div class="dh"><button id="d-back" type="button" title="Back">←</button><h3 id="d-title"></h3><button id="d-close" type="button">Close</button></div>
+  <div class="dsub" id="d-sub"></div>
+  <div class="dbody" id="d-body"></div>
+</aside>
+
+<script id="data-libs" type="application/json">__LIBS__</script>
+<script id="data-hand" type="application/json">__HAND__</script>
+<script id="data-packs" type="application/json">__PACKS__</script>
+<script id="data-stats" type="application/json">__STATS__</script>
+<script id="data-intro" type="text/html">__INTRO__</script>
+<script id="data-syntax" type="text/html">__SYNTAX__</script>
+<script>
+"use strict";
+const LIBS = JSON.parse(document.getElementById("data-libs").textContent);
+const HAND = JSON.parse(document.getElementById("data-hand").textContent);
+const PACKS = JSON.parse(document.getElementById("data-packs").textContent);
+const STATS = JSON.parse(document.getElementById("data-stats").textContent);
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const MAX_LINES = 2500;
+
+// ---------- statements and definitions ----------
+const DIRECTIVE_WORDS = new Set(["must", "may", "count", "min", "max", "sum", "mean", "code", "anchor", "suppress", "fix", "options", "each", "revision", "by", "at", "safe", "join", "sep", "ordered", "from", "floor", "drop", "report", "tag", "inputs", "lattice", "pragma"]);
+const TYPE_WORDS = new Set(["node", "span", "loc", "symbol", "number", "relation"]);
+const BUILTIN_FNS = new Set(["match", "match_all", "cat", "strlen", "substr", "to_number", "to_string", "contains", "ord"]);
+const isDecl = s => s.kind === "decl" || s.kind === "native" || s.kind === "edit" || s.kind === "functor";
+function statements(src) {
+  const lines = src.split("\n"); const out = []; let cur = null;
+  lines.forEach((ln, i) => {
+    const t = ln.replace(/\/\/.*$/, "").trimEnd();
+    if (cur === null) {
+      if (!t.trim() || /^\s/.test(ln)) return;
+      const m = t.match(/^(?:\.(decl|native|violation|edit|functor)\s+)?(?:(?:must|may|edit)\s+)?([A-Za-z_]\w*)\s*\(/);
+      cur = { start: i, end: i, kind: m ? (m[1] || "rule") : "other", name: m ? m[2] : null };
+      if ((t.startsWith(".") || t.startsWith("#")) && !(m && m[1])) { cur.kind = "directive"; cur.name = null; }
+    }
+    if (cur) {
+      cur.end = i;
+      const next = lines[i + 1];
+      const contin = next !== undefined && /^\s+\S/.test(next) && !/^\s*\/\//.test(next);
+      if (cur.kind === "rule" ? /\.\s*$/.test(t) && !contin : !contin) { out.push(cur); cur = null; }
+    }
+  });
+  if (cur) out.push(cur);
+  return out;
+}
+function defsOf(src) {
+  const map = new Map();
+  for (const st of statements(src)) {
+    if (!st.name) continue;
+    if (!map.has(st.name)) map.set(st.name, []);
+    map.get(st.name).push(st);
+  }
+  return map;
+}
+const LIBDEFS = {};
+const DEFINERS = new Map();
+for (const [mod, lib] of Object.entries(LIBS)) {
+  LIBDEFS[mod] = defsOf(lib.src);
+  for (const [name, sts] of LIBDEFS[mod]) {
+    if (!sts.some(s => isDecl(s))) continue;
+    if (!DEFINERS.has(name)) DEFINERS.set(name, []);
+    DEFINERS.get(name).push(mod);
+  }
+}
+function usesOf(src) {
+  const set = new Set(["core"]);
+  const add = m => { if (set.has(m) || !LIBS[m]) return; set.add(m); for (const u of usesOf(LIBS[m].src)) set.add(u); };
+  for (const m of src.matchAll(/^#include\s+"([\w/]+)\.rr"/gm)) add(m[1]);
+  return set;
+}
+function resolveLib(name, uses, lang) {
+  const mods = DEFINERS.get(name);
+  if (!mods) return null;
+  const pref = mods.find(m => uses.has(m));
+  if (pref) return pref;
+  const fam = lang === "python" ? "python/" : /typescript|javascript|tsx/.test(lang || "") ? "tsx/" : null;
+  return (fam && mods.find(m => m.startsWith(fam))) || mods[0];
+}
+
+// ---------- highlighting ----------
+// Soufflé form: a bare name in an atom is a variable (c-var); a name before `(` is a relation, a stop-set argument
+// that names a known relation links to it too. `$X` appears only inside backtick patterns and templates.
+const RR_TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(```\s.*?\s```|``\s.*?\s``|`(?:[^`\\]|\\.)*`)|(\$[A-Za-z_]\w*)|(@[A-Za-z_]\w*)|(:-|=>|!=|<=|>=|~)|(\bast(?=\())|(\b-?\d+(?:\.\d+)?\b)|(\b[A-Za-z_]\w*)(?=\s*\()|(\b[A-Za-z_]\w*\b)/g;
+const DIR_CONT = /^\s+(?:suppress|anchor|options|each|code)\b/;
+function hlRR(line, ctx) {
+  let out = "", last = 0;
+  const dm = line.match(/^(\s*)(\.[a-z_]+|#include)/);
+  if (dm) { out += esc(dm[1]) + `<span class="c-dir">${esc(dm[2])}</span>`; last = dm[0].length; }
+  const inDir = !!dm || DIR_CONT.test(line);
+  const fm = !dm && line.match(/^(\s+)fix(\s+)(?:safe(\s+))?([a-z_]\w*)(?=\s+")/);
+  if (fm) {
+    out += `${fm[1]}<span class="c-kw">fix</span>${fm[2]}` + (fm[3] ? `<span class="c-kw">safe</span>${fm[3]}` : "") + relLink(fm[4], ctx);
+    last = fm[0].length;
+  }
+  RR_TOKEN.lastIndex = last;
+  let m;
+  while ((m = RR_TOKEN.exec(line))) {
+    out += esc(line.slice(last, m.index));
+    const [tok, com, str, pat, v, bi, op, atom, num, rel, word] = m;
+    if (com) out += `<span class="c-com">${esc(com)}</span>`;
+    else if (str) out += `<span class="c-str">${esc(str)}</span>`;
+    else if (pat) out += `<span class="c-pat">${esc(pat)}</span>`;
+    else if (v) out += `<span class="c-var">${esc(v)}</span>`;
+    else if (bi) out += `<span class="c-bi">${esc(bi)}</span>`;
+    else if (op) out += `<span class="c-op">${esc(op)}</span>`;
+    else if (atom) out += `<span class="c-atom" title="Matcher atom: a term with no Datalog lowering here">ast</span>`;
+    else if (num) out += `<span class="c-num">${esc(num)}</span>`;
+    else if (rel) out += BUILTIN_FNS.has(rel) ? `<span class="c-bi">${rel}</span>` : relLink(rel, ctx);
+    else if (word) out += wordHtml(word, ctx, inDir);
+    last = m.index + tok.length;
+  }
+  return out + esc(line.slice(last));
+}
+function wordHtml(word, ctx, inDir) {
+  if (DIRECTIVE_WORDS.has(word) || ["true", "false"].includes(word)) return `<span class="c-kw">${word}</span>`;
+  if (TYPE_WORDS.has(word)) return `<span class="c-kw">${word}</span>`;
+  if (inDir) return esc(word);
+  if (word === "_") return esc(word);
+  // A stop-set argument names a relation (`nearest(f, s, scope)`); anything else is a variable.
+  if (ctx && ((ctx.local && ctx.local.has(word)) || DEFINERS.has(word))) return relLink(word, ctx);
+  return `<span class="c-var">${esc(word)}</span>`;
+}
+function relLink(name, ctx) {
+  if (DIRECTIVE_WORDS.has(name)) return `<span class="c-kw">${name}</span>`;
+  if (ctx && ctx.local && ctx.local.has(name)) {
+    const st = ctx.local.get(name).find(s => s.kind !== "rule") || ctx.local.get(name)[0];
+    return `<a class="rel" data-local="${st.start}" data-name="${name}">${name}</a>`;
+  }
+  const mod = !ctx ? null : ctx.prefer && (DEFINERS.get(name) || []).includes(ctx.prefer) ? ctx.prefer : resolveLib(name, ctx.uses, ctx.lang);
+  if (mod) {
+    const nat = LIBS[mod].kind === "native";
+    return `<a class="rel ${nat ? "nat" : "lib"}" data-mod="${mod}" data-name="${name}" title="${nat ? "native" : mod}">${name}</a>`;
+  }
+  return `<span class="c-rel">${name}</span>`;
+}
+const JSON_TOKEN = /("(?:[^"\\]|\\.)*")(\s*:)?|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+function hlJSON(line) {
+  let out = "", last = 0, m;
+  JSON_TOKEN.lastIndex = 0;
+  while ((m = JSON_TOKEN.exec(line))) {
+    out += esc(line.slice(last, m.index));
+    if (m[1]) out += m[2] ? `<span class="c-key">${esc(m[1])}</span>${esc(m[2])}` : `<span class="c-str">${esc(m[1])}</span>`;
+    else if (m[3]) out += `<span class="c-lit">${m[3]}</span>`;
+    else out += `<span class="c-num">${m[4]}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(line.slice(last));
+}
+const YAML_TOKEN = /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')|^(\s*(?:- )?)([A-Za-z_$][\w.$-]*)(:)/g;
+function hlYAML(line) {
+  let out = "", last = 0, m;
+  YAML_TOKEN.lastIndex = 0;
+  while ((m = YAML_TOKEN.exec(line))) {
+    out += esc(line.slice(last, m.index));
+    if (m[1]) out += `<span class="c-com">${esc(m[1])}</span>`;
+    else if (m[2]) out += `<span class="c-str">${esc(m[2])}</span>`;
+    else out += esc(m[3]) + `<span class="c-key">${esc(m[4])}</span>:`;
+    last = m.index + m[0].length;
+    if (m[0] === "") JSON_TOKEN.lastIndex++;
+  }
+  return out + esc(line.slice(last));
+}
+// Source shown beside a rule: comments muted, "← …" marks what the rule reports. Diffs: "+ " and "- " lines.
+function hlSrc(line) {
+  const m = line.match(/^(.*?)((?:#|\/\/) .*)?$/);
+  let body = esc(m[1]), com = m[2] || "";
+  if (com) {
+    const k = com.indexOf("←");
+    com = k < 0 ? `<span class="c-com">${esc(com)}</span>`
+      : `<span class="c-com">${esc(com.slice(0, k))}</span><span class="c-mark">${esc(com.slice(k))}</span>`;
+  }
+  return body + com;
+}
+function hlDiff(line) {
+  if (line.startsWith("+ ")) return `<span class="d-add">${hlSrc(line)}</span>`;
+  if (line.startsWith("- ")) return `<span class="d-del">${hlSrc(line)}</span>`;
+  return hlSrc(line);
+}
+function renderCode(el, text, lang, opts = {}) {
+  const lines = text.replace(/\n$/, "").split("\n");
+  const ctx = lang === "rr" ? { local: defsOf(text), uses: usesOf(text), lang: opts.lang || (text.match(/^\.language\s+(\w+)/m) || [])[1] } : null;
+  const hl = lang === "rr" ? l => hlRR(l, ctx) : lang === "json" ? hlJSON : lang === "yaml" ? hlYAML : lang === "src" ? hlSrc : lang === "diff" ? hlDiff : esc;
+  const draw = limit => {
+    const n = Math.min(lines.length, limit);
+    const start = opts.start || 0;
+    let html = `<pre class="code" style="counter-reset: ln ${start}">`;
+    for (let i = 0; i < n; i++) {
+      const ind = lines[i].match(/^[ \t]*/)[0].replace(/\t/g, "    ").length;
+      html += `<span class="l" data-l="${i}"${ind ? ` style="--ind:${ind}ch"` : ""}>${hl(lines[i])}</span>`;
+    }
+    html += `</pre><canvas class="mm" aria-hidden="true"></canvas><div class="more" aria-live="polite"></div>`;
+    if (lines.length > n) html += `<button class="show-all" type="button">Show all ${lines.length.toLocaleString()} lines</button>`;
+    el.innerHTML = html;
+    const b = el.querySelector(".show-all");
+    if (b) b.addEventListener("click", () => draw(Infinity));
+    mapCode(el);
+  };
+  el.classList.add("cv");
+  draw(opts.all ? Infinity : MAX_LINES);
+  el._ctx = { text, lang };
+}
+
+// ---------- code map ----------
+// The scrolling element is the box itself (.pair, .snips) or, in the workbench panes, the pane's .scroll.
+function mapCode(el) {
+  const cv = el.querySelector("canvas.mm"), more = el.querySelector(".more"), pre = el.querySelector("pre.code");
+  if (!cv || !pre) return;
+  const rows = [...pre.querySelectorAll(".l")];
+  const style = getComputedStyle(document.documentElement);
+  const col = v => style.getPropertyValue(v).trim();
+  const tone = l => {
+    const f = l.querySelector("[class^='c-'], a.rel");
+    if (!f) return col("--ink");
+    const c = f.className;
+    return c.includes("c-com") ? col("--muted") : c.includes("c-str") ? col("--t-str") : c.includes("c-key") || c.includes("c-kw") ? col("--accent-2")
+      : c.includes("c-dir") ? col("--accent") : c.includes("c-bi") || c.includes("c-atom") ? col("--t-builtin") : col("--ink");
+  };
+  const lines = rows.map(l => { const t = l.textContent; const ind = t.match(/^\s*/)[0].length; return { ind, len: t.trimEnd().length - ind, tone: tone(l) }; });
+  const below = () => {
+    const bottom = el.scrollTop + el.clientHeight;
+    let lo = 0, hi = rows.length;                          // first row starting below the visible part
+    while (lo < hi) { const m = (lo + hi) >> 1; if (rows[m].offsetTop < bottom) lo = m + 1; else hi = m; }
+    return rows.length - lo;
+  };
+  const paint = () => {
+    const H = el.clientHeight, S = el.scrollHeight;
+    const scrolls = S > H + 4 && H > 0;
+    el.classList.toggle("scrolls", scrolls);
+    if (!scrolls) return;
+    const dpr = window.devicePixelRatio || 1, W = 72;
+    cv.style.height = H + "px";
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const k = H / S, cw = 0.9;                             // map pixels per content pixel; per character
+    rows.forEach((l, i) => {
+      const L = lines[i]; if (L.len <= 0) return;
+      const y = l.offsetTop * k, h = Math.max(1, Math.min(3, l.offsetHeight * k * 0.7));
+      g.globalAlpha = 0.75; g.fillStyle = L.tone;
+      g.fillRect(4 + Math.min(L.ind, 30) * cw, y, Math.max(1.5, Math.min(L.len * cw, W - 8 - L.ind * cw)), h);
+    });
+    g.globalAlpha = 1;
+    const vy = el.scrollTop * k, vh = Math.max(8, H * k);
+    g.fillStyle = col("--ink"); g.globalAlpha = 0.10; g.fillRect(0, vy, W, vh);
+    g.globalAlpha = 0.55; g.strokeStyle = col("--accent-2"); g.lineWidth = 1; g.strokeRect(0.5, vy + 0.5, W - 1, vh - 1);
+    g.globalAlpha = 1;
+    const n = below();
+    more.classList.toggle("on", n > 0);
+    more.textContent = n > 0 ? `${n.toLocaleString()} more line${n === 1 ? "" : "s"} below, of ${rows.length.toLocaleString()}. Scroll, or use the map on the right.` : "";
+  };
+  const seek = e => {
+    const r = cv.getBoundingClientRect();
+    el.scrollTop = ((e.clientY - r.top) / r.height) * el.scrollHeight - el.clientHeight / 2;
+  };
+  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); seek(e); cv.onpointermove = seek; });
+  cv.addEventListener("pointerup", () => { cv.onpointermove = null; });
+  let queued = false;
+  const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; paint(); }); } };
+  if (!el._mapped) {                                       // once per element: redraws replace the canvas, not the listeners
+    el._mapped = true;
+    el.addEventListener("scroll", () => el._paint && el._paint(), { passive: true });
+    new ResizeObserver(() => el._paint && el._paint()).observe(el);
+  }
+  el._paint = later;
+  later();
+}
+
+// ---------- definition drawer ----------
+const drawer = $("#drawer"); const history_ = [];
+function openDef(mod, name, push = true) {
+  const lib = LIBS[mod]; if (!lib) return;
+  const sts = (LIBDEFS[mod].get(name) || []);
+  if (push) history_.push([mod, name]);
+  $("#d-title").textContent = name;
+  const nat = lib.kind === "native";
+  const others = (DEFINERS.get(name) || []).filter(m => m !== mod);
+  $("#d-sub").innerHTML = `<span class="pill ${nat ? "native" : "datalog"}">${nat ? "native, in the binary" : lib.kind === "program" ? "a typing program, run before the rules" : "Datalog, shipped as a library"}</span>
+    <span>${esc(mod)}</span>${others.length ? `<span>also defined in ${others.map(o => `<a href="#" data-alt="${o}">${o}</a>`).join(", ")}</span>` : ""}
+    <span style="flex:1"></span><button class="btn" type="button" id="d-open">Open module</button>`;
+  const srcLines = lib.src.split("\n");
+  const body = $("#d-body"); body.innerHTML = "";
+  const decl = sts.filter(s => isDecl(s));
+  const rules = sts.filter(s => s.kind === "rule");
+  const pieces = [];
+  const take = (st, withComments) => {
+    let a = st.start;
+    if (withComments) while (a > 0 && /^\s*\/\//.test(srcLines[a - 1])) a--;
+    pieces.push({ a, text: srcLines.slice(a, st.end + 1).join("\n") });
+  };
+  decl.forEach(s => take(s, true)); rules.forEach(s => take(s, false));
+  const merged = pieces.sort((x, y) => x.a - y.a).map(p => p.text).join("\n");
+  if (merged) {
+    const ctx = { local: null, prefer: mod, uses: usesOf(lib.src), lang: mod.startsWith("python") ? "python" : mod.startsWith("tsx") ? "typescript" : "" };
+    body.innerHTML = `<pre class="code">${merged.split("\n").map(l => `<span class="l">${hlRR(l, ctx)}</span>`).join("")}</pre>`;
+  } else body.innerHTML = `<div class="note">No definition found.</div>`;
+  if (nat) body.insertAdjacentHTML("beforeend", `<div class="note">Native: provided by the binary from the parse tape or a file reader. Changing it needs a new release.</div>`);
+  else body.insertAdjacentHTML("beforeend", `<div class="note">${rules.length} rule${rules.length === 1 ? "" : "s"} in ${esc(mod)}. Updating this library does not need a new binary.</div>`);
+  $("#d-open").addEventListener("click", () => { closeDrawer(); location.hash = "library"; showLib(mod, name); });
+  $("#d-sub").querySelectorAll("a[data-alt]").forEach(a => a.addEventListener("click", e => { e.preventDefault(); openDef(a.dataset.alt, name); }));
+  drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false");
+  $("#d-back").disabled = history_.length < 2;
+}
+function closeDrawer() { drawer.classList.remove("open"); drawer.setAttribute("aria-hidden", "true"); history_.length = 0; }
+$("#d-close").addEventListener("click", closeDrawer);
+$("#d-back").addEventListener("click", () => { history_.pop(); const p = history_[history_.length - 1]; if (p) openDef(p[0], p[1], false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+document.addEventListener("click", e => {
+  const a = e.target.closest("a.rel"); if (!a) return;
+  e.preventDefault();
+  if (a.dataset.local !== undefined) {
+    const pre = a.closest("pre.code"); const l = pre && pre.querySelector(`.l[data-l="${a.dataset.local}"]`);
+    if (l) { l.scrollIntoView({ block: "center" }); l.classList.add("flash"); setTimeout(() => l.classList.remove("flash"), 900); }
+  } else if (a.dataset.mod) openDef(a.dataset.mod, a.dataset.name);
+});
+
+// ---------- panes ----------
+function panes(container, list) {
+  container.innerHTML = "";
+  for (const p of list) {
+    const d = document.createElement("div"); d.className = "pane";
+    d.innerHTML = `<div class="ph"><b>${esc(p.title)}</b><span>${esc(p.meta || "")}</span></div><div class="scroll"></div>`;
+    container.appendChild(d);
+    renderCode(d.querySelector(".scroll"), p.text, p.lang);
+  }
+}
+const lineCount = s => s.replace(/\n$/, "").split("\n").length;
+const kb = n => n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " KB" : n + " B";
+const pretty = j => JSON.stringify(JSON.parse(j), null, 2);
+
+// ---------- library view ----------
+function buildLib() {
+  const list = $("#lib-list"); list.innerHTML = "";
+  for (const [mod, lib] of Object.entries(LIBS)) {
+    const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.mod = mod;
+    const nrel = [...LIBDEFS[mod].values()].filter(s => s.some(x => isDecl(x))).length;
+    el.innerHTML = `<span class="id">${esc(mod)}</span><span class="meta"><span class="pill ${lib.kind === "program" ? "datalog" : lib.kind}">${lib.kind === "native" ? "native" : lib.kind === "program" ? "program" : "Datalog"}</span><span>${nrel} relations · ${lineCount(lib.src)} lines</span></span>`;
+    el.addEventListener("click", () => showLib(mod));
+    el.addEventListener("keydown", e => { if (e.key === "Enter") showLib(mod); });
+    list.appendChild(el);
+  }
+}
+function showLib(mod, focus) {
+  const lib = LIBS[mod];
+  $("#lib-list").querySelectorAll(".item").forEach(i => i.setAttribute("aria-selected", i.dataset.mod === mod));
+  $("#lib-bar").innerHTML = `<h2>${esc(mod)}</h2><p>${esc(lib.blurb || "")}</p>`;
+  panes($("#lib-panes"), [{ title: mod + ".rr", meta: `${lineCount(lib.src)} lines`, text: lib.src, lang: "rr" }]);
+  if (focus) {
+    const st = (LIBDEFS[mod].get(focus) || [])[0];
+    const l = st && $(`#lib-panes .l[data-l="${st.start}"]`);
+    if (l) { l.scrollIntoView({ block: "center" }); l.classList.add("flash"); setTimeout(() => l.classList.remove("flash"), 900); }
+  }
+}
+
+// ---------- packs view ----------
+const packCache = {};
+let curPack = null;
+async function loadPack(name) {
+  if (!packCache[name]) {
+    const r = await fetch(`data/pack-${name}.json`);
+    if (!r.ok) throw new Error(`data/pack-${name}.json: ${r.status}`);
+    packCache[name] = await r.json();
+  }
+  return packCache[name];
+}
+function buildPacks() {
+  const chips = $("#pack-chips"); chips.innerHTML = "";
+  for (const p of PACKS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.dataset.pack = p.name;
+    b.innerHTML = `${esc(p.name)}<span class="n">${p.count}</span>`;
+    if (p.hand) b.title = `${p.hand} hand-written, ${p.count - p.hand} generated`;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => selectPack(p.name));
+    chips.appendChild(b);
+  }
+  $("#pack-q").addEventListener("input", () => listPack());
+}
+async function selectPack(name, ruleId) {
+  curPack = name;
+  $("#pack-chips").querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", c.dataset.pack === name));
+  $("#pack-list").innerHTML = `<div class="note">Loading ${esc(name)}…</div>`;
+  try { await loadPack(name); } catch (e) { $("#pack-list").innerHTML = `<div class="note">Could not load the ${esc(name)} pack (${esc(e.message)}). Reload the page to try again.</div>`; return; }
+  listPack(ruleId);
+}
+function listPack(selectId) {
+  const rules = packCache[curPack] || [];
+  const q = $("#pack-q").value.trim().toLowerCase();
+  const list = $("#pack-list"); list.innerHTML = "";
+  const shown = rules.filter(r => !q || r.id.toLowerCase().includes(q) || (r.d || "").toLowerCase().includes(q));
+  if (!shown.length) { list.innerHTML = `<div class="note">No rule in ${esc(curPack)} matches “${esc(q)}”.</div>`; return; }
+  const frag = document.createDocumentFragment();
+  for (const r of shown) {
+    const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.id = r.id;
+    const size = r.h ? `${r.jl.toLocaleString()} → ${lineCount(r.h).toLocaleString()} lines` : `${r.jl.toLocaleString()} → ${r.rl.toLocaleString()} lines`;
+    el.innerHTML = `<span class="id">${esc(r.id)}</span><span class="meta"><span class="pill mode-${r.m}">${r.m}</span>${r.h ? `<span class="pill hand" title="Written and reviewed by hand">hand-written</span>` : `<span class="pill gen" title="Machine translation of the JSON, not reviewed">generated</span>`}<span>${size}</span>${!r.h && r.u ? `<span class="pill atom" title="Matcher terms kept as ast(…) atoms">${r.u} atom${r.u > 1 ? "s" : ""}</span>` : ""}</span>`;
+    el.addEventListener("click", () => showRule(r));
+    el.addEventListener("keydown", e => { if (e.key === "Enter") showRule(r); });
+    frag.appendChild(el);
+  }
+  list.appendChild(frag);
+  const pick = shown.find(r => r.id === selectId) || shown[0];
+  showRule(pick);
+}
+function showRule(r, view) {
+  $("#pack-list").querySelectorAll(".item").forEach(i => i.setAttribute("aria-selected", i.dataset.id === r.id));
+  const jtext = pretty(r.j);
+  const json = { title: "Today: rerail.policy/v1 JSON", meta: `${lineCount(jtext).toLocaleString()} lines · ${kb(jtext.length)}`, text: jtext, lang: "json" };
+  const gen = { title: "Generated .rr: machine output, not reviewed", meta: `${lineCount(r.r).toLocaleString()} lines · ${kb(r.r.length)}${r.u ? ` · ${r.u} matcher atom${r.u > 1 ? "s" : ""}` : ""}`, text: r.r, lang: "rr" };
+  const pane = (title, text) => ({ title, meta: `${lineCount(text).toLocaleString()} lines · ${kb(text.length)}`, text, lang: "rr" });
+  const views = r.h
+    ? [{ label: "Hand-written .rr", panes: [pane("Hand-written .rr", r.h), json] },
+       ...Object.entries(r.hx || {}).map(([k, t]) => ({ label: `${k}.rr`, panes: [pane(`${r.id}.${k}.rr`, t)] })),
+       { label: "Generated .rr", panes: [json, gen] }]
+    : [{ label: "Generated .rr", panes: [json, gen] }];
+  const k = Math.min(view || 0, views.length - 1);
+  const note = r.h
+    ? "Written by hand on the libraries (see Libraries), and reviewed against the JSON and the tool it ports. The generated tab shows what the translator makes of the same JSON."
+    : "No hand-written version yet. The .rr is the translator's construct-by-construct lowering of the JSON. It is meant to keep the JSON's meaning, but nobody has reviewed it, and it is not how a person would write the rule.";
+  $("#pack-bar").innerHTML = `<h2>${esc(r.id)}</h2><p>${esc(r.d || "")}</p><p class="note" style="padding:0">${esc(note)}</p>${views.length > 1 ? `<div class="tabs" role="tablist"></div>` : ""}`;
+  if (views.length > 1) {
+    const tabs = $("#pack-bar .tabs");
+    views.forEach((v, i) => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+      b.textContent = v.label; b.setAttribute("aria-selected", i === k);
+      b.addEventListener("click", () => showRule(r, i));
+      tabs.appendChild(b);
+    });
+  }
+  panes($("#pack-panes"), views[k].panes);
+}
+
+// ---------- data-layer view ----------
+let handData = null;
+async function loadHand() {
+  if (!handData) { const r = await fetch("data/hand.json"); if (!r.ok) throw new Error(`data/hand.json: ${r.status}`); handData = await r.json(); }
+  return handData;
+}
+function buildHand() {
+  const list = $("#dl-list"); list.innerHTML = "";
+  HAND.forEach((h, i) => {
+    const el = document.createElement("div"); el.className = "item"; el.setAttribute("role", "option"); el.tabIndex = 0; el.dataset.i = i;
+    el.innerHTML = `<span class="id">${esc(h.title)}</span><span class="meta">${h.tags.map(t => `<span class="pill">${esc(t)}</span>`).join("")}</span>`;
+    el.addEventListener("click", () => showHand(i));
+    el.addEventListener("keydown", e => { if (e.key === "Enter") showHand(i); });
+    list.appendChild(el);
+  });
+}
+async function showHand(i, variant) {
+  const h = HAND[i];
+  $("#dl-list").querySelectorAll(".item").forEach(x => x.setAttribute("aria-selected", x.dataset.i == i));
+  $("#dl-bar").innerHTML = `<h2>${esc(h.title)}</h2><p>${esc(h.summary)}</p><div class="tabs" role="tablist"></div>`;
+  $("#dl-panes").innerHTML = `<div class="note">Loading…</div>`;
+  let data;
+  try { data = (await loadHand())[h.key]; } catch (e) { $("#dl-panes").innerHTML = `<div class="note">Could not load the rule texts (${esc(e.message)}). Reload the page to try again.</div>`; return; }
+  const tabs = $("#dl-bar .tabs");
+  h.views.forEach((v, k) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "tab"; b.setAttribute("role", "tab");
+    b.textContent = v.label; b.setAttribute("aria-selected", k === (variant || 0));
+    b.addEventListener("click", () => showHand(i, k));
+    tabs.appendChild(b);
+  });
+  const v = h.views[variant || 0];
+  panes($("#dl-panes"), v.panes.map(p => {
+    let text = data[p.src];
+    if (p.lang === "json") text = pretty(text);
+    return { title: p.title, meta: `${lineCount(text).toLocaleString()} lines · ${kb(text.length)}`, text, lang: p.lang };
+  }));
+}
+
+// ---------- syntax view ----------
+function buildRead(view) {
+  const root = $("#v-" + view);
+  root.innerHTML = document.getElementById("data-" + view).textContent.replace(/\{\{(\w+)\}\}/g, (_, k) => STATS[k] ?? "");
+  root.querySelectorAll("[data-rr]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "rr", { all: true }));
+  root.querySelectorAll("[data-json]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "json", { all: true }));
+  root.querySelectorAll("[data-src]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "src", { all: true }));
+  root.querySelectorAll("[data-diff]").forEach(el => renderCode(el, el.textContent.replace(/^\n/, ""), "diff", { all: true }));
+}
+
+// ---------- routing ----------
+const VIEWS = ["intro", "syntax", "library", "packs", "data-layer"];
+let started = {};
+function route() {
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "intro";
+  VIEWS.forEach(n => $("#v-" + n).classList.toggle("on", n === v));
+  document.querySelectorAll("nav.views a").forEach(a => { if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  if (v === "library" && !started.library) { started.library = 1; showLib("python/names"); }
+  if (v === "packs" && !started.packs) { started.packs = 1; selectPack("python", "bandit-b102-exec-used"); }
+  if (v === "data-layer" && !started.dl) { started.dl = 1; showHand(0); }
+}
+buildRead("intro"); buildRead("syntax"); buildLib(); buildPacks(); buildHand();
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

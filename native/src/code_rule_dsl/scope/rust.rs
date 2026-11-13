@@ -11,11 +11,12 @@ use super::{
     Binding, BuildError, Builder, Form, Import, NodeRef, Reference, ScopeKind, ScopeTable, Site,
     TYPE, VALUE,
 };
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.
-pub(crate) const MACRO: u8 = 4;
+pub const MACRO: u8 = 4;
 /// Lifetime parameters (`'a`).
 pub(crate) const LIFETIME: u8 = 8;
 /// Loop and block labels (`'outer:`).
@@ -44,7 +45,7 @@ pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, _: &Node<'_, D>) {
 /// The scope and index of the binding `name` resolves to at `reference`: in each scope from the
 /// reference's outwards, the latest binding of the reference's namespace made before it. Past a
 /// function only items stay visible; past a module, only macros (`macro_rules!` is textual).
-pub(crate) fn resolve_index(
+pub fn resolve_index(
     table: &ScopeTable,
     reference: &Reference,
     name: &str,
@@ -121,7 +122,7 @@ fn is_item(binding: &Binding, scope_start: usize) -> bool {
 /// (`thread_local! { .. }`, `lazy_static! { .. }`) in the reference's module or a block within it
 /// may bind a name: the module a glob reads is another file's or crate's, and what a macro defines
 /// needs its expansion.
-pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
+pub fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
     let mut current = Some(reference.scope);
     while let Some(index) = current {
         let scope = &table.scopes[index as usize];
@@ -137,7 +138,7 @@ pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
 }
 
 /// What the first segment of a `use` path names, once `use_path` has followed it.
-pub(crate) enum UseHead<'t> {
+pub enum UseHead<'t> {
     /// `crate`, `self` or `super`.
     Keyword,
     /// An extern crate: the path is global (`::serde`) or its head an `extern crate` item's name,
@@ -152,7 +153,7 @@ pub(crate) enum UseHead<'t> {
 /// What a `use` path leads to: its segments, the head followed through the `use` bindings it names
 /// where the `use` stands (`use crate::b as a; use a::f;` imports `crate::b::f`), and what that
 /// head then names.
-pub(crate) struct UsePath<'t> {
+pub struct UsePath<'t> {
     pub(crate) segments: Vec<String>,
     pub(crate) head: UseHead<'t>,
 }
@@ -165,7 +166,7 @@ const MAX_USE_HOPS: usize = 64;
 /// `use` path's first segment: each head bound by another `use` is replaced with that one's path,
 /// read from its own scope. `is_extern` tells an `extern crate` item's binding. `None` for a
 /// binding that imports no path, and where the `use` bindings name each other in a cycle.
-pub(crate) fn use_path<'t>(
+pub fn use_path<'t>(
     table: &'t ScopeTable,
     at: (u32, usize),
     name: &str,
@@ -272,7 +273,7 @@ pub(crate) fn use_path<'t>(
 /// head a glob import may bind, a path no read holds (a `use` path, a visibility), or `self::`
 /// and `super::` where the module is not known. A `use` path that names neither is read as
 /// written (an extern crate's, or a module of the crate the definitions would tell).
-pub(crate) fn import_path<D: Doc>(
+pub fn import_path<D: Doc>(
     table: &ScopeTable,
     node: &Node<'_, D>,
     file: Option<&str>,
@@ -392,7 +393,7 @@ impl Visitor<'_, '_> {
     }
 
     fn children<D: Doc>(&mut self, node: &Node<'_, D>) -> Result<(), BuildError> {
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             self.visit(&child)?;
         }
         Ok(())
@@ -485,7 +486,7 @@ impl Visitor<'_, '_> {
                 self.field(node, "right")
             }
             "break_expression" | "continue_expression" => {
-                for child in node.children().filter(|child| child.is_named()) {
+                for child in node.named() {
                     if child.kind() == "label" {
                         self.builder.reference(child.range(), LABEL);
                     } else {
@@ -530,7 +531,7 @@ impl Visitor<'_, '_> {
     /// is visible in its whole block or module, before it too.
     fn items<D: Doc>(&mut self, node: &Node<'_, D>) {
         let start = self.scope_start();
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             let (spaces, form) = match child.kind().as_ref() {
                 "function_item" | "function_signature_item" => (VALUE, Form::Definition),
                 "struct_item" => {
@@ -628,7 +629,7 @@ impl Visitor<'_, '_> {
             binding.name = name.map(|name| NodeRef::of(&name));
             self.builder.bind(self.builder.current, "Self", binding);
         }
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             let is_name = node
                 .field("name")
                 .is_some_and(|name| name.range() == child.range());
@@ -652,7 +653,7 @@ impl Visitor<'_, '_> {
         node: &Node<'_, D>,
         start: usize,
     ) -> Result<(), BuildError> {
-        for parameter in node.children().filter(|child| child.is_named()) {
+        for parameter in node.named() {
             let spaces = match parameter.kind().as_ref() {
                 "type_parameter" => TYPE,
                 // A const parameter is read in value and in type-argument position (`[u8; N]`,
@@ -664,7 +665,7 @@ impl Visitor<'_, '_> {
             if let Some(name) = parameter.field("name") {
                 self.bind(&name, &parameter, spaces, Form::TypeParameter, start);
             }
-            for child in parameter.children().filter(|child| child.is_named()) {
+            for child in parameter.named() {
                 let is_name = parameter
                     .field("name")
                     .is_some_and(|name| name.range() == child.range());
@@ -753,7 +754,7 @@ impl Visitor<'_, '_> {
     /// A function's or closure's parameters: their types are read, their patterns bound at
     /// `start`.
     fn parameters<D: Doc>(&mut self, node: &Node<'_, D>, start: usize) -> Result<(), BuildError> {
-        for parameter in node.children().filter(|child| child.is_named()) {
+        for parameter in node.named() {
             match parameter.kind().as_ref() {
                 "self_parameter" => {
                     if let Some(name) = parameter.children().find(|child| child.kind() == "self") {
@@ -872,7 +873,7 @@ impl Visitor<'_, '_> {
                 Ok(())
             }
             "let_chain" => {
-                for child in node.children().filter(|child| child.is_named()) {
+                for child in node.named() {
                     self.condition(&child, form)?;
                 }
                 Ok(())
@@ -908,7 +909,7 @@ impl Visitor<'_, '_> {
         self.builder.push(ScopeKind::Block, node.range());
         let start = node.range().start;
         if let Some(pattern) = node.field("pattern") {
-            for child in pattern.children().filter(|child| child.is_named()) {
+            for child in pattern.named() {
                 let is_condition = pattern
                     .field("condition")
                     .is_some_and(|condition| condition.range() == child.range());
@@ -966,7 +967,7 @@ impl Visitor<'_, '_> {
                     self.pattern_constructor(&path)?;
                 }
                 let constructor = pattern.field("type");
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     if constructor
                         .as_ref()
                         .is_none_or(|path| path.range() != child.range())
@@ -978,7 +979,7 @@ impl Visitor<'_, '_> {
             }
             "struct_pattern" => {
                 self.type_name(pattern.field("type"))?;
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     if child.kind() == "field_pattern" {
                         if let Some(inner) = child.field("pattern") {
                             self.pattern(&inner, site, form, offset, None)?;
@@ -996,7 +997,7 @@ impl Visitor<'_, '_> {
             "closure_expression" | "macro_invocation" => self.visit(pattern),
             "token_tree" | "attribute_item" | "line_comment" | "block_comment" => Ok(()),
             _ => {
-                for child in pattern.children().filter(|child| child.is_named()) {
+                for child in pattern.named() {
                     self.pattern(&child, site, form, offset, None)?;
                 }
                 Ok(())
@@ -1199,7 +1200,7 @@ impl Visitor<'_, '_> {
                 }
             }
             "use_list" => {
-                for child in tree.children().filter(|child| child.is_named()) {
+                for child in tree.named() {
                     self.use_tree(&child, prefix, site, start);
                 }
             }
@@ -1292,8 +1293,8 @@ fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
 }
 
 /// A Rust file's table, as `ScopeTable::build` builds it.
-#[cfg(test)]
-pub(crate) fn build_for_test(source: &str) -> ScopeTable {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
     let root = GrammarDialect::Rust.ast_grep(source);
@@ -1301,5 +1302,4 @@ pub(crate) fn build_for_test(source: &str) -> ScopeTable {
         .expect("Rust scope build")
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

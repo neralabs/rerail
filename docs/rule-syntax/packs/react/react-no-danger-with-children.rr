@@ -1,0 +1,48 @@
+.policy "react-no-danger-with-children" revision 2
+.description "Do not give an element both children and dangerouslySetInnerHTML."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-danger-with-children: React throws when an element has both. Props are found as written, through
+// {...spread} of a variable whose initialiser is an object literal (and that object's own spreads).
+//   <div dangerouslySetInnerHTML={{ __html: "x" }}>child</div>             reported, at the element
+//   const p = { children: "x" }; <div {...p} dangerouslySetInnerHTML={h} />    reported
+//   React.createElement("div", { dangerouslySetInnerHTML: h }, "child")       reported, at the call
+// The rule's own quirk is kept: children that start on the line after the open tag (a first child that is a
+// line break, to ESTree) do not count, so <div dangerouslySetInnerHTML={h}>⏎<b/></div> is not reported.
+// Any `x.createElement(…)` counts, not only React's, as in the rule.
+#include "tsx/react.rr"
+
+.violation danger_with_children(at: node)
+    code "react/no-danger-with-children"
+    "Only set one of `children` or `props.dangerouslySetInnerHTML`"
+    suppress eslint "react/no-danger-with-children"
+    suppress oxlint "no-danger-with-children"
+    suppress biome "lint/security/noDangerouslySetInnerHtmlWithChildren"
+danger_with_children(e) :- react_open(e, o), el_prop(o, "dangerouslySetInnerHTML"), (nested(e) ; el_prop(o, "children")).
+danger_with_children(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), text(p, "createElement"), field(c, "arguments", l), child(l, a, 1), props_object(a, o),
+    obj_prop(o, "dangerouslySetInnerHTML"), (child(l, _, 2) ; obj_prop(o, "children")), docof(c, d), react_doc(d).
+
+// nested(e): e's first child is not a line break. tree-sitter drops blank text that has a line break, so a first
+// child on a later line than the open tag (and not text) had one before it.
+.decl nested(e: node)
+nested(e) :- kind(e, "jsx_element"), field(e, "open_tag", o), child(e, c, 1), !field(e, "close_tag", c),
+    (kind(c, "jsx_text") ; end_line(o, l), line(c, l)).
+// el_prop(o, x): open tag o has prop x, itself or in a spread variable's object.
+.decl el_prop(o: node, x: symbol)
+el_prop(o, x) :- jsx_prop(o, x, _).
+el_prop(o, x) :- jsx_spread(o, s), child(s, sp, 0), kind(sp, "spread_element"), child(sp, i, 0), props_object(i, b),
+    obj_prop(b, x).
+// props_object(e, o): e is the object literal o, or a variable initialised with one.
+.decl props_object(e: node, o: node)
+props_object(o, o) :- kind(o, "object").
+props_object(i, o) :- kind(i, "identifier"), ref_site(i, site), binding_value(site, o), kind(o, "object").
+// obj_prop(o, x): object literal o has a property named x (`x: …`, `{ x }`, `x() {}`), or a spread variable's does.
+.decl obj_prop(o: node, x: symbol)
+obj_prop(o, x) :- props_object(_, o), child(o, p, _), (field(p, "key", k) ; kind(p, "method_definition"), field(p, "name", k)),
+    kind(k, "property_identifier"), text(k, x).
+obj_prop(o, x) :- props_object(_, o), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
+obj_prop(o, x) :- props_object(_, o), child(o, sp, _), kind(sp, "spread_element"), child(sp, i, 0),
+    props_object(i, b), obj_prop(b, x).

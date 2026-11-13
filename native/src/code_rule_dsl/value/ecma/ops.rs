@@ -263,7 +263,7 @@ fn relational(operator: &str, left: &Value, right: &Value) -> Value {
 /// `>` from IsLessThan, `<=` and `>=` as its negation with the operands swapped, and an undefined
 /// comparison (NaN, a string that is no BigInt) false either way. `None` for anything that is
 /// not a primitive (an object, an array or a regex converts through ToPrimitive, not modelled).
-pub(crate) fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
+pub fn relation(operator: &str, left: &Value, right: &Value) -> Option<bool> {
     Some(match operator {
         "<" => is_less_than(left, right)? == Some(true),
         ">" => is_less_than(right, left)? == Some(true),

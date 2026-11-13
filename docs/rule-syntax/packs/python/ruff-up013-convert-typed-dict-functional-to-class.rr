@@ -1,0 +1,31 @@
+.policy "ruff-up013-convert-typed-dict-functional-to-class" revision 2
+.description "Define typed dictionaries with class syntax instead of the functional TypedDict call; the class form is easier to read."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP013 (pyupgrade): `X = TypedDict("X", …)` where a class statement says the same. The fields come as
+// a dict display whose keys are str literals that are identifiers (a `__` prefix would be name-mangled in a
+// class body), as `dict(a=int)`, or as keywords. `total=` may follow a dict; nothing else may. The finding is
+// at the assignment.
+//   X = TypedDict("X", {"a": int}, total=False)   ← UP013: class X(TypedDict, total=False): a: int
+//   X = TypedDict("X", a=int)                     ← UP013
+//   X = TypedDict("X", {"x-y": int})              not reported: not an identifier
+//   X = TypedDict("X", {"a": int, **c})           not reported
+#include "python/upgrade.rr"
+//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_kwsplat(c), identifier(x)
+
+.violation UP013(at: node, x: symbol) code "UP013"
+    "Define `{x}` as `class {x}(TypedDict):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords."
+    suppress ruff "UP013"
+UP013(s, x) :- functional_def(s, x, c, "TypedDict"), fields_ok(c).
+// fields_ok(c): Ruff's match_fields_and_total. `*xs` counts as a positional argument.
+.decl fields_ok(c: node)
+fields_ok(c) :- call_nargs(c, 1), up_arg(c, 0, _), !call_kwsplat(c).                        // TypedDict("X") or keywords
+fields_ok(c) :- call_nargs(c, 2), up_arg(c, 1, d), kind(d, "dictionary"), !bad_key(d).
+fields_ok(c) :- call_nargs(c, 2), up_arg(c, 1, d), kind(d, "call"), field(d, "function", f), builtin_at(f, "dict"),
+    call_nargs(d, 0), !call_kwsplat(d).
+.decl bad_key(d: node)  // an entry that is no `"name": type`
+bad_key(d) :- kind(d, "dictionary"), child(d, e, _), !kind(e, "pair"), !kind(e, "comment").
+bad_key(d) :- kind(d, "dictionary"), child(d, e, _), kind(e, "pair"), field(e, "key", k),
+    (!plain_str(k, _) ; plain_str(k, v), (!identifier(v) ; prefix("__", v))).

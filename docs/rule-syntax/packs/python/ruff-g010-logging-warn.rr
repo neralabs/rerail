@@ -1,0 +1,19 @@
+.policy "ruff-g010-logging-warn" revision 2
+.description "Call the warning logging method instead of warn; warn is a deprecated alias of warning."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G010 (flake8-logging-format): the deprecated `warn` method of a logger, or `logging.warn`. Reported at the
+// method name, with Ruff's safe fix to `warning`.
+//   logging.warn("Hello World!")                     ← G010, fix: logging.warning(…)
+//   from logging import warn; warn("foo")            ← G010
+//   from distutils import log; log.warn("x")         not reported: not a logger
+#include "python/logging.rr"
+
+.violation G010(at: node) code "G010"
+    "Replace the deprecated `warn` logging call with `warning`, which takes the same arguments; leave it if this object is not a standard logger and has no `warning` method."
+    suppress ruff "G010"
+    fix safe to_warning "Replace `warn` with `warning`"
+G010(at) :- log_call(_, "warn", at, _).
+to_warning(at) => replace(at, `warning`).

@@ -1,0 +1,112 @@
+// Sketch, not a policy: LEG-083's search, the shape behind the three checks COVERAGE.md marks
+// "memoised DFS" (legacy_execution_surfaces LEG-083, serverplan_state_tripwires
+// _transitive_sink, lazy_architecture's transitive helpers). Addition 7, dfs_first.
+// Python linter: scripts/lint_legacy_execution_surfaces.py, :1043-1081 (the search) and
+// :1236 (roots in sorted(symbol) order).
+//
+// What the script does. For each function, in symbol order, it searches the same-file
+// call graph depth first, calls in visit order, for an eager `.resolve()`, and stops at
+// legacy surfaces. It reports the function at its first call whose target reaches one.
+// One memo is shared by all functions, and a function met again while its own search is
+// still open counts as reaching nothing, so on call cycles the answer depends on order.
+
+#include "python/ast.rr"
+//   py_frame, visit_index
+#include "python/names.rr"
+//   sym_of, ref_site, binding_value, site_annotation, attr_of, annotation
+#include "python/calls.rr"
+//   callee, call_arg
+
+// From the rest of the LEG port (data-layer/checks/group-3.md, legacy_execution_surfaces):
+.decl name_call_target(c: node, g: node)  // call c resolves, by name, to def g in the file
+.decl eager_resolve(c: node)              // c is a `.resolve()` call LEG-083 counts as eager
+.decl legacy_surface(f: node)             // the search does not enter these
+.decl leg_symbol(f: node, s: symbol)      // "Class.method", the script's symbol for def f
+.input name_call_target, eager_resolve, legacy_surface, leg_symbol
+
+// The graph. A function's out-edges are its calls, in visit order: to the eager call
+// itself (a target) or to the def it resolves to.
+.decl leg_edge(f: node, n: node, i: number)
+leg_edge(f, c, i) :- eager_resolve(c), py_frame(c, f), visit_index(c, i).
+leg_edge(f, g, i) :- name_call_target(c, g), py_frame(c, f), !legacy_surface(g),
+    visit_index(c, i).
+.decl eager_call(c: node)
+eager_call(c) :- eager_resolve(c).
+
+// Roots: every function that is not itself a legacy surface, ordered by symbol.
+.decl leg_root(f: node, s: symbol)
+leg_root(f, s) :- leg_symbol(f, s), !legacy_surface(f).
+
+// The finding, at the root's first call on the path: `first` is that call's visit index.
+// dfs_first_memo matches the script exactly, cycles included.
+.violation LEG_083(at: node)
+    "This function reaches an eager resolve() through calls in this file."
+LEG_083(c) :- leg_root(f, _),
+    dfs_first_memo(f, _, i, leg_edge, eager_call, leg_root),
+    py_frame(c, f), visit_index(c, i).
+
+// ---- The recommended check -------------------------------------------------------------
+// LEG-083 counts any `.resolve()` or `.resolve_async()` as eager, by method name. The lazy
+// terminals are LazyResult/LazySeq `resolve(self)` and `resolve_async(self)`: no arguments.
+// A pathlib path's `resolve()` and a lookup such as `catalog.resolve(ref)` are not eager
+// lazy terminals. At the data layer's 2026-10-18 commit, all 18 LEG-083 findings in its own
+// files come from such calls (spikes/dfs-first, data-layer/upstream/LEG-083.md).
+
+// path_class(q): the pathlib classes, by qualified name.
+.decl path_class(q: symbol)
+path_class("pathlib.Path"). path_class("pathlib.PurePath"). path_class("pathlib.PosixPath").
+path_class("pathlib.WindowsPath"). path_class("pathlib.PurePosixPath").
+path_class("pathlib.PureWindowsPath").
+// Methods and attributes of a path that give a path again.
+.decl path_method(m: symbol)
+path_method("absolute"). path_method("cwd"). path_method("expanduser"). path_method("home").
+path_method("joinpath"). path_method("readlink"). path_method("relative_to").
+path_method("resolve"). path_method("with_name"). path_method("with_stem").
+path_method("with_suffix").
+
+// mentions_path(t): annotation t names a path class somewhere: `Path`, `Path | None`,
+// or the string `"Path"` (parsed as an annotation).
+.decl mentions_path(t: node)
+mentions_path(t) :- site_annotation(_, t), sym_of(n, q), path_class(q), (n = t ; within(n, t)).
+mentions_path(t) :- site_annotation(_, t), string_annotation(s), (s = t ; within(s, t)),
+    parsed(s, "annotation", r), sym_of(n, q), path_class(q), (n = r ; within(n, r)).
+
+// path_value(e): expression e holds a pathlib path. Approximate and flow-insensitive: a name
+// is a path if some binding it may read (ref_site, which follows Python's scopes) is a
+// parameter or assignment annotated with a path class, or is assigned a path expression.
+// Attributes (`args.root`, `self.path`) are not followed: that needs field types.
+.decl path_value(e: node)
+path_value(c) :- callee(c, f), sym_of(f, q), path_class(q).                  // Path(x)
+path_value(c) :- callee(c, m), attr_of(m, o, a), path_method(a),
+    (path_value(o) ; sym_of(o, q), path_class(q)).                          // p.with_name(x), Path.cwd()
+path_value(e) :- attr_of(e, o, "parent"), path_value(o).                     // p.parent
+path_value(e) :- kind(e, "subscript"), field(e, "value", v),
+    attr_of(v, o, "parents"), path_value(o).                                // p.parents[1]
+path_value(e) :- kind(e, "binary_operator"), op(e, "/"), field(e, "left", l),
+    path_value(l).                                                          // p / "x"
+path_value(e) :- kind(e, "parenthesized_expression"), child(e, c, 0), path_value(c).
+path_value(e) :- kind(e, "conditional_expression"), (child(e, c, 0) ; child(e, c, 2)),
+    path_value(c).                                                          // p if b else q
+path_value(r) :- kind(r, "identifier"), ref_site(r, site), path_site(site).
+.decl path_site(site: node)
+path_site(site) :- site_annotation(site, t), mentions_path(t).
+path_site(site) :- binding_value(site, v), path_value(v).
+
+// lazy_terminal(c): an eager call LEG-083 should count.
+.decl lazy_terminal(c: node)
+lazy_terminal(c) :- eager_resolve(c), callee(c, m), attr_of(m, o, _),
+    !call_arg(c, _, _, _), !path_value(o).
+.decl lazy_edge(f: node, n: node, i: number)
+lazy_edge(f, c, i) :- lazy_terminal(c), py_frame(c, f), visit_index(c, i).
+lazy_edge(f, g, i) :- name_call_target(c, g), py_frame(c, f), !legacy_surface(g),
+    visit_index(c, i).
+
+// The check as it should be: lazy terminals only, and no memo shared between roots, so every
+// function that reaches one is reported, whatever the order of function names. On the
+// data layer today it reports what LEG_083 would with lazy terminals only (40 functions at
+// 2026-08-20; none at 2026-10-18), because no call cycle there reaches a lazy terminal
+// through a poisoned entry. It stays right when one does.
+.violation LEG_083_SOUND(at: node)
+    "This function reaches an eager lazy-terminal resolve() through calls in this file."
+LEG_083_SOUND(c) :- leg_root(f, _), dfs_first(f, _, i, lazy_edge, lazy_terminal),
+    py_frame(c, f), visit_index(c, i).

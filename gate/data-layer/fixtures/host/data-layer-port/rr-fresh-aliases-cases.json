@@ -1,0 +1,517 @@
+{
+  "cases": [
+    {
+      "id": "alias-multiple-imports",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from one import A as B, C as D\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-duplicate-aliases",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "from one import A as B, A as B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-plain-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo as bar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-dotted-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo.bar as other\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-same-dotted-leaf",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo.bar as bar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-private-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo as _bar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-class-scope",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "class C:\n    A = B\n    from x import C as D\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-async-scope",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "async def f():\n    A = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-module-if",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "if True:\n    A = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-multi-target",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B = C\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-duplicate-target",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = A = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-annotated",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A: object = module.B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-annotation-only",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A: module.B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-same-attribute",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = module.A\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-tuple-target",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A, B = module.C\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-parentheses",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "(A) = (module.B)\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-subscript",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = module.B[int]\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-augmented",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A += B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-call",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B()\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-unicode",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "\u212a = K\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-type-alias",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "type A = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-nested-chain",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B = module.C\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-line-order",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B; from one import C as D\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-invalid-python",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\nbad (\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-ignored-gate-source",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file_content",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        },
+        "source": "not used"
+      }
+    },
+    {
+      "id": "alias-python2-print",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\nprint \"legacy\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-invalid-escape",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "A = B\n\"\\x\"\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-parenthesized-tuple",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "(A,) = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-nested-parens",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "((A)) = B\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-tab-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo\tas\tbar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-continued-import",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo as\\\n bar\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    },
+    {
+      "id": "alias-tab-import-trigger",
+      "check": "data_layer_compat_aliases",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "facade.py",
+          "source": "import foo\tas\tbar\n# =\n"
+        }
+      ],
+      "arguments": {
+        "path": {
+          "path": "facade.py"
+        }
+      }
+    }
+  ]
+}

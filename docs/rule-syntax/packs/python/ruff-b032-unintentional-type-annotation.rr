@@ -1,0 +1,22 @@
+.policy "ruff-b032-unintentional-type-annotation" revision 2
+.description "Use = instead of : when setting a subscript or another object's attribute without a value; a colon there makes a type annotation that assigns nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B032 (flake8-bugbear): `x[k]: v` or `o.a: v` with no `=`. The colon makes an annotation, so nothing is
+// stored: the author meant `=`. Only a subscript of a Name, or an attribute of a Name other than `self`, is
+// reported (`self.x: int` declares an attribute). Reported at the statement.
+//   dct["b"]: 2                ← B032
+//   dct.b: test.lower()        ← B032
+//   self.test: int             not reported
+//   typed: dict[str, int] = {} not reported: it has a value
+#include "python/ast.rr"
+
+.violation B032(at: node) code "B032"
+    "Possible unintentional type annotation (using `:`). Did you mean to assign (using `=`)?"
+    suppress ruff "B032"
+B032(st) :- asgstmt(a, st), field(a, "type", _), !field(a, "right", _), field(a, "left", t), odd_target(t).
+.decl odd_target(t: node)
+odd_target(t) :- kind(t, "subscript"), field(t, "value", v), kind(v, "identifier").
+odd_target(t) :- attr_of(t, v, _), kind(v, "identifier"), !text(v, "self").

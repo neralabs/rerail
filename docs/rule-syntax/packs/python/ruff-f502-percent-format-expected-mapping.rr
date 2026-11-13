@@ -1,0 +1,16 @@
+.policy "ruff-f502-percent-format-expected-mapping" revision 2
+.description "Pass a mapping, not a list, tuple or set, to a %-format string that uses %(key) placeholders; the call fails at run time."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F502 (pyflakes): a format with `%(key)` placeholders applied to a sequence: a list, tuple or set display,
+// or a list, set or generator comprehension. Python wants a mapping and raises TypeError.
+//   "%(name)s" % ("bob",)         ← F502
+//   "%(name)s" % person           not reported: may be a mapping
+#include "python/pyflakes-format.rr"
+//   percent_fmt(b, s, r, v), pct_key(v, k)
+
+.violation F502(at: node) code "F502" "`%`-format string expected mapping but got sequence"
+    suppress ruff "F502"
+F502(b) :- percent_fmt(b, _, r, v), pct_key(v, _), sequence_display(r).

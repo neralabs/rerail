@@ -1,0 +1,43 @@
+.policy "sqlfluff-st10-structure-constant-expression" revision 2
+.description "Remove SQL comparisons that are always true or false, such as an expression compared to itself or two literals; 1 = 1 and 1 = 0 are allowed."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's ST10 (structure.constant_expression). An =, != or <> comparison whose result is fixed; the finding
+// is at the operator:
+//   WHERE col = col                 an expression compared with itself (col = COL too: unquoted names fold)
+//   WHERE 'a' != 'b'                two literals
+//   WHERE 1 = 1, WHERE 1 = 0        fine: the usual ways to write "always" and "never"
+// Literals typed with a time zone or date (DATE '…', TIMESTAMPTZ '…') may depend on the session, so they count
+// as expressions, not constants. A COLLATE on the right is looked through.
+
+#include "sql/syntax.rr"
+
+.violation ST10(at: loc, why: symbol) code "ST10" "{why}"
+    suppress sqlfluff "ST10", "all", "structure", "structure.constant_expression"
+ST10(o, "Remove or correct this comparison of an expression with itself; it is always true or always false.") :-
+    equality(e, o, l, r), !fixed(l), !fixed(r), same_expr(l, r).
+ST10(o, "Remove this comparison of two literals; it always has the same result (1 = 1 and 1 = 0 are allowed).") :-
+    equality(e, o, l, r), fixed(l), constant(r), !idiom(e, l, r).
+// same_expr(l, r): the same text; for unquoted column references, in any case (a = A). Function calls and
+// other expressions compare exactly: f(a) = F(a) is not reported.
+.decl same_expr(l: node, r: node)
+same_expr(l, r) :- equality(_, _, l, r), text(l, x), text(r, x).
+same_expr(l, r) :- equality(_, _, l, r), kind(l, "field"), kind(r, "field"), text(l, x), text(r, y),
+    !contains("\"", x), !contains("\"", y), @lower(x) = @lower(y).
+// equality(e, o, l, r): e is l = r (or != or <>), r with any COLLATE removed; nested comparisons do not count.
+.decl equality(e: node, o: loc, l: node, r: node)
+equality(e, o, l, r) :- comparison(e, x, o), (x = "=" ; x = "!=" ; x = "<>"), field(e, "left", l), plain(l),
+    field(e, "right", r0), (plain(r0), r = r0 ; kind(r0, "collate_expression"), field(r0, "expression", r), plain(r)).
+.decl plain(n: node)
+plain(n) :- node(_, n, k, _, _), k != "binary_expression", k != "collate_expression".
+.decl constant(n: node)  // a literal (not a typed string, timestamp or time), or a $1 parameter
+constant(n) :- kind(n, "literal"), count : { child(n, c, _), kind(c, k), typed(k) } = 0.
+.decl typed(k: symbol)
+typed("identifier"). typed("timestamp"). typed("time").
+constant(n) :- kind(n, "parameter"), match("\\$[0-9]+", n).
+.decl fixed(n: node)  // a constant, or a typed string other than DATE, TIMETZ and TIMESTAMPTZ
+fixed(n) :- constant(n).
+fixed(n) :- kind(n, "literal"), child(n, c, _), kind(c, "identifier"), !iglob("{date,timetz,timestamptz}", c).
+.decl idiom(e: node, l: node, r: node)  // 1 = 1, 1 = 0, '1' = '0', …
+idiom(e, l, r) :- equality(e, o, l, r), text(o, "="), match("1|'1'|.*\\s'1'", l), glob("{0,1,'0','1'}", r).

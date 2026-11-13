@@ -1,0 +1,28 @@
+.policy "ruff-pt014-pytest-duplicate-parametrize-test-cases" revision 2
+.description "Remove duplicate test cases from pytest parametrize values; a repeated case runs the same test twice and covers nothing new."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT014 (flake8-pytest-style): a parametrize value list or tuple with the same case twice. Each repeat is
+// reported, compared as Ruff's ComparableExpr does (python/compare's cmp_same: parentheses, spacing, comments and
+// quotes aside; "ab" is "a" "b" and 1.0 is 1.00, but b"a" and f"a" are not "a").
+//   @pytest.mark.parametrize("x", [1, 1, 2])     ← PT014 at the second 1
+//   @pytest.mark.parametrize("x", [(1, 2), (1,2)])    ← PT014
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a)
+#include "python/compare.rr"
+//   cmp_same(a, b), cmp_same_ask(a, b)
+
+.violation PT014(at: node, i: number) code "PT014"
+    "Remove this repeat of case {i} of the parametrize values, or fix its values if it was meant to differ; keep it when the element is a call that yields a new object each time."
+    suppress ruff "PT014"
+PT014(m, i) :- repeat(b, _), i = min k : { repeat(b, k) }, unparen(b, m).
+.decl repeat(b: node, i: number)  // element b repeats element i of the same values
+repeat(b, i) :- case(v, a, i), case(v, b, j), i < j, cmp_same(a, b).
+
+.decl case(v: node, e: node, i: number)  // e is the i-th element of the values argument v
+case(v, e, i) :- exc_call(c, "pytest.mark.parametrize"), exc_argument(c, "argvalues", 1, v),
+    (kind(v, "list") ; kind(v, "tuple")), child(v, e, j), !kind(e, "comment"),
+    i = count : { child(v, x, k), k < j, !kind(x, "comment") }.
+cmp_same_ask(a, b) :- case(v, a, i), case(v, b, j), i < j.

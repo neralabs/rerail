@@ -1,0 +1,55 @@
+.policy "phpcs-squiz-php-disallow-size-functions-in-loops" revision 3
+.description "Hoist count(), sizeof() and strlen() out of PHP loop conditions unless the loop changes what they measure; they are recomputed on every pass."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/names.rr"
+//   php_call_written(c, x), php_first_arg(c, e), php_this(n), php_fn_boundary(k)
+
+// PHP_CodeSniffer's Squiz.PHP.DisallowSizeFunctionsInLoops (code Found): count(), sizeof() or strlen() in the
+// condition of a for, while or do-while loop, which runs it on every pass. Reported at the call:
+//   for ($i = 0; $i < count($a); $i++)     while ($i < \strlen($s))     } while ($i < sizeof($a));
+//   for ($i = sizeof($a); $i > 0; $i--)    not reported: the initializer runs once
+// The pack keeps the loops where hoisting would change the result (divergences.json: upstream-wrong, from
+// Symfony and Laravel), as the sniff does not:
+//   while (strlen($c) < 3) { $c .= $next; }               the loop writes what is measured
+//   while ($i < count($this->items)) { $this->pop(); }    a method of $this may change $this->items
+.violation size_in_loop(at: node, v: node) code "Squiz.PHP.DisallowSizeFunctionsInLoops"
+    "Assign the size of {v} to a variable before the loop and use that in the condition; as written it is recomputed on every pass."
+    suppress phpcs "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+size_in_loop(c, v) :- size_call(c, v), loop_part(l, "condition", p), (c = p ; within(c, p)),
+    text(v, t), !writes(l, t), !this_changes(l, v).
+.decl size_call(c: node, v: node)  // c is count(v…), sizeof(v…) or strlen(v…)
+size_call(c, v) :- php_call_written(c, x), (x = "count" ; x = "sizeof" ; x = "strlen"), php_first_arg(c, v).
+
+// loop_part(l, f, p): p is loop l's condition, update (a for's third clause) or body.
+.decl loop_part(l: node, f: symbol, p: node)
+loop_part(l, f, p) :- (kind(l, "for_statement") ; kind(l, "while_statement") ; kind(l, "do_statement")),
+    (f = "condition" ; f = "update" ; f = "body"), field(l, f, p).
+// in_loop(l, n): n runs as part of loop l: in one of its parts, not inside a function defined there.
+.decl in_loop(l: node, n: node)
+in_loop(l, n) :- loop_part(l, _, n).
+in_loop(l, n) :- loop_part(l, _, p), within_stop(n, p, php_fn_boundary).
+
+// writes(l, t): the loop changes the value written t: `t = …`, `t .= …`, `t[…][…] = …`, `[t, $b] = …`,
+// array_push(t, …) and its kin, or unset(t[…]).
+.decl writes(l: node, t: symbol)
+writes(l, t) :- in_loop(l, w), (kind(w, "assignment_expression") ; kind(w, "augmented_assignment_expression")),
+    field(w, "left", x), target(x, t).
+writes(l, t) :- in_loop(l, w), php_call_written(w, f), array_mutator(f), php_first_arg(w, x), text(x, t).
+writes(l, t) :- in_loop(l, w), kind(w, "unset_statement"), has(w, x, "subscript_expression"), child(x, b, 0),
+    text(b, t).
+.decl target(x: node, t: symbol)  // x is t, t[…], t[…][…], or a list pattern [t, …] / list(t, …) holding one
+target(x, t) :- text(x, t).
+target(x, t) :- kind(x, "subscript_expression"), child(x, b, 0), target(b, t).
+target(x, t) :- kind(x, "list_literal"), within(y, x), text(y, t).
+.decl array_mutator(f: symbol)
+array_mutator("array_push"). array_mutator("array_unshift"). array_mutator("array_pop"). array_mutator("array_shift").
+array_mutator("array_splice").
+
+// this_changes(l, v): v is `$this->p` and the loop calls a method of $this.
+.decl this_changes(l: node, v: node)
+this_changes(l, v) :- size_call(_, v), kind(v, "member_access_expression"), field(v, "object", o), php_this(o),
+    in_loop(l, m), kind(m, "member_call_expression"), field(m, "object", o2), php_this(o2).

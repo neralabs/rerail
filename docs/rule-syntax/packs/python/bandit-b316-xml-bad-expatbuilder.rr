@@ -1,0 +1,15 @@
+.policy "bandit-b316-xml-bad-expatbuilder" revision 2
+.description "Use defusedxml instead of xml.dom.expatbuilder to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B316 (its B001 blacklist): a call to xml.dom.expatbuilder's parse or parseString.
+//   from xml.dom import expatbuilder; expatbuilder.parseString(s)    B316
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B316(at: node) code "B316"
+    "Using xml.dom.expatbuilder to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B316"
+B316(n) :- blacklisted(n, "B316").

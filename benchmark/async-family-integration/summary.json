@@ -1,0 +1,514 @@
+{
+  "files": 5725,
+  "source_bytes": 95697853,
+  "reference": {
+    "indexed_native_match_cpu_ms": 643.561,
+    "current_native_execution_cpu_ms": 3221.845,
+    "current_native_selection_cpu_ms": 271.495,
+    "independent_cpu_ms": 166.865,
+    "generated_cpu_ms": 163.056,
+    "independent_wall_ms": 167.438,
+    "generated_wall_ms": 163.331,
+    "parse_tape_cpu_ms": 9736.602,
+    "indexed_native_index_cpu_ms": 40951.137,
+    "indexed_native_first_selection_cpu_ms": 29039.97925,
+    "indexed_native_repeat_selection_cpu_ms": [
+      0.3,
+      0.318
+    ],
+    "semantic_requests": [
+      12,
+      12,
+      12
+    ],
+    "generated_vm": [
+      1886,
+      1886,
+      1886
+    ],
+    "findings": [
+      0,
+      0,
+      0
+    ]
+  },
+  "json_admission": {
+    "admitted": 2,
+    "clauses": [
+      {
+        "admitted": true,
+        "clause": "blocking-http-call",
+        "code": "ASYNC210",
+        "documentGates": 0,
+        "labelPasses": 8,
+        "policy": "ruff-async210-blocking-http-call-in-async-function",
+        "stage": "packed_matcher_lower"
+      },
+      {
+        "admitted": false,
+        "clause": "run-process",
+        "code": "ASYNC221",
+        "policy": "ruff-async221-run-process-in-async-function",
+        "reason": "arguments binds",
+        "stage": "gated_match_tree"
+      },
+      {
+        "admitted": true,
+        "clause": "wait-for-process",
+        "code": "ASYNC222",
+        "documentGates": 0,
+        "labelPasses": 8,
+        "policy": "ruff-async222-wait-for-process-in-async-function",
+        "stage": "packed_matcher_lower"
+      },
+      {
+        "admitted": false,
+        "clause": "blocking-open",
+        "code": "ASYNC230",
+        "policy": "ruff-async230-blocking-open-call-in-async-function",
+        "reason": "resolves.binding",
+        "stage": "gated_match_tree"
+      }
+    ],
+    "completeFamilyAdmitted": false,
+    "executionMeasured": false,
+    "integrated": {
+      "clauses": 2,
+      "status": "lowered"
+    },
+    "offered": 4,
+    "refused": 2,
+    "schema": "rerail-async-generic-compiler-admission-v1",
+    "semanticProducerPolicy": "Accepted semantic leaves use native fact producers; no whole-rule executor is substituted."
+  },
+  "rr": {
+    "cpu_ms": 1058754.435,
+    "wall_ms": 2053364.409542,
+    "files": 5725,
+    "nodes": 19007630,
+    "findings": 0,
+    "profiling": false,
+    "prepared": "store",
+    "memo": [
+      0,
+      0
+    ],
+    "phases": [
+      [
+        "stats",
+        0.2276300000000058,
+        0.26549800000000867,
+        11658.461184,
+        7
+      ],
+      [
+        "parse (worker)",
+        13.44739100000002,
+        2.5310580000000016,
+        11658.461184,
+        0
+      ],
+      [
+        "batch (worker)",
+        7.756006000000006,
+        0.4411219999999977,
+        11658.461184,
+        0
+      ],
+      [
+        "wait",
+        0.04614300000017957,
+        0.7895119999999969,
+        11658.461184,
+        0
+      ],
+      [
+        "local",
+        892.5420539999999,
+        106.039263,
+        11658.461184,
+        88416
+      ],
+      [
+        "cross",
+        31.165129999999976,
+        1.1935799999999972,
+        11658.461184,
+        122
+      ],
+      [
+        "write",
+        0.180753999999979,
+        0.0254939999999948,
+        11658.461184,
+        0
+      ]
+    ],
+    "chunks": 234,
+    "sql_executions": 88545,
+    "execution_budget_100_pass": false
+  },
+  "rr-profile": {
+    "cpu_ms": 863726.854,
+    "wall_ms": 1386381.737208,
+    "files": 5725,
+    "nodes": 19007630,
+    "findings": 0,
+    "profiling": true,
+    "prepared": "store",
+    "memo": [
+      0,
+      0
+    ],
+    "phases": [
+      [
+        "stats",
+        0.6093929999999569,
+        0.4576009999999973,
+        11570.823168,
+        7
+      ],
+      [
+        "parse (worker)",
+        2.37340400000001,
+        1.2845239999999993,
+        11570.823168,
+        0
+      ],
+      [
+        "batch (worker)",
+        6.886033000000009,
+        0.48119800000000146,
+        11570.823168,
+        0
+      ],
+      [
+        "wait",
+        0.10808700000067661,
+        0.8974259999999877,
+        11570.823168,
+        0
+      ],
+      [
+        "local",
+        736.8550729999994,
+        86.63731500000002,
+        11570.823168,
+        141642
+      ],
+      [
+        "cross",
+        21.05143099999998,
+        0.5498850000000033,
+        11570.823168,
+        122
+      ],
+      [
+        "write",
+        0.15083000000004176,
+        0.018311999999994555,
+        11570.823168,
+        0
+      ]
+    ],
+    "chunks": 391,
+    "sql_executions": 141771,
+    "execution_budget_100_pass": false,
+    "all_traced_sql": {
+      "runs": 141771,
+      "vmSteps": 58047536,
+      "fullScanSteps": 2904225,
+      "sorts": 0,
+      "autoindexRows": 0
+    }
+  },
+  "rr-positive": {
+    "cpu_ms": 692.486,
+    "wall_ms": 697.390083,
+    "files": 24,
+    "nodes": 2568,
+    "findings": 120,
+    "profiling": false,
+    "prepared": "prepared",
+    "memo": [
+      0,
+      0
+    ],
+    "phases": [
+      [
+        "stats",
+        0.4902709999999999,
+        0.056607000000000005,
+        139.051008,
+        7
+      ],
+      [
+        "parse (worker)",
+        0.006141000000000001,
+        0.006562,
+        139.051008,
+        0
+      ],
+      [
+        "batch (worker)",
+        0.0010799999999999994,
+        0.0007589999999999993,
+        139.051008,
+        0
+      ],
+      [
+        "wait",
+        0.00030200000000002447,
+        0.002134999999999998,
+        139.051008,
+        0
+      ],
+      [
+        "local",
+        0.09183400000000003,
+        0.010104999999999996,
+        139.051008,
+        290
+      ],
+      [
+        "cross",
+        0.00952300000000006,
+        0.0005080000000000084,
+        139.051008,
+        122
+      ],
+      [
+        "write",
+        0.00014599999999997948,
+        0.0008829999999999949,
+        139.051008,
+        0
+      ]
+    ],
+    "chunks": 1,
+    "sql_executions": 419,
+    "execution_budget_100_pass": false,
+    "missing": [],
+    "unexpected": []
+  },
+  "producers": {
+    "all_calls": 691328,
+    "async_calls": 65399,
+    "core_construction_cpu_ns": 1057690000,
+    "eager_argument_rows": 1005452,
+    "files": 5725,
+    "nodes": 19007630,
+    "parse_tape_cpu_ns": 10632136000,
+    "runs": [
+      {
+        "postings_all_families_cpu_ns": 67416000,
+        "reference_async_structure_cpu_ns": 159075000
+      },
+      {
+        "postings_all_families_cpu_ns": 49040000,
+        "reference_async_structure_cpu_ns": 134972000
+      },
+      {
+        "postings_all_families_cpu_ns": 41221000,
+        "reference_async_structure_cpu_ns": 131837000
+      }
+    ],
+    "scope": "Producer-only microbenchmark, not end-to-end execution. Postings builds every call family and arguments; reference builds only async-context call structure. Core construction is separate; production may reuse it. Every async call ID agrees per document. Per-document CPU clocks and output destruction excluded from producer timers.",
+    "source_bytes": 95697853
+  },
+  "edge-parity": [
+    {
+      "fixture": "1f85485a7075",
+      "expected": 120,
+      "actual": 120,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "38094aa6ac7e",
+      "expected": 2,
+      "actual": 2,
+      "missing": [],
+      "unexpected": []
+    },
+    {
+      "fixture": "483985bd330e",
+      "expected": 24,
+      "actual": 20,
+      "missing": [
+        [
+          "ASYNC230",
+          "doc1.py",
+          23
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          25
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          26
+        ],
+        [
+          "ASYNC230",
+          "doc1.py",
+          29
+        ]
+      ],
+      "unexpected": []
+    },
+    {
+      "fixture": "c6d2d16e3195",
+      "expected": 28,
+      "actual": 29,
+      "missing": [
+        [
+          "ASYNC210",
+          "doc0.py",
+          14
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          46
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          57
+        ]
+      ],
+      "unexpected": [
+        [
+          "ASYNC210",
+          "doc0.py",
+          11
+        ],
+        [
+          "ASYNC210",
+          "doc0.py",
+          13
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          38
+        ],
+        [
+          "ASYNC230",
+          "doc0.py",
+          44
+        ]
+      ]
+    }
+  ],
+  "ruff-edge-parity": {
+    "ruff_version": "0.15.7",
+    "arguments": "check --isolated --no-cache --select ASYNC210,ASYNC221,ASYNC222,ASYNC230 --output-format json",
+    "comparisons": [
+      {
+        "fixture": "1f85485a7075",
+        "ruff_count": 120,
+        "reference_missing_vs_ruff": [],
+        "reference_extra_vs_ruff": [],
+        "rr_missing_vs_ruff": [],
+        "rr_extra_vs_ruff": []
+      },
+      {
+        "fixture": "38094aa6ac7e",
+        "ruff_count": 2,
+        "reference_missing_vs_ruff": [],
+        "reference_extra_vs_ruff": [],
+        "rr_missing_vs_ruff": [],
+        "rr_extra_vs_ruff": []
+      },
+      {
+        "fixture": "483985bd330e",
+        "ruff_count": 24,
+        "reference_missing_vs_ruff": [],
+        "reference_extra_vs_ruff": [],
+        "rr_missing_vs_ruff": [
+          [
+            "ASYNC230",
+            "doc1.py",
+            23
+          ],
+          [
+            "ASYNC230",
+            "doc1.py",
+            25
+          ],
+          [
+            "ASYNC230",
+            "doc1.py",
+            26
+          ],
+          [
+            "ASYNC230",
+            "doc1.py",
+            29
+          ]
+        ],
+        "rr_extra_vs_ruff": []
+      },
+      {
+        "fixture": "c6d2d16e3195",
+        "ruff_count": 32,
+        "reference_missing_vs_ruff": [
+          [
+            "ASYNC210",
+            "doc0.py",
+            11
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            38
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            40
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            44
+          ]
+        ],
+        "reference_extra_vs_ruff": [],
+        "rr_missing_vs_ruff": [
+          [
+            "ASYNC210",
+            "doc0.py",
+            14
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            40
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            46
+          ],
+          [
+            "ASYNC230",
+            "doc0.py",
+            57
+          ]
+        ],
+        "rr_extra_vs_ruff": [
+          [
+            "ASYNC210",
+            "doc0.py",
+            13
+          ]
+        ]
+      }
+    ]
+  }
+}

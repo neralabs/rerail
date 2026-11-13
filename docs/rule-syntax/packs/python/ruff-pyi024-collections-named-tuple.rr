@@ -1,0 +1,14 @@
+.policy "ruff-pyi024-collections-named-tuple" revision 2
+.description "Use typing.NamedTuple instead of collections.namedtuple; it lets each field carry a type annotation that type checkers can analyze."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI024 (flake8-pyi), every file: a use of `collections.namedtuple`, called or not, however imported (the
+// import itself is not reported). `typing.NamedTuple` carries field types.
+//   Point = collections.namedtuple("Point", "x y")    ← PYI024 at `collections.namedtuple`
+#include "python/typing.rr"
+
+.violation PYI024(at: node) code "PYI024" "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
+    suppress ruff "PYI024"
+PYI024(e) :- sym_of(e, "collections.namedtuple"), (kind(e, "attribute") ; ast_name(e, _)), !field(_, "object", e).

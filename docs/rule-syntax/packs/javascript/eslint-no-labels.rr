@@ -1,0 +1,26 @@
+.policy "eslint-no-labels" revision 4
+.description "Avoid labeled statements and labeled break or continue; restructure the loop or extract a function instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   label_of, jump, jump_label, loop
+
+// ESLint's no-labels: every labeled statement, and every `break x` / `continue x`.
+//   outer: for (;;) { break outer; }      → both the label and the break are reported
+// Options: allowLoop: true allows labels on loops (and jumps to them); allowSwitch: true the same for switches.
+.violation no_labels(at: node, detail: symbol) code "no-labels" "Remove {detail}."
+    suppress eslint "no-labels"
+    suppress oxlint "no-labels"
+no_labels(l, "this label; restructure the loop or extract a function instead") :-
+    label_of(l, _), !allowed(l).
+no_labels(j, "the label from this break; extract the loops into a function and return to exit early") :-
+    jump(j, "break"), jump_label(j, _, l), !allowed(l).
+no_labels(j, "the label from this continue; restructure the loop or extract its body into a function") :-
+    jump(j, "continue"), jump_label(j, _, l), !allowed(l).
+
+// allowed(l): the options allow a label on what l labels.
+.decl allowed(l: node)
+allowed(l) :- label_of(l, _), field(l, "body", s), loop(s), option("allowLoop", "true").
+allowed(l) :- label_of(l, _), field(l, "body", s), kind(s, "switch_statement"), option("allowSwitch", "true").

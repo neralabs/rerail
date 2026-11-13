@@ -27,7 +27,7 @@ pub(crate) const KINDS: &[&str] = &[
     "error",
 ];
 
-const G: Grammar = Grammar::Scanf;
+const G: Grammar = GRAMMAR;
 
 /// `SCAN_MAX_ARGS`: the highest `%n$` a format may name when no variable is passed.
 const MAX_ARGS: i64 = 0xFF;
@@ -289,5 +289,32 @@ fn mixed(start: usize, end: usize) -> Error {
     )
 }
 
-#[cfg(test)]
-mod tests;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod tests;
+
+/// The `scanfFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct ScanfGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&ScanfGrammar);
+
+impl super::LiteralGrammar for ScanfGrammar {
+    fn name(&self) -> &'static str {
+        "scanfFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Php
+    }
+    fn host(&self) -> &'static str {
+        "PHP strings"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "encapsed_string", "heredoc", "nowdoc"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        parse(text)
+    }
+}

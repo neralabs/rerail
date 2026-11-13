@@ -13,7 +13,7 @@ fn capitalize(string: &str) -> String {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum StringCase {
+pub enum StringCase {
     LowerCase,
     UpperCase,
     Capitalize,
@@ -50,7 +50,7 @@ impl StringCase {
 /// Separator to split a string: `user_accountName` -> `user`, `accountName`. It is rejoined
 /// according to `StringCase`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Separator {
+pub enum Separator {
     CaseChange,
     Dash,
     Dot,
@@ -236,7 +236,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

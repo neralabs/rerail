@@ -1,0 +1,17 @@
+.policy "ruff-d409-mismatched-section-underline-length" revision 2
+.description "Make a section underline exactly as long as the section name above it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D409 (pydocstyle): a section's dashed underline (the first non-blank line after the header) that is not
+// as long as the section name as written. Reported at the underline.
+//   Returns
+//   ---                      ← D409: 3 dashes for 7 letters
+#include "python/docstrings-sections.rr"
+
+.violation D409(at: span, k: symbol) code "D409"
+    "Make this underline exactly as many dashes as the section name above it has characters."
+    suppress ruff "D409"
+D409(at, v) :- doc_section(s, i, v, _, _, _), doc_after(s, i, f, _), doc_dashes(s, f, n), n != strlen(v),
+    doc_at(s, f, at).

@@ -1,0 +1,1018 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 7,
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "state": "All ten candidates pass recorded source parity, 50 edit/removal transitions, and the complete 70-rule repository gate. Activation and wave/GPU migration remain separate.",
+  "linear_issues_created": [],
+  "oracle": {
+    "pytest_exit_code": 0,
+    "collected_tests": 208,
+    "loaded_source_files_checked": 1515,
+    "source_mismatches": []
+  },
+  "recordings": [
+    {
+      "path": "fixtures/host/data-layer-port/batch-07-recording.json",
+      "sha256": "369bbde9fb994c37c62a5dfeb96b8bc1540df2453787d158aa20ad0afa282d8a"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-07-probes.json",
+      "sha256": "6aa1881200342bc8ffe6b5939ee31ae3e91e9ccccf5aa23382d3da8371ad5190"
+    }
+  ],
+  "source_corpus": {
+    "nativeCalls": 217,
+    "replayedCalls": 217,
+    "positiveCalls": 146,
+    "cleanCalls": 71,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "coverage": [
+      {
+        "check": "post_op_side_effects",
+        "positive": 13,
+        "clean": 9
+      },
+      {
+        "check": "post_op_no_internal_dispatch",
+        "positive": 14,
+        "clean": 4
+      },
+      {
+        "check": "executor_publication_repairs",
+        "positive": 3,
+        "clean": 2
+      },
+      {
+        "check": "history_serverplan_projection",
+        "positive": 8,
+        "clean": 4
+      },
+      {
+        "check": "revision_ancestry_invariants",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "versioned_merged_identity",
+        "positive": 9,
+        "clean": 4
+      },
+      {
+        "check": "publication_registry_writes",
+        "positive": 15,
+        "clean": 9
+      },
+      {
+        "check": "declared_fact_interrogation",
+        "positive": 29,
+        "clean": 13
+      },
+      {
+        "check": "grammar_mutation_invalidation",
+        "positive": 28,
+        "clean": 17
+      },
+      {
+        "check": "unknown_contract_defaults",
+        "positive": 23,
+        "clean": 7
+      }
+    ],
+    "nativeSha256": "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126",
+    "dimensions": [
+      "multiplicity",
+      "relative path",
+      "line",
+      "diagnostic code",
+      "backend comparison column",
+      "diagnostic category where recorded"
+    ],
+    "missingNativeCoverage": [],
+    "nativeCoverage": [
+      {
+        "check": "post_op_side_effects",
+        "positive": 13,
+        "clean": 9
+      },
+      {
+        "check": "post_op_no_internal_dispatch",
+        "positive": 14,
+        "clean": 4
+      },
+      {
+        "check": "executor_publication_repairs",
+        "positive": 3,
+        "clean": 2
+      },
+      {
+        "check": "history_serverplan_projection",
+        "positive": 8,
+        "clean": 4
+      },
+      {
+        "check": "revision_ancestry_invariants",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "versioned_merged_identity",
+        "positive": 9,
+        "clean": 4
+      },
+      {
+        "check": "publication_registry_writes",
+        "positive": 15,
+        "clean": 9
+      },
+      {
+        "check": "declared_fact_interrogation",
+        "positive": 29,
+        "clean": 13
+      },
+      {
+        "check": "grammar_mutation_invalidation",
+        "positive": 28,
+        "clean": 17
+      },
+      {
+        "check": "unknown_contract_defaults",
+        "positive": 23,
+        "clean": 7
+      }
+    ]
+  },
+  "retained_calls": [
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detector_is_not_helper_name_based",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": []
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_recursive_helper_mutation_of_tainted_rows",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP110",
+          "message": "assigns into a Python subscript; SQL-visible row/result shape must not be repaired or synthesized after execution"
+        }
+      ]
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_recursive_post_op_execution_on_tainted_inputs",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP103",
+          "message": "recursively materializes a tainted post-op result; post-op behavior must be a closed terminal projection, not runtime orchestration"
+        }
+      ]
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_filtered_dict_comprehension_over_tainted_row",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP112",
+          "message": "builds a filtered or reshaped dict from tainted post-op data; SQL must emit the terminal key/value shape"
+        }
+      ]
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_list_comprehension_filter_over_tainted_rows",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP113",
+          "message": "filters tainted rows in a Python comprehension; filtering belongs in SQL/ServerPlan"
+        }
+      ]
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_hydrator_transaction_recovery",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP106",
+          "message": "reads hydrator.txn; post-ops must not recover connection/transaction state from the hydrator"
+        }
+      ]
+    },
+    {
+      "check": "post_op_side_effects",
+      "test": "scripts/tests/test_lint_post_op_side_effects.py::test_detects_python_result_mutation_and_synthesis",
+      "entry": "_RuntimeOpBehaviorVisitor.visit",
+      "reason": "Legacy helper observation: this visitor has no production caller at the source pin. Its unchanged inputs, configuration, findings and pytest result are retained separately.",
+      "findings": [
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP107",
+          "message": "mutates or assembles Python data with .update() on tainted post-op data; SQL-visible row/result shape must be produced before post-op materialization"
+        },
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP110",
+          "message": "assigns into a Python subscript; SQL-visible row/result shape must not be repaired or synthesized after execution"
+        },
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP107",
+          "message": "mutates or assembles Python data with .append() on tainted post-op data; SQL-visible row/result shape must be produced before post-op materialization"
+        },
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP108",
+          "message": "calls model_copy(update=...); write/update result synthesis must be represented by SQL/ServerPlan"
+        },
+        {
+          "path": "input.py",
+          "line": 1,
+          "column": null,
+          "code": "POSTOP111",
+          "message": "assigns object state inside a post-op; side-effect state mutation must be an explicit plan effect"
+        }
+      ]
+    }
+  ],
+  "uncaptured_tests": [
+    "scripts/tests/test_lint_post_op_side_effects.py::test_branch_eol_result_is_terminal_materializer_not_runtime_op",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_scalar_column_materializers_are_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_raw_result_exists_materializer_is_deleted",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_merge_result_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_table_exists_many_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_cleanup_result_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_require_permitted_row_materializer_is_terminal_sql_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_versioned_metadata_map_materializers_are_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_revision_history_versions_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_plan_history_cursor_page_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_branch_history_cursor_page_materializer_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_write_object_ids_builder_is_terminal_sql_result_projection",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_visible_rows_tuple_builder_is_terminal_write_result_packaging",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_materialized_embedding_metadata_resolver_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_embedding_metadata_validation_is_sql_fact_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_embedding_hash_materializer_is_terminal_sql_hash_fact_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_require_resolved_source_builder_is_sql_fact_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_require_no_rows_builder_is_sql_empty_relation_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_fetch_branch_tip_builder_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_fetch_branch_tip_literal_expected_builder_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_verify_branch_tip_match_builder_is_terminal_sql_fact_projection",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_project_commit_branch_revision_builder_is_terminal_context_projection",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_renewable_family_projection_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_renewable_refresh_replay_validation_is_sql_update_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_prepare_polyfill_fts_index_rows_builder_is_approved_porter_exception",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_validate_vector_conflicts_builder_is_sql_conflict_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_renewable_access_validation_is_sql_fact_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_renewable_refresh_validation_is_sql_fact_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_renewable_refresh_rotate_validation_is_sql_fact_exception_gate",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_dolt_revision_ids_builder_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_materialization_candidates_builder_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_strict_sql_dod_reclassifies_questionable_terminal_shapes_as_debt",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_graph_result_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_graph_bindings_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_coalesced_insert_return_map_kind_is_terminal_sql_row_hydration",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_obsolete_runtime_ref_result_materializer_is_deleted",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_branch_guard_sql_builders_are_classified_by_sql_result_role",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_sql_post_op_burndown_has_no_move_or_inline_debt",
+    "scripts/tests/test_lint_post_op_side_effects.py::test_first_row_recursive_post_op_surface_is_deleted",
+    "scripts/tests/test_lint_history_serverplan_projection.py::test_current_tree_has_no_history_projection_violations",
+    "scripts/tests/test_check_versioned_merged_identity.py::test_merged_identity_architecture_has_no_allowlist",
+    "scripts/tests/test_lint_declared_fact_interrogation.py::test_the_curated_set_holds_no_name_generic_enough_to_be_noise",
+    "scripts/tests/test_lint_declared_fact_interrogation.py::test_probed_attribute_name_reads_the_literal",
+    "scripts/tests/test_lint_declared_fact_interrogation.py::test_probed_attribute_name_declines_other_builtins",
+    "scripts/tests/test_lint_declared_fact_interrogation.py::test_override_identity_comparison_returns_the_shared_attribute",
+    "scripts/tests/test_lint_grammar_mutation_invalidation.py::test_the_memoizable_closure_is_explicit",
+    "scripts/tests/test_lint_grammar_mutation_invalidation.py::test_the_memoizable_closure_is_current",
+    "scripts/tests/test_lint_unknown_contract_defaults.py::test_the_three_state_names_are_unambiguous",
+    "scripts/tests/test_lint_unknown_contract_defaults.py::test_the_excluded_names_are_still_ambiguous"
+  ],
+  "incremental": {
+    "format": "rerail.data-layer-incremental-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "nativeSha256": "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126",
+    "checks": 10,
+    "transitions": 50,
+    "differences": 0,
+    "elapsedMs": 103.07375000000002,
+    "rows": [
+      {
+        "check": "post_op_side_effects",
+        "cleanTest": "scripts/tests/test_lint_post_op_side_effects.py::test_runtime_allowlist_governance_accepts_mandatory_verification",
+        "positiveTest": "scripts/tests/test_lint_post_op_side_effects.py::test_runtime_allowlist_governance_rejects_boolean_opt_out",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "post_op_no_internal_dispatch",
+        "cleanTest": "probe:batch7:clean-simple",
+        "positiveTest": "probe:batch7:alias-kill-is-monotone",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "executor_publication_repairs",
+        "cleanTest": "scripts/tests/test_lint_executor_publication_repairs.py::test_executor_repair_linter_accepts_producer_projection_contract",
+        "positiveTest": "scripts/tests/test_lint_executor_publication_repairs.py::test_executor_repair_linter_rejects_private_publication_mutation",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "history_serverplan_projection",
+        "cleanTest": "scripts/tests/test_lint_history_serverplan_projection.py::test_terminal_post_op_hydration_is_allowed",
+        "positiveTest": "scripts/tests/test_lint_history_serverplan_projection.py::test_history_collector_tracks_return_without_ancestor_walk",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "revision_ancestry_invariants",
+        "cleanTest": "scripts/tests/test_lint_revision_ancestry_invariants.py::test_linter_accepts_seed_cast_and_native_stored_comparison",
+        "positiveTest": "scripts/tests/test_lint_revision_ancestry_invariants.py::test_linter_rejects_descriptor_and_indexed_column_text_cast",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "versioned_merged_identity",
+        "cleanTest": "scripts/tests/test_check_versioned_merged_identity.py::test_catalog_projection_satisfies_the_reviewed_constructor_contract",
+        "positiveTest": "scripts/tests/test_check_versioned_merged_identity.py::test_direct_projection_fails_closed",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "publication_registry_writes",
+        "cleanTest": "scripts/tests/test_lint_publication_registry_writes.py::test_reading_an_entry_stays_quiet",
+        "positiveTest": "scripts/tests/test_lint_publication_registry_writes.py::test_assigning_an_entry_is_reported",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "declared_fact_interrogation",
+        "cleanTest": "scripts/tests/test_lint_declared_fact_interrogation.py::test_comparing_two_different_methods_is_not_this_mistake",
+        "positiveTest": "scripts/tests/test_lint_declared_fact_interrogation.py::test_an_override_identity_test_is_reported",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "grammar_mutation_invalidation",
+        "cleanTest": "scripts/tests/test_lint_grammar_mutation_invalidation.py::test_a_mutator_that_discards_derived_answers_stays_quiet",
+        "positiveTest": "scripts/tests/test_lint_grammar_mutation_invalidation.py::test_a_node_rewritten_in_place_without_saying_so_is_reported",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "unknown_contract_defaults",
+        "cleanTest": "scripts/tests/test_lint_unknown_contract_defaults.py::test_a_populated_container_is_a_real_fallback_and_stays_quiet",
+        "positiveTest": "scripts/tests/test_lint_unknown_contract_defaults.py::test_defaulting_an_undeclared_field_to_an_empty_tuple_is_reported",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      }
+    ]
+  },
+  "engine": {
+    "format": "rerail.data-layer-integrated-engine/v1",
+    "base_commit": "9bc955cc5",
+    "commit": "d627273f67aaa3504e92905a677de2ea6370bc56",
+    "branch": "jeremy/data-layer-integrated-compat-20261103",
+    "native_sha256": "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126",
+    "build": {
+      "package": "rerail-engine",
+      "profile": "profiling",
+      "extra_features": [],
+      "allocator": "jemalloc"
+    },
+    "frontend_schema_sha256": "80122b31b5c1e7e86fff47dc4eeb3cfea585b68a75df991c08b3640ad5f6497b",
+    "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "replay_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "boundary": "Production public schema, native compiled-rule and resident-workspace APIs. Relational compatibility is executable; wave/GPU lowering is separate."
+  },
+  "frontend": {
+    "format": "rerail.integrated-schema-compatibility/v1",
+    "through": 7,
+    "checks": 70,
+    "nativeSha256": "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126",
+    "capabilitiesSha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "schemaSha256": "80122b31b5c1e7e86fff47dc4eeb3cfea585b68a75df991c08b3640ad5f6497b",
+    "failures": 0
+  },
+  "repository": {
+    "files": 9021,
+    "bytes": 137924324,
+    "expected": 24993,
+    "actual": 24993,
+    "failures": [],
+    "falsePositives": [],
+    "falseNegatives": [],
+    "workloadSha256": "8dcd26660991ff4fe64021ffd17947845ba99879c2d00c909728754900e9c1b9",
+    "nativeSha256": "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126",
+    "phaseCpuMs": {
+      "compile": {
+        "userMs": 1315.279,
+        "systemMs": 41.65
+      },
+      "cold": {
+        "userMs": 384188.385,
+        "systemMs": 11330.448
+      }
+    },
+    "compilationMs": 1350.851666,
+    "coldMs": 321603.251041,
+    "osPeakRssBytes": 15398617088,
+    "receipt": "docs/performance-decisions/data-layer-batch-seven-20261103.json",
+    "productionPlanEquivalence": {
+      "baselineCommit": "194429e585615e471aeb2d616524d394b915c167",
+      "policy": "packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json",
+      "beforeResolvedSha256": "e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8",
+      "afterResolvedSha256": "e6d5f2ff3ab1166ae96aa9718231568520f7da2bd022645e025d02a5fce732d8",
+      "identical": true
+    },
+    "qualification": "Historical full run; the authored helper modes changed, but the resolved default production program is byte-identical. This run was not relabeled or repeated."
+  },
+  "policies": [
+    {
+      "check": "post_op_side_effects",
+      "path": "packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json",
+      "sha256": "655ff5697718438456d6a1e01767157a7c99b68689779cb60bb9f4ebc40fcb98"
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "path": "packs/data-layer/candidates/rules/data-layer-post-op-no-internal-dispatch.json",
+      "sha256": "f04e536ac07edc1151120f17c76a18e2791de9af91fb151d37d6901c5586d14c"
+    },
+    {
+      "check": "executor_publication_repairs",
+      "path": "packs/data-layer/candidates/rules/data-layer-executor-publication-repairs.json",
+      "sha256": "8bb06158b6c487c677eca9afd9af8524adb158ec3a92b3689d82336c6e658f2c"
+    },
+    {
+      "check": "history_serverplan_projection",
+      "path": "packs/data-layer/candidates/rules/data-layer-history-serverplan-projection.json",
+      "sha256": "167e4569d9cee4534df7514ffd927151fa4f4531197eaa9f5f5c818244a57886"
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "path": "packs/data-layer/candidates/rules/data-layer-revision-ancestry-invariants.json",
+      "sha256": "29d46248597921efeb90a3c0de5c284ff07f5d5207487b04d67a5fb1077e46d1"
+    },
+    {
+      "check": "versioned_merged_identity",
+      "path": "packs/data-layer/candidates/rules/data-layer-versioned-merged-identity.json",
+      "sha256": "f410333211d81a210c38b26ed4db7df073d9900dc07a3f3ebb3eeb84a2a6d754"
+    },
+    {
+      "check": "publication_registry_writes",
+      "path": "packs/data-layer/candidates/rules/data-layer-publication-registry-writes.json",
+      "sha256": "4078d413576a8c2f7dddb3a5e1171825f5415a3e1c581bccd059a793b2000926"
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "path": "packs/data-layer/candidates/rules/data-layer-declared-fact-interrogation.json",
+      "sha256": "0fa2269f092b0af0ebae7b0dc14e940c03c20fee4ce2e08ced21699deb6e91f9"
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "path": "packs/data-layer/candidates/rules/data-layer-grammar-mutation-invalidation.json",
+      "sha256": "37bd90ecc337a8ca5e89cacd5bee302d799a89f9157e16372065b3b87dcdb977"
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "path": "packs/data-layer/candidates/rules/data-layer-unknown-contract-defaults.json",
+      "sha256": "319a5ef09dda569d69cde3d4010887c1fc348a8180df7301268757e2477520e2"
+    }
+  ],
+  "validation": {
+    "focused_production_tests": 28,
+    "first_fifty_and_batch_seven_tests": 53,
+    "integrated_schema_options_tests": 32,
+    "sixth_batch_observations": 1259,
+    "sixth_batch_differences": 0,
+    "native_tests": {
+      "passed": 2515,
+      "failed": 1,
+      "ignored": 67,
+      "failure": "admission_spike::interpreter_snapshot_matches_the_current_independent_oracle",
+      "qualification": "Both checked files and the hash mismatch are unchanged from base 9bc955cc5."
+    },
+    "root_typecheck": true,
+    "integrated_typecheck": true,
+    "typescript_conformance_tests_including_native_coverage_guard": 54,
+    "always_clean_controls_rejected": 10
+  },
+  "limitations": [
+    "Seven captured calls exercise an unused legacy helper visitor and do not count as production detector passes.",
+    "Forty-nine tests have no recorded detector call; helper calls inside signing tests do not certify the surrounding workflow.",
+    "Ten removal transitions compare with a fresh empty workspace; the other forty transitions use oracle observations.",
+    "Peak RSS remains high; performance acceptance is not claimed.",
+    "Relational clauses do not lower through the newer wave/GPU execution model."
+  ],
+  "prior_sixth_batch": {
+    "parts": 24,
+    "completed": 24,
+    "calls": 1259,
+    "coverage": [
+      {
+        "check": "execution_authority_bypass",
+        "positive": 4,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 39,
+        "clean": 29
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 52,
+        "clean": 28
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_bypass",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 42,
+        "clean": 17
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 135,
+        "clean": 65
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 65,
+        "clean": 14
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 64,
+        "clean": 682
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 10,
+        "clean": 2
+      }
+    ],
+    "nativeSha256": [
+      "fee334990d0f21843779fd305f720598b49965b1b0e3258d20596b60185a2126"
+    ],
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0
+  },
+  "testsuite_coverage_receipt": "fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json"
+}

@@ -1,0 +1,441 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-plan-optimizer-v2",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer plan_optimizer_v2 at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2065_plan_core/**/*.py",
+      "impl/common/l2066_plan_optimizer/**/*.py",
+      "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**",
+      "**/tests/**",
+      "**/test/**",
+      "**/.pytest_cache/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "optimizer-file-checks",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_module",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_op",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_value_repr",
+                "ast_level"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(ast_level,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "optimizer_contract",
+            "query": {
+              "$option": "entryPoint",
+              "escape": "sql",
+              "template": "SELECT {} entry"
+            }
+          },
+          {
+            "name": "optimizer_imports",
+            "query": "SELECT n.*,CASE WHEN n.kind='ImportFrom' THEN n.module ELSE alias.name END imported,coalesce(alias.position,0) ordinal FROM a n LEFT JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' AND n.kind='Import' WHERE n.kind='Import' OR n.kind='ImportFrom' AND n.level=0",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "optimizer_files",
+            "query": "SELECT n.*,rx_replace(n.__path,'^.*/','') basename,rx_matches(n.__path,'(?:^|/)l2065_plan_core/') core,1+length(text)-length(replace(text,char(10),'')) line_count FROM (SELECT a.*,CASE WHEN (SELECT entry FROM optimizer_contract)='scan_file' THEN source_text(__path) ELSE replace(replace(source_text(__path),char(13)||char(10),char(10)),char(13),char(10)) END text FROM a WHERE kind='Module') n",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "pass_classes",
+            "query": "SELECT n.*,(SELECT v.name FROM a stmt JOIN a target ON target.__path=stmt.__path AND target.parent=stmt.id AND target.field='target' AND target.kind='Name' AND target.name='phase' JOIN a v ON v.__path=stmt.__path AND v.parent=stmt.id AND v.field='value' AND v.kind='Attribute' WHERE stmt.__path=n.__path AND stmt.parent=n.id AND stmt.kind='AnnAssign' ORDER BY stmt.id LIMIT 1) declared_phase FROM classes n WHERE n.parent=0 AND substr(n.name,-4)='Pass' AND NOT EXISTS(SELECT 1 FROM a base WHERE base.__path=n.__path AND base.parent=n.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='Protocol')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "pipeline_entries",
+            "query": "SELECT tuple.__path,tuple.parent assignment,call.position,CASE cls.declared_phase WHEN 'NORMALIZE' THEN 0 WHEN 'ANALYZE' THEN 1 WHEN 'PHYSICAL' THEN 2 END phase FROM a tuple JOIN calls call ON call.__path=tuple.__path AND call.parent=tuple.id AND call.field='elts' AND call.callee_kind='Name' JOIN pass_classes cls ON cls.__path=call.__path AND cls.name=call.callee WHERE tuple.kind='Tuple' AND tuple.field='value' AND cls.id=(SELECT max(p.id) FROM pass_classes p WHERE p.__path=cls.__path AND p.name=cls.name AND p.id<tuple.id)",
+            "indexes": [
+              [
+                "__path",
+                "assignment",
+                "position"
+              ]
+            ]
+          },
+          {
+            "name": "optimizer_findings_0",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-001' AS issue,'Import of I/O module '||(char(39)||n.imported||char(39))||' is forbidden in the v2 optimizer packages. Keep the optimizer pure: move runtime/I/O concerns to the executor layer (l2070_batching) and pass plain data into the optimizer instead.' AS message,n.id||':PV2-001:'||(n.id+n.ordinal*0.001) AS identity,0 AS phase,n.id+n.ordinal*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM optimizer_imports n JOIN optimizer_files file ON file.__path=n.__path WHERE (n.imported='os' OR substr(n.imported,1,3)='os.' OR n.imported='io' OR substr(n.imported,1,3)='io.' OR n.imported='socket' OR substr(n.imported,1,7)='socket.' OR n.imported='subprocess' OR substr(n.imported,1,11)='subprocess.' OR n.imported='sqlite3' OR substr(n.imported,1,8)='sqlite3.' OR n.imported='asyncio' OR substr(n.imported,1,8)='asyncio.' OR n.imported='threading' OR substr(n.imported,1,10)='threading.' OR n.imported='multiprocessing' OR substr(n.imported,1,16)='multiprocessing.' OR n.imported='urllib' OR substr(n.imported,1,7)='urllib.' OR n.imported='http' OR substr(n.imported,1,5)='http.') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-002' AS issue,'l2065_plan_core may not import '||(char(39)||n.imported||char(39))||'. The core is the bottom of the optimizer DAG. Fix by adapting legacy data into core types inside impl/common/l2066_plan_optimizer/adapter.py instead.' AS message,n.id||':PV2-002:'||(n.id+n.ordinal*0.001) AS identity,0 AS phase,n.id+n.ordinal*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM optimizer_imports n JOIN optimizer_files file ON file.__path=n.__path WHERE NOT (n.imported='os' OR substr(n.imported,1,3)='os.' OR n.imported='io' OR substr(n.imported,1,3)='io.' OR n.imported='socket' OR substr(n.imported,1,7)='socket.' OR n.imported='subprocess' OR substr(n.imported,1,11)='subprocess.' OR n.imported='sqlite3' OR substr(n.imported,1,8)='sqlite3.' OR n.imported='asyncio' OR substr(n.imported,1,8)='asyncio.' OR n.imported='threading' OR substr(n.imported,1,10)='threading.' OR n.imported='multiprocessing' OR substr(n.imported,1,16)='multiprocessing.' OR n.imported='urllib' OR substr(n.imported,1,7)='urllib.' OR n.imported='http' OR substr(n.imported,1,5)='http.') AND file.core AND (n.imported='l2070_batching' OR substr(n.imported,1,15)='l2070_batching.' OR n.imported='impl.common.l2070_server_plan' OR substr(n.imported,1,30)='impl.common.l2070_server_plan.' OR n.imported='impl.common.l2100_sql_grammar' OR substr(n.imported,1,30)='impl.common.l2100_sql_grammar.' OR n.imported='impl.common.l2066_plan_optimizer' OR substr(n.imported,1,33)='impl.common.l2066_plan_optimizer.') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-003' AS issue,'Only adapter.py may import legacy layer '||(char(39)||n.imported||char(39))||'. Fix by routing legacy step data through LegacyStepAdapter so the pass pipeline sees only AnnotatedPlanNode/RelationSchema/EffectSummary.' AS message,n.id||':PV2-003:'||(n.id+n.ordinal*0.001) AS identity,0 AS phase,n.id+n.ordinal*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM optimizer_imports n JOIN optimizer_files file ON file.__path=n.__path WHERE NOT (n.imported='os' OR substr(n.imported,1,3)='os.' OR n.imported='io' OR substr(n.imported,1,3)='io.' OR n.imported='socket' OR substr(n.imported,1,7)='socket.' OR n.imported='subprocess' OR substr(n.imported,1,11)='subprocess.' OR n.imported='sqlite3' OR substr(n.imported,1,8)='sqlite3.' OR n.imported='asyncio' OR substr(n.imported,1,8)='asyncio.' OR n.imported='threading' OR substr(n.imported,1,10)='threading.' OR n.imported='multiprocessing' OR substr(n.imported,1,16)='multiprocessing.' OR n.imported='urllib' OR substr(n.imported,1,7)='urllib.' OR n.imported='http' OR substr(n.imported,1,5)='http.') AND NOT file.core AND file.basename!='adapter.py' AND (n.imported='l2070_batching' OR substr(n.imported,1,15)='l2070_batching.' OR n.imported='impl.common.l2070_server_plan' OR substr(n.imported,1,30)='impl.common.l2070_server_plan.' OR n.imported='impl.common.l2100_sql_grammar' OR substr(n.imported,1,30)='impl.common.l2100_sql_grammar.') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-010' AS issue,'Direct access to PlanScope internal '||(char(39)||n.name||char(39))||' outside scope.py. Use bind()/lookup()/export()/import_exported()/bindings()/exports() so there is exactly one scope authority.' AS message,n.id||':PV2-010:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename!='scope.py' AND n.kind='Attribute' AND n.name IN ('_bindings','_exports')"
+          },
+          {
+            "name": "optimizer_findings_1",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-011' AS issue,'Second dotted-ref parser detected. The only dotted-ref parsing lives in scope.py. Use ref_binding_id() for the binding part or PlanScope.resolve_dotted() for full resolution.' AS message,n.id||':PV2-011:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename!='scope.py' AND n.callee_kind='Attribute' AND n.callee IN ('partition','rpartition','rsplit','split') AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND (arg.position=0 AND arg.kind='Constant' AND arg.value='.')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-012' AS issue,'Parallel table-keyed binding map '||(char(39)||n.name||char(39))||' is forbidden. The legacy *_cte_by_table side maps caused the out-of-scope-ref bug class. Bind relations in PlanScope and resolve them by BindingId instead.' AS message,n.id||':PV2-012:'||(owner.id+n.position*0.001) AS identity,1 AS phase,owner.id+n.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a owner ON owner.__path=n.__path AND owner.id=n.parent JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='Name' AND n.field IN ('target','targets') AND owner.kind IN ('Assign','AnnAssign') AND substr(n.name,-9)='_by_table' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-012' AS issue,'Parallel table-keyed binding map '||(char(39)||n.name||char(39))||' is forbidden. The legacy *_cte_by_table side maps caused the out-of-scope-ref bug class. Bind relations in PlanScope and resolve them by BindingId instead.' AS message,n.id||':PV2-012:'||(n.fn+n.id*0.000001) AS identity,1 AS phase,n.fn+n.id*0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM parameters n JOIN optimizer_files file ON file.__path=n.__path WHERE n.field IN ('posonlyargs','args','kwonlyargs') AND substr(n.name,-9)='_by_table' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-020' AS issue,'Comparison against shape literal '||operand.value_repr||'. Use the typed Cardinality lattice (Cardinality.COUNT etc.) instead of string role/tag comparisons; only adapter.py may translate legacy strings.' AS message,n.id||':PV2-020:'||(n.id+operand.id*0.000001) AS identity,2 AS phase,n.id+operand.id*0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a operand ON operand.__path=n.__path AND operand.parent=n.id AND operand.field IN ('left','comparators') AND operand.kind='Constant' JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename!='adapter.py' AND n.kind='Compare' AND operand.value IN ('count','count_only','exists')"
+          },
+          {
+            "name": "optimizer_findings_2",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-021' AS issue,'String literal '||n.value_repr||' looks like a legacy *_count sibling ref. Counts are Cardinality.COUNT relations with one typed `count` column; use RelationSchema.count() instead of suffix-derived refs.' AS message,n.id||':PV2-021:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='Constant' AND n.value_kind='str' AND rx_matches(n.value,'_count\\z') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-021' AS issue,'f-string constructs a *_count sibling ref. Counts are Cardinality.COUNT relations; use RelationSchema.count() instead of suffix-derived refs.' AS message,n.id||':PV2-021:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='JoinedStr' AND EXISTS(SELECT 1 FROM a part WHERE part.__path=n.__path AND part.parent=n.id AND part.field='values' AND (part.kind='Constant' AND part.value_kind='str' AND rx_matches(part.value,'_count\\z'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-022' AS issue,'Set intersection on names is forbidden in the v2 optimizer. Derive schemas through overlay_schema()/project_schema()/union_schema() so type hints and provenance are preserved.' AS message,n.id||':PV2-022:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='BinOp' AND n.op='BitAnd' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.parent=n.id AND call.field IN ('left','right') AND call.callee_kind='Name' AND call.callee IN ('set','frozenset')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-022' AS issue,'.intersection() on column names is forbidden in the v2 optimizer. Derive schemas through overlay_schema()/project_schema()/union_schema() so type hints and provenance are preserved.' AS message,n.id||':PV2-022:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n JOIN optimizer_files file ON file.__path=n.__path WHERE n.callee_kind='Attribute' AND n.callee='intersection'"
+          },
+          {
+            "name": "optimizer_findings_3",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-023' AS issue,'ColumnSchema() called with bare string column id '||arg.value_repr||'. Wrap it in ColumnId(...) so the type checker can track column identity.' AS message,n.id||':PV2-023:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND arg.position=0 AND arg.kind='Constant' AND arg.value_kind='str' JOIN optimizer_files file ON file.__path=n.__path WHERE n.callee_kind='Name' AND n.callee='ColumnSchema' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-030' AS issue,'Model introspection '||(char(39)||n.name||char(39))||' is forbidden in the v2 optimizer. Producer contracts are authoritative: fail closed with AdapterContractError and fix the producing step''s contract instead of reconstructing it.' AS message,n.id||':PV2-030:'||(n.id) AS identity,3 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind IN ('Name','Attribute') AND n.name IN ('get_type_hints','model_fields','model_json_schema','model_sql_column_type_hints') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-031' AS issue,'raise in '||(f.name)||'() has no repair hint. Every v2 error message must say what is wrong and how to fix it (e.g. start a sentence with Fix/Use/Add/Project/Bind describing the repair).' AS message,n.id||':PV2-031:'||(f.id*1000000+n.id) AS identity,3 AS phase,f.id*1000000+n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN a exception ON exception.__path=n.__path AND exception.parent=n.id AND exception.field='exc' AND exception.kind!='Name' JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='Raise' AND NOT EXISTS(SELECT 1 FROM a text WHERE text.__path=f.__path AND text.id BETWEEN f.id AND f.last AND (text.kind='Constant' AND text.value_kind='str' AND rx_matches(text.value,'(?:\\A|[^0-9A-Z_a-z\u00aa\u00b2-\u00b3\u00b5\u00b9-\u00ba\u00bc-\u00be\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376-\u0377\u037a-\u037d\u037f\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u052f\u0531-\u0556\u0559\u0560-\u0588\u05d0-\u05ea\u05ef-\u05f2\u0620-\u064a\u0660-\u0669\u066e-\u066f\u0671-\u06d3\u06d5\u06e5-\u06e6\u06ee-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07c0-\u07ea\u07f4-\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u0860-\u086a\u0870-\u0887\u0889-\u088e\u08a0-\u08c9\u0904-\u0939\u093d\u0950\u0958-\u0961\u0966-\u096f\u0971-\u0980\u0985-\u098c\u098f-\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc-\u09dd\u09df-\u09e1\u09e6-\u09f1\u09f4-\u09f9\u09fc\u0a05-\u0a0a\u0a0f-\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32-\u0a33\u0a35-\u0a36\u0a38-\u0a39\u0a59-\u0a5c\u0a5e\u0a66-\u0a6f\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2-\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0-\u0ae1\u0ae6-\u0aef\u0af9\u0b05-\u0b0c\u0b0f-\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32-\u0b33\u0b35-\u0b39\u0b3d\u0b5c-\u0b5d\u0b5f-\u0b61\u0b66-\u0b6f\u0b71-\u0b77\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99-\u0b9a\u0b9c\u0b9e-\u0b9f\u0ba3-\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0be6-\u0bf2\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c39\u0c3d\u0c58-\u0c5a\u0c5d\u0c60-\u0c61\u0c66-\u0c6f\u0c78-\u0c7e\u0c80\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cdd-\u0cde\u0ce0-\u0ce1\u0ce6-\u0cef\u0cf1-\u0cf2\u0d04-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d54-\u0d56\u0d58-\u0d61\u0d66-\u0d78\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0de6-\u0def\u0e01-\u0e30\u0e32-\u0e33\u0e40-\u0e46\u0e50-\u0e59\u0e81-\u0e82\u0e84\u0e86-\u0e8a\u0e8c-\u0ea3\u0ea5\u0ea7-\u0eb0\u0eb2-\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0ed0-\u0ed9\u0edc-\u0edf\u0f00\u0f20-\u0f33\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f-\u1049\u1050-\u1055\u105a-\u105d\u1061\u1065-\u1066\u106e-\u1070\u1075-\u1081\u108e\u1090-\u1099\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1369-\u137c\u1380-\u138f\u13a0-\u13f5\u13f8-\u13fd\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f8\u1700-\u1711\u171f-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u17e0-\u17e9\u17f0-\u17f9\u1810-\u1819\u1820-\u1878\u1880-\u1884\u1887-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191e\u1946-\u196d\u1970-\u1974\u1980-\u19ab\u19b0-\u19c9\u19d0-\u19da\u1a00-\u1a16\u1a20-\u1a54\u1a80-\u1a89\u1a90-\u1a99\u1aa7\u1b05-\u1b33\u1b45-\u1b4c\u1b50-\u1b59\u1b83-\u1ba0\u1bae-\u1be5\u1c00-\u1c23\u1c40-\u1c49\u1c4d-\u1c7d\u1c80-\u1c88\u1c90-\u1cba\u1cbd-\u1cbf\u1ce9-\u1cec\u1cee-\u1cf3\u1cf5-\u1cf6\u1cfa\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2070-\u2071\u2074-\u2079\u207f-\u2089\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2119-\u211d\u2124\u2126\u2128\u212a-\u212d\u212f-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2150-\u2189\u2460-\u249b\u24ea-\u24ff\u2776-\u2793\u2c00-\u2ce4\u2ceb-\u2cee\u2cf2-\u2cf3\u2cfd\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u2e2f\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312f\u3131-\u318e\u3192-\u3195\u31a0-\u31bf\u31f0-\u31ff\u3220-\u3229\u3248-\u324f\u3251-\u325f\u3280-\u3289\u32b1-\u32bf\u3400-\u4dbf\u4e00-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua62b\ua640-\ua66e\ua67f-\ua69d\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua7ca\ua7d0-\ua7d1\ua7d3\ua7d5-\ua7d9\ua7f2-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua830-\ua835\ua840-\ua873\ua882-\ua8b3\ua8d0-\ua8d9\ua8f2-\ua8f7\ua8fb\ua8fd-\ua8fe\ua900-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf-\ua9d9\ua9e0-\ua9e4\ua9e6-\ua9fe\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa50-\uaa59\uaa60-\uaa76\uaa7a\uaa7e-\uaaaf\uaab1\uaab5-\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uab30-\uab5a\uab5c-\uab69\uab70-\uabe2\uabf0-\uabf9\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40-\ufb41\ufb43-\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff10-\uff19\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc\ud800\udc00-\ud800\udc0b\ud800\udc0d-\ud800\udc26\ud800\udc28-\ud800\udc3a\ud800\udc3c-\ud800\udc3d\ud800\udc3f-\ud800\udc4d\ud800\udc50-\ud800\udc5d\ud800\udc80-\ud800\udcfa\ud800\udd07-\ud800\udd33\ud800\udd40-\ud800\udd78\ud800\udd8a-\ud800\udd8b\ud800\ude80-\ud800\ude9c\ud800\udea0-\ud800\uded0\ud800\udee1-\ud800\udefb\ud800\udf00-\ud800\udf23\ud800\udf2d-\ud800\udf4a\ud800\udf50-\ud800\udf75\ud800\udf80-\ud800\udf9d\ud800\udfa0-\ud800\udfc3\ud800\udfc8-\ud800\udfcf\ud800\udfd1-\ud800\udfd5\ud801\udc00-\ud801\udc9d\ud801\udca0-\ud801\udca9\ud801\udcb0-\ud801\udcd3\ud801\udcd8-\ud801\udcfb\ud801\udd00-\ud801\udd27\ud801\udd30-\ud801\udd63\ud801\udd70-\ud801\udd7a\ud801\udd7c-\ud801\udd8a\ud801\udd8c-\ud801\udd92\ud801\udd94-\ud801\udd95\ud801\udd97-\ud801\udda1\ud801\udda3-\ud801\uddb1\ud801\uddb3-\ud801\uddb9\ud801\uddbb-\ud801\uddbc\ud801\ude00-\ud801\udf36\ud801\udf40-\ud801\udf55\ud801\udf60-\ud801\udf67\ud801\udf80-\ud801\udf85\ud801\udf87-\ud801\udfb0\ud801\udfb2-\ud801\udfba\ud802\udc00-\ud802\udc05\ud802\udc08\ud802\udc0a-\ud802\udc35\ud802\udc37-\ud802\udc38\ud802\udc3c\ud802\udc3f-\ud802\udc55\ud802\udc58-\ud802\udc76\ud802\udc79-\ud802\udc9e\ud802\udca7-\ud802\udcaf\ud802\udce0-\ud802\udcf2\ud802\udcf4-\ud802\udcf5\ud802\udcfb-\ud802\udd1b\ud802\udd20-\ud802\udd39\ud802\udd80-\ud802\uddb7\ud802\uddbc-\ud802\uddcf\ud802\uddd2-\ud802\ude00\ud802\ude10-\ud802\ude13\ud802\ude15-\ud802\ude17\ud802\ude19-\ud802\ude35\ud802\ude40-\ud802\ude48\ud802\ude60-\ud802\ude7e\ud802\ude80-\ud802\ude9f\ud802\udec0-\ud802\udec7\ud802\udec9-\ud802\udee4\ud802\udeeb-\ud802\udeef\ud802\udf00-\ud802\udf35\ud802\udf40-\ud802\udf55\ud802\udf58-\ud802\udf72\ud802\udf78-\ud802\udf91\ud802\udfa9-\ud802\udfaf\ud803\udc00-\ud803\udc48\ud803\udc80-\ud803\udcb2\ud803\udcc0-\ud803\udcf2\ud803\udcfa-\ud803\udd23\ud803\udd30-\ud803\udd39\ud803\ude60-\ud803\ude7e\ud803\ude80-\ud803\udea9\ud803\udeb0-\ud803\udeb1\ud803\udf00-\ud803\udf27\ud803\udf30-\ud803\udf45\ud803\udf51-\ud803\udf54\ud803\udf70-\ud803\udf81\ud803\udfb0-\ud803\udfcb\ud803\udfe0-\ud803\udff6\ud804\udc03-\ud804\udc37\ud804\udc52-\ud804\udc6f\ud804\udc71-\ud804\udc72\ud804\udc75\ud804\udc83-\ud804\udcaf\ud804\udcd0-\ud804\udce8\ud804\udcf0-\ud804\udcf9\ud804\udd03-\ud804\udd26\ud804\udd36-\ud804\udd3f\ud804\udd44\ud804\udd47\ud804\udd50-\ud804\udd72\ud804\udd76\ud804\udd83-\ud804\uddb2\ud804\uddc1-\ud804\uddc4\ud804\uddd0-\ud804\uddda\ud804\udddc\ud804\udde1-\ud804\uddf4\ud804\ude00-\ud804\ude11\ud804\ude13-\ud804\ude2b\ud804\ude3f-\ud804\ude40\ud804\ude80-\ud804\ude86\ud804\ude88\ud804\ude8a-\ud804\ude8d\ud804\ude8f-\ud804\ude9d\ud804\ude9f-\ud804\udea8\ud804\udeb0-\ud804\udede\ud804\udef0-\ud804\udef9\ud804\udf05-\ud804\udf0c\ud804\udf0f-\ud804\udf10\ud804\udf13-\ud804\udf28\ud804\udf2a-\ud804\udf30\ud804\udf32-\ud804\udf33\ud804\udf35-\ud804\udf39\ud804\udf3d\ud804\udf50\ud804\udf5d-\ud804\udf61\ud805\udc00-\ud805\udc34\ud805\udc47-\ud805\udc4a\ud805\udc50-\ud805\udc59\ud805\udc5f-\ud805\udc61\ud805\udc80-\ud805\udcaf\ud805\udcc4-\ud805\udcc5\ud805\udcc7\ud805\udcd0-\ud805\udcd9\ud805\udd80-\ud805\uddae\ud805\uddd8-\ud805\udddb\ud805\ude00-\ud805\ude2f\ud805\ude44\ud805\ude50-\ud805\ude59\ud805\ude80-\ud805\udeaa\ud805\udeb8\ud805\udec0-\ud805\udec9\ud805\udf00-\ud805\udf1a\ud805\udf30-\ud805\udf3b\ud805\udf40-\ud805\udf46\ud806\udc00-\ud806\udc2b\ud806\udca0-\ud806\udcf2\ud806\udcff-\ud806\udd06\ud806\udd09\ud806\udd0c-\ud806\udd13\ud806\udd15-\ud806\udd16\ud806\udd18-\ud806\udd2f\ud806\udd3f\ud806\udd41\ud806\udd50-\ud806\udd59\ud806\udda0-\ud806\udda7\ud806\uddaa-\ud806\uddd0\ud806\udde1\ud806\udde3\ud806\ude00\ud806\ude0b-\ud806\ude32\ud806\ude3a\ud806\ude50\ud806\ude5c-\ud806\ude89\ud806\ude9d\ud806\udeb0-\ud806\udef8\ud807\udc00-\ud807\udc08\ud807\udc0a-\ud807\udc2e\ud807\udc40\ud807\udc50-\ud807\udc6c\ud807\udc72-\ud807\udc8f\ud807\udd00-\ud807\udd06\ud807\udd08-\ud807\udd09\ud807\udd0b-\ud807\udd30\ud807\udd46\ud807\udd50-\ud807\udd59\ud807\udd60-\ud807\udd65\ud807\udd67-\ud807\udd68\ud807\udd6a-\ud807\udd89\ud807\udd98\ud807\udda0-\ud807\udda9\ud807\udee0-\ud807\udef2\ud807\udf02\ud807\udf04-\ud807\udf10\ud807\udf12-\ud807\udf33\ud807\udf50-\ud807\udf59\ud807\udfb0\ud807\udfc0-\ud807\udfd4\ud808\udc00-\ud808\udf99\ud809\udc00-\ud809\udc6e\ud809\udc80-\ud809\udd43\ud80b\udf90-\ud80b\udff0\ud80c\udc00-\ud80d\udc2f\ud80d\udc41-\ud80d\udc46\ud811\udc00-\ud811\ude46\ud81a\udc00-\ud81a\ude38\ud81a\ude40-\ud81a\ude5e\ud81a\ude60-\ud81a\ude69\ud81a\ude70-\ud81a\udebe\ud81a\udec0-\ud81a\udec9\ud81a\uded0-\ud81a\udeed\ud81a\udf00-\ud81a\udf2f\ud81a\udf40-\ud81a\udf43\ud81a\udf50-\ud81a\udf59\ud81a\udf5b-\ud81a\udf61\ud81a\udf63-\ud81a\udf77\ud81a\udf7d-\ud81a\udf8f\ud81b\ude40-\ud81b\ude96\ud81b\udf00-\ud81b\udf4a\ud81b\udf50\ud81b\udf93-\ud81b\udf9f\ud81b\udfe0-\ud81b\udfe1\ud81b\udfe3\ud81c\udc00-\ud821\udff7\ud822\udc00-\ud823\udcd5\ud823\udd00-\ud823\udd08\ud82b\udff0-\ud82b\udff3\ud82b\udff5-\ud82b\udffb\ud82b\udffd-\ud82b\udffe\ud82c\udc00-\ud82c\udd22\ud82c\udd32\ud82c\udd50-\ud82c\udd52\ud82c\udd55\ud82c\udd64-\ud82c\udd67\ud82c\udd70-\ud82c\udefb\ud82f\udc00-\ud82f\udc6a\ud82f\udc70-\ud82f\udc7c\ud82f\udc80-\ud82f\udc88\ud82f\udc90-\ud82f\udc99\ud834\udec0-\ud834\uded3\ud834\udee0-\ud834\udef3\ud834\udf60-\ud834\udf78\ud835\udc00-\ud835\udc54\ud835\udc56-\ud835\udc9c\ud835\udc9e-\ud835\udc9f\ud835\udca2\ud835\udca5-\ud835\udca6\ud835\udca9-\ud835\udcac\ud835\udcae-\ud835\udcb9\ud835\udcbb\ud835\udcbd-\ud835\udcc3\ud835\udcc5-\ud835\udd05\ud835\udd07-\ud835\udd0a\ud835\udd0d-\ud835\udd14\ud835\udd16-\ud835\udd1c\ud835\udd1e-\ud835\udd39\ud835\udd3b-\ud835\udd3e\ud835\udd40-\ud835\udd44\ud835\udd46\ud835\udd4a-\ud835\udd50\ud835\udd52-\ud835\udea5\ud835\udea8-\ud835\udec0\ud835\udec2-\ud835\udeda\ud835\udedc-\ud835\udefa\ud835\udefc-\ud835\udf14\ud835\udf16-\ud835\udf34\ud835\udf36-\ud835\udf4e\ud835\udf50-\ud835\udf6e\ud835\udf70-\ud835\udf88\ud835\udf8a-\ud835\udfa8\ud835\udfaa-\ud835\udfc2\ud835\udfc4-\ud835\udfcb\ud835\udfce-\ud835\udfff\ud837\udf00-\ud837\udf1e\ud837\udf25-\ud837\udf2a\ud838\udc30-\ud838\udc6d\ud838\udd00-\ud838\udd2c\ud838\udd37-\ud838\udd3d\ud838\udd40-\ud838\udd49\ud838\udd4e\ud838\ude90-\ud838\udead\ud838\udec0-\ud838\udeeb\ud838\udef0-\ud838\udef9\ud839\udcd0-\ud839\udceb\ud839\udcf0-\ud839\udcf9\ud839\udfe0-\ud839\udfe6\ud839\udfe8-\ud839\udfeb\ud839\udfed-\ud839\udfee\ud839\udff0-\ud839\udffe\ud83a\udc00-\ud83a\udcc4\ud83a\udcc7-\ud83a\udccf\ud83a\udd00-\ud83a\udd43\ud83a\udd4b\ud83a\udd50-\ud83a\udd59\ud83b\udc71-\ud83b\udcab\ud83b\udcad-\ud83b\udcaf\ud83b\udcb1-\ud83b\udcb4\ud83b\udd01-\ud83b\udd2d\ud83b\udd2f-\ud83b\udd3d\ud83b\ude00-\ud83b\ude03\ud83b\ude05-\ud83b\ude1f\ud83b\ude21-\ud83b\ude22\ud83b\ude24\ud83b\ude27\ud83b\ude29-\ud83b\ude32\ud83b\ude34-\ud83b\ude37\ud83b\ude39\ud83b\ude3b\ud83b\ude42\ud83b\ude47\ud83b\ude49\ud83b\ude4b\ud83b\ude4d-\ud83b\ude4f\ud83b\ude51-\ud83b\ude52\ud83b\ude54\ud83b\ude57\ud83b\ude59\ud83b\ude5b\ud83b\ude5d\ud83b\ude5f\ud83b\ude61-\ud83b\ude62\ud83b\ude64\ud83b\ude67-\ud83b\ude6a\ud83b\ude6c-\ud83b\ude72\ud83b\ude74-\ud83b\ude77\ud83b\ude79-\ud83b\ude7c\ud83b\ude7e\ud83b\ude80-\ud83b\ude89\ud83b\ude8b-\ud83b\ude9b\ud83b\udea1-\ud83b\udea3\ud83b\udea5-\ud83b\udea9\ud83b\udeab-\ud83b\udebb\ud83c\udd00-\ud83c\udd0c\ud83e\udff0-\ud83e\udff9\ud840\udc00-\ud869\udedf\ud869\udf00-\ud86d\udf39\ud86d\udf40-\ud86e\udc1d\ud86e\udc20-\ud873\udea1\ud873\udeb0-\ud87a\udfe0\ud87a\udff0-\ud87b\ude5d\ud87e\udc00-\ud87e\ude1d\ud880\udc00-\ud884\udf4a\ud884\udf50-\ud888\udfaf])(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)(?:\\z|[^0-9A-Z_a-z\u00aa\u00b2-\u00b3\u00b5\u00b9-\u00ba\u00bc-\u00be\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376-\u0377\u037a-\u037d\u037f\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u052f\u0531-\u0556\u0559\u0560-\u0588\u05d0-\u05ea\u05ef-\u05f2\u0620-\u064a\u0660-\u0669\u066e-\u066f\u0671-\u06d3\u06d5\u06e5-\u06e6\u06ee-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07c0-\u07ea\u07f4-\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u0860-\u086a\u0870-\u0887\u0889-\u088e\u08a0-\u08c9\u0904-\u0939\u093d\u0950\u0958-\u0961\u0966-\u096f\u0971-\u0980\u0985-\u098c\u098f-\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc-\u09dd\u09df-\u09e1\u09e6-\u09f1\u09f4-\u09f9\u09fc\u0a05-\u0a0a\u0a0f-\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32-\u0a33\u0a35-\u0a36\u0a38-\u0a39\u0a59-\u0a5c\u0a5e\u0a66-\u0a6f\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2-\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0-\u0ae1\u0ae6-\u0aef\u0af9\u0b05-\u0b0c\u0b0f-\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32-\u0b33\u0b35-\u0b39\u0b3d\u0b5c-\u0b5d\u0b5f-\u0b61\u0b66-\u0b6f\u0b71-\u0b77\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99-\u0b9a\u0b9c\u0b9e-\u0b9f\u0ba3-\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0be6-\u0bf2\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c39\u0c3d\u0c58-\u0c5a\u0c5d\u0c60-\u0c61\u0c66-\u0c6f\u0c78-\u0c7e\u0c80\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cdd-\u0cde\u0ce0-\u0ce1\u0ce6-\u0cef\u0cf1-\u0cf2\u0d04-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d54-\u0d56\u0d58-\u0d61\u0d66-\u0d78\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0de6-\u0def\u0e01-\u0e30\u0e32-\u0e33\u0e40-\u0e46\u0e50-\u0e59\u0e81-\u0e82\u0e84\u0e86-\u0e8a\u0e8c-\u0ea3\u0ea5\u0ea7-\u0eb0\u0eb2-\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0ed0-\u0ed9\u0edc-\u0edf\u0f00\u0f20-\u0f33\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f-\u1049\u1050-\u1055\u105a-\u105d\u1061\u1065-\u1066\u106e-\u1070\u1075-\u1081\u108e\u1090-\u1099\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1369-\u137c\u1380-\u138f\u13a0-\u13f5\u13f8-\u13fd\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f8\u1700-\u1711\u171f-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u17e0-\u17e9\u17f0-\u17f9\u1810-\u1819\u1820-\u1878\u1880-\u1884\u1887-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191e\u1946-\u196d\u1970-\u1974\u1980-\u19ab\u19b0-\u19c9\u19d0-\u19da\u1a00-\u1a16\u1a20-\u1a54\u1a80-\u1a89\u1a90-\u1a99\u1aa7\u1b05-\u1b33\u1b45-\u1b4c\u1b50-\u1b59\u1b83-\u1ba0\u1bae-\u1be5\u1c00-\u1c23\u1c40-\u1c49\u1c4d-\u1c7d\u1c80-\u1c88\u1c90-\u1cba\u1cbd-\u1cbf\u1ce9-\u1cec\u1cee-\u1cf3\u1cf5-\u1cf6\u1cfa\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2070-\u2071\u2074-\u2079\u207f-\u2089\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2119-\u211d\u2124\u2126\u2128\u212a-\u212d\u212f-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2150-\u2189\u2460-\u249b\u24ea-\u24ff\u2776-\u2793\u2c00-\u2ce4\u2ceb-\u2cee\u2cf2-\u2cf3\u2cfd\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u2e2f\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312f\u3131-\u318e\u3192-\u3195\u31a0-\u31bf\u31f0-\u31ff\u3220-\u3229\u3248-\u324f\u3251-\u325f\u3280-\u3289\u32b1-\u32bf\u3400-\u4dbf\u4e00-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua62b\ua640-\ua66e\ua67f-\ua69d\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua7ca\ua7d0-\ua7d1\ua7d3\ua7d5-\ua7d9\ua7f2-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua830-\ua835\ua840-\ua873\ua882-\ua8b3\ua8d0-\ua8d9\ua8f2-\ua8f7\ua8fb\ua8fd-\ua8fe\ua900-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf-\ua9d9\ua9e0-\ua9e4\ua9e6-\ua9fe\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa50-\uaa59\uaa60-\uaa76\uaa7a\uaa7e-\uaaaf\uaab1\uaab5-\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uab30-\uab5a\uab5c-\uab69\uab70-\uabe2\uabf0-\uabf9\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40-\ufb41\ufb43-\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff10-\uff19\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc\ud800\udc00-\ud800\udc0b\ud800\udc0d-\ud800\udc26\ud800\udc28-\ud800\udc3a\ud800\udc3c-\ud800\udc3d\ud800\udc3f-\ud800\udc4d\ud800\udc50-\ud800\udc5d\ud800\udc80-\ud800\udcfa\ud800\udd07-\ud800\udd33\ud800\udd40-\ud800\udd78\ud800\udd8a-\ud800\udd8b\ud800\ude80-\ud800\ude9c\ud800\udea0-\ud800\uded0\ud800\udee1-\ud800\udefb\ud800\udf00-\ud800\udf23\ud800\udf2d-\ud800\udf4a\ud800\udf50-\ud800\udf75\ud800\udf80-\ud800\udf9d\ud800\udfa0-\ud800\udfc3\ud800\udfc8-\ud800\udfcf\ud800\udfd1-\ud800\udfd5\ud801\udc00-\ud801\udc9d\ud801\udca0-\ud801\udca9\ud801\udcb0-\ud801\udcd3\ud801\udcd8-\ud801\udcfb\ud801\udd00-\ud801\udd27\ud801\udd30-\ud801\udd63\ud801\udd70-\ud801\udd7a\ud801\udd7c-\ud801\udd8a\ud801\udd8c-\ud801\udd92\ud801\udd94-\ud801\udd95\ud801\udd97-\ud801\udda1\ud801\udda3-\ud801\uddb1\ud801\uddb3-\ud801\uddb9\ud801\uddbb-\ud801\uddbc\ud801\ude00-\ud801\udf36\ud801\udf40-\ud801\udf55\ud801\udf60-\ud801\udf67\ud801\udf80-\ud801\udf85\ud801\udf87-\ud801\udfb0\ud801\udfb2-\ud801\udfba\ud802\udc00-\ud802\udc05\ud802\udc08\ud802\udc0a-\ud802\udc35\ud802\udc37-\ud802\udc38\ud802\udc3c\ud802\udc3f-\ud802\udc55\ud802\udc58-\ud802\udc76\ud802\udc79-\ud802\udc9e\ud802\udca7-\ud802\udcaf\ud802\udce0-\ud802\udcf2\ud802\udcf4-\ud802\udcf5\ud802\udcfb-\ud802\udd1b\ud802\udd20-\ud802\udd39\ud802\udd80-\ud802\uddb7\ud802\uddbc-\ud802\uddcf\ud802\uddd2-\ud802\ude00\ud802\ude10-\ud802\ude13\ud802\ude15-\ud802\ude17\ud802\ude19-\ud802\ude35\ud802\ude40-\ud802\ude48\ud802\ude60-\ud802\ude7e\ud802\ude80-\ud802\ude9f\ud802\udec0-\ud802\udec7\ud802\udec9-\ud802\udee4\ud802\udeeb-\ud802\udeef\ud802\udf00-\ud802\udf35\ud802\udf40-\ud802\udf55\ud802\udf58-\ud802\udf72\ud802\udf78-\ud802\udf91\ud802\udfa9-\ud802\udfaf\ud803\udc00-\ud803\udc48\ud803\udc80-\ud803\udcb2\ud803\udcc0-\ud803\udcf2\ud803\udcfa-\ud803\udd23\ud803\udd30-\ud803\udd39\ud803\ude60-\ud803\ude7e\ud803\ude80-\ud803\udea9\ud803\udeb0-\ud803\udeb1\ud803\udf00-\ud803\udf27\ud803\udf30-\ud803\udf45\ud803\udf51-\ud803\udf54\ud803\udf70-\ud803\udf81\ud803\udfb0-\ud803\udfcb\ud803\udfe0-\ud803\udff6\ud804\udc03-\ud804\udc37\ud804\udc52-\ud804\udc6f\ud804\udc71-\ud804\udc72\ud804\udc75\ud804\udc83-\ud804\udcaf\ud804\udcd0-\ud804\udce8\ud804\udcf0-\ud804\udcf9\ud804\udd03-\ud804\udd26\ud804\udd36-\ud804\udd3f\ud804\udd44\ud804\udd47\ud804\udd50-\ud804\udd72\ud804\udd76\ud804\udd83-\ud804\uddb2\ud804\uddc1-\ud804\uddc4\ud804\uddd0-\ud804\uddda\ud804\udddc\ud804\udde1-\ud804\uddf4\ud804\ude00-\ud804\ude11\ud804\ude13-\ud804\ude2b\ud804\ude3f-\ud804\ude40\ud804\ude80-\ud804\ude86\ud804\ude88\ud804\ude8a-\ud804\ude8d\ud804\ude8f-\ud804\ude9d\ud804\ude9f-\ud804\udea8\ud804\udeb0-\ud804\udede\ud804\udef0-\ud804\udef9\ud804\udf05-\ud804\udf0c\ud804\udf0f-\ud804\udf10\ud804\udf13-\ud804\udf28\ud804\udf2a-\ud804\udf30\ud804\udf32-\ud804\udf33\ud804\udf35-\ud804\udf39\ud804\udf3d\ud804\udf50\ud804\udf5d-\ud804\udf61\ud805\udc00-\ud805\udc34\ud805\udc47-\ud805\udc4a\ud805\udc50-\ud805\udc59\ud805\udc5f-\ud805\udc61\ud805\udc80-\ud805\udcaf\ud805\udcc4-\ud805\udcc5\ud805\udcc7\ud805\udcd0-\ud805\udcd9\ud805\udd80-\ud805\uddae\ud805\uddd8-\ud805\udddb\ud805\ude00-\ud805\ude2f\ud805\ude44\ud805\ude50-\ud805\ude59\ud805\ude80-\ud805\udeaa\ud805\udeb8\ud805\udec0-\ud805\udec9\ud805\udf00-\ud805\udf1a\ud805\udf30-\ud805\udf3b\ud805\udf40-\ud805\udf46\ud806\udc00-\ud806\udc2b\ud806\udca0-\ud806\udcf2\ud806\udcff-\ud806\udd06\ud806\udd09\ud806\udd0c-\ud806\udd13\ud806\udd15-\ud806\udd16\ud806\udd18-\ud806\udd2f\ud806\udd3f\ud806\udd41\ud806\udd50-\ud806\udd59\ud806\udda0-\ud806\udda7\ud806\uddaa-\ud806\uddd0\ud806\udde1\ud806\udde3\ud806\ude00\ud806\ude0b-\ud806\ude32\ud806\ude3a\ud806\ude50\ud806\ude5c-\ud806\ude89\ud806\ude9d\ud806\udeb0-\ud806\udef8\ud807\udc00-\ud807\udc08\ud807\udc0a-\ud807\udc2e\ud807\udc40\ud807\udc50-\ud807\udc6c\ud807\udc72-\ud807\udc8f\ud807\udd00-\ud807\udd06\ud807\udd08-\ud807\udd09\ud807\udd0b-\ud807\udd30\ud807\udd46\ud807\udd50-\ud807\udd59\ud807\udd60-\ud807\udd65\ud807\udd67-\ud807\udd68\ud807\udd6a-\ud807\udd89\ud807\udd98\ud807\udda0-\ud807\udda9\ud807\udee0-\ud807\udef2\ud807\udf02\ud807\udf04-\ud807\udf10\ud807\udf12-\ud807\udf33\ud807\udf50-\ud807\udf59\ud807\udfb0\ud807\udfc0-\ud807\udfd4\ud808\udc00-\ud808\udf99\ud809\udc00-\ud809\udc6e\ud809\udc80-\ud809\udd43\ud80b\udf90-\ud80b\udff0\ud80c\udc00-\ud80d\udc2f\ud80d\udc41-\ud80d\udc46\ud811\udc00-\ud811\ude46\ud81a\udc00-\ud81a\ude38\ud81a\ude40-\ud81a\ude5e\ud81a\ude60-\ud81a\ude69\ud81a\ude70-\ud81a\udebe\ud81a\udec0-\ud81a\udec9\ud81a\uded0-\ud81a\udeed\ud81a\udf00-\ud81a\udf2f\ud81a\udf40-\ud81a\udf43\ud81a\udf50-\ud81a\udf59\ud81a\udf5b-\ud81a\udf61\ud81a\udf63-\ud81a\udf77\ud81a\udf7d-\ud81a\udf8f\ud81b\ude40-\ud81b\ude96\ud81b\udf00-\ud81b\udf4a\ud81b\udf50\ud81b\udf93-\ud81b\udf9f\ud81b\udfe0-\ud81b\udfe1\ud81b\udfe3\ud81c\udc00-\ud821\udff7\ud822\udc00-\ud823\udcd5\ud823\udd00-\ud823\udd08\ud82b\udff0-\ud82b\udff3\ud82b\udff5-\ud82b\udffb\ud82b\udffd-\ud82b\udffe\ud82c\udc00-\ud82c\udd22\ud82c\udd32\ud82c\udd50-\ud82c\udd52\ud82c\udd55\ud82c\udd64-\ud82c\udd67\ud82c\udd70-\ud82c\udefb\ud82f\udc00-\ud82f\udc6a\ud82f\udc70-\ud82f\udc7c\ud82f\udc80-\ud82f\udc88\ud82f\udc90-\ud82f\udc99\ud834\udec0-\ud834\uded3\ud834\udee0-\ud834\udef3\ud834\udf60-\ud834\udf78\ud835\udc00-\ud835\udc54\ud835\udc56-\ud835\udc9c\ud835\udc9e-\ud835\udc9f\ud835\udca2\ud835\udca5-\ud835\udca6\ud835\udca9-\ud835\udcac\ud835\udcae-\ud835\udcb9\ud835\udcbb\ud835\udcbd-\ud835\udcc3\ud835\udcc5-\ud835\udd05\ud835\udd07-\ud835\udd0a\ud835\udd0d-\ud835\udd14\ud835\udd16-\ud835\udd1c\ud835\udd1e-\ud835\udd39\ud835\udd3b-\ud835\udd3e\ud835\udd40-\ud835\udd44\ud835\udd46\ud835\udd4a-\ud835\udd50\ud835\udd52-\ud835\udea5\ud835\udea8-\ud835\udec0\ud835\udec2-\ud835\udeda\ud835\udedc-\ud835\udefa\ud835\udefc-\ud835\udf14\ud835\udf16-\ud835\udf34\ud835\udf36-\ud835\udf4e\ud835\udf50-\ud835\udf6e\ud835\udf70-\ud835\udf88\ud835\udf8a-\ud835\udfa8\ud835\udfaa-\ud835\udfc2\ud835\udfc4-\ud835\udfcb\ud835\udfce-\ud835\udfff\ud837\udf00-\ud837\udf1e\ud837\udf25-\ud837\udf2a\ud838\udc30-\ud838\udc6d\ud838\udd00-\ud838\udd2c\ud838\udd37-\ud838\udd3d\ud838\udd40-\ud838\udd49\ud838\udd4e\ud838\ude90-\ud838\udead\ud838\udec0-\ud838\udeeb\ud838\udef0-\ud838\udef9\ud839\udcd0-\ud839\udceb\ud839\udcf0-\ud839\udcf9\ud839\udfe0-\ud839\udfe6\ud839\udfe8-\ud839\udfeb\ud839\udfed-\ud839\udfee\ud839\udff0-\ud839\udffe\ud83a\udc00-\ud83a\udcc4\ud83a\udcc7-\ud83a\udccf\ud83a\udd00-\ud83a\udd43\ud83a\udd4b\ud83a\udd50-\ud83a\udd59\ud83b\udc71-\ud83b\udcab\ud83b\udcad-\ud83b\udcaf\ud83b\udcb1-\ud83b\udcb4\ud83b\udd01-\ud83b\udd2d\ud83b\udd2f-\ud83b\udd3d\ud83b\ude00-\ud83b\ude03\ud83b\ude05-\ud83b\ude1f\ud83b\ude21-\ud83b\ude22\ud83b\ude24\ud83b\ude27\ud83b\ude29-\ud83b\ude32\ud83b\ude34-\ud83b\ude37\ud83b\ude39\ud83b\ude3b\ud83b\ude42\ud83b\ude47\ud83b\ude49\ud83b\ude4b\ud83b\ude4d-\ud83b\ude4f\ud83b\ude51-\ud83b\ude52\ud83b\ude54\ud83b\ude57\ud83b\ude59\ud83b\ude5b\ud83b\ude5d\ud83b\ude5f\ud83b\ude61-\ud83b\ude62\ud83b\ude64\ud83b\ude67-\ud83b\ude6a\ud83b\ude6c-\ud83b\ude72\ud83b\ude74-\ud83b\ude77\ud83b\ude79-\ud83b\ude7c\ud83b\ude7e\ud83b\ude80-\ud83b\ude89\ud83b\ude8b-\ud83b\ude9b\ud83b\udea1-\ud83b\udea3\ud83b\udea5-\ud83b\udea9\ud83b\udeab-\ud83b\udebb\ud83c\udd00-\ud83c\udd0c\ud83e\udff0-\ud83e\udff9\ud840\udc00-\ud869\udedf\ud869\udf00-\ud86d\udf39\ud86d\udf40-\ud86e\udc1d\ud86e\udc20-\ud873\udea1\ud873\udeb0-\ud87a\udfe0\ud87a\udff0-\ud87b\ude5d\ud87e\udc00-\ud87e\ude1d\ud880\udc00-\ud884\udf4a\ud884\udf50-\ud888\udfaf])'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-060' AS issue,'Fusion legality predicate '||(n.name)||'() is outside effects.py. Move legality decisions into EffectSummary.placement_after() and have passes/strategies consume PlacementDecision instead.' AS message,n.id||':PV2-060:'||(n.id) AS identity,4 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename NOT IN ('effects.py','adapter.py') AND n.kind='FunctionDef' AND n.name IN ('can_share_statement_after','conflicts_with','placement_after','repeated_write_keys')"
+          },
+          {
+            "name": "optimizer_findings_4",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-060' AS issue,'Direct legality fact access '||(char(39)||n.name||char(39))||' outside effects.py. Ask EffectSummary.placement_after() for a PlacementDecision instead of re-implementing fusion predicates in passes or strategies.' AS message,n.id||':PV2-060:'||(n.id) AS identity,4 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename NOT IN ('effects.py','adapter.py') AND n.kind='Attribute' AND n.name IN ('cte_rewritable_read_tables','estimated_param_count','has_unbounded_params','requires_materialized_inputs','requires_prior_statement_visibility_after_writes','requires_runtime_sequential_batch','supports_sql_batch_transport') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-060' AS issue,'can_share_statement_after() is a legacy compatibility helper. Use EffectSummary.placement_after() and assert the returned BoundaryKind set in tests.' AS message,n.id||':PV2-060:'||(n.id) AS identity,4 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename NOT IN ('effects.py','adapter.py') AND n.callee_kind='Attribute' AND n.callee='can_share_statement_after' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-044' AS issue,'File has '||(file.line_count)||' lines (cap '||'600'||'). Split it so each v2 file stays small enough for a less-capable LLM to edit whole.' AS message,n.id||':PV2-044:'||(-1) AS identity,5 AS phase,-1 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='Module' AND (file.line_count)>600 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-042' AS issue,'Attribute mutation outside __init__/__post_init__. v2 plan nodes and passes are immutable; use dataclasses.replace() or with_ref_rewrite() to produce updated copies.' AS message,n.id||':PV2-042:'||(n.id) AS identity,5 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE n.kind='Assign' AND EXISTS(SELECT 1 FROM a t WHERE t.__path=n.__path AND t.parent=n.id AND t.field='targets' AND (t.position=0 AND t.kind='Attribute')) AND NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND n.id BETWEEN f.id AND f.last AND f.name IN ('__init__','__post_init__'))"
+          },
+          {
+            "name": "optimizer_findings_5",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-040' AS issue,'Pass class '||(n.name)||' must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures.' AS message,n.id||':PV2-040:'||(n.id) AS identity,5 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM pass_classes n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename='passes.py' AND (n.declared_phase IS NULL OR NOT EXISTS(SELECT 1 FROM a stmt JOIN a target ON target.__path=stmt.__path AND target.parent=stmt.id AND target.field='target' AND target.kind='Name' AND target.name='name' WHERE stmt.__path=n.__path AND stmt.parent=n.id AND stmt.kind='AnnAssign') OR NOT EXISTS(SELECT 1 FROM functions f WHERE f.__path=n.__path AND f.parent=n.id AND f.kind='FunctionDef' AND f.name='run')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-041' AS issue,'DEFAULT_V2_PASSES phases are not in NORMALIZE -> ANALYZE -> PHYSICAL order. Reorder the pipeline so semantic rewrites run before ordering and ordering runs before physical grouping.' AS message,n.id||':PV2-041:'||(n.id) AS identity,5 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename='passes.py' AND n.parent=0 AND n.kind IN ('Assign','AnnAssign') AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (v.kind='Tuple')) AND EXISTS(SELECT 1 FROM a t WHERE t.__path=n.__path AND t.parent=n.id AND t.field IN ('target','targets') AND t.position=0 AND t.kind='Name' AND t.name='DEFAULT_V2_PASSES') AND EXISTS(SELECT 1 FROM pipeline_entries first JOIN pipeline_entries later ON later.__path=first.__path AND later.assignment=first.assignment AND later.position>first.position AND later.phase<first.phase WHERE first.__path=n.__path AND first.assignment=n.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-043' AS issue,'run_verified_passes() must run PlanVerifier after every pass. Add the verifier call back; unverified rewrites are how legacy scoping bugs escaped to compile/execute time.' AS message,n.id||':PV2-043:'||(n.id) AS identity,5 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions n JOIN optimizer_files file ON file.__path=n.__path WHERE file.basename='passes.py' AND n.parent=0 AND n.kind='FunctionDef' AND n.name='run_verified_passes' AND NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.id BETWEEN n.id AND n.last AND (v.kind='Name' AND v.name='PlanVerifier'))"
+          }
+        ],
+        "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY path,issue,line ORDER BY phase,ordering) chosen FROM (SELECT * FROM optimizer_findings_0 UNION ALL SELECT * FROM optimizer_findings_1 UNION ALL SELECT * FROM optimizer_findings_2 UNION ALL SELECT * FROM optimizer_findings_3 UNION ALL SELECT * FROM optimizer_findings_4 UNION ALL SELECT * FROM optimizer_findings_5)) WHERE chosen=1",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "optimizer-invariant-registry",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
+          "doc_codes": {
+            "evidence": {
+              "as": "d",
+              "query": {
+                "regex": {
+                  "source": "file.content",
+                  "pattern": "`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`"
+                }
+              },
+              "project": {
+                "code": "capture.CODE"
+              }
+            }
+          },
+          "documents": {
+            "evidence": {
+              "as": "doc",
+              "query": {
+                "regex": {
+                  "source": "file.content",
+                  "pattern": "(?s)\\A(?P<TEXT>.*)\\z"
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_value_repr"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "registered_invariants",
+            "query": "SELECT n.*,v.value invariant,v.value_repr invariant_repr FROM calls n JOIN a kw ON kw.__path=n.__path AND kw.parent=n.id AND kw.kind='keyword' AND kw.name='code' JOIN a v ON v.__path=kw.__path AND v.parent=kw.id AND v.field='value' AND v.kind='Constant' AND v.value_kind='str' WHERE n.__path='impl/common/l2065_plan_core/verifier.py' AND n.callee_kind='Name' AND n.callee='OptimizerInvariant'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_file": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-050' AS issue,'Invariant code '||n.invariant_repr||' is registered in OPTIMIZER_INVARIANTS but missing from '||'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md'||'. Add a doc row for it so maintainers can discover the invariant without reading source.' AS message,n.id||':PV2-050:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM doc_codes d WHERE d.__path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' AND d.code=n.invariant) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-052' AS issue,'Invariant code '||n.invariant_repr||' is never cited as ''('||(n.invariant)||')'' in a verifier error message. Add the code citation to the corresponding PlanVerificationError message so failures map back to the registry.' AS message,n.id||':PV2-052:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND instr(source_text(n.__path),'('||n.invariant||')')=0) WHERE 0",
+            "find_violations": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-050' AS issue,'Invariant code '||n.invariant_repr||' is registered in OPTIMIZER_INVARIANTS but missing from '||'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md'||'. Add a doc row for it so maintainers can discover the invariant without reading source.' AS message,n.id||':PV2-050:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM doc_codes d WHERE d.__path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' AND d.code=n.invariant) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-052' AS issue,'Invariant code '||n.invariant_repr||' is never cited as ''('||(n.invariant)||')'' in a verifier error message. Add the code citation to the corresponding PlanVerificationError message so failures map back to the registry.' AS message,n.id||':PV2-052:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND instr(source_text(n.__path),'('||n.invariant||')')=0 UNION ALL SELECT 'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' path,0 start_byte,0 end_byte,1 line,'PV2-050' issue,'Missing invariants design doc '||'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md'||'. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint.' message,'missing-document' identity,0 phase,0 ordering,'' symbol,'' sort_name WHERE NOT (source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL) UNION ALL SELECT d.__path path,0 start_byte,length(CAST(source_text(d.__path) AS BLOB)) end_byte,1 line,'PV2-051' issue,'Doc lists invariant code '||(char(39)||d.code||char(39))||' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in '||'impl/common/l2065_plan_core/verifier.py'||'.' message,d.code identity,0 phase,0 ordering,'' symbol,'' sort_name FROM doc_codes d WHERE d.__path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' AND NOT EXISTS(SELECT 1 FROM registered_invariants r WHERE r.invariant=d.code) GROUP BY d.__path,d.code"
+          },
+          "default": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-050' AS issue,'Invariant code '||n.invariant_repr||' is registered in OPTIMIZER_INVARIANTS but missing from '||'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md'||'. Add a doc row for it so maintainers can discover the invariant without reading source.' AS message,n.id||':PV2-050:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM doc_codes d WHERE d.__path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' AND d.code=n.invariant) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'PV2-052' AS issue,'Invariant code '||n.invariant_repr||' is never cited as ''('||(n.invariant)||')'' in a verifier error message. Add the code citation to the corresponding PlanVerificationError message so failures map back to the registry.' AS message,n.id||':PV2-052:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM registered_invariants n WHERE source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL AND instr(source_text(n.__path),'('||n.invariant||')')=0 UNION ALL SELECT 'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' path,0 start_byte,0 end_byte,1 line,'PV2-050' issue,'Missing invariants design doc '||'docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md'||'. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint.' message,'missing-document' identity,0 phase,0 ordering,'' symbol,'' sort_name WHERE NOT (source_text('docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md') IS NOT NULL) UNION ALL SELECT d.__path path,0 start_byte,length(CAST(source_text(d.__path) AS BLOB)) end_byte,1 line,'PV2-051' issue,'Doc lists invariant code '||(char(39)||d.code||char(39))||' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in '||'impl/common/l2065_plan_core/verifier.py'||'.' message,d.code identity,0 phase,0 ordering,'' symbol,'' sort_name FROM doc_codes d WHERE d.__path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md' AND NOT EXISTS(SELECT 1 FROM registered_invariants r WHERE r.invariant=d.code) GROUP BY d.__path,d.code) WHERE source_text('impl/common/l2065_plan_core/verifier.py') IS NOT NULL"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "locations": [
+          "impl/common/l2065_plan_core/verifier.py",
+          "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md"
+        ],
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

@@ -1,0 +1,3264 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-serverplan-target-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer serverplan_target_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2065_plan_core/**/*.py",
+      "impl/common/l2066_plan_optimizer/**/*.py",
+      "impl/common/l2070_server_plan/**/*.py",
+      "impl/common/l7300_sql_versioned_transactions/**/*.py",
+      "impl/common/l9700_sql_graph_query/**/*.py",
+      "l2070_batching/**/*.py",
+      "l9900_auto_api/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**",
+      "**/tests/**",
+      "**/test_*.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "requiredShape": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "legacy-symbols",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "class_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:BatchedStep|BatchingStrategy|CompoundSequenceStrategy|DependentReadCteStrategy|HomogeneousCteStrategy|JsonAggregationStrategy|SqliteReadSiblingBatchStrategy)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA004",
+        "message": "legacy-symbols",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "backend-names",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "kind": "function_definition"
+                      }
+                    ]
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^(?:impl/common/l2070_server_plan/|l2070_batching/)",
+                      "notRegex": "^impl/common/l2070_server_plan/codegen/"
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "regex": "(?i)doltdb|mariadb|mongodb|mysql|neo4j|postgres|sqlite"
+                        },
+                        {
+                          "regex": "(?i)batch|coalesce|strategy|transport"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA009",
+        "message": "backend-names",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "executor-parameters",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/executor\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "any": [
+                                      {
+                                        "kind": "list_splat_pattern"
+                                      },
+                                      {
+                                        "kind": "dictionary_splat_pattern"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "any": [
+                                {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "attribute",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "keyword_argument",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "regex": "^ServerPlanStep$"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "attribute",
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          },
+                                          {
+                                            "not": {
+                                              "inside": {
+                                                "kind": "keyword_argument",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "regex": "^ServerPlanStep$"
+                                      }
+                                    ],
+                                    "stopBy": "end"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA006",
+        "message": "executor-parameters",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "executor-imports",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_from_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/executor\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "(?:\\.steps\\.|\\.steps$)",
+                      "stopBy": "neighbor",
+                      "field": "module_name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "dotted_name"
+                                },
+                                {
+                                  "pattern": "$IMPORTED"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "aliased_import"
+                                },
+                                {
+                                  "has": {
+                                    "pattern": "$IMPORTED",
+                                    "stopBy": "neighbor",
+                                    "field": "name"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "^(?:[A-Za-z_]\\w*)?(?:Step|Intent|Strategy)(?:\\s+as\\s+\\w+)?$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA005",
+        "message": "executor-imports",
+        "anchor": "witness.span",
+        "each": "IMPORTED"
+      }
+    },
+    {
+      "id": "tag-conditions",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "if_statement"
+                      },
+                      {
+                        "kind": "elif_clause"
+                      },
+                      {
+                        "kind": "conditional_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "call"
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:step_tags)$"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "attribute"
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:step_tags)$"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor",
+                                          "field": "attribute"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "function"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "call"
+                              },
+                              {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "regex": "^(?:step_tags)$"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "attribute"
+                                        },
+                                        {
+                                          "has": {
+                                            "all": [
+                                              {
+                                                "kind": "identifier"
+                                              },
+                                              {
+                                                "regex": "^(?:step_tags)$"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "neighbor",
+                                  "field": "function"
+                                }
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "condition"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA007",
+        "message": "tag-conditions",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "tag-matches",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "match_statement"
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "call"
+                                },
+                                {
+                                  "has": {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "regex": "^(?:step_tags)$"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "attribute"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "kind": "identifier"
+                                                },
+                                                {
+                                                  "regex": "^(?:step_tags)$"
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "function"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "call"
+                                  },
+                                  {
+                                    "has": {
+                                      "any": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "regex": "^(?:step_tags)$"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "attribute"
+                                            },
+                                            {
+                                              "has": {
+                                                "all": [
+                                                  {
+                                                    "kind": "identifier"
+                                                  },
+                                                  {
+                                                    "regex": "^(?:step_tags)$"
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "attribute"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "function"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "subject"
+                        }
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "case_clause"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "if_clause"
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "all": [
+                                          {
+                                            "kind": "call"
+                                          },
+                                          {
+                                            "has": {
+                                              "any": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "identifier"
+                                                    },
+                                                    {
+                                                      "regex": "^(?:step_tags)$"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "attribute"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "all": [
+                                                          {
+                                                            "kind": "identifier"
+                                                          },
+                                                          {
+                                                            "regex": "^(?:step_tags)$"
+                                                          }
+                                                        ],
+                                                        "stopBy": "neighbor",
+                                                        "field": "attribute"
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              ],
+                                              "stopBy": "neighbor",
+                                              "field": "function"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "has": {
+                                          "all": [
+                                            {
+                                              "kind": "call"
+                                            },
+                                            {
+                                              "has": {
+                                                "any": [
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "identifier"
+                                                      },
+                                                      {
+                                                        "regex": "^(?:step_tags)$"
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "all": [
+                                                      {
+                                                        "kind": "attribute"
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "identifier"
+                                                            },
+                                                            {
+                                                              "regex": "^(?:step_tags)$"
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor",
+                                                          "field": "attribute"
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor",
+                                                "field": "function"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA007",
+        "message": "tag-matches",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "strategy-getattr",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:getattr)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:getattr)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^impl/common/l2070_server_plan/strategies/"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "string"
+                                  },
+                                  {
+                                    "kind": "concatenated_string"
+                                  }
+                                ]
+                              },
+                              {
+                                "value": {
+                                  "regex": "^(?:_stmt|_grammar|grammar)$"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA008",
+        "message": "strategy-getattr",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "strategy-isinstance",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "call"
+                      },
+                      {
+                        "has": {
+                          "any": [
+                            {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:isinstance)$"
+                                }
+                              ]
+                            },
+                            {
+                              "all": [
+                                {
+                                  "kind": "attribute"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^(?:isinstance)$"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "attribute"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "function"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^impl/common/l2070_server_plan/strategies/"
+                    }
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "attribute",
+                                            "stopBy": "neighbor",
+                                            "field": "attribute"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "kind": "keyword_argument",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "regex": "^Sql|Grammar$|Stmt$"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "all": [
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "attribute",
+                                              "stopBy": "neighbor",
+                                              "field": "attribute"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "kind": "keyword_argument",
+                                              "stopBy": "neighbor",
+                                              "field": "name"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "regex": "^Sql|Grammar$|Stmt$"
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "arguments"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA008",
+        "message": "strategy-isinstance",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-physical_program.py-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_from_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/physical_program\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection|l2050_transaction)",
+                      "stopBy": "neighbor",
+                      "field": "module_name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-physical_program.py-from",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-physical_program.py-direct",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/physical_program\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "pattern": "$IMPORT"
+                            },
+                            {
+                              "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection|l2050_transaction)"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "pattern": "$IMPORT"
+                                  },
+                                  {
+                                    "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection|l2050_transaction)"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-physical_program.py-direct",
+        "anchor": "witness.span",
+        "each": "IMPORT"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-planning_contract.py-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_from_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/planning_contract\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^(?:impl\\.|l2000_connection|l2050_transaction|l2100_sql_grammar)",
+                      "stopBy": "neighbor",
+                      "field": "module_name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-planning_contract.py-from",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-planning_contract.py-direct",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/planning_contract\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "pattern": "$IMPORT"
+                            },
+                            {
+                              "regex": "^(?:impl\\.|l2000_connection|l2050_transaction|l2100_sql_grammar)"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "pattern": "$IMPORT"
+                                  },
+                                  {
+                                    "regex": "^(?:impl\\.|l2000_connection|l2050_transaction|l2100_sql_grammar)"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-planning_contract.py-direct",
+        "anchor": "witness.span",
+        "each": "IMPORT"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-runtime_application.py-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_from_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/runtime_application\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection)",
+                      "stopBy": "neighbor",
+                      "field": "module_name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-runtime_application.py-from",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "imports-l2070_batching-runtime_application.py-direct",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l2070_batching/runtime_application\\.py$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "dotted_name"
+                            },
+                            {
+                              "pattern": "$IMPORT"
+                            },
+                            {
+                              "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection)"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "pattern": "$IMPORT"
+                                  },
+                                  {
+                                    "regex": "^(?:impl\\.sqlite|impl\\.postgres|impl\\.mariadb|l2000_connection)"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA012",
+        "message": "imports-l2070_batching-runtime_application.py-direct",
+        "anchor": "witness.span",
+        "each": "IMPORT"
+      }
+    },
+    {
+      "id": "receipt-accounting",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "scan_sources": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "kind": "augmented_assignment"
+                      }
+                    ]
+                  },
+                  {
+                    "filePath": {
+                      "regex": "^l9900_auto_api/"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:driver_round_trips|query_rtts|round_trips)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:driver_round_trips|query_rtts|round_trips)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "not": {
+                        "all": [
+                          {
+                            "kind": "attribute"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:execution_receipt|receipt)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "object"
+                            }
+                          }
+                        ]
+                      },
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SPTA010",
+        "message": "receipt-accounting",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "required-contracts",
+      "relational": {
+        "inputs": {
+          "raw_classes": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "pattern": "$CLASS"
+                          },
+                          {
+                            "has": {
+                              "pattern": "$NAME",
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "kind": "function_definition"
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "inside": {
+                                  "all": [
+                                    {
+                                      "kind": "decorated_definition"
+                                    },
+                                    {
+                                      "has": {
+                                        "all": [
+                                          {
+                                            "kind": "decorator"
+                                          },
+                                          {
+                                            "has": {
+                                              "all": [
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "call"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "any": [
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "identifier"
+                                                              },
+                                                              {
+                                                                "regex": "^(?:dataclass)$"
+                                                              }
+                                                            ]
+                                                          },
+                                                          {
+                                                            "all": [
+                                                              {
+                                                                "kind": "attribute"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "identifier"
+                                                                    },
+                                                                    {
+                                                                      "regex": "^(?:dataclass)$"
+                                                                    }
+                                                                  ],
+                                                                  "stopBy": "neighbor",
+                                                                  "field": "attribute"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        ],
+                                                        "stopBy": "neighbor",
+                                                        "field": "function"
+                                                      }
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "has": {
+                                                    "all": [
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "keyword_argument"
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "pattern": "frozen",
+                                                                "stopBy": "neighbor",
+                                                                "field": "name"
+                                                              }
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "pattern": "True",
+                                                                "stopBy": "neighbor",
+                                                                "field": "value"
+                                                              }
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor"
+                                                        }
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "all": [
+                                                            {
+                                                              "kind": "keyword_argument"
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "pattern": "slots",
+                                                                "stopBy": "neighbor",
+                                                                "field": "name"
+                                                              }
+                                                            },
+                                                            {
+                                                              "has": {
+                                                                "pattern": "True",
+                                                                "stopBy": "neighbor",
+                                                                "field": "value"
+                                                              }
+                                                            }
+                                                          ],
+                                                          "stopBy": "neighbor"
+                                                        }
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor",
+                                                    "field": "arguments"
+                                                  }
+                                                }
+                                              ],
+                                              "stopBy": "neighbor"
+                                            }
+                                          }
+                                        ],
+                                        "stopBy": "neighbor"
+                                      }
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              },
+                              {
+                                "pattern": "$FROZEN"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME",
+                "frozen": "capture.FROZEN.startByte"
+              }
+            }
+          },
+          "raw_functions": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "pattern": "$FN"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "class_definition"
+                              }
+                            ],
+                            "stopBy": "end"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "kind": "module",
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "inside": {
+                                    "kind": "module",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME"
+              }
+            }
+          },
+          "raw_assignments": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "assignment"
+                              },
+                              {
+                                "kind": "augmented_assignment"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "$ASSIGN"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "pattern": "$NAME"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "left"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "expression_statement"
+                            },
+                            {
+                              "inside": {
+                                "kind": "module",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.NAME"
+              }
+            }
+          },
+          "raw_members": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "assignment"
+                      },
+                      {
+                        "pattern": "$ASSIGN"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "pattern": "$FIELD"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "left"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "pattern": "$TYPE",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          },
+                          {
+                            "pattern": "$_"
+                          }
+                        ]
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "expression_statement"
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "class_definition"
+                                        },
+                                        {
+                                          "pattern": "$CLASS"
+                                        },
+                                        {
+                                          "has": {
+                                            "pattern": "$NAME",
+                                            "stopBy": "neighbor",
+                                            "field": "name"
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "inside": {
+                                              "any": [
+                                                {
+                                                  "kind": "class_definition"
+                                                },
+                                                {
+                                                  "kind": "function_definition"
+                                                }
+                                              ],
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.FIELD",
+                "owner": "capture.CLASS.startByte",
+                "type": "capture.TYPE"
+              }
+            }
+          },
+          "raw_methods": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "pattern": "$METHOD"
+                      },
+                      {
+                        "has": {
+                          "pattern": "$METHOD_NAME",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "block"
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "class_definition"
+                                      },
+                                      {
+                                        "pattern": "$CLASS"
+                                      },
+                                      {
+                                        "has": {
+                                          "pattern": "$NAME",
+                                          "stopBy": "neighbor",
+                                          "field": "name"
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "inside": {
+                                            "any": [
+                                              {
+                                                "kind": "class_definition"
+                                              },
+                                              {
+                                                "kind": "function_definition"
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "all": [
+                                {
+                                  "kind": "decorated_definition"
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "block"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "pattern": "$CLASS"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$NAME",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "class_definition"
+                                                    },
+                                                    {
+                                                      "kind": "function_definition"
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.METHOD_NAME",
+                "owner": "capture.CLASS.startByte"
+              }
+            }
+          },
+          "raw_annotations": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$TOKEN"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "type"
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "assignment"
+                                  },
+                                  {
+                                    "pattern": "$ASSIGN"
+                                  },
+                                  {
+                                    "has": {
+                                      "all": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "pattern": "$FIELD"
+                                        }
+                                      ],
+                                      "stopBy": "neighbor",
+                                      "field": "left"
+                                    }
+                                  },
+                                  {
+                                    "any": [
+                                      {
+                                        "has": {
+                                          "pattern": "$TYPE",
+                                          "stopBy": "neighbor",
+                                          "field": "type"
+                                        }
+                                      },
+                                      {
+                                        "pattern": "$_"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "expression_statement"
+                                        },
+                                        {
+                                          "inside": {
+                                            "all": [
+                                              {
+                                                "kind": "block"
+                                              },
+                                              {
+                                                "inside": {
+                                                  "all": [
+                                                    {
+                                                      "kind": "class_definition"
+                                                    },
+                                                    {
+                                                      "pattern": "$CLASS"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "pattern": "$NAME",
+                                                        "stopBy": "neighbor",
+                                                        "field": "name"
+                                                      }
+                                                    },
+                                                    {
+                                                      "not": {
+                                                        "inside": {
+                                                          "any": [
+                                                            {
+                                                              "kind": "class_definition"
+                                                            },
+                                                            {
+                                                              "kind": "function_definition"
+                                                            }
+                                                          ],
+                                                          "stopBy": "end"
+                                                        }
+                                                      }
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ],
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.TOKEN",
+                "owner": "capture.CLASS.startByte",
+                "field": "capture.FIELD"
+              }
+            }
+          },
+          "raw_returns": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$TOKEN"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "pattern": "$METHOD"
+                            },
+                            {
+                              "has": {
+                                "pattern": "$METHOD_NAME",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "block"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "pattern": "$CLASS"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$NAME",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "class_definition"
+                                                    },
+                                                    {
+                                                      "kind": "function_definition"
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "decorated_definition"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "block"
+                                            },
+                                            {
+                                              "inside": {
+                                                "all": [
+                                                  {
+                                                    "kind": "class_definition"
+                                                  },
+                                                  {
+                                                    "pattern": "$CLASS"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "pattern": "$NAME",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  },
+                                                  {
+                                                    "not": {
+                                                      "inside": {
+                                                        "any": [
+                                                          {
+                                                            "kind": "class_definition"
+                                                          },
+                                                          {
+                                                            "kind": "function_definition"
+                                                          }
+                                                        ],
+                                                        "stopBy": "end"
+                                                      }
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": "end",
+                          "field": "return_type"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.TOKEN",
+                "owner": "capture.METHOD.startByte",
+                "class": "capture.CLASS.startByte",
+                "method": "capture.METHOD_NAME"
+              }
+            }
+          },
+          "raw_parameters": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$TOKEN"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "typed_parameter"
+                                },
+                                {
+                                  "kind": "typed_default_parameter"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "has": {
+                                  "any": [
+                                    {
+                                      "kind": "list_splat_pattern"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat_pattern"
+                                    }
+                                  ],
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            }
+                          ],
+                          "stopBy": "end",
+                          "field": "type"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "pattern": "$METHOD"
+                            },
+                            {
+                              "has": {
+                                "pattern": "$METHOD_NAME",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            },
+                            {
+                              "any": [
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "block"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "pattern": "$CLASS"
+                                            },
+                                            {
+                                              "has": {
+                                                "pattern": "$NAME",
+                                                "stopBy": "neighbor",
+                                                "field": "name"
+                                              }
+                                            },
+                                            {
+                                              "not": {
+                                                "inside": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "class_definition"
+                                                    },
+                                                    {
+                                                      "kind": "function_definition"
+                                                    }
+                                                  ],
+                                                  "stopBy": "end"
+                                                }
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                },
+                                {
+                                  "inside": {
+                                    "all": [
+                                      {
+                                        "kind": "decorated_definition"
+                                      },
+                                      {
+                                        "inside": {
+                                          "all": [
+                                            {
+                                              "kind": "block"
+                                            },
+                                            {
+                                              "inside": {
+                                                "all": [
+                                                  {
+                                                    "kind": "class_definition"
+                                                  },
+                                                  {
+                                                    "pattern": "$CLASS"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "pattern": "$NAME",
+                                                      "stopBy": "neighbor",
+                                                      "field": "name"
+                                                    }
+                                                  },
+                                                  {
+                                                    "not": {
+                                                      "inside": {
+                                                        "any": [
+                                                          {
+                                                            "kind": "class_definition"
+                                                          },
+                                                          {
+                                                            "kind": "function_definition"
+                                                          }
+                                                        ],
+                                                        "stopBy": "end"
+                                                      }
+                                                    }
+                                                  }
+                                                ],
+                                                "stopBy": "neighbor"
+                                              }
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ],
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              ]
+                            }
+                          ],
+                          "stopBy": {
+                            "kind": "function_definition"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.TOKEN",
+                "owner": "capture.METHOD.startByte",
+                "class": "capture.CLASS.startByte",
+                "method": "capture.METHOD_NAME"
+              }
+            }
+          },
+          "raw_bases": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$TOKEN"
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "kind": "keyword_argument",
+                            "stopBy": "end"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "kind": "argument_list"
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "class_definition"
+                                  },
+                                  {
+                                    "pattern": "$CLASS"
+                                  },
+                                  {
+                                    "has": {
+                                      "pattern": "$NAME",
+                                      "stopBy": "neighbor",
+                                      "field": "name"
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "inside": {
+                                        "any": [
+                                          {
+                                            "kind": "class_definition"
+                                          },
+                                          {
+                                            "kind": "function_definition"
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.TOKEN",
+                "owner": "capture.CLASS.startByte"
+              }
+            }
+          },
+          "raw_union_names": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "attribute",
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "keyword_argument",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "$TOKEN"
+                      },
+                      {
+                        "inside": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "assignment"
+                                    },
+                                    {
+                                      "kind": "augmented_assignment"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "pattern": "$ASSIGN"
+                                },
+                                {
+                                  "has": {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "pattern": "$NAME"
+                                      }
+                                    ],
+                                    "stopBy": "neighbor",
+                                    "field": "left"
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "expression_statement"
+                                  },
+                                  {
+                                    "inside": {
+                                      "kind": "module",
+                                      "stopBy": "neighbor"
+                                    }
+                                  }
+                                ],
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          ],
+                          "stopBy": "end",
+                          "field": "right"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "name": "capture.TOKEN",
+                "alias": "capture.NAME"
+              }
+            }
+          }
+        },
+        "stages": [
+          {
+            "name": "classes",
+            "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,name ORDER BY __start DESC) AS selected FROM raw_classes) WHERE selected=1",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ],
+              [
+                "__path",
+                "__start"
+              ]
+            ]
+          },
+          {
+            "name": "symbols",
+            "query": "SELECT __path,name FROM classes UNION SELECT __path,name FROM raw_functions UNION SELECT __path,name FROM raw_assignments",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "members",
+            "query": "SELECT * FROM raw_members",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "methods",
+            "query": "SELECT * FROM (SELECT *,row_number() OVER(PARTITION BY __path,owner,name ORDER BY __start DESC) AS selected FROM raw_methods) WHERE selected=1",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "annotations",
+            "query": "SELECT * FROM raw_annotations",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "field",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "returns",
+            "query": "SELECT * FROM raw_returns",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT * FROM raw_parameters",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "bases",
+            "query": "SELECT * FROM raw_bases",
+            "indexes": [
+              [
+                "__path",
+                "owner",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "union_names",
+            "query": "SELECT * FROM raw_union_names",
+            "indexes": [
+              [
+                "__path",
+                "alias",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "required_symbols",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS name FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\"],[\"l2070_batching/execution_receipt.py\",\"PhysicalResultSet\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\"],[\"l2070_batching/runtime_application.py\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"PopulateCacheApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\"]]')",
+            "indexes": [
+              [
+                "path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "required_fields",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"application_results\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"driver_round_trips\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"result_set_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"results\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"sql_group_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"sql_statement_count\"],[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\",\"transaction_control_count\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\",\"applications\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\",\"operation\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\",\"requests\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\",\"regions\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\",\"result_bindings\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\",\"statements\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\",\"rollback_scope_ref\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\",\"after_refs\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\",\"effect_ref\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\",\"required\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"cardinality\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"kind\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\",\"relation\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"permission_context_ref\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"scope\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\",\"validated_session_ref\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"failure_isolation\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"ordered_effects\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"python_boundary\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"recursive_query\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"result_transport\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\",\"session_context\"]]')",
+            "indexes": [
+              [
+                "path",
+                "class"
+              ]
+            ]
+          },
+          {
+            "name": "required_immutable",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class FROM json_each('[[\"l2070_batching/execution_receipt.py\",\"BackendExecutionReceipt\"],[\"l2070_batching/execution_receipt.py\",\"PhysicalResultSet\"],[\"l2070_batching/physical_program.py\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportProgram\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRequest\"],[\"l2070_batching/physical_program.py\",\"SqlStatementRegion\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationRequirement\"],[\"l2070_batching/planning_contract.py\",\"OrderedEffect\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundary\"],[\"l2070_batching/planning_contract.py\",\"RecursiveQueryRequirement\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportRequirement\"],[\"l2070_batching/planning_contract.py\",\"SessionContextRequirement\"],[\"l2070_batching/planning_contract.py\",\"StepPlanningContract\"],[\"l2070_batching/runtime_application.py\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"PopulateCacheApplication\"]]')",
+            "indexes": [
+              [
+                "path",
+                "class"
+              ]
+            ]
+          },
+          {
+            "name": "required_enums",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS class,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"SAVEPOINT\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"STATEMENT\"],[\"l2070_batching/planning_contract.py\",\"FailureIsolationKind\",\"TRANSACTION\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"CLOSED_APPLICATION\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"EXTERNAL_IO\"],[\"l2070_batching/planning_contract.py\",\"PythonBoundaryKind\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"AFFECTED_COUNT\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"GENERATED_IDENTIFIER\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"LOGICAL_ROW\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"RAW_RELATION\"],[\"l2070_batching/planning_contract.py\",\"ResultTransportKind\",\"TERMINAL_SCALAR\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"NONE\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"STATEMENT\"],[\"l2070_batching/planning_contract.py\",\"SessionContextScope\",\"TRANSACTION\"]]')",
+            "indexes": [
+              [
+                "path",
+                "class"
+              ]
+            ]
+          },
+          {
+            "name": "required_unions",
+            "query": "SELECT json_extract(value,'$[0]') AS path,json_extract(value,'$[1]') AS alias,json_extract(value,'$[2]') AS name FROM json_each('[[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"ClosedApplicationRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"ExternalIoRegion\"],[\"l2070_batching/physical_program.py\",\"PhysicalTransportRegion\",\"SqlStatementRegion\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"ApplyLifecycleEffectApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"BuildTerminalPayloadApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"DecodeAffectedCountApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"DecodeScalarApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"HydrateManyApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"HydrateOneApplication\"],[\"l2070_batching/runtime_application.py\",\"RuntimeApplication\",\"PopulateCacheApplication\"]]')",
+            "indexes": [
+              [
+                "path",
+                "alias"
+              ]
+            ]
+          }
+        ],
+        "locations": [
+          "l2070_batching/execution_receipt.py",
+          "l2070_batching/physical_executor.py",
+          "l2070_batching/physical_placement.py",
+          "l2070_batching/physical_program.py",
+          "l2070_batching/planning_contract.py",
+          "l2070_batching/runtime_application.py",
+          "l2070_batching/step.py"
+        ],
+        "query": {
+          "$option": "requiredShape",
+          "cases": {
+            "true": "SELECT path,0 AS start_byte,0 AS end_byte,symbol,issue,requirement FROM (\n SELECT r.path,r.name AS symbol,'SPTA001' AS issue,'symbol' AS requirement FROM required_symbols r\n WHERE NOT EXISTS(SELECT 1 FROM symbols s WHERE s.__path=r.path AND s.name=r.name)\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','fields' FROM required_fields r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NOT NULL)\n UNION ALL SELECT r.path,r.class,'SPTA013','immutable' FROM required_immutable r JOIN classes c ON c.__path=r.path AND c.name=r.class WHERE c.frozen IS NULL\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','enum' FROM required_enums r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=r.path AND b.owner=c.__start AND b.name='StrEnum')\n OR NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NULL)\n UNION ALL SELECT DISTINCT r.path,r.alias,'SPTA013','union' FROM required_unions r JOIN symbols s ON s.__path=r.path AND s.name=r.alias\n WHERE NOT EXISTS(SELECT 1 FROM union_names n WHERE n.__path=r.path AND n.alias=r.alias AND n.name=r.name)\n UNION ALL SELECT 'l2070_batching/step.py','ServerPlanStep.planning_contract','SPTA002','planning-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start JOIN returns r ON r.__path=m.__path AND r.owner=m.__start\n WHERE c.__path='l2070_batching/step.py' AND c.name='ServerPlanStep' AND m.name='planning_contract' AND r.name='StepPlanningContract')\n UNION ALL SELECT 'l2070_batching/physical_placement.py','ApplicationPlacementUnit.application','SPTA003','application-field' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN annotations a ON a.__path=c.__path AND a.owner=c.__start AND a.field='application'\n WHERE c.__path='l2070_batching/physical_placement.py' AND c.name='ApplicationPlacementUnit' AND a.name='RuntimeApplication')\n UNION ALL SELECT 'l2070_batching/physical_executor.py','BackendExecutor.execute_program','SPTA011','executor-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start\n JOIN returns r ON r.__path=m.__path AND r.owner=m.__start JOIN parameters p ON p.__path=m.__path AND p.owner=m.__start\n WHERE c.__path='l2070_batching/physical_executor.py' AND c.name='BackendExecutor' AND m.name='execute_program' AND r.name='BackendExecutionReceipt' AND p.name='PhysicalTransportProgram')\n )",
+            "false": "SELECT path,0 AS start_byte,0 AS end_byte,symbol,issue,requirement FROM (\n SELECT r.path,r.name AS symbol,'SPTA001' AS issue,'symbol' AS requirement FROM required_symbols r\n WHERE NOT EXISTS(SELECT 1 FROM symbols s WHERE s.__path=r.path AND s.name=r.name)\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','fields' FROM required_fields r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NOT NULL)\n UNION ALL SELECT r.path,r.class,'SPTA013','immutable' FROM required_immutable r JOIN classes c ON c.__path=r.path AND c.name=r.class WHERE c.frozen IS NULL\n UNION ALL SELECT DISTINCT r.path,r.class,'SPTA013','enum' FROM required_enums r JOIN classes c ON c.__path=r.path AND c.name=r.class\n WHERE NOT EXISTS(SELECT 1 FROM bases b WHERE b.__path=r.path AND b.owner=c.__start AND b.name='StrEnum')\n OR NOT EXISTS(SELECT 1 FROM members f WHERE f.__path=r.path AND f.owner=c.__start AND f.name=r.name AND f.type IS NULL)\n UNION ALL SELECT DISTINCT r.path,r.alias,'SPTA013','union' FROM required_unions r JOIN symbols s ON s.__path=r.path AND s.name=r.alias\n WHERE NOT EXISTS(SELECT 1 FROM union_names n WHERE n.__path=r.path AND n.alias=r.alias AND n.name=r.name)\n UNION ALL SELECT 'l2070_batching/step.py','ServerPlanStep.planning_contract','SPTA002','planning-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start JOIN returns r ON r.__path=m.__path AND r.owner=m.__start\n WHERE c.__path='l2070_batching/step.py' AND c.name='ServerPlanStep' AND m.name='planning_contract' AND r.name='StepPlanningContract')\n UNION ALL SELECT 'l2070_batching/physical_placement.py','ApplicationPlacementUnit.application','SPTA003','application-field' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN annotations a ON a.__path=c.__path AND a.owner=c.__start AND a.field='application'\n WHERE c.__path='l2070_batching/physical_placement.py' AND c.name='ApplicationPlacementUnit' AND a.name='RuntimeApplication')\n UNION ALL SELECT 'l2070_batching/physical_executor.py','BackendExecutor.execute_program','SPTA011','executor-method' WHERE NOT EXISTS(\n SELECT 1 FROM classes c JOIN methods m ON m.__path=c.__path AND m.owner=c.__start\n JOIN returns r ON r.__path=m.__path AND r.owner=m.__start JOIN parameters p ON p.__path=m.__path AND p.owner=m.__start\n WHERE c.__path='l2070_batching/physical_executor.py' AND c.name='BackendExecutor' AND m.name='execute_program' AND r.name='BackendExecutionReceipt' AND p.name='PhysicalTransportProgram')\n ) WHERE 0"
+          }
+        },
+        "key": [
+          "symbol",
+          "issue",
+          "requirement"
+        ],
+        "code": "issue"
+      },
+      "violation": {
+        "code": "missing_contract",
+        "message": "Missing target contract",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

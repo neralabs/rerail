@@ -36,7 +36,7 @@ pub(super) fn occurrences(
     steps: &mut Steps<'_>,
 ) -> Result<Occurrences, BuildError> {
     let mut occurrences = Occurrences::new();
-    let Some(flow) = table.php.as_deref() else {
+    let Some(flow) = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of) else {
         return Ok(occurrences);
     };
     let variable = crate::code_rule_dsl::language::kind_ids(table.language, &["variable_name"]);
@@ -98,7 +98,7 @@ pub(super) fn build(table: &ScopeTable, steps: &mut Steps<'_>) -> Result<ScopeFa
                 .collect()
         })
         .collect();
-    let Some(flow) = table.php.as_deref() else {
+    let Some(flow) = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of) else {
         return Ok(facts);
     };
     let kinds = ArrayKinds {

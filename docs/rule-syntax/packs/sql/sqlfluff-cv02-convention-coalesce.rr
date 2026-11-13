@@ -1,0 +1,17 @@
+.policy "sqlfluff-cv02-convention-coalesce" revision 2
+.description "Use COALESCE instead of IFNULL or NVL in SQL; it is standard and works across databases."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's CV02 (convention.coalesce). A call of IFNULL or NVL, in any case, not qualified by a schema:
+//   SELECT ifnull(foo, 0) AS bar FROM baz        reported; the fix is COALESCE(foo, 0)
+//   SELECT my_schema.nvl(foo, 0) FROM baz        fine: a user function
+
+#include "sql/syntax.rr"
+
+.violation CV02(at: node, f: node) code "CV02" "Use 'COALESCE' instead of '{f}'."
+    suppress sqlfluff "CV02", "L060", "all", "convention", "convention.coalesce"
+    fix use_coalesce "Write COALESCE"
+CV02(c, n) :- kind(c, "invocation"), child(c, o, 0), kind(o, "object_reference"), field(o, "name", n),
+    iglob("{ifnull,nvl}", n), !contains(".", o).
+use_coalesce(_, n) => replace(n, `COALESCE`).

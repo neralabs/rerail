@@ -1,0 +1,18 @@
+.policy "bandit-b415-import-pyghmi" revision 2
+.description "Avoid importing pyghmi; IPMI is an insecure protocol, so prefer an encrypted management protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B415 (its B001 blacklist): an import of pyghmi or anything under it.
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+//   import pyghmi                               B415
+//   from pyghmi.ipmi import command             B415
+//   import pyghmi_tools                         not reported
+//   importlib.import_module("pyghmi")           B415: a call that imports a listed module (exactly)
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B415(at: node) code "B415"
+    "Replace this pyghmi import with a client for an encrypted management protocol such as Redfish over HTTPS; IPMI is insecure."
+    suppress nosec "B415"
+B415(n) :- blacklisted(n, "B415").

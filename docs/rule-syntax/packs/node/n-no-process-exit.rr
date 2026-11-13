@@ -1,0 +1,19 @@
+.policy "n-no-process-exit" revision 2
+.description "Avoid calling process.exit(); throw an error instead so pending work can finish and callers can handle the failure."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-process-exit: a call whose callee is the member expression `process.exit`, by name
+// (the selector `CallExpression > MemberExpression.callee[object.name="process"][property.name="exit"]`):
+//   process.exit(1)          reported, also process?.exit(1), process.exit?.() and (process.exit)(1)
+//   process["exit"](1)       not: a computed property has no name
+//   process.exit`x`          not: a tagged template is no CallExpression
+//   const { exit } = process; exit()      not: no member expression
+// No scope analysis: a local `process` is reported too, as the selector reads names only.
+
+#include "tsx/node.rr"   // called
+
+.violation process_exit(at: node) code "n/no-process-exit" "Don't use process.exit(); throw an error instead."
+    suppress eslint "n/no-process-exit"
+process_exit(c) :- called(c, f), kind(f, "member_expression"), field(f, "object", o), kind(o, "identifier"),
+    text(o, "process"), field(f, "property", x), text(x, "exit").

@@ -1,0 +1,22 @@
+.policy "eslint-no-octal-escape" revision 5
+.description "Use Unicode or hex escapes instead of legacy octal escapes in string literals; octal escapes are deprecated and forbidden in strict mode."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-octal-escape: a legacy octal escape in a string literal, reported once per literal, at the
+// literal, naming the first one. An octal escape is `\` and up to three octal digits that make at most 255
+// (`\377`; `\400` is `\40` then "0"), or `\0` followed by 8 or 9 (`\0` alone is the NUL escape, allowed).
+//   "foo \01 bar"   '\377'   '\08'   'a\1\2'      → reported ('\01', '\377', '\0', '\1')
+//   '\0'   '\\01'   '\8'   '01'                    fine
+// No options.
+.violation no_octal_escape(at: node, seq: symbol) code "no-octal-escape" "Don't use octal: '\\{seq}'. Use '\\u....' instead."
+    suppress eslint "no-octal-escape"
+    suppress biome "lint/suspicious/noOctalEscape"
+// ESLint's own regex on the literal's source: skip characters and whole escapes, lazily, up to the first octal
+// escape. Its two forms are two groups, one per rule: a group that takes no part in the match gives no row.
+//   '\08\1': the first escape is `\0` before 8, so the message names \0, not \1
+no_octal_escape(s, D) :- kind(s, "string"),
+    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?<D>[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|0[89])[\\s\\S]*", s).
+no_octal_escape(s, Z) :- kind(s, "string"),
+    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?:[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|(?<Z>0)[89])[\\s\\S]*", s).

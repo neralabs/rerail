@@ -40,7 +40,7 @@ language or capability.
 
 Each language family has one adapter type, and every engine call site asks it instead of matching on a language.
 
-- **Adapter:** the trait each family's type implements: `Python`, `Ecma`, `Php`, `Blade`, `Rust`, `Vue` or `Sql`.
+- **Adapter:** the trait each family's type implements: `Python`, `Ecma`, `Php`, `Blade`, `Rust`, `Vue`, `Sql`, `Rr` or `Json`.
 - **Concern traits:** one per capability (`ScopeRules`, `ValueRules`, ...); a concern the family lacks is `Refused`.
 - **Embedding family:** Blade and Vue read the embedded language's semantics over an embedded program.
 
@@ -55,6 +55,8 @@ Each language family has one adapter type, and every engine call site asks it in
 | `rust` | `rust` | all five | `clippy` |
 | `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
+| `rr` | `rr` (`.rr` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
+| `json` | `json` | none: all five `Refused` (rules read its tree) | none |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -75,7 +77,7 @@ Each language family has one adapter type, and every engine call site asks it in
 <summary>How dispatch, refusals and embedding work</summary>
 
 - **Adapter files:** `Python` (`adapter/scope.rs`, `value.rs`, ...), `Rust` (`adapter/rust.rs`), `Vue`
-  (`adapter/vue.rs`) and `Sql` (`adapter/sql.rs`).
+  (`adapter/vue.rs`), `Sql` (`adapter/sql.rs`), `Rr` (`adapter/rr.rs`) and `Json` (`adapter/json.rs`).
 - **`with_adapter!`** is the one exhaustive match on a family. It, `Family`, `GrammarDialect`, `Family::of` and
   `honours` are generated from the registry; no enum is edited by hand.
 - **Every other call site** asks the adapter. One that needs a concern's associated type calls a function generic over
@@ -241,18 +243,21 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 | `capabilities` | yes | Per capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (no such thing or no plan; a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
 | `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
+| `fragments` | no | Grammars of a part of one of its dialects, which `.rr` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
 
 Each dialect has:
 
 - **`label`**: the file language hosts and the store use.
 - **`suffixes`**: lowercase, with the dot. Compound ones such as `.blade.php` win over shorter ones.
 - **`variant`**, supported only: the engine's `GrammarDialect::<variant>`.
-- **`parser`**, supported only: `tree-sitter`, or `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md)).
-  Validated, but drives no behaviour yet.
+- **`parser`**, supported only: `tree-sitter`; `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md));
+  `rr`, the rule engine's own parser of `.rr` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
+  compiles, written in its tree-sitter grammar's ids, with tree-sitter for a file the grammar refuses. Validated; the
+  engine picks the parser by dialect, not from this field (JSON's Bitlex parser: `tape::TapeImage::parse`).
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)
   or `ast-grep:<Language>`.
 - **`tapeTag`**: required when supported; a `planned` dialect may declare one to reserve it. Persisted, unique across
-  entries, never reused. Taken: Rust 9, SQL 10, Vue 12 (11 is free for a second SQL dialect).
+  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13 and JSON 14 (11 is free for a second SQL dialect).
 
 </details>
 
@@ -351,10 +356,13 @@ Register the language as planned, add its grammar and adapter, then flip capabil
 
 1. **Register it.** Add `languages/<id>.json` with `status: "planned"`: family, dialect labels and suffixes, every
    capability `not-supported-yet`, suppressions and embeds. Give each dialect the `tapeTag` it reserves (Rust 9, SQL
-   10 and Vue 12 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
+   10, Vue 12, rr 13 and JSON 14 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
    regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs can land now.
 2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`). Flip the entry to
    `supported` with each dialect's `variant`, `parser` and `grammar`. The build fails until `adapter::<Family>` exists.
+   Name the language under `ast.languages` in `native/src/code_rule_dsl/capabilities.json` with its grammar (a
+   version, or `native:<id>` for a grammar the engine builds in, as `rr` has), or policies cannot target it; a test
+   holds those keys equal to the registry's supported languages.
 3. **Write its adapter** in its own file, registered by one `mod` and one `pub(crate) use` line in
    `native/src/code_rule_dsl/language/adapter.rs`. A new family's type implements `Adapter` and each concern trait,
    or `Refused` for a concern the language will not have.

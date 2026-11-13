@@ -1,0 +1,17 @@
+# corpus: mix: seed 142
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = lasts(fill(prev(op, 22), (aligned(alpha, 8) & starts(digit))))
+mask m1 = op
+mask m2 = x
+mask m3 = (after_odd_run(digit) & (m0 ^ ws))
+mask m4 = quote

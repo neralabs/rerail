@@ -1,0 +1,116 @@
+.policy "eslint-id-length" revision 5
+.description "Avoid one-character names for variables, parameters, functions, classes, properties and imports; use names that say what they hold."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/names.rr"
+#include "tsx/statements.rr"   // for_head
+
+// ESLint's id-length: names that are shorter than min (default 2) or longer than max (default none), where
+// they are declared or written:
+//   var x = 1;  function f(a, ...r) {}  class C {}  import { a as b } from "m";  catch (e)   → too short
+//   o.p = 1;  ({ k: v } = o);  ({ p: 1 })  class A { m() {} #q = 1 }      properties, unless properties: "never"
+//   f(x);  x.y;  import { a } from "m";                                     not checked: uses, unchanged names
+// exceptions: names that are allowed; exceptionPatterns: regexes, a name matching one is allowed.
+// Length counts characters (ESLint counts graphemes: see NOTES).
+.violation id_length(at: node, msg: symbol) code "id-length" "{msg}"
+    suppress eslint "id-length"
+    suppress oxlint "id-length"
+id_length(n, cat("Identifier name '", p, x, "' is too short (< ", to_string(k), ").")) :- named(n, x, p), min_len(k), k > 0,
+    j = k - 1, "" = @slice(x, j, k).
+id_length(n, cat("Identifier name ", p, "'", x, "' is too long (> ", to_string(k), ").")) :- named(n, x, p),
+    option("max", m), k = to_number(m), j = k + 1,
+    "" != @slice(x, k, j).
+.decl min_len(k: number)
+min_len(to_number(m)) :- option("min", m).
+min_len(2) :- !option("min", _).
+
+// named(n, x, p): node n names x, where id-length looks; p is "#" for a private name, else "". x is the name
+// without its `#`, as ESLint's PrivateIdentifier.name, so exceptions and exceptionPatterns test it bare.
+.decl named(n: node, x: symbol, p: symbol)
+named(n, x, p) :- candidate(n, x, p), !excepted(x).
+.decl candidate(n: node, x: symbol, p: symbol)
+candidate(n, x, "") :- checked(n), !kind(n, "private_property_identifier"), text(n, x).
+candidate(n, x, "#") :- checked(n), kind(n, "private_property_identifier"), text(n, t), match("#(?<x>.*)", t).
+.decl excepted(x: symbol)
+excepted(x) :- option_item("exceptions", _, x).
+excepted(x) :- candidate(_, x, _), option_item("exceptionPatterns", _, p), match(cat("[\\s\\S]*(?:", p, ")[\\s\\S]*"), x).
+
+// checked(n): the identifiers ESLint checks, by their ESTree parent. Declarations: always.
+.decl checked(n: node)
+checked(n) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier").
+checked(n) :- (kind(f, "function_declaration") ; kind(f, "function_expression") ; kind(f, "generator_function") ;
+    kind(f, "generator_function_declaration") ; kind(f, "class_declaration") ; kind(f, "abstract_class_declaration")),
+    field(f, "name", n).
+checked(n) :- kind(h, "class_heritage"), child(h, n, 0), kind(n, "identifier"), child(c, h, _),
+    kind(c, "class_declaration").                                              // class A extends B: B too
+checked(n) :- kind(e, "extends_clause"), field(e, "value", n), kind(n, "identifier"), inside(e, c, "class_heritage"),
+    child(k, c, _), kind(k, "class_declaration").                              // the same in TypeScript
+// for (const x of xs), for (let k in o): the head's variable is a declarator's id in ESTree. for (x of xs) is not.
+checked(n) :- for_head(f, _), field(f, "left", n), kind(n, "identifier").
+checked(n) :- param(n).
+checked(n) :- kind(c, "catch_clause"), field(c, "parameter", n), kind(n, "identifier").
+checked(n) :- (kind(a, "assignment_pattern") ; kind(a, "object_assignment_pattern")), field(a, "left", n),
+    (kind(n, "identifier") ; kind(n, "shorthand_property_identifier_pattern")).
+checked(n) :- (kind(p, "array_pattern") ; kind(p, "rest_pattern")), child(p, n, _), kind(n, "identifier").
+checked(n) :- kind(p, "pair_pattern"), field(p, "value", n), kind(n, "identifier"), field(p, "key", k),
+    !same_text(k, n).                                                          // { a: b } = o: b
+checked(n) :- kind(i, "import_specifier"), field(i, "alias", n), field(i, "name", m), !same_name(m, n).
+checked(n) :- (kind(i, "namespace_import") ; kind(i, "import_clause")), child(i, n, _), kind(n, "identifier").
+// Class members: a method's name (or a computed identifier key), a field's name and an identifier value.
+checked(n) :- kind(m, "method_definition"), inside(m, _, "class_body"), field(m, "name", k), member_key(k, n).
+checked(n) :- (kind(f, "field_definition") ; kind(f, "public_field_definition")),
+    (field(f, "property", k) ; field(f, "name", k) ; field(f, "value", k)), member_key(k, n).
+// Properties, unless properties is "never".
+checked(n) :- props(), prop_name(n).
+
+.decl props()
+props() :- !option("properties", "never").
+// prop_name(n): { a: 1 } and { a } and { m() {} } in an object literal (not an import's `with { type }`);
+// { a: a } = o and { a } = o in a pattern; and o.p = 1, ({ k: o.p } = x), where both o and p count.
+.decl prop_name(n: node)
+prop_name(n) :- kind(p, "pair"), field(p, "key", n), kind(n, "property_identifier"), !attr_key(n).
+prop_name(n) :- kind(p, "pair"), field(p, "value", n), kind(n, "identifier"), field(p, "key", k), same_text(k, n).
+prop_name(n) :- kind(n, "shorthand_property_identifier"), !attr_key(n).
+prop_name(n) :- kind(m, "method_definition"), child(o, m, _), kind(o, "object"), field(m, "name", n),
+    kind(n, "property_identifier").
+prop_name(n) :- kind(p, "pair_pattern"), field(p, "value", v), kind(v, "identifier"), field(p, "key", n), same_text(n, v).
+prop_name(n) :- kind(n, "shorthand_property_identifier_pattern"), child(o, n, _), kind(o, "object_pattern").
+prop_name(n) :- assigned_member(m), field(m, f, n), (f = "object" ; f = "property"),
+    (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "private_property_identifier")).
+// attr_key(k): a key of import attributes, which are not names:  import(m, { with: { type: "json" } }),
+// import x from "m" with { type: "json" }.
+.decl attr_key(k: node)
+attr_key(k) :- kind(p, "pair"), field(p, "key", k), inside(p, _, "import_attribute").
+attr_key(k) :- attr_object(o), child(o, p, _), (kind(p, "pair"), field(p, "key", k) ;
+    kind(p, "shorthand_property_identifier"), k = p).
+.decl attr_object(o: node)  // the options of import(m, o), and objects nested under its keys
+attr_object(o) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), field(c, "arguments", a),
+    child(a, o, 1), kind(o, "object").
+attr_object(o) :- attr_key(k), field(p, "key", k), field(p, "value", o), kind(o, "object").
+.decl assigned_member(m: node)  // a non-computed member that is written: o.p = 1, o.p += 1, ({ k: o.p } = x)
+assigned_member(m) :- kind(m, "member_expression"), field(a, "left", m),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")).
+assigned_member(m) :- kind(m, "member_expression"), kind(p, "pair_pattern"), field(p, "value", m), child(o, p, _),
+    field(a, "left", o), kind(a, "assignment_expression").
+
+// param(n): a function's own parameter name: f(a), f(a: T), f(a?: T), x => x. (Defaults, rest and patterns are
+// covered above, by their pattern node.)
+.decl param(n: node)
+param(n) :- kind(ps, "formal_parameters"), child(ps, n, _), kind(n, "identifier").
+param(n) :- kind(ps, "formal_parameters"), child(ps, p, _), (kind(p, "required_parameter") ;
+    kind(p, "optional_parameter")), field(p, "pattern", n), kind(n, "identifier"), !param_property(p).
+// constructor(private c, readonly d): a TypeScript parameter property. ESTree wraps it in TSParameterProperty,
+// which id-length does not look into.
+.decl param_property(p: node)
+param_property(p) :- child(p, m, _), (kind(m, "accessibility_modifier") ; kind(m, "override_modifier")).
+param_property(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly").
+param(n) :- kind(f, "arrow_function"), field(f, "parameter", n), kind(n, "identifier").
+.decl member_key(k: node, n: node)  // a class member's key: `m`, `#m`, or the identifier in `[m]`
+member_key(k, k) :- (kind(k, "property_identifier") ; kind(k, "private_property_identifier") ; kind(k, "identifier")).
+member_key(k, n) :- kind(k, "computed_property_name"), child(k, n, 0), kind(n, "identifier").
+.decl same_text(a: node, b: node)
+same_text(a, b) :- text(a, x), text(b, x), a != b, child(p, a, _), child(p, b, _).
+.decl same_name(m: node, n: node)  // import { a as a }: the imported and local names are the same
+same_name(m, n) :- kind(i, "import_specifier"), field(i, "name", m), field(i, "alias", n), text(n, x),
+    (text(m, x) ; str(m, x)).

@@ -1,0 +1,16 @@
+.policy "eslint-no-caller" revision 3
+.description "Don't use arguments.callee or arguments.caller; they are deprecated and throw in strict mode."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-caller: `arguments.callee` and `arguments.caller`, written with a dot. Neither works in strict
+// mode. ESLint does not look at what `arguments` is bound to, nor at `arguments["callee"]`.
+//   arguments.callee()   (arguments).caller   → reported;   arguments["callee"]   x.callee   → not
+.violation no_caller(at: node, prop: node) code "no-caller"
+    "Replace arguments.{prop} with a reference to the function by name or an explicit parameter."
+    suppress eslint "no-caller"
+    suppress oxlint "no-caller"
+no_caller(n, p) :- dotted_member(n, o, p), deparen(o, a), kind(a, "identifier"), text(a, "arguments"),
+    (text(p, "callee") ; text(p, "caller")).

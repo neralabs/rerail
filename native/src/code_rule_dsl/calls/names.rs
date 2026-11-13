@@ -22,11 +22,11 @@ struct Entry {
 /// Each family's names are its own namespace. A new family's `CallRules` must create names with
 /// its own `Family` and choose that family's spelling.
 #[derive(Clone)]
-pub(crate) struct Name(Arc<Entry>);
+pub struct Name(Arc<Entry>);
 
 impl Name {
     /// Interns `text` in `family`'s namespace, along with its dotted prefixes.
-    pub(crate) fn new(family: Family, text: &str) -> Self {
+    pub fn new(family: Family, text: &str) -> Self {
         if let Some(name) = TABLE.read().get(family, text) {
             return name;
         }
@@ -39,21 +39,21 @@ impl Name {
     }
 
     /// `text`'s name in `family`, if something interned it.
-    pub(crate) fn get(family: Family, text: &str) -> Option<Self> {
+    pub fn get(family: Family, text: &str) -> Option<Self> {
         TABLE.read().get(family, text)
     }
 
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.0.text
     }
 
     /// The name up to its last dot.
-    pub(crate) fn parent(&self) -> Option<&Self> {
+    pub fn parent(&self) -> Option<&Self> {
         self.0.parent.as_ref()
     }
 
     /// The name and its dotted prefixes, longest first.
-    pub(crate) fn lineage(&self) -> impl Iterator<Item = &Self> {
+    pub fn lineage(&self) -> impl Iterator<Item = &Self> {
         std::iter::successors(Some(self), |name| name.parent())
     }
 
@@ -62,7 +62,7 @@ impl Name {
         self.0.root.as_ref().unwrap_or(self)
     }
 
-    pub(crate) fn family(&self) -> Family {
+    pub fn family(&self) -> Family {
         self.0.family
     }
 }

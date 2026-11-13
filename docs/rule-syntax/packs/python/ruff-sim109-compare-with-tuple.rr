@@ -1,0 +1,19 @@
+.policy "ruff-sim109-compare-with-tuple" revision 2
+.description "Use a membership test against a tuple instead of several or-chained equality checks of the same variable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM109 (flake8-simplify): an `or` with two or more operands `x == y` that compare the same name x to a
+// name, anywhere in the `or`. Ruff skips an `or` with a comment inside. Its fix is unsafe; none here.
+//   if a == b or a == c: …           ← SIM109: if a in (b, c): …
+//   if a == b or a == "c": …         not reported: only names on the right
+#include "python/simplify.rr"
+//   sim_operand(t, o, i, v); cmp(c, op, l, r) from python/names
+
+.violation SIM109(at: node, x: symbol) code "SIM109" "Use `{x} in (...)` instead of multiple equality comparisons"
+    suppress ruff "SIM109"
+SIM109(t, x) :- eq_name(t, x, i), eq_name(t, x, j), i < j, !has(t, _, "comment").
+.decl eq_name(t: node, x: symbol, i: number)  // operand i of the `or` t is `x == y`, x and y plain names
+eq_name(t, x, i) :- sim_operand(t, "or", i, v), unparen(v, c), cmp(c, "==", l, r), kind(l, "identifier"), text(l, x),
+    kind(r, "identifier").

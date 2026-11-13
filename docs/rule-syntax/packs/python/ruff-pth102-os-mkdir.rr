@@ -1,0 +1,18 @@
+.policy "ruff-pth102-os-mkdir" revision 2
+.description "Use Path.mkdir() instead of os.mkdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH102 (flake8-use-pathlib): a call of `os.mkdir`, however it is imported, with any arguments, unless
+// `dir_fd` is passed and not None: pathlib has no `dir_fd`. Reported at the callee.
+//   os.mkdir("d", 0o755)                 ← PTH102
+//   os.mkdir("d", dir_fd=None)           ← PTH102
+//   os.mkdir("d", dir_fd=3)              not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
+
+.violation PTH102(at: node) code "PTH102"
+    "Use `Path(path).mkdir(mode=mode)` instead of `os.mkdir(path, mode)`; leave it where the path is bytes or `dir_fd` comes through `**kwargs`."
+    suppress ruff "PTH102"
+PTH102(f) :- pth_call(c, "os.mkdir", f), !kw_set(c, "dir_fd").

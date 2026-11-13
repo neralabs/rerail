@@ -1,0 +1,43 @@
+// python/datetime: naive datetimes, as Ruff's flake8-datetimez (DTZ) rules find them.
+//
+// Interface
+//   seen_module(d, "datetime")  (python/misc-seen) d imports `datetime`; every DTZ rule is silent in a file that
+//                             does not
+//   dt_call(c, q)             c calls q, resolved through imports ("datetime.datetime.now"), in such a file
+//   naive_tz(c, q, how)       call c of q passes no timezone (how "missing") or `None` (how "none"), by the
+//                             timezone parameter's position or keyword: `datetime(…, tzinfo)` is 7th,
+//                             `now(tz)` 0th, `fromtimestamp(ts, tz)` 1st
+//   then_astimezone(c)        c's value goes through `.replace(…)` calls into `.astimezone`, which makes it aware
+//
+// Python background
+//   - A datetime without tzinfo is naive: it compares and subtracts only with naive ones, and means "local time"
+//     to some APIs and UTC to others.
+//   - `.astimezone()` on a naive value reads it as local time and returns an aware one, so Ruff accepts a chain
+//     ending in it: `datetime.now().replace(microsecond=0).astimezone()` is fine.
+//       import datetime
+//       datetime.datetime.now()                        naive_tz(c, "datetime.datetime.now", "missing")
+//       datetime.datetime.now(None)                    naive_tz(…, "none")
+//       datetime.datetime.now().astimezone()           then_astimezone(<now()>)
+//       datetime.datetime(2000, 1, 1, tzinfo=None)     naive_tz(…, "datetime.datetime", "none")
+#include "python/ruff.rr"
+#include "python/misc-seen.rr"
+
+seen_ask("datetime").
+.decl dt_call(c: node, q: symbol)
+dt_call(c, q) :- call_q(c, q), prefix("datetime.", q), docof(c, d), seen_module(d, "datetime").
+
+// The timezone parameter of each constructor, for ruff.rr's call_param.
+param_slot("datetime.datetime", "tzinfo", 7).
+param_slot("datetime.datetime.now", "tz", 0).
+param_slot("datetime.datetime.fromtimestamp", "tz", 1).
+.decl naive_tz(c: node, q: symbol, how: symbol)
+naive_tz(c, q, "missing") :- dt_call(c, q), param_slot(q, x, _), !call_param(c, x, _).
+naive_tz(c, q, "none") :- dt_call(c, q), param_slot(q, x, _), call_param(c, x, v), unparen(v, m), kind(m, "none").
+
+// then_astimezone(c): `c.astimezone`, or `c.replace(…)` whose own value then_astimezone.
+.decl then_astimezone(c: node)
+then_astimezone(c) :- dt_call(c, _), dt_tail(c).
+.decl dt_tail(c: node)
+dt_tail(c) :- kind(c, "call"), ast_up(c, a), attr_of(a, _, "astimezone").
+dt_tail(c) :- kind(c, "call"), ast_up(c, a), attr_of(a, _, "replace"), ast_up(a, r), field(r, "function", a),
+    dt_tail(r).

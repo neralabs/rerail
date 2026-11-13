@@ -11,7 +11,7 @@ use serde_json::Value;
 
 /// `suppress.clippy`: what silences the violation as Clippy silences its lint.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Clippy {
+pub struct Clippy {
     /// The lint names whose `allow` or `expect` silences it, as an attribute spells them
     /// (`clippy::double_parens`, a group such as `clippy::complexity` or `clippy::all`, or
     /// `warnings`). A port lists its lint and every group it belongs to.
@@ -23,6 +23,19 @@ pub(crate) struct Clippy {
 
 /// A Rust version, `major.minor.patch`; `1.53` is `1.53.0`.
 pub(crate) type RustVersion = (u32, u32, u32);
+
+/// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
+/// names that silence the violation.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "clippy";
+    const DETAIL: &'static str = "clippy: #[allow] and #[expect] attributes are Clippy's";
+    type Spec = Clippy;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Clippy> {
+        spec(value, at)
+    }
+}
 
 /// Parses `suppress.clippy`: `{ "lints": [Name]+, "msrv"?: "1.53" }`.
 pub(super) fn spec(clippy: &Value, at: &str) -> napi::Result<Clippy> {
@@ -398,7 +411,7 @@ fn cfg_enabled(predicate: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Clippy, ClippyIndex, RustVersion, rust_version};
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;
@@ -580,7 +593,7 @@ mod tests {
                  expands",
             ),
         ];
-        let oracle: Oracle = serde_json::from_str(crate::code_rule_dsl::oracle!(
+        let oracle: Oracle = serde_json::from_str(crate::code_rule_dsl::fixtures::oracle!(
             "rust/suppress/fixtures.expected.json"
         ))
         .expect("fixture oracle JSON");
@@ -607,24 +620,24 @@ mod tests {
             let source_path = case.file.strip_prefix("fixtures/").expect("fixture path");
             let source = match source_path {
                 "argument.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/argument.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/argument.rs")
                 }
                 "cfg_attr.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/cfg_attr.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/cfg_attr.rs")
                 }
-                "expect.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/expect.rs"),
+                "expect.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expect.rs"),
                 "expression.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/expression.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/expression.rs")
                 }
-                "forbid.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/forbid.rs"),
-                "groups.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/groups.rs"),
-                "macros.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/macros.rs"),
-                "names.rs" => crate::code_rule_dsl::oracle!("rust/suppress/fixtures/names.rs"),
+                "forbid.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/forbid.rs"),
+                "groups.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/groups.rs"),
+                "macros.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/macros.rs"),
+                "names.rs" => crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/names.rs"),
                 "override.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/override.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/override.rs")
                 }
                 "placement.rs" => {
-                    crate::code_rule_dsl::oracle!("rust/suppress/fixtures/placement.rs")
+                    crate::code_rule_dsl::fixtures::oracle!("rust/suppress/fixtures/placement.rs")
                 }
                 _ => panic!("unknown fixture {source_path}"),
             };

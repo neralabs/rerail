@@ -1,0 +1,1331 @@
+{
+  "format": "rerail.fact-api-oracle/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 119,
+  "cases": [
+    {
+      "id": "supplied-positive-no-source",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    12,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 1,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches eager downstream function l7450_versioned_revert.facts_only.build_lazy (direct eager sink plan.execute)"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-clean-no-source",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "id": "supplied-owner-calls",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    12,
+                    "plan.execute",
+                    false
+                  ],
+                  [
+                    13,
+                    "grammar_fetchall",
+                    true
+                  ],
+                  [
+                    14,
+                    "grammar_fetchall",
+                    true
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 1,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 1,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-006",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 13,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy passes _conn to grammar_fetchall() instead of the plan owner"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches eager downstream function l7450_versioned_revert.facts_only.build_lazy (direct eager sink plan.execute)"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-private-tie",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.helper",
+                "qualname": "helper",
+                "scope": [],
+                "name": "helper",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "private_runtime_reachthroughs": [
+                  [
+                    12,
+                    "vars(...).get('_conn')"
+                  ],
+                  [
+                    12,
+                    "vars(...)"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.helper",
+            "message": "helper reaches through private runtime state instead of surfaced dependencies"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-call-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "local_callee_calls": [
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.z_async"
+                  ],
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.a_async"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.z_async",
+                "qualname": "z_async",
+                "scope": [],
+                "name": "z_async",
+                "line": 7,
+                "is_async": true,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.a_async",
+                "qualname": "a_async",
+                "scope": [],
+                "name": "a_async",
+                "line": 7,
+                "is_async": true,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches eager downstream function l7450_versioned_revert.facts_only.z_async (async function)"
+          },
+          {
+            "rule": "LA-013",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 12,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches non-lazy helper l7450_versioned_revert.facts_only.z_async; every function in a lazy callchain must itself be *_lazy or @pure_lazy"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-lazy-flag",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "local_callee_calls": [
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.helper"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.helper",
+                "qualname": "helper",
+                "scope": [],
+                "name": "helper",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        []
+      ]
+    },
+    {
+      "id": "supplied-cache-clean-no-source",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "id": "supplied-cache-changed-no-source",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": [
+              "supplied first error",
+              "supplied second error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      },
+      "expected": [
+        "l1234_test.facts_only.derive: supplied first error",
+        "l1234_test.facts_only.derive: supplied second error",
+        "l1234_test.facts_only.derive: function body hash changed"
+      ]
+    },
+    {
+      "id": "supplied-cache-duplicates",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          },
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "OptimizerRunCache"
+              ]
+            ],
+            "body_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": [
+              "supplied first error",
+              "supplied second error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      },
+      "expected": [
+        "duplicate decorator entry: l1234_test.facts_only.derive",
+        "l1234_test.facts_only.derive: supplied first error",
+        "l1234_test.facts_only.derive: supplied second error",
+        "l1234_test.facts_only.derive: function body hash changed"
+      ]
+    },
+    {
+      "id": "supplied-memo-all-differences",
+      "contract": "memoized-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "max_entries": 4,
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "errors": [
+              "supplied memoization error"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "max_entries": 8,
+            "body_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "signature_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "cache_lifetime": "bad",
+            "key_policy": "bad",
+            "return_policy": "bad",
+            "exception_policy": "bad",
+            "rationale": ""
+          }
+        ]
+      },
+      "expected": [
+        "l1234_test.facts_only.derive: supplied memoization error",
+        "l1234_test.facts_only.derive: memoization bound changed",
+        "l1234_test.facts_only.derive: cache lifetime is not approved",
+        "l1234_test.facts_only.derive: key policy is not approved",
+        "l1234_test.facts_only.derive: return policy is not approved",
+        "l1234_test.facts_only.derive: exception policy is not approved",
+        "l1234_test.facts_only.derive: review rationale is required",
+        "l1234_test.facts_only.derive: function body hash changed",
+        "l1234_test.facts_only.derive: function signature hash changed"
+      ]
+    },
+    {
+      "id": "supplied-event-order-not-line-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    90,
+                    "plan.execute",
+                    false
+                  ],
+                  [
+                    12,
+                    "plan.execute_async",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 1,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 1,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 90,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 90,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches eager downstream function l7450_versioned_revert.facts_only.build_lazy (direct eager sink plan.execute)"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-call-order-not-line-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+                "qualname": "build_lazy",
+                "scope": [],
+                "name": "build_lazy",
+                "line": 1,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    90,
+                    "l7450_versioned_revert.facts_only.last"
+                  ],
+                  [
+                    12,
+                    "l7450_versioned_revert.facts_only.first"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.last",
+                "qualname": "last",
+                "scope": [],
+                "name": "last",
+                "line": 100,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    101,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.first",
+                "qualname": "first",
+                "scope": [],
+                "name": "first",
+                "line": 110,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    111,
+                    "plan.execute_async",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 3,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 3,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 90,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 90,
+            "symbol": "l7450_versioned_revert.facts_only.build_lazy",
+            "message": "build_lazy reaches eager downstream function l7450_versioned_revert.facts_only.last (direct eager sink plan.execute)"
+          },
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 101,
+            "symbol": "l7450_versioned_revert.facts_only.last",
+            "message": "last is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 101,
+            "symbol": "l7450_versioned_revert.facts_only.last",
+            "message": "last reaches eager downstream function l7450_versioned_revert.facts_only.last (direct eager sink plan.execute)"
+          },
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 111,
+            "symbol": "l7450_versioned_revert.facts_only.first",
+            "message": "first is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 111,
+            "symbol": "l7450_versioned_revert.facts_only.first",
+            "message": "first reaches eager downstream function l7450_versioned_revert.facts_only.first (direct eager sink plan.execute_async)"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-cycle-shared-memo",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.a_lazy",
+                "qualname": "a_lazy",
+                "scope": [],
+                "name": "a_lazy",
+                "line": 1,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    2,
+                    "l7450_versioned_revert.facts_only.b_lazy"
+                  ],
+                  [
+                    3,
+                    "l7450_versioned_revert.facts_only.sink"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.b_lazy",
+                "qualname": "b_lazy",
+                "scope": [],
+                "name": "b_lazy",
+                "line": 10,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    11,
+                    "l7450_versioned_revert.facts_only.a_lazy"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.sink",
+                "qualname": "sink",
+                "scope": [],
+                "name": "sink",
+                "line": 20,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [
+                  [
+                    21,
+                    "plan.execute",
+                    false
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 2,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 2,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 3,
+            "symbol": "l7450_versioned_revert.facts_only.a_lazy",
+            "message": "a_lazy is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 3,
+            "symbol": "l7450_versioned_revert.facts_only.a_lazy",
+            "message": "a_lazy reaches eager downstream function l7450_versioned_revert.facts_only.sink (direct eager sink plan.execute)"
+          },
+          {
+            "rule": "LA-001",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 21,
+            "symbol": "l7450_versioned_revert.facts_only.sink",
+            "message": "sink is lazy but performs eager plan/grammar I/O"
+          },
+          {
+            "rule": "LA-009",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 21,
+            "symbol": "l7450_versioned_revert.facts_only.sink",
+            "message": "sink reaches eager downstream function l7450_versioned_revert.facts_only.sink (direct eager sink plan.execute)"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-legacy-continues-before-late-diagnostics",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "l7450_versioned_revert/facts_only.py",
+            "module": "l7450_versioned_revert.facts_only",
+            "functions": [
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.bootstrap_lazy",
+                "qualname": "bootstrap_lazy",
+                "scope": [],
+                "name": "bootstrap_lazy",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": true,
+                "has_pure_lazy_decorator": true,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    8,
+                    "l7450_versioned_revert.facts_only.legacy"
+                  ]
+                ],
+                "lazy_result_of_returns": [
+                  9
+                ],
+                "bootstrap_lazy_state_mutations": [
+                  [
+                    10,
+                    "attribute assignment to self.state"
+                  ]
+                ]
+              },
+              {
+                "file": "l7450_versioned_revert/facts_only.py",
+                "symbol": "l7450_versioned_revert.facts_only.legacy",
+                "qualname": "legacy",
+                "scope": [],
+                "name": "legacy",
+                "line": 20,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": true,
+                "is_public": true,
+                "plan_io_calls": []
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 0,
+          "LA-012": 0,
+          "LA-013": 1,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-013",
+            "file": "l7450_versioned_revert/facts_only.py",
+            "line": 8,
+            "symbol": "l7450_versioned_revert.facts_only.bootstrap_lazy",
+            "message": "bootstrap_lazy reaches a legacy eager wrapper downstream"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "supplied-quoted-annotation",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "'OptimizerRunCache'"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      },
+      "expected": [
+        "l1234_test.facts_only.derive: cache argument 'cache' annotation \"'OptimizerRunCache'\" does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
+      ]
+    },
+    {
+      "id": "supplied-annotation-escapes",
+      "contract": "cached-policy-comparison",
+      "parameters": {
+        "functions": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "path": "l1234_test/facts_only.py",
+            "line": 7,
+            "cache_args": [
+              "cache"
+            ],
+            "cache_annotations": [
+              [
+                "cache",
+                "tuple[Literal[\"a'b\\nc\"], '\u2028']"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "errors": []
+          }
+        ],
+        "entries": [
+          {
+            "function": "l1234_test.facts_only.derive",
+            "cache_args": [
+              "cache"
+            ],
+            "cache_types": [
+              [
+                "cache",
+                "l2070_batching.optimizer_run_cache.OptimizerRunCache"
+              ]
+            ],
+            "allowed_cache_members": [
+              [
+                "get",
+                "call"
+              ]
+            ],
+            "body_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "signature_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "owner_scope": "optimizer_run",
+            "rationale": "Reviewed API test contract"
+          }
+        ]
+      },
+      "expected": [
+        "l1234_test.facts_only.derive: cache argument 'cache' annotation 'tuple[Literal[\"a\\'b\\\\nc\"], \\'\\u2028\\']' does not match cache type 'l2070_batching.optimizer_run_cache.OptimizerRunCache'"
+      ]
+    },
+    {
+      "id": "supplied-hydration-visitation-order",
+      "contract": "lazy-analyzed",
+      "parameters": {
+        "files": [
+          {
+            "path": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "module": "impl.common.l2070_server_plan.steps.hydration_order",
+            "functions": [
+              {
+                "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+                "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+                "qualname": "Step.preprocess",
+                "scope": [
+                  "Step"
+                ],
+                "name": "preprocess",
+                "line": 7,
+                "is_async": false,
+                "is_lazy": false,
+                "has_pure_lazy_decorator": false,
+                "has_legacy_boundary_decorator": false,
+                "is_public": true,
+                "plan_io_calls": [],
+                "local_callee_calls": [
+                  [
+                    3,
+                    "hydrate_many_post_op"
+                  ],
+                  [
+                    2,
+                    "runtime_sql_conn_from_hydrator"
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "LA-001": 0,
+          "LA-002": 0,
+          "LA-003": 0,
+          "LA-004": 0,
+          "LA-005": 0,
+          "LA-006": 0,
+          "LA-007": 0,
+          "LA-008": 0,
+          "LA-009": 0,
+          "LA-010": 0,
+          "LA-011": 1,
+          "LA-012": 0,
+          "LA-013": 0,
+          "LA-014": 0,
+          "LA-015": 0,
+          "LA-016": 0,
+          "LA-017": 0,
+          "LA-018": 0
+        },
+        [
+          {
+            "rule": "LA-011",
+            "file": "impl/common/l2070_server_plan/steps/hydration_order.py",
+            "line": 3,
+            "symbol": "impl.common.l2070_server_plan.steps.hydration_order.Step.preprocess",
+            "message": "Step.preprocess uses forbidden terminal hydration/runtime-SQL helper"
+          }
+        ]
+      ]
+    }
+  ]
+}

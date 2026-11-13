@@ -1,0 +1,40 @@
+.policy "ruff-sim103-needless-bool" revision 2
+.description "Return the condition directly instead of an if/else that returns True in one branch and False in the other."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM103 (flake8-simplify): an `if` whose branch is only `return True` and whose alternative is only
+// `return False`, or the other way round. The alternative is the `else` of a plain `if`/`else`, the `else`
+// after the last `elif` (reported at that `elif`, whose test is the one to return), or, for an `if` with no
+// `elif` or `else`, the statement right after it. An `if` testing `sys.version_info`, `sys.platform` or
+// `TYPE_CHECKING` is left alone. Ruff's fix is unsafe; none here.
+//   if x > 0:              ← SIM103: return x > 0
+//       return True
+//   else:
+//       return False
+//   if not ok:             ← SIM103: return ok
+//       return False
+//   return True
+//   if a: return True
+//   elif b: return False   not reported: the `elif` has no `else` after it
+#include "python/simplify.rr"
+//   sim_bool_return(s, b), sim_exempt_if(i); py_orelse, body_stmt, body_len from python/ast
+
+.violation SIM103(at: node) code "SIM103"
+    "Replace this `if`/`else` with one `return` of the condition, negated with `not` if the `if` branch returns `False`."
+    suppress ruff "SIM103"
+SIM103(at) :- needless(s, at, b1, b2), returns(b1, v), returns(b2, w), v != w, !sim_exempt_if(s).
+
+// needless(s, at, b1, b2): if statement s chooses between the body b1 and the alternative b2, reported at `at`.
+.decl needless(s: node, at: node, b1: node, b2: node)
+needless(s, s, b1, b2) :- py_if(s, _, b1), py_orelse(s, e), kind(e, "else_clause"), field(e, "body", b2).
+needless(s, c, b1, b2) :- kind(s, "if_statement"), child(s, c, _), py_if(c, _, b1), py_orelse(c, e),
+    kind(e, "else_clause"), field(e, "body", b2).
+needless(s, s, b1, r) :- py_if(s, _, b1), kind(s, "if_statement"), !py_orelse(s, _), body_stmt(p, s, i),
+    body_stmt(p, r, i + 1), kind(r, "return_statement").
+// returns(b, v): b is the one statement `return True` (v "true") or `return False`; for the statement after
+// the `if`, b is that statement itself.
+.decl returns(b: node, v: symbol)
+returns(b, v) :- body_len(b, 1), body_stmt(b, s, 0), sim_bool_return(s, v).
+returns(r, v) :- sim_bool_return(r, v).

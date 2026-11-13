@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn oracle_dir() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("php/calls/php")
+    PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("php/calls/php")
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {

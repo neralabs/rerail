@@ -1,0 +1,73 @@
+.policy "n-no-path-concat" revision 6
+.description "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-path-concat: a file path built by concatenation from __dirname, __filename or
+// import.meta.dirname / .filename / .url, where the next piece starts with a path separator:
+//   __dirname + "/foo.js"              reported at the `+`
+//   `${__filename}/x`                  reported at the template
+//   __dirname + path.sep + "x"         reported: path.sep is a separator (path from require("path") or an import)
+//   import.meta.url + "/x"             reported (the plugin suggests new URL() here)
+//   __dirname + ".js"   "/" + __dirname   not
+// __dirname and __filename are the CommonJS globals (cjs_ref); a local variable of the name is left alone.
+// The next piece's first characters (collectFirstChars): an assignment's right side, a binary expression's left,
+// both branches of `?:` and of a logical expression, a sequence's last expression, a template's first text (or
+// its first substitution, when the text is empty), and a string constant: a literal, or a variable never
+// reassigned whose initialiser is one (getStringIfConstant). path.sep is "/" here, as on POSIX.
+
+#include "tsx/node.rr"   // cjs_ref, deparen, static_prop; values.rr's api_use
+
+// The module the trace follows, and the API: require("path").sep, `import { sep } from "path"` ("path" only, as
+// the plugin's trace map has no "node:path").
+node_module("path", "path").
+api_known("path#sep").
+node_global("require").
+
+// path_source(n): a path-valued expression: the CommonJS globals, and import.meta's path members.
+.decl path_source(n: node)
+path_source(r) :- (cjs_ref(r, "__dirname") ; cjs_ref(r, "__filename")), kind(r, "identifier").
+path_source(n) :- static_prop(n, o, x), kind(o, "meta_property"), text(o, t),
+    match("import\\s*\\.\\s*meta", t), (x = "dirname" ; x = "filename" ; x = "url").
+
+// next(n, e, at): source n is the left of `+` at, whose right side e follows; or n is a template at's
+// substitution, followed by the template's text or substitution e.
+.decl concat(n: node, at: node)
+concat(n, b) :- path_source(n), estree_parent(n, b), kind(b, "binary_expression"), op(b, "+"), field(b, "left", l),
+    deparen(l, n), field(b, "right", r), slash(r).
+concat(n, t) :- path_source(n), child(s, n, _), kind(s, "template_substitution"), child(t, s, i),
+    kind(t, "template_string"), piece_slash(t, i + 1).
+
+// slash(e): one of e's possible first characters is "/".
+.decl slash(e: node)
+slash(e) :- kind(e, "parenthesized_expression"), deparen(e, x), slash(x).
+slash(e) :- (kind(e, "assignment_expression") ; kind(e, "augmented_assignment_expression")), field(e, "right", r),
+    slash(r).
+slash(e) :- kind(e, "binary_expression"), field(e, "left", l), slash(l).
+slash(e) :- kind(e, "binary_expression"), (op(e, "&&") ; op(e, "||") ; op(e, "??")), field(e, "right", r), slash(r).
+slash(e) :- kind(e, "ternary_expression"), (field(e, "consequence", x) ; field(e, "alternative", x)), slash(x).
+slash(e) :- kind(e, "sequence_expression"), child(e, x, i), !child(e, _, i + 1), slash(x).
+slash(e) :- kind(e, "template_string"), piece_slash(e, 0).
+slash(e) :- api_use(e, "path#sep", "read"), (kind(e, "member_expression") ; kind(e, "subscript_expression")).
+slash(e) :- kind(e, "string"), value(e, v), prefix("/", v).
+slash(e) :- kind(e, "identifier"), ref_site(e, d), binding_value(d, v), kind(v, "string"), value(v, s),
+    prefix("/", s), !rebound(d).
+// piece_slash(t, i): template t's child i starts its text with "/", or is the substitution that comes first.
+.decl piece_slash(t: node, i: number)
+piece_slash(t, i) :- kind(t, "template_string"), child(t, f, i), kind(f, "string_fragment"), text(f, v),
+    prefix("/", v).
+piece_slash(t, i) :- kind(t, "template_string"), child(t, f, i), kind(f, "escape_sequence"), text(f, "\\/").
+piece_slash(t, i) :- kind(t, "template_string"), child(t, s, i), kind(s, "template_substitution"), child(s, e, 0),
+    slash(e).
+// rebound(d): the variable is assigned after its declaration, so it is no constant.
+.decl rebound(d: node)
+rebound(d) :- ref_site(r, d), field(a, "left", r), (kind(a, "assignment_expression") ;
+    kind(a, "augmented_assignment_expression")).
+rebound(d) :- ref_site(r, d), kind(u, "update_expression"), child(u, r, _).
+
+.violation path_concat(at: node, msg: symbol) code "n/no-path-concat" "{msg}"
+    suppress eslint "n/no-path-concat"
+path_concat(b, "Build this path with path.join() or path.resolve() instead of concatenating strings.") :-
+    concat(_, b), kind(b, "binary_expression").
+path_concat(t, "Build this path with path.join() or path.resolve() instead of a template string.") :-
+    concat(_, t), kind(t, "template_string").

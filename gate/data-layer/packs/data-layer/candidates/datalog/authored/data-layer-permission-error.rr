@@ -1,0 +1,64 @@
+// data-layer-permission-error, authored clause `raise` (`syntax: valid`).
+// The policy: a raise_statement matching `raise PermissionError($$$ARGS)` or `raise PermissionError` (patterns by
+// named children, the converter's form: `raise PermissionError(…) from e` has a second child and matches
+// neither), and
+// - not inside a module that has, anywhere, an import_from_statement lying wholly before the raise
+//   (`layout.after: {to: capture.RAISE, breaks: {min: 0}}`: the capture RAISE, the raise itself, must start at or
+//   after the import's end; `breaks.min 0` always holds) whose `module_name` child's text contains
+//   `l1100_exceptions` and which has a `name` child that is the dotted_name `PermissionError` or the
+//   aliased_import `PermissionError as PermissionError`;
+// - and neither the raise's first line (`layout.line`) nor the line before it (`layout.previousLine`) contains
+//   `lint: allow-builtin-permission-error` (each searched in the physical line's full text).
+// `layout.after` to a capture is W's `Gap::holds` (matcher/layout.rs): the capture must start at or after the import's
+// end, and the lines between them count `breaks`, which `min: 0` always accepts; no `blank` is asked. That is a byte
+// comparison, exactly, so no layout relation is needed. The regexes read each node's full text (`node_text`).
+// The lines are `tape_line`'s, numbered as `line(n)` and W's layout number them (`\r\n`, `\r`, `\n`).
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// The two patterns.
+.decl raise_builtin(d: number, r: node, start: number)
+raise_builtin(d, r, s) :-
+    node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1),
+    node(_, x, "identifier", _, _), text(x, "PermissionError").
+raise_builtin(d, r, s) :-
+    node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1),
+    node(_, x, "call", _, _), child(x, f, 0), node(_, f, "identifier", _, _), text(f, "PermissionError"),
+    child(x, a, 1), node(_, a, "argument_list", _, _), !child(x, _, 2).
+
+// `from …l1100_exceptions… import PermissionError` (or `PermissionError as PermissionError`), ending at `end`.
+// `has: {field: module_name, regex: l1100_exceptions}` searches the module_name node's text (a dotted_name or a
+// relative_import, dots and all).
+.decl raise_module_name(m: node)
+raise_module_name(m) :- field(i, "module_name", m), node(_, i, "import_from_statement", _, _), node_text(m, s),
+    contains("l1100_exceptions", s).
+
+.decl raise_imported_name(c: node)
+raise_imported_name(c) :- node(_, c, "dotted_name", _, _), node_text(c, "PermissionError").
+raise_imported_name(c) :-
+    node(_, c, "aliased_import", _, _), field(c, "name", x), node_text(x, "PermissionError"),
+    field(c, "alias", y), node_text(y, "PermissionError").
+
+.decl raise_import(d: number, end: number)
+raise_import(d, e) :-
+    node(d, i, "import_from_statement", _, e), field(i, "module_name", m), raise_module_name(m),
+    field(i, "name", c), raise_imported_name(c).
+
+.decl raise_imported(r: node)
+raise_imported(r) :- raise_builtin(d, r, s), raise_import(d, e), e <= s.
+
+// The allow marker on the raise's line or the line before.
+.decl raise_allowed(r: node)
+raise_allowed(r) :-
+    raise_builtin(d, r, _), line(r, l), tape_line(d, l, sp), text(sp, t),
+    contains("lint: allow-builtin-permission-error", t).
+raise_allowed(r) :-
+    raise_builtin(d, r, _), line(r, l), k = l - 1, tape_line(d, k, sp), text(sp, t),
+    contains("lint: allow-builtin-permission-error", t).
+
+violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :-
+    raise_builtin(d, r, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
+    !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).

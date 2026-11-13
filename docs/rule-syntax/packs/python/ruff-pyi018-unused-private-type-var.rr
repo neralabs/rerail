@@ -1,0 +1,15 @@
+.policy "ruff-pyi018-unused-private-type-var" revision 2
+.description "Remove private type variables that are never used, or use them; an unused underscore-prefixed type variable is likely a mistake."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI018 (flake8-pyi), every file: `_T = TypeVar("_T")` (or ParamSpec, TypeVarTuple) whose private name
+// nothing in the file reads. Only the last binding of the name in its scope counts; class bodies only in stubs
+// (python/typing's unused_private). Reported at the assignment.
+//   _T = TypeVar("_T")        ← PYI018 when no annotation uses _T
+#include "python/typing.rr"
+
+.violation PYI018(at: node, x: symbol) code "PYI018" "Remove the unused private type variable `{x}`, or use it in an annotation; rename it without the underscore if other modules import it."
+    suppress ruff "PYI018"
+PYI018(a, x) :- unused_private(_, x, a), simple_assign(a, t, v), plain_target(t, x), typevar_call(v, _).

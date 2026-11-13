@@ -1,0 +1,31 @@
+.policy "ruff-up026-deprecated-mock-import" revision 2
+.description "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP026 (pyupgrade): the `mock` backport, which the standard library has had as `unittest.mock` since 3.3.
+// Three forms, each where Ruff reports it:
+//   import mock, sys            ← UP026 at `mock` (each `mock` or `mock.mock` item, aliased or not)
+//   from mock import patch      ← UP026 at the statement (from `mock` or `mock.mock`)
+//   mock.mock.Mock()            ← UP026 at `mock.mock`: an attribute of `mock.mock` (by spelling), in a file that
+//                                 imports the `mock` package somewhere (Ruff's seen_module)
+//   x = mock.mock               not reported: nothing is read from it
+// The JSON's three clauses, one message each.
+#include "python/upgrade-imports.rr"
+//   plain_import(i, a, m, l), from_stmt(i, m)
+
+.violation UP026(at: node, msg: symbol) code "UP026" "{msg}"
+    suppress ruff "UP026"
+UP026(a, m) :- plain_import(_, a, x, _), mock_module(x), says("import", m).
+UP026(i, m) :- from_stmt(i, x), mock_module(x), says("from", m).
+UP026(e, m) :- attr_of(_, e, _), attr_of(e, o, "mock"), kind(o, "identifier"), text(o, "mock"), docof(e, d),
+    imports_mock(d), says("attribute", m).
+.decl imports_mock(d: number)
+imports_mock(d) :- import_alias(i, _, q, _, _), @head(q) = "mock", docof(i, d).
+.decl mock_module(m: symbol)
+mock_module("mock"). mock_module("mock.mock").
+.decl says(form: symbol, msg: symbol)
+says("import", "Import mock from the standard library with `from unittest import mock` (add `as NAME` if it is aliased). Keep the separate package only if the code must still run on Python 2.").
+says("from", "Import from `unittest.mock` instead of `mock`; `from mock import mock` becomes `from unittest import mock`. Keep the separate package only if the code must still run on Python 2.").
+says("attribute", "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`.").

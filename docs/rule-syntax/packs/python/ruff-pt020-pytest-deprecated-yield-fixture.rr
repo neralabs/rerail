@@ -1,0 +1,17 @@
+.policy "ruff-pt020-pytest-deprecated-yield-fixture" revision 2
+.description "Use the pytest fixture decorator instead of the deprecated yield_fixture alias; fixtures can already yield, so the rename changes nothing else."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT020 (flake8-pytest-style): `@pytest.yield_fixture`, deprecated since pytest 6.2; `@pytest.fixture` can
+// yield. Reported when it is a function's first fixture decorator.
+//   @pytest.yield_fixture()      ← PT020
+//   @pytest.fixture              not reported
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), pytest_deco(o, d, e, q)
+
+.violation PT020(at: node) code "PT020"
+    "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes."
+    suppress ruff "PT020"
+PT020(d) :- pytest_fixture(f, d, e), pytest_deco(f, d, e, "pytest.yield_fixture").

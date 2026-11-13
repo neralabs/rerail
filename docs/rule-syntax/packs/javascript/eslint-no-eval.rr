@@ -1,0 +1,30 @@
+.policy "eslint-no-eval" revision 4
+.description "Avoid eval() in JavaScript, including indirect use through the global object; it runs arbitrary strings as code."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+#include "tsx/eslint-a-globals.rr"
+//   callee(c, f), global_ref_to(r, x), global_object_ref(o, x), static_prop(m, o, x), global_this(t), deparen(e, l)
+
+// ESLint's no-eval. Reported at the `eval` identifier or property:
+//   eval(s);            a direct call, even of a parameter named eval (ESLint checks the name only)
+//   var f = eval;       (0, eval)(s);    g(eval);      any other use of the global eval
+//   globalThis.eval(s); window.eval(s);  global.global.eval(s)   through the global object, where
+//                       window or global is a global variable (browser or Node environment, `/* global */`)
+//   this.eval(s);       where this is the global object: a script's top level, a sloppy plain function
+// allowIndirect (default false): only direct calls `eval(s)` are reported, and not `eval?.(s)`.
+.violation no_eval(at: node) code "no-eval"
+    "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead."
+    suppress eslint "no-eval"
+    suppress oxlint "no-eval"
+    suppress biome "lint/security/noGlobalEval"
+no_eval(f) :- callee(c, f), kind(f, "identifier"), text(f, "eval"), (!option("allowIndirect", "true") ; !optional(c)).
+no_eval(r) :- indirect(), global_ref_to(r, "eval"), !callee(_, r).
+no_eval(p) :- indirect(), static_prop(m, o, "eval"), global_object_ref(o, _), field(m, k, p), (k = "property" ; k = "index").
+no_eval(p) :- indirect(), static_prop(m, t, "eval"), kind(t, "this"), global_this(t), field(m, k, p),
+    (k = "property" ; k = "index").
+.decl indirect()  // the default: indirect uses are reported too
+indirect() :- !option("allowIndirect", "true").
+.decl optional(c: node)  // eval?.(s)
+optional(c) :- kind(c, "call_expression"), field(c, "optional_chain", _).

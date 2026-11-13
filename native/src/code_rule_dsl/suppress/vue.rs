@@ -2,7 +2,7 @@
 //! file's scripts. A Vue file is two documents (`embed`): the component's own tree, which holds
 //! its template comments, and the program its scripts make, which holds theirs.
 
-use super::EslintDirectives;
+use super::eslint::EslintDirectives;
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::origin::InFile;
 use crate::code_rule_dsl::tape::{TapeDoc, tape_doc};
@@ -18,7 +18,7 @@ fn component(doc: &TapeDoc) -> &TapeDoc {
 /// `<script>` blocks, the only ones vue-eslint-parser gives ESLint core (`getAllComments`); the
 /// template's comments are eslint-plugin-vue's (`VueDirectives`), and its expressions' comments
 /// neither's. The comments are the embedded program's, at the file bytes they copy.
-pub(crate) fn script_directives<D: Doc>(
+pub fn script_directives<D: Doc>(
     node: &Node<'_, D>,
     source: &str,
     lines: &LineTable,
@@ -73,7 +73,7 @@ enum EventKind {
 
 /// eslint-plugin-vue 10.11.1's template comment directives and element boundaries.
 #[derive(Debug, Default)]
-pub(crate) struct VueDirectives {
+pub struct VueDirectives {
     /// Directive and element-boundary events in source order.
     events: Vec<Event>,
 }
@@ -299,7 +299,7 @@ fn strip_description(value: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::Terminators;

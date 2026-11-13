@@ -1,0 +1,1331 @@
+{
+  "format": "rerail.canonical-frontier-recovery/v1",
+  "date": "2026-10-24",
+  "status": "deterministic admission and composition selected; complete-job 100-submission gate still fails",
+  "baselineCommit": "e237b5a0",
+  "tddRedCommit": "bc3417cd",
+  "rootCause": {
+    "previousOrder": "Corpus::prepare_files sorted plan handles by Arc allocation address",
+    "previousAdmission": "lowering allowed 256 newly generated nodes after earlier plans populated reuse state",
+    "sameObjectWitness": {
+      "deterministic": false,
+      "format": "rerail.frontier-audit/v1",
+      "policyDigest": "sha256:8cc2a69de252623b2d6f534fcc0a12ee3913039a2a1a6b76e5fd289b59bc628b",
+      "rule": "data-layer-serverplan-state-tripwires",
+      "scope": "one compiled policy; identical plan objects, capabilities and tape input slot",
+      "sqlExecution": "none; plan compilation only",
+      "rawPath": ".rerail/profiles/frontier-recovery-20261024/state-baseline-audit.json",
+      "rawSha256": "37ef6ca95e59f6cb01a35f63ac966c3d9242f73f6e02a570654a834a5ac9ac9c",
+      "languages": [
+        {
+          "deterministic": false,
+          "language": 1,
+          "variants": [
+            {
+              "order": "forward",
+              "parametersSha256": "b6dcbf041c78d2f95eecb6cc27e0b21e290103ccbfa98250d39fc7a134742a3f",
+              "peakLiveRelations": 321,
+              "physicalBuilds": 1029,
+              "plans": 139,
+              "resultQueries": 2,
+              "stageSha256": "c44e0addaaeaa79b74826b4d0988e5efbb2a769cb9ffaf44566f63ae077b555f",
+              "stages": 1609,
+              "broadenedPlans": 54,
+              "generatedNodes": 26110,
+              "admissionsSha256": "435dadf63bd32222b73efa4e82893e2ddbb6cc3f6af092e1387c934510b716a4"
+            },
+            {
+              "order": "reverse",
+              "parametersSha256": "f588b68ec10de087dcde6b89e17d27fa674a2b2cad9e3bda662db09eb1852cb2",
+              "peakLiveRelations": 255,
+              "physicalBuilds": 972,
+              "plans": 139,
+              "resultQueries": 2,
+              "stageSha256": "ce93bdd251f3a5769977747273dd033ec1f84a244e2b27260241ce69990a19a6",
+              "stages": 1532,
+              "broadenedPlans": 64,
+              "generatedNodes": 26898,
+              "admissionsSha256": "0fab308664613a0eccb1e4eb75659b4c2bfd57fca7a3b53a0659f8e201d424f4"
+            },
+            {
+              "order": "rotated",
+              "parametersSha256": "31e23862f32894b8735922ef827682a182d3c429e8c6dc41bdcbd83745c476fd",
+              "peakLiveRelations": 268,
+              "physicalBuilds": 1029,
+              "plans": 139,
+              "resultQueries": 2,
+              "stageSha256": "207358ad901ab68e419a383d5b359d0be64fd40c7a17e3733bb2592df255ec73",
+              "stages": 1609,
+              "broadenedPlans": 54,
+              "generatedNodes": 26110,
+              "admissionsSha256": "435dadf63bd32222b73efa4e82893e2ddbb6cc3f6af092e1387c934510b716a4"
+            },
+            {
+              "order": "interleaved",
+              "parametersSha256": "c10fc1ffc8feb596b354746d51c49ce49f7fa298d8a502ec0079a7166e4a76fb",
+              "peakLiveRelations": 304,
+              "physicalBuilds": 1029,
+              "plans": 139,
+              "resultQueries": 2,
+              "stageSha256": "a6af6659a4813629baf42359e7df9a77717c646197a0a4ec1072a84b01d0064d",
+              "stages": 1609,
+              "broadenedPlans": 56,
+              "generatedNodes": 26614,
+              "admissionsSha256": "94223553e6491fbafa272c4a0493b65b895bc43e84fc198720ca16cbef52017e"
+            }
+          ]
+        }
+      ],
+      "instrumentedAddonSha256": "a7680fb030f28739d301f874abbbd3348a3d74e621d77a2b2049f7c6b67ed3dc"
+    },
+    "consequence": "identical compiled plans changed admission and physical work under explicit permutations; this is not a SQL equivalence or cache-pruning inference",
+    "changedAdmissionExamples": [
+      {
+        "plan": 0,
+        "forward": [
+          93,
+          false
+        ],
+        "reverse": [
+          66,
+          false
+        ]
+      },
+      {
+        "plan": 1,
+        "forward": [
+          92,
+          false
+        ],
+        "reverse": [
+          85,
+          false
+        ]
+      },
+      {
+        "plan": 2,
+        "forward": [
+          68,
+          false
+        ],
+        "reverse": [
+          76,
+          false
+        ]
+      },
+      {
+        "plan": 3,
+        "forward": [
+          167,
+          false
+        ],
+        "reverse": [
+          110,
+          false
+        ]
+      },
+      {
+        "plan": 5,
+        "forward": [
+          110,
+          false
+        ],
+        "reverse": [
+          192,
+          false
+        ]
+      },
+      {
+        "plan": 6,
+        "forward": [
+          214,
+          false
+        ],
+        "reverse": [
+          256,
+          true
+        ]
+      },
+      {
+        "plan": 7,
+        "forward": [
+          258,
+          true
+        ],
+        "reverse": [
+          257,
+          true
+        ]
+      },
+      {
+        "plan": 8,
+        "forward": [
+          256,
+          true
+        ],
+        "reverse": [
+          257,
+          true
+        ]
+      },
+      {
+        "plan": 11,
+        "forward": [
+          85,
+          false
+        ],
+        "reverse": [
+          66,
+          false
+        ]
+      },
+      {
+        "plan": 12,
+        "forward": [
+          159,
+          false
+        ],
+        "reverse": [
+          93,
+          false
+        ]
+      },
+      {
+        "plan": 13,
+        "forward": [
+          172,
+          false
+        ],
+        "reverse": [
+          179,
+          false
+        ]
+      },
+      {
+        "plan": 14,
+        "forward": [
+          154,
+          false
+        ],
+        "reverse": [
+          184,
+          false
+        ]
+      }
+    ]
+  },
+  "implementation": {
+    "admission": "each plan independently receives the existing 256-node allowance",
+    "failure": "discard the complete failed fragment and construct its conservative fallback in fresh state",
+    "composition": "intern full generated SQL definitions, schemas, typed parameter values and child identities; no digest establishes sharing",
+    "placement": "canonical topological numbering, parameter order and producer-grouped result packets; retain original consumer identities",
+    "sourceDomain": "one pinned tape/domain slot per program; compare the actual file-domain definition before composition",
+    "addresses": "local handle and cache-set keys only; no admission or physical placement decision",
+    "canonicalAliases": "local SQL names, never cross-program sharing identities",
+    "execution": "SQLite remains the executor and SQL remains the fact owner",
+    "removed": "legacy alias-compaction renderer and new uncompacted diagnostic captures; historical replay input remains supported",
+    "flags": "no alternative compiler or execution algorithm flag"
+  },
+  "selectedAudit": {
+    "deterministic": true,
+    "format": "rerail.frontier-audit/v1",
+    "policyDigest": "sha256:8cc2a69de252623b2d6f534fcc0a12ee3913039a2a1a6b76e5fd289b59bc628b",
+    "rule": "data-layer-serverplan-state-tripwires",
+    "scope": "one compiled policy; identical plan objects, capabilities and tape input slot",
+    "sqlExecution": "none; plan compilation only",
+    "rawPath": ".rerail/profiles/frontier-recovery-20261024/state-selected-audit.json",
+    "rawSha256": "f8ad5d8c7dcc2079284531a93e2cb7d6cf87dc4e27e9610608ae28a97865fae6",
+    "languages": [
+      {
+        "deterministic": true,
+        "language": 1,
+        "variants": [
+          {
+            "order": "forward",
+            "parametersSha256": "8ad0f49b22fc5c61849b6b45cfbe2aa9ebf4f0507166c60b8b5be241ce926902",
+            "peakLiveRelations": 263,
+            "physicalBuilds": 951,
+            "plans": 139,
+            "producerSha256": "c3ce10999ff2447fc19a11913ed8aa3123bc680be32576496c921e2defad9392",
+            "resultQueries": 2,
+            "stageSha256": "2b7be5b3e84e78a575e4d7eab202aa3dfd31cec5e8c159ad82644004f6c12bcb",
+            "stages": 1503,
+            "broadenedPlans": 65,
+            "generatedNodes": 29466,
+            "admissionsSha256": "c4af28ed563b3de11803411ecd5049bfa99290447c3efb0d00e0ab6dce955ccf"
+          },
+          {
+            "order": "reverse",
+            "parametersSha256": "8ad0f49b22fc5c61849b6b45cfbe2aa9ebf4f0507166c60b8b5be241ce926902",
+            "peakLiveRelations": 263,
+            "physicalBuilds": 951,
+            "plans": 139,
+            "producerSha256": "c3ce10999ff2447fc19a11913ed8aa3123bc680be32576496c921e2defad9392",
+            "resultQueries": 2,
+            "stageSha256": "2b7be5b3e84e78a575e4d7eab202aa3dfd31cec5e8c159ad82644004f6c12bcb",
+            "stages": 1503,
+            "broadenedPlans": 65,
+            "generatedNodes": 29466,
+            "admissionsSha256": "c4af28ed563b3de11803411ecd5049bfa99290447c3efb0d00e0ab6dce955ccf"
+          },
+          {
+            "order": "rotated",
+            "parametersSha256": "8ad0f49b22fc5c61849b6b45cfbe2aa9ebf4f0507166c60b8b5be241ce926902",
+            "peakLiveRelations": 263,
+            "physicalBuilds": 951,
+            "plans": 139,
+            "producerSha256": "c3ce10999ff2447fc19a11913ed8aa3123bc680be32576496c921e2defad9392",
+            "resultQueries": 2,
+            "stageSha256": "2b7be5b3e84e78a575e4d7eab202aa3dfd31cec5e8c159ad82644004f6c12bcb",
+            "stages": 1503,
+            "broadenedPlans": 65,
+            "generatedNodes": 29466,
+            "admissionsSha256": "c4af28ed563b3de11803411ecd5049bfa99290447c3efb0d00e0ab6dce955ccf"
+          },
+          {
+            "order": "interleaved",
+            "parametersSha256": "8ad0f49b22fc5c61849b6b45cfbe2aa9ebf4f0507166c60b8b5be241ce926902",
+            "peakLiveRelations": 263,
+            "physicalBuilds": 951,
+            "plans": 139,
+            "producerSha256": "c3ce10999ff2447fc19a11913ed8aa3123bc680be32576496c921e2defad9392",
+            "resultQueries": 2,
+            "stageSha256": "2b7be5b3e84e78a575e4d7eab202aa3dfd31cec5e8c159ad82644004f6c12bcb",
+            "stages": 1503,
+            "broadenedPlans": 65,
+            "generatedNodes": 29466,
+            "admissionsSha256": "c4af28ed563b3de11803411ecd5049bfa99290447c3efb0d00e0ab6dce955ccf"
+          }
+        ]
+      }
+    ],
+    "canonicalAdmissions": [
+      [
+        0,
+        93,
+        false
+      ],
+      [
+        1,
+        111,
+        false
+      ],
+      [
+        2,
+        93,
+        false
+      ],
+      [
+        3,
+        193,
+        false
+      ],
+      [
+        4,
+        229,
+        false
+      ],
+      [
+        5,
+        193,
+        false
+      ],
+      [
+        6,
+        256,
+        true
+      ],
+      [
+        7,
+        256,
+        true
+      ],
+      [
+        8,
+        257,
+        true
+      ],
+      [
+        9,
+        193,
+        false
+      ],
+      [
+        10,
+        257,
+        true
+      ],
+      [
+        11,
+        85,
+        false
+      ],
+      [
+        12,
+        175,
+        false
+      ],
+      [
+        13,
+        254,
+        false
+      ],
+      [
+        14,
+        229,
+        false
+      ],
+      [
+        15,
+        138,
+        false
+      ],
+      [
+        16,
+        125,
+        false
+      ],
+      [
+        17,
+        145,
+        false
+      ],
+      [
+        18,
+        106,
+        false
+      ],
+      [
+        19,
+        142,
+        false
+      ],
+      [
+        20,
+        158,
+        false
+      ],
+      [
+        21,
+        246,
+        false
+      ],
+      [
+        22,
+        138,
+        false
+      ],
+      [
+        23,
+        210,
+        false
+      ],
+      [
+        24,
+        131,
+        false
+      ],
+      [
+        25,
+        166,
+        false
+      ],
+      [
+        26,
+        159,
+        false
+      ],
+      [
+        27,
+        257,
+        true
+      ],
+      [
+        28,
+        194,
+        false
+      ],
+      [
+        29,
+        194,
+        false
+      ],
+      [
+        30,
+        208,
+        false
+      ],
+      [
+        31,
+        189,
+        false
+      ],
+      [
+        32,
+        189,
+        false
+      ],
+      [
+        33,
+        189,
+        false
+      ],
+      [
+        34,
+        188,
+        false
+      ],
+      [
+        35,
+        189,
+        false
+      ],
+      [
+        36,
+        197,
+        false
+      ],
+      [
+        37,
+        189,
+        false
+      ],
+      [
+        38,
+        189,
+        false
+      ],
+      [
+        39,
+        197,
+        false
+      ],
+      [
+        40,
+        194,
+        false
+      ],
+      [
+        41,
+        194,
+        false
+      ],
+      [
+        42,
+        196,
+        false
+      ],
+      [
+        43,
+        203,
+        false
+      ],
+      [
+        44,
+        212,
+        false
+      ],
+      [
+        45,
+        256,
+        true
+      ],
+      [
+        46,
+        194,
+        false
+      ],
+      [
+        47,
+        194,
+        false
+      ],
+      [
+        48,
+        194,
+        false
+      ],
+      [
+        49,
+        194,
+        false
+      ],
+      [
+        50,
+        194,
+        false
+      ],
+      [
+        51,
+        200,
+        false
+      ],
+      [
+        52,
+        209,
+        false
+      ],
+      [
+        53,
+        256,
+        true
+      ],
+      [
+        54,
+        256,
+        true
+      ],
+      [
+        55,
+        256,
+        true
+      ],
+      [
+        56,
+        256,
+        true
+      ],
+      [
+        57,
+        256,
+        true
+      ],
+      [
+        58,
+        256,
+        true
+      ],
+      [
+        59,
+        256,
+        true
+      ],
+      [
+        60,
+        257,
+        true
+      ],
+      [
+        61,
+        257,
+        true
+      ],
+      [
+        62,
+        258,
+        true
+      ],
+      [
+        63,
+        258,
+        true
+      ],
+      [
+        64,
+        258,
+        true
+      ],
+      [
+        65,
+        257,
+        true
+      ],
+      [
+        66,
+        258,
+        true
+      ],
+      [
+        67,
+        258,
+        true
+      ],
+      [
+        68,
+        257,
+        true
+      ],
+      [
+        69,
+        256,
+        true
+      ],
+      [
+        70,
+        256,
+        true
+      ],
+      [
+        71,
+        256,
+        true
+      ],
+      [
+        72,
+        256,
+        true
+      ],
+      [
+        73,
+        256,
+        true
+      ],
+      [
+        74,
+        256,
+        true
+      ],
+      [
+        75,
+        256,
+        true
+      ],
+      [
+        76,
+        256,
+        true
+      ],
+      [
+        77,
+        256,
+        true
+      ],
+      [
+        78,
+        256,
+        true
+      ],
+      [
+        79,
+        256,
+        true
+      ],
+      [
+        80,
+        256,
+        true
+      ],
+      [
+        81,
+        256,
+        true
+      ],
+      [
+        82,
+        86,
+        false
+      ],
+      [
+        83,
+        91,
+        false
+      ],
+      [
+        84,
+        92,
+        false
+      ],
+      [
+        85,
+        170,
+        false
+      ],
+      [
+        86,
+        170,
+        false
+      ],
+      [
+        87,
+        187,
+        false
+      ],
+      [
+        88,
+        165,
+        false
+      ],
+      [
+        89,
+        165,
+        false
+      ],
+      [
+        90,
+        165,
+        false
+      ],
+      [
+        91,
+        165,
+        false
+      ],
+      [
+        92,
+        165,
+        false
+      ],
+      [
+        93,
+        173,
+        false
+      ],
+      [
+        94,
+        165,
+        false
+      ],
+      [
+        95,
+        165,
+        false
+      ],
+      [
+        96,
+        173,
+        false
+      ],
+      [
+        97,
+        170,
+        false
+      ],
+      [
+        98,
+        170,
+        false
+      ],
+      [
+        99,
+        171,
+        false
+      ],
+      [
+        100,
+        179,
+        false
+      ],
+      [
+        101,
+        188,
+        false
+      ],
+      [
+        102,
+        257,
+        true
+      ],
+      [
+        103,
+        170,
+        false
+      ],
+      [
+        104,
+        170,
+        false
+      ],
+      [
+        105,
+        170,
+        false
+      ],
+      [
+        106,
+        170,
+        false
+      ],
+      [
+        107,
+        170,
+        false
+      ],
+      [
+        108,
+        179,
+        false
+      ],
+      [
+        109,
+        188,
+        false
+      ],
+      [
+        110,
+        256,
+        true
+      ],
+      [
+        111,
+        256,
+        true
+      ],
+      [
+        112,
+        256,
+        true
+      ],
+      [
+        113,
+        256,
+        true
+      ],
+      [
+        114,
+        256,
+        true
+      ],
+      [
+        115,
+        256,
+        true
+      ],
+      [
+        116,
+        256,
+        true
+      ],
+      [
+        117,
+        257,
+        true
+      ],
+      [
+        118,
+        257,
+        true
+      ],
+      [
+        119,
+        258,
+        true
+      ],
+      [
+        120,
+        258,
+        true
+      ],
+      [
+        121,
+        258,
+        true
+      ],
+      [
+        122,
+        257,
+        true
+      ],
+      [
+        123,
+        258,
+        true
+      ],
+      [
+        124,
+        258,
+        true
+      ],
+      [
+        125,
+        257,
+        true
+      ],
+      [
+        126,
+        256,
+        true
+      ],
+      [
+        127,
+        256,
+        true
+      ],
+      [
+        128,
+        256,
+        true
+      ],
+      [
+        129,
+        256,
+        true
+      ],
+      [
+        130,
+        256,
+        true
+      ],
+      [
+        131,
+        256,
+        true
+      ],
+      [
+        132,
+        256,
+        true
+      ],
+      [
+        133,
+        256,
+        true
+      ],
+      [
+        134,
+        256,
+        true
+      ],
+      [
+        135,
+        256,
+        true
+      ],
+      [
+        136,
+        256,
+        true
+      ],
+      [
+        137,
+        256,
+        true
+      ],
+      [
+        138,
+        256,
+        true
+      ]
+    ]
+  },
+  "guard": {
+    "limit": 100,
+    "engineSubmitted": 8669,
+    "sqliteInternal": 994,
+    "totalObserved": 9663,
+    "connections": 136,
+    "status": "budget-exceeded",
+    "coverageProblems": [],
+    "unknownOrigins": 0,
+    "enginePhases": {
+      "connectionSetup": 372,
+      "filePublication": 36,
+      "catalogPublication": 12,
+      "candidatePreparation": 4252,
+      "cleanup": 2216,
+      "relationalEvaluation": 1781
+    },
+    "firstOverBudget": {
+      "startNs": 734552583,
+      "session": "profile-80566-32.json",
+      "query": 40,
+      "sql": "\nCREATE TRIGGER file_delete BEFORE DELETE ON file BEGIN\n    DELETE FROM ftsk WHERE rowid=OLD.fid;\nEND;",
+      "context": {
+        "component": "ast-index",
+        "stage": "schema"
+      },
+      "thread": "ThreadId(1)"
+    },
+    "parity": {
+      "nativeCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277"
+    }
+  },
+  "repeatGuard": {
+    "engineSubmitted": 8669,
+    "sqliteInternal": 994,
+    "totalObserved": 9663,
+    "coverageProblems": [],
+    "parity": {
+      "nativeCalls": 2,
+      "positiveCalls": 1,
+      "cleanCalls": 1,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277"
+    }
+  },
+  "priorGuard": {
+    "engineSubmitted": 9481,
+    "sqliteInternal": 994,
+    "source": "shared-span-waves-20261024.json"
+  },
+  "engineSubmissionReductionPercent": 8.564497415884398,
+  "frontiers": {
+    "selected": [
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-0.json",
+        "stages": 647,
+        "physicalBuilds": 393,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 57,
+        "stageSha256": "1e1a2fc6a28800c02329f521c5a655acb3fd2af0d368f2f4b04e0afbc093c745"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-1.json",
+        "stages": 647,
+        "physicalBuilds": 393,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 57,
+        "stageSha256": "1e1a2fc6a28800c02329f521c5a655acb3fd2af0d368f2f4b04e0afbc093c745"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-2.json",
+        "stages": 659,
+        "physicalBuilds": 401,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 53,
+        "stageSha256": "d711a6a023bb439816a941bf2c2cdd8aca8352547687a8e01a1f95e2b2c72938"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-acceptance/capture/sql/raw/candidate-80566-3.json",
+        "stages": 659,
+        "physicalBuilds": 401,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 53,
+        "stageSha256": "d711a6a023bb439816a941bf2c2cdd8aca8352547687a8e01a1f95e2b2c72938"
+      }
+    ],
+    "repeat": [
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-repeat/capture/sql/raw/candidate-95873-0.json",
+        "stages": 647,
+        "physicalBuilds": 393,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 57,
+        "stageSha256": "1e1a2fc6a28800c02329f521c5a655acb3fd2af0d368f2f4b04e0afbc093c745"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-repeat/capture/sql/raw/candidate-95873-1.json",
+        "stages": 647,
+        "physicalBuilds": 393,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 57,
+        "stageSha256": "1e1a2fc6a28800c02329f521c5a655acb3fd2af0d368f2f4b04e0afbc093c745"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-repeat/capture/sql/raw/candidate-95873-2.json",
+        "stages": 659,
+        "physicalBuilds": 401,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 53,
+        "stageSha256": "d711a6a023bb439816a941bf2c2cdd8aca8352547687a8e01a1f95e2b2c72938"
+      },
+      {
+        "capture": ".rerail/profiles/frontier-recovery-20261024/selected-repeat/capture/sql/raw/candidate-95873-3.json",
+        "stages": 659,
+        "physicalBuilds": 401,
+        "peakLiveRelations": 100,
+        "spanFills": 2,
+        "broadened": 53,
+        "stageSha256": "d711a6a023bb439816a941bf2c2cdd8aca8352547687a8e01a1f95e2b2c72938"
+      }
+    ]
+  },
+  "correctness": {
+    "nativeFacingTests": 309,
+    "standaloneSqlTests": 44,
+    "fixedBudgetNodeTests": 11,
+    "originalCorpus": {
+      "nativeCalls": 120,
+      "positiveCalls": 60,
+      "cleanCalls": 60,
+      "falsePositives": 0,
+      "falseNegatives": 0,
+      "engineFailures": 0,
+      "executionPathDifferences": 0,
+      "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277"
+    },
+    "scope": "120 original observations across 60 rules, 60 positive and 60 clean; not the full 3210 observations or repository run"
+  },
+  "matchedCpu": {
+    "prior": {
+      "nativeSha256": "2a19d3be7254e47cf3e9cb4937e5f3de6bb4b434966fcc168fa39fc1c89eb5e6",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 2205.918,
+          "systemMs": 91.193,
+          "cpuMs": 2297.111,
+          "wallMs": 2500.0049169999998,
+          "maxRSSRaw": 330096,
+          "memory": {
+            "rss": 283124888,
+            "heapTotal": 104497152,
+            "heapUsed": 34188136,
+            "external": 4931993,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2396.251,
+          "systemMs": 115.668,
+          "cpuMs": 2511.919,
+          "wallMs": 3211.289292,
+          "maxRSSRaw": 360800,
+          "memory": {
+            "rss": 245458312,
+            "heapTotal": 108609536,
+            "heapUsed": 42154464,
+            "external": 9867511,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 2221.187,
+          "systemMs": 97.182,
+          "cpuMs": 2318.369,
+          "wallMs": 3007.4825419999997,
+          "maxRSSRaw": 410144,
+          "memory": {
+            "rss": 365815176,
+            "heapTotal": 106332160,
+            "heapUsed": 34275752,
+            "external": 48080937,
+            "arrayBuffers": 2241491
+          }
+        }
+      ],
+      "medianCpuMs": 2318.369,
+      "minCpuMs": 2297.111,
+      "maxCpuMs": 2511.919,
+      "medianReportedMaxRSSKiB": 360800
+    },
+    "selected": {
+      "nativeSha256": "5b69514a6d86038b138f9b1534f89903ab2c18574c87fbe9b07e631380347277",
+      "trials": [
+        {
+          "passed": true,
+          "userMs": 1594.257,
+          "systemMs": 89.642,
+          "cpuMs": 1683.899,
+          "wallMs": 1927.151167,
+          "maxRSSRaw": 324336,
+          "memory": {
+            "rss": 277767560,
+            "heapTotal": 109608960,
+            "heapUsed": 42440696,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1528.813,
+          "systemMs": 88.675,
+          "cpuMs": 1617.488,
+          "wallMs": 1817.6918330000003,
+          "maxRSSRaw": 343728,
+          "memory": {
+            "rss": 297789768,
+            "heapTotal": 111362048,
+            "heapUsed": 67561600,
+            "external": 7399752,
+            "arrayBuffers": 2241491
+          }
+        },
+        {
+          "passed": true,
+          "userMs": 1523.005,
+          "systemMs": 87.707,
+          "cpuMs": 1610.712,
+          "wallMs": 1840.012333,
+          "maxRSSRaw": 375536,
+          "memory": {
+            "rss": 329672144,
+            "heapTotal": 106971136,
+            "heapUsed": 41062848,
+            "external": 53156855,
+            "arrayBuffers": 45530835
+          }
+        }
+      ],
+      "medianCpuMs": 1617.488,
+      "minCpuMs": 1610.712,
+      "maxCpuMs": 1683.899,
+      "medianReportedMaxRSSKiB": 343728
+    },
+    "medianReductionPercent": 30.231641296100843
+  },
+  "memoryDiagnostic": {
+    "method": "one separate SQL replay per captured first source observation, same production cache budgets and unchanged replay helper",
+    "observations": {
+      "prior": {
+        "rows": 135,
+        "stages": 761,
+        "peakLiveRelations": 114,
+        "sqlCpuMs": 107.460247,
+        "sqliteCompileCpuMs": 62.816206,
+        "processPeakRssBytes": 40239104,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "steppingHeapPeakBytes": 22828464,
+        "compileHeapPeakBytes": 3590080
+      },
+      "canonical": {
+        "rows": 161,
+        "stages": 647,
+        "peakLiveRelations": 100,
+        "sqlCpuMs": 89.943773,
+        "sqliteCompileCpuMs": 52.692548,
+        "processPeakRssBytes": 40189952,
+        "cacheBudgetKiB": {
+          "main": 1024,
+          "temp": 512
+        },
+        "steppingHeapPeakBytes": 19793328,
+        "compileHeapPeakBytes": 3397936
+      }
+    },
+    "candidateRows": "135 before and 161 after; independent bounded admission can broaden candidates; intermediate rows are not a parity claim",
+    "scope": "SQLite replay allocation, not process RSS or retained ownership; full-result parity is measured by native corpus replay"
+  },
+  "validation": [
+    "native Clippy with profiling",
+    "native Clippy without profiling",
+    "standalone all-target Clippy",
+    "npm run check",
+    "native and standalone Rust formatting",
+    "git diff --check"
+  ],
+  "method": {
+    "workers": 4,
+    "build": "opt1 engine, deps3, no LTO, 256 codegen units; code-rule-profile enabled in both binaries",
+    "allocator": "same system allocator shim",
+    "order": "three alternating fresh-process pairs; own builds, tests and diagnostics finish before timing",
+    "cpuScope": "process.cpuUsage around complete replay including policy validation/compilation, snapshot and workspace evaluation, parity and cleanup",
+    "tracing": false,
+    "memory": "process.resourceUsage maxRSS in KiB; ranges overlap; no retained-ownership claim",
+    "machine": "shared host; small controlled workload; no full repository recovery claim",
+    "recordingSha256": "c70481240faa5181e98bc58b931a8ace78a1f546ca984c6aacf350e1469ce4f4",
+    "commandScript": ".rerail/profiles/frontier-recovery-20261024/cpu.py"
+  },
+  "remaining": [
+    "complete-job 100-submission acceptance",
+    "4252 candidate-preparation and 2216 cleanup submissions remain",
+    "coalesce node/child demand and repeated selector construction",
+    "named physical owners across different frontiers and clause readers",
+    "whole-job publication and remaining session lifetimes",
+    "general empty-output completion and conditional demand admission",
+    "full 3210 corpus observations, edit matrix and repository CPU/memory acceptance"
+  ],
+  "evidenceDirectory": ".rerail/profiles/frontier-recovery-20261024"
+}

@@ -1,0 +1,50 @@
+.policy "react-jsx-no-leaked-render" revision 2
+.description "Make the left side of a && in JSX a boolean, so 0, NaN or \"\" is not rendered."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-leaked-render, at its defaults (both strategies valid, so ternaries are never reported): a `&&`
+// directly in a JSX {…} whose left side may be a value React renders, such as 0, or crashes on (NaN in React
+// Native). A left side is safe when it is a unary (`!x`, `!!x`), binary (`x > 0`) or call expression, or a
+// ||/&&/?? of safe ones, or a variable initialised with a boolean literal; `""` is safe since React 18.
+//   {count && <List />}              reported, at the &&          {count > 0 && <List />}      not reported
+//   {a?.has(x) && <B />}             reported: an optional call is a chain, not a call
+//   const on = true; {on && <B />}   not reported
+// ESLint's fix (coerce with !! or rewrite as a ternary) is not offered: the JSON has none.
+#include "tsx/react.rr"
+#include "tsx/eslint-a-common.rr"
+
+.violation leaked_render(at: node)
+    code "react/jsx-no-leaked-render"
+    "Coerce the left side of this && to a boolean (`!!x` or a comparison such as `x > 0`) or use a ternary; a value such as 0 renders as text."
+    suppress eslint "react/jsx-no-leaked-render"
+leaked_render(b) :- kind(j, "jsx_expression"), child(j, x, 0), deparen(x, b), kind(b, "binary_expression"), op(b, "&&"),
+    field(b, "left", l0), deparen(l0, l), !coerced(l), !boolean_var(l), !empty_string(l), docof(b, d), react_doc(d).
+
+// coerced(l): the left side is a UnaryExpression, BinaryExpression or CallExpression to ESTree, or a logical
+// expression of them. tree-sitter writes both kinds of operator as binary_expression.
+.decl coerced(l: node)
+coerced(l) :- kind(l, "unary_expression").
+coerced(l) :- kind(l, "binary_expression"), !logical(l).
+coerced(l) :- kind(l, "call_expression"), !optional_chain(l), field(l, "function", f), !kind(f, "import"),
+    field(l, "arguments", a), kind(a, "arguments").                       // not a tagged template f`x`
+coerced(l) :- logical(l), field(l, "left", a0), deparen(a0, a), coerced(a), field(l, "right", b0), deparen(b0, b),
+    coerced(b).
+.decl logical(l: node)
+logical(l) :- kind(l, "binary_expression"), (op(l, "&&") ; op(l, "||") ; op(l, "??")).
+// optional_chain(x): x is part of an a?.b chain, which ESTree wraps in a ChainExpression: a?.b(), a.b?.().
+// Parentheses end the chain: (a?.b)() is a plain call.
+.decl optional_chain(x: node)
+optional_chain(x) :- (kind(x, "call_expression") ; kind(x, "member_expression") ; kind(x, "subscript_expression")),
+    field(x, "optional_chain", _).
+// The TypeScript grammar writes the `?.` of a call `f?.(x)` as a token of the call, not as a field.
+optional_chain(x) :- kind(x, "call_expression"), op(x, "?.").
+optional_chain(x) :- (kind(x, "call_expression"), field(x, "function", y) ; kind(x, "member_expression"), field(x, "object", y) ;
+    kind(x, "subscript_expression"), field(x, "object", y)), optional_chain(y).
+// empty_string(l): the literal "" (a template `` is no Literal, so it is not safe).
+.decl empty_string(l: node)
+empty_string(l) :- kind(l, "string"), value(l, "").
+// boolean_var(l): `const show = true; … {show && …}`: the variable's initialiser is true or false.
+.decl boolean_var(l: node)
+boolean_var(l) :- kind(l, "identifier"), ref_site(l, site), binding_value(site, v), (kind(v, "true") ; kind(v, "false")).

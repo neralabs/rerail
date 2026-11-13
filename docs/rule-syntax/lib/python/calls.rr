@@ -1,0 +1,88 @@
+// python/calls: call targets and call chains, from the engine's Python typing program.
+// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rr (the call relations; its type
+// relations are python/types here), with this branch's syntax helpers (posarg skips comments; dexpr).
+//
+// The engine resolves Python calls once, in one program, typing/programs/calls.rr beside this site. It runs that
+// program over the repository, file by file and then in bounded cross-file rounds, and gives this library its
+// answers as facts keyed by file and span (`typing_calls__*`, one row per answer; each node is its path, kind,
+// start byte and end byte). The rules below join those spans back to this run's nodes. The program runs only when
+// a rule's findings depend on one of these relations; a rule that reads only the syntax helpers does not run it.
+// rrlab does the same: it runs the program over the run's facts first (tools/rrlab/README.md, typing programs).
+//
+// Three-valued, as the program answers:
+//   call_target(c, f) rows and no call_open(c)  -> c calls exactly those f (definite)
+//   call_open(c)                                -> c may call something else too (unknown)
+//   neither                                     -> c calls no workspace function (e.g. `len(x)`)
+// Rules must not treat a missing call_target as "calls nothing" when call_open holds.
+//
+// What the program covers: LEGB lookup and imports (relative ones of any depth), later unconditional bindings
+// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, others
+// unknown), classes and inheritance (method lookup in C3 order, constructors to `__new__` and `__init__`, a
+// metaclass's `__call__`, instances to `__call__`), late-bound self/cls, `super()`, and functions flowing through
+// assignments, returns and a returned parameter. Data flow through containers, getattr/setattr and attributes set
+// outside classes give call_open, never a wrong target.
+//
+// Interface: call_target, call_open, calls, calls_open, reach, owner, and the syntax helpers call, callee,
+// call_arg, posarg, dexpr, awaited.
+#include "python/names.rr"
+#include "python/imports.rr"
+// fdef (a def node) comes from python/names.
+
+// ---- the program's answers ----------------------------------------------------------------------------------------
+.decl typing_calls__call_target(c_path: symbol, c_kind: symbol, c_start: number, c_end: number,
+    f_path: symbol, f_kind: symbol, f_start: number, f_end: number)
+.decl typing_calls__call_open(c_path: symbol, c_kind: symbol, c_start: number, c_end: number)
+
+.decl call_target(c: node, f: node)
+call_target(c, f) :- typing_calls__call_target(p, k, s, e, q, j, t, u), doc(d, p, _), node(d, c, k, s, e), doc(g, q, _),
+    node(g, f, j, t, u).
+.decl call_open(c: node)
+call_open(c) :- typing_calls__call_open(p, k, s, e), doc(d, p, _), node(d, c, k, s, e).
+
+// ---- call chains ----------------------------------------------------------------------------------------------
+// owner(c, f): f is the nearest enclosing def of call c (a lambda's or a nested class body's calls are the
+// enclosing function's).
+.decl owner(c: node, f: node)
+owner(c, f) :- kind(c, "call"), nearest(c, f, fdef).
+// calls(f, g): the call graph edge "f may call g".
+.decl calls(f: node, g: node)
+calls(f, g) :- owner(c, f), call_target(c, g).
+// calls_open(f): f makes at least one call whose target is unknown, so its out-edges are incomplete.
+.decl calls_open(f: node)
+calls_open(f) :- owner(c, f), call_open(c).
+// reach(f, g): f may call g, directly or through a chain of calls. Only the known side: a chain through a
+// calls_open function may reach more.
+.decl reach(f: node, g: node)
+reach(f, g) :- calls(f, g).
+reach(f, h) :- reach(f, g), calls(g, h).
+
+// ---- syntax --------------------------------------------------------------------------------------------------------
+// call(c): c is a call expression.
+.decl call(c: node)
+call(c) :- kind(c, "call").
+// call_arg(c, i, keyword, v): an argument of call c. Positional: i is its index and keyword is "".
+// Keyword `k=v`: i is -1 and keyword is "k". Splats (`*xs`, `**kw`) have no row.
+// e.g. `open(p, mode="w")` gives (c, 0, "", <p>) and (c, -1, "mode", <"w">).
+.decl call_arg(c: node, i: number, keyword: symbol, v: node)
+call_arg(c, i, "", a) :- posarg(c, i, a).
+call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _),
+    kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", v).
+// callee(c, e): e is the function expression of call c (`f` in `f(x)`, `obj.m` in `obj.m()`).
+.decl callee(c: node, e: node)
+callee(c, e) :- kind(c, "call"), field(c, "function", e).
+// posarg(c, i, a): a is the argument at index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
+// The index counts all argument children but comments, so it matches param's index only while no keyword or splat
+// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rr's pos_arg is CPython's call.args.
+.decl posarg(c: node, i: number, a: node)
+posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
+    !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),
+    i = count : { arg_child_at(al, j), j < k }.
+// arg_child_at(l, k): child k of argument list l is not a comment (posarg counts these).
+.decl arg_child_at(l: node, k: number)
+arg_child_at(l, k) :- kind(l, "argument_list"), child(l, b, k), !kind(b, "comment").
+// dexpr(f, e): e is a decorator expression on definition f (`@cache` gives the name node, `@route("/")` the call).
+.decl dexpr(f: node, e: node)
+dexpr(f, e) :- kind(dd, "decorated_definition"), field(dd, "definition", f), child(dd, dc, _), kind(dc, "decorator"), child(dc, e, 0).
+// awaited(c): call c is the operand of `await` (`await fetch()`), so a coroutine it returns is consumed.
+.decl awaited(c: node)
+awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").

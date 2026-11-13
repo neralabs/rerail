@@ -3,6 +3,7 @@
 //! `a` the node `1` and `c` the node `2`). A name gets an element only where the literal decides
 //! it: no default, no rest, no spread or computed key that could supply it, no getter.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::operand;
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::key::{identifier_name, static_property_name};
@@ -10,7 +11,7 @@ use ast_grep_core::{Doc, Node};
 
 /// Pairs `pattern`'s names with `value`'s elements, each as the name node's start and the
 /// element as written.
-pub(crate) fn destructured<D: Doc>(
+pub fn destructured<D: Doc>(
     pattern: &Node<'_, D>,
     value: &Node<'_, D>,
     out: &mut Vec<(usize, NodeRef)>,
@@ -63,8 +64,7 @@ pub(crate) fn destructured<D: Doc>(
 }
 
 fn named<'a, 'r, D: Doc>(node: &'a Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> + 'a {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
+    node.named_code()
 }
 
 /// The literal a value is, through parentheses and TypeScript's wrappers.

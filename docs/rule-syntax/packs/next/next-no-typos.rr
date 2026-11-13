@@ -1,0 +1,44 @@
+.policy "next-no-typos" revision 3
+.description "Spell getStaticProps, getStaticPaths and getServerSideProps exactly in page files; an export one letter off is silently ignored by Next.js."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-typos. In a page (a file under pages/, not pages/api/), a named export of a
+// function or variable one edit (Levenshtein distance 1) away from a Next.js data-fetching function; the
+// finding is at the export statement:
+//   pages/index.js:  export async function getStaticProp() {}      "Did you mean getStaticProps?"
+//   pages/index.js:  export const getServerSidePropss = …           "Did you mean getServerSideProps?"
+//   pages/index.js:  export function* getStaticProp() {}            generators too
+// The plugin picks the page from the text after the file name's first "pages", and skips it when that part's
+// directory starts with /api.
+
+#include "tsx/next.rr"
+
+.violation typo(at: node, x: symbol, want: symbol) code "@next/next/no-typos"
+    "{x} may be a typo. Did you mean {want}?"
+    suppress eslint "@next/next/no-typos"
+    suppress oxlint "no-typos"
+// No name is one edit from two of the three, so the suggestion is unique.
+typo(e, x, w) :- exported(e, x), page(e), near(x, w), !data_fn(x).
+.decl exported(e: node, x: symbol)  // export function x() {} / export const x = …, y = …
+exported(e, x) :- kind(e, "export_statement"), field(e, "declaration", f),
+    (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")), field(f, "name", n), text(n, x).
+exported(e, x) :- kind(e, "export_statement"), field(e, "declaration", s),
+    (kind(s, "lexical_declaration") ; kind(s, "variable_declaration")), child(s, v, _), field(v, "name", n),
+    kind(n, "identifier"), text(n, x).
+.decl page(e: node)
+page(e) :- kind(e, "export_statement"), docof(e, d), pages_rest(d, r), r != "", !match("/api.*/[^/]*", r).
+
+.decl data_fn(w: symbol)
+data_fn("getStaticProps"). data_fn("getStaticPaths"). data_fn("getServerSideProps").
+// near(x, w): x is one substitution, deletion or insertion away from w. At each cut i of w (0 to its length),
+// pre is w's first i characters: x is pre + any one character + w's rest after i (substitution), pre + w's rest
+// after i (deletion), or pre + any one character + w from i on (insertion).
+.decl near(x: symbol, w: symbol)
+near(x, w) :- exported(_, x), data_fn(w), cut(i), i <= strlen(w), pre = @slice(w, 0, i),
+    (i < strlen(w), glob(cat(cat(pre, "?"), @slice(w, i + 1, strlen(w))), x)
+    ; i < strlen(w), x = cat(pre, @slice(w, i + 1, strlen(w)))
+    ; glob(cat(cat(pre, "?"), @slice(w, i, strlen(w))), x)).
+.decl cut(i: number)
+cut(0). cut(1). cut(2). cut(3). cut(4). cut(5). cut(6). cut(7). cut(8). cut(9).
+cut(10). cut(11). cut(12). cut(13). cut(14). cut(15). cut(16). cut(17). cut(18).

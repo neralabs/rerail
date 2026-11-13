@@ -42,6 +42,18 @@ describe("Rerail schema", () => {
 });
 
 describe("SqliteRuleStore", () => {
+  it("preserves aggregate reporting gates when a code rule is stored and reopened", async () => {
+    const path = await temporaryDatabase();
+    const rule = { ...MOCK_CODE_RULES[0]!, clauses: [
+      { id: "aggregate", define: { report_when: { count: { gt: 16 } } } }, ...MOCK_CODE_RULES[0]!.clauses,
+    ] };
+    const store = new SqliteRuleStore(path);
+    store.upsertCodeRule(rule);
+    store.close();
+    const reopened = new SqliteRuleStore(path);
+    try { expect(reopened.codeRules()[0]).toEqual(rule); }
+    finally { reopened.close(); }
+  });
   it("round-trips code rules and conversation rules through kind-specific columns", async () => {
     const path = await temporaryDatabase();
     const store = new SqliteRuleStore(path);

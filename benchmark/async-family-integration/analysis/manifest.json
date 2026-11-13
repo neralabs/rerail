@@ -1,0 +1,36 @@
+{
+  "baseCommit": "fce3ff781de49e8b77dd34e1bdb9f07253e19914",
+  "sourceSha256": {
+    "native/src/code_rule_dsl/facts/core.rs": "bc1a8ead39dda4be1dcb4c365df410ed6d6a19792e319b1e7084c0f06793ef45",
+    "native/src/code_rule_dsl/facts/vtab/syntax.rs": "23ca43cacf87a55a544b0c57c738bc46c74a467cf3cf31970280d03a3110d3c8",
+    "native/src/code_rule_dsl/logic/plan/compose/experiments.rs": "f66f6da558baf016bb3f1df3206d0a298778946d119b09859dcfc85e4a2c0820",
+    "native/src/code_rule_dsl/logic/profile.rs": "518aaf10e624324f9b38fb5d16f0ffead825204673d5d12f930e4a112e1475f7",
+    "native/src/code_rule_dsl/logic/profile/analysis.rs": "912f1d5dde75ed72586023304fb571ed9687e5ea5b4210a4a5bc0f0d866edd43",
+    "native/src/code_rule_dsl/logic/profile/analysis_report.rs": "bd41b2ddc6241aa96dd50a89fb2b564ab3c6413753bfc57eab26e1de47df0627",
+    "native/src/code_rule_dsl/logic/profile/fixtures/outer-binding.tsv": "16b3d443068bc1236271fc304ae8c4232f08a0c15c823ad8ec47d99fc0778076"
+  },
+  "binarySha256": "447c3ac406c63bb984e7432c9cb699499a0492966fbd1e7d47706c2519c6728d",
+  "reports": [
+    {
+      "path": "late.json",
+      "sha256": "5a358b7d887798dbc2a92cd62452bcabe42f8953ff2aea7fcd03dcd9e8d677ce"
+    },
+    {
+      "path": "late.log",
+      "sha256": "6ba7cfa9f498b5315011e9dcaf8d67fa7cff2000517889307c553d7f143b0f57"
+    },
+    {
+      "path": "current.json",
+      "sha256": "bdfdbe0823ec3458242cdf6431372283566d88dfce91eaeb70776b5efae8f5fb"
+    },
+    {
+      "path": "current.log",
+      "sha256": "020b3636bc359bdf8d32d2eddf0d1380cc3359446e9074c6fb19015c242a2a3c"
+    },
+    {
+      "path": "positive.json",
+      "sha256": "1ad97b413ff8adbbba37cc4ecc82b865243dca55ccf89a55f6533764b190715f"
+    }
+  ],
+  "notes": "Diagnostic runs, not unprofiled performance comparisons. All builds and tests ran at nice 19. Historical fixture rows are from benchmark/async-family-integration/profile-native.tsv.gz."
+}

@@ -1,0 +1,25 @@
+.policy "ruff-up041-timeout-error-alias" revision 2
+.description "Use the builtin TimeoutError instead of socket.timeout or asyncio.TimeoutError; since Python 3.10 and 3.11 they are plain aliases of it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP041 (pyupgrade): an alias of the builtin TimeoutError: `socket.timeout` from Python 3.10 on, and
+// `asyncio.TimeoutError` from 3.11 on (the target, python/upgrade). Ruff looks where an exception is named:
+// an except clause, a `raise`, and the function of a call. In an except tuple the tuple is reported once.
+//   except socket.timeout:                          ← UP041 (3.10+)
+//   except (asyncio.TimeoutError, KeyError):        ← UP041 at the tuple (3.11+)
+//   raise asyncio.TimeoutError                      ← UP041 (3.11+)
+#include "python/upgrade-imports.rr"
+//   exc_site(e, how), handler_tuple(t, e), up_qual(e, q)        (python/upgrade-imports)
+//   targets(m)                                               (python/upgrade)
+
+.violation UP041(at: node, alias: symbol) code "UP041"
+    "Use the builtin `TimeoutError` instead of `{alias}`, the same class since Python 3.10 (socket) and 3.11 (asyncio); in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`."
+    suppress ruff "UP041"
+UP041(e, q) :- exc_site(e, _), timeout_alias(e, q).
+UP041(t, q) :- handler_tuple(t, e), timeout_alias(e, q).
+.decl timeout_alias(e: node, q: symbol)
+timeout_alias(e, q) :- up_qual(e, q), since(q, m), targets(m).
+.decl since(q: symbol, m: number)
+since("socket.timeout", 10). since("asyncio.TimeoutError", 11).

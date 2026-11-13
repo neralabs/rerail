@@ -1,0 +1,51 @@
+.policy "react-iframe-missing-sandbox" revision 2
+.description "Give every iframe a sandbox attribute with valid, safe permissions."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/iframe-missing-sandbox: an <iframe> (or createElement("iframe", …)) without a sandbox prop, or whose
+// literal sandbox list has a token that is not a sandbox permission, or has both allow-scripts and
+// allow-same-origin (together the framed page can lift its own sandbox). All reports are at the element or call.
+//   <iframe src="x" />                                       missing
+//   <iframe sandbox="allow-scripts allow-same-origin" />     the combination
+//   <iframe sandbox="allow-forms nope" />                    "nope" is not a permission
+// Only literal values are read: sandbox={x} counts as present and is not checked. Tokens are split at single
+// spaces and trimmed, as in the rule, so sandbox="a  b" has an empty token, which is allowed.
+#include "tsx/react.rr"
+
+.violation sandbox(at: node, msg: symbol)
+    code "react/iframe-missing-sandbox"
+    "{msg}"
+    suppress eslint "react/iframe-missing-sandbox"
+    suppress oxlint "iframe-missing-sandbox"
+sandbox(n, "Add a sandbox attribute to this iframe, listing only the allow-* permissions its content needs; sandbox=\"\" grants none.") :-
+    iframe(n), !sandbox_value(n, _, _).
+sandbox(n, cat("Remove \"", t, "\" from this iframe's sandbox list or replace it with a valid allow-* permission; browsers ignore unknown tokens.")) :-
+    sandbox_token(n, v, t), !permission(t).
+sandbox(n, "Drop allow-scripts or allow-same-origin from this iframe's sandbox; together they let the framed page remove its own sandbox.") :-
+    sandbox_token(n, v, "allow-scripts"), sandbox_token(n, v, "allow-same-origin").
+
+.decl iframe(n: node)  // <iframe …>, or createElement("iframe", …)
+iframe(o) :- react_open(_, o), plain_tag(o, "iframe").
+iframe(c) :- create_tag(c, "iframe"), docof(c, d), react_doc(d).
+// sandbox_value(n, v, s): a sandbox prop of n, with v its value and s the string when it is a literal ("" if not).
+// Every sandbox attribute counts; in createElement, the first `sandbox` key.
+.decl sandbox_value(n: node, v: node, s: symbol)
+sandbox_value(o, a, s) :- iframe(o), jsx_prop(o, "sandbox", a), (sandbox_literal(a, s) ; !sandbox_literal(a, _), s = "").
+sandbox_value(c, p, s) :- iframe(c), create_key(c, "sandbox", p), count : { create_key(c, "sandbox", q), precedes(q, p) } = 0,
+    (sandbox_literal(p, s) ; !sandbox_literal(p, _), s = "").
+.decl sandbox_literal(p: node, s: symbol)  // sandbox="…", or `sandbox: "…"` in createElement's props
+sandbox_literal(a, s) :- kind(a, "jsx_attribute"), child(a, v, 1), jsx_string(v, s).
+sandbox_literal(p, s) :- kind(p, "pair"), field(p, "value", v), kind(v, "string"), str(v, s).
+// sandbox_token(n, v, t): token t of the list, split at each space and trimmed (the empty token "" between two
+// spaces is allowed, so it need not be listed).
+.decl sandbox_token(n: node, v: node, t: symbol)
+sandbox_token(n, v, @replace_all(t, "^\\s+|\\s+$", "")) :- sandbox_value(n, v, s), s != "", match_all("(?<t>[^ ]+)", s).
+.decl permission(t: symbol)
+permission(""). permission("allow-downloads-without-user-activation"). permission("allow-downloads").
+permission("allow-forms"). permission("allow-modals"). permission("allow-orientation-lock").
+permission("allow-pointer-lock"). permission("allow-popups"). permission("allow-popups-to-escape-sandbox").
+permission("allow-presentation"). permission("allow-same-origin"). permission("allow-scripts").
+permission("allow-storage-access-by-user-activation"). permission("allow-top-navigation").
+permission("allow-top-navigation-by-user-activation").

@@ -1,0 +1,15 @@
+.policy "bandit-b313-xml-bad-celementtree" revision 2
+.description "Use defusedxml instead of xml.etree.cElementTree to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B313 (its B001 blacklist): a call to xml.etree.cElementTree's parse, iterparse, fromstring or XMLParser.
+//   import xml.etree.cElementTree as ET; ET.fromstring(s)    B313
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B313(at: node) code "B313"
+    "Using xml.etree.cElementTree to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B313"
+B313(n) :- blacklisted(n, "B313").

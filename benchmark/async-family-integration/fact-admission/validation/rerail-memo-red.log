@@ -1,0 +1,19 @@
+   Compiling rerail-store v0.1.0 (/Users/jeremy/orca/workspaces/rerail/Async-family-integration-comparison/native/crates/store)
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 9.23s
+     Running unittests src/lib.rs (/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_store-9f329dac6c2013e9)
+
+running 1 test
+
+thread 'content_store::facts_memo::tests::memo_batch_work_is_bounded_by_demanded_keys' (126111647) panicked at native/crates/store/src/../../../src/content_store/facts_memo/tests.rs:337:5:
+128 demanded keys must not scan 2048 retained rows each: 2648717 VM instructions
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test content_store::facts_memo::tests::memo_batch_work_is_bounded_by_demanded_keys ... FAILED
+
+failures:
+
+failures:
+    content_store::facts_memo::tests::memo_batch_work_is_bounded_by_demanded_keys
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 162 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p rerail-store --lib`

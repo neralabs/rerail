@@ -1,0 +1,26 @@
+.policy "ruff-ruf060-in-empty-collection" revision 1
+.description "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the result is almost always fixed, so the test hides a mistake or dead code."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF060: `x in c` or `x not in c`, one operator, where c is empty: an empty display or string, or a
+// call of list, tuple, set, frozenset, dict, str, bytes or bytearray with no arguments, or with one that is
+// itself empty.
+//   1 in []                   ← RUF060
+//   1 in set(set())           ← RUF060
+//   1 in set(set([1]))        not reported
+#include "python/ruff.rr"
+
+.violation RUF060(at: node, msg: symbol) code "RUF060" "{msg}"
+    suppress ruff "RUF060"
+RUF060(c, "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False` and simplify, or fill the collection if items were meant.") :-
+    cmp(c, "in", _, r), empty_coll(r).
+RUF060(c, "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True` and simplify, or fill the collection if items were meant.") :-
+    cmp(c, "not in", _, r), empty_coll(r).
+
+.decl empty_coll(e: node)
+empty_coll(e) :- empty_literal(e, _).
+empty_coll(e) :- unparen(e, m), call_q(m, "builtins.bytearray"), call_nargs(m, 0), call_nkwargs(m, 0).
+empty_coll(e) :- unparen(e, m), call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), call_only(m, a),
+    empty_coll(a).

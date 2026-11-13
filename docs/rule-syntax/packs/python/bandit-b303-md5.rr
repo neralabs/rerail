@@ -1,0 +1,19 @@
+.policy "bandit-b303-md5" revision 2
+.description "Avoid MD2, MD4, MD5, and SHA1 hashes from PyCrypto, PyCryptodome, or cryptography; they are broken for security, so use SHA-256 or a password hash."
+.language python
+.mode steer
+.scope include "**/*.py", "**/*.pyi"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+// Bandit's B303 (its B001 blacklist): a call that makes an MD2, MD4, MD5 or SHA1 hash with PyCrypto, PyCryptodome or cryptography.
+// (hashlib's weak hashes are B324, a separate test.)
+//   from Crypto.Hash import MD5; MD5.new()     B303: Crypto.Hash.MD5.new
+//   hashes.SHA1()   after `from cryptography.hazmat.primitives import hashes`: B303
+//   hashes.SHA256()                             not reported
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B303(at: node) code "B303"
+    "MD5 and SHA1 are broken for security use. Use SHA-256, or a password hash for passwords."
+    suppress nosec "B303"
+B303(n) :- blacklisted(n, "B303").

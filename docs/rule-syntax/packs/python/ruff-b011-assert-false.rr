@@ -1,0 +1,16 @@
+.policy "ruff-b011-assert-false" revision 2
+.description "Raise AssertionError instead of assert False; assertions are stripped when Python runs with optimizations enabled."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B011 (flake8-bugbear): `assert False`. `python -O` strips asserts, so the statement disappears; raise
+// AssertionError to fail unconditionally. Reported at the `False`, through parentheses.
+//   assert False, "message"    ← B011 at `False`
+//   assert 1 != 2              not reported
+#include "python/ast.rr"
+
+.violation B011(at: node) code "B011"
+    "Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`"
+    suppress ruff "B011"
+B011(f) :- kind(s, "assert_statement"), child(s, t, 0), unparen(t, f), kind(f, "false").

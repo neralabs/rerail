@@ -1,0 +1,1674 @@
+{
+  "format": "rerail.sql-execution-budget-evidence/v1",
+  "date": "2026-10-23",
+  "referenceCommit": "8cf43e5b5bf8e915a87a355c70f40f9da4d51c86",
+  "sourceBudgetCommit": "c109a915585170eb24bd0641b8cd57a98ecdfe80",
+  "scope": "Complete cold source-corpus replay process: positive and clean observations, each through snapshot and workspace evaluation. No file/rule/batch/worker/connection reset. Diagnostic EXPLAIN excluded.",
+  "runtimeAlgorithmsChanged": false,
+  "wp1": "pending; same worktree; recovery R4",
+  "provenance": {
+    "source": "fixtures/host/data-layer-port/batch-06-recording.json",
+    "sourceSha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "tests": [
+      "scripts/tests/test_lint_serverplan_state_tripwires.py::test_rejects_lazy_result_private_step_ref_access",
+      "scripts/tests/test_lint_serverplan_state_tripwires.py::test_collector_uses_generated_return_kinds_without_recomputing_project_map"
+    ],
+    "note": "Unchanged original observations. One cold process includes snapshot and workspace parity for both cases."
+  },
+  "addon": {
+    "path": ".rerail/profiles/sql-budget-recovery-20261023/engine.node",
+    "sha256": "bf671d4a7ade25aa484fa54994fd611d093c671129b17e043d18b6a2056b629f"
+  },
+  "capture": {
+    "path": ".rerail/profiles/sql-budget-recovery-20261023/acceptance-final/capture/sql/profile.json",
+    "sha256": "dec6977ac5fb6ed555d7094ca7d6c388500c2b8091777b5b5747b2133fb47b78"
+  },
+  "nativeOutput": {
+    "path": ".rerail/profiles/sql-budget-recovery-20261023/acceptance-final/capture/parity.json",
+    "sha256": "ebf7123389d2de94a11bba0eb320ea01e64db7b45594fe2a9d37ae77d250757b"
+  },
+  "budget": {
+    "limit": 100,
+    "observed": 24159,
+    "excess": 24059,
+    "accepted": false,
+    "status": "budget-exceeded",
+    "scope": "One complete cold job across workers and connections, including publication, setup, DDL, transactions, matching and cleanup. Diagnostic EXPLAIN is excluded.",
+    "enforcement": "Acceptance after the complete run; execution 101 does not truncate findings. No per-file, per-rule, per-batch or per-connection reset.",
+    "categories": {
+      "setup": 17686,
+      "transaction": 168,
+      "matchingAndCleanup": 6305
+    },
+    "sessions": [
+      {
+        "session": "profile-95700-0.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-1.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-10.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-100.json",
+        "pid": 95700,
+        "completed": 5010,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 5010,
+        "observed": 5010
+      },
+      {
+        "session": "profile-95700-101.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-102.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-103.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-104.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-105.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-106.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-107.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-108.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-109.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-11.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-110.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-111.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-112.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-113.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-114.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-115.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-116.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-117.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-118.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-119.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-12.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-120.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-121.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-122.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-123.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-124.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-125.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-126.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-127.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-128.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-129.json",
+        "pid": 95700,
+        "completed": 251,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 251,
+        "observed": 251
+      },
+      {
+        "session": "profile-95700-13.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-130.json",
+        "pid": 95700,
+        "completed": 320,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 320,
+        "observed": 320
+      },
+      {
+        "session": "profile-95700-131.json",
+        "pid": 95700,
+        "completed": 177,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 177,
+        "observed": 177
+      },
+      {
+        "session": "profile-95700-132.json",
+        "pid": 95700,
+        "completed": 331,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 331,
+        "observed": 331
+      },
+      {
+        "session": "profile-95700-133.json",
+        "pid": 95700,
+        "completed": 5010,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 5010,
+        "observed": 5010
+      },
+      {
+        "session": "profile-95700-134.json",
+        "pid": 95700,
+        "completed": 331,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 331,
+        "observed": 331
+      },
+      {
+        "session": "profile-95700-135.json",
+        "pid": 95700,
+        "completed": 320,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 320,
+        "observed": 320
+      },
+      {
+        "session": "profile-95700-14.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-15.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-16.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-17.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-18.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-19.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-2.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-20.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-21.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-22.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-23.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-24.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-25.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-26.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-27.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-28.json",
+        "pid": 95700,
+        "completed": 50,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 50,
+        "observed": 50
+      },
+      {
+        "session": "profile-95700-29.json",
+        "pid": 95700,
+        "completed": 61,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 61,
+        "observed": 61
+      },
+      {
+        "session": "profile-95700-3.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-30.json",
+        "pid": 95700,
+        "completed": 42,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 42,
+        "observed": 42
+      },
+      {
+        "session": "profile-95700-31.json",
+        "pid": 95700,
+        "completed": 63,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 63,
+        "observed": 63
+      },
+      {
+        "session": "profile-95700-32.json",
+        "pid": 95700,
+        "completed": 5032,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 5032,
+        "observed": 5032
+      },
+      {
+        "session": "profile-95700-33.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-34.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-35.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-36.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-37.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-38.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-39.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-4.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-40.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-41.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-42.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-43.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-44.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-45.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-46.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-47.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-48.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-49.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-5.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-50.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-51.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-52.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-53.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-54.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-55.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-56.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-57.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-58.json",
+        "pid": 95700,
+        "completed": 7,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 7,
+        "observed": 7
+      },
+      {
+        "session": "profile-95700-59.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-6.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-60.json",
+        "pid": 95700,
+        "completed": 6,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 6,
+        "observed": 6
+      },
+      {
+        "session": "profile-95700-61.json",
+        "pid": 95700,
+        "completed": 251,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 251,
+        "observed": 251
+      },
+      {
+        "session": "profile-95700-62.json",
+        "pid": 95700,
+        "completed": 311,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 311,
+        "observed": 311
+      },
+      {
+        "session": "profile-95700-63.json",
+        "pid": 95700,
+        "completed": 177,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 177,
+        "observed": 177
+      },
+      {
+        "session": "profile-95700-64.json",
+        "pid": 95700,
+        "completed": 331,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 331,
+        "observed": 331
+      },
+      {
+        "session": "profile-95700-65.json",
+        "pid": 95700,
+        "completed": 5032,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 5032,
+        "observed": 5032
+      },
+      {
+        "session": "profile-95700-66.json",
+        "pid": 95700,
+        "completed": 331,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 331,
+        "observed": 331
+      },
+      {
+        "session": "profile-95700-67.json",
+        "pid": 95700,
+        "completed": 7,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 7,
+        "observed": 7
+      },
+      {
+        "session": "profile-95700-68.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-69.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-7.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-70.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-71.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-72.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-73.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-74.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-75.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-76.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-77.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-78.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-79.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-8.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-80.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-81.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-82.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-83.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-84.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-85.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-86.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-87.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-88.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-89.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-9.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-90.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-91.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-92.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-93.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-94.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-95.json",
+        "pid": 95700,
+        "completed": 3,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 3,
+        "observed": 3
+      },
+      {
+        "session": "profile-95700-96.json",
+        "pid": 95700,
+        "completed": 50,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 50,
+        "observed": 50
+      },
+      {
+        "session": "profile-95700-97.json",
+        "pid": 95700,
+        "completed": 61,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 61,
+        "observed": 61
+      },
+      {
+        "session": "profile-95700-98.json",
+        "pid": 95700,
+        "completed": 42,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 42,
+        "observed": 42
+      },
+      {
+        "session": "profile-95700-99.json",
+        "pid": 95700,
+        "completed": 63,
+        "fromSessionStart": true,
+        "running": 0,
+        "source": "code-rule-dsl",
+        "started": 63,
+        "observed": 63
+      }
+    ],
+    "problems": [],
+    "firstOverBudget": {
+      "startNs": 370381042,
+      "session": "profile-95700-28.json",
+      "query": 4671,
+      "sql": "CREATE TABLE \"syntax_21\" (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL,\"ancestor_end\",\"ancestor_kind\",\"ancestor_start\",\"body_end\",\"body_kind\",\"body_start\",\"kind\",\"line\",\"name_source\",\"parameters_end\",\"parameters_kind\",\"parameters_start\",\"parent_end\",\"parent_kind\",\"parent_start\",\"text\")",
+      "context": {},
+      "thread": "ThreadId(1)"
+    }
+  },
+  "firstOverBudgetContexts": {},
+  "captureCoverage": {
+    "complete": true,
+    "problems": []
+  },
+  "parity": {
+    "nativeSha256": "bf671d4a7ade25aa484fa54994fd611d093c671129b17e043d18b6a2056b629f",
+    "nativeCalls": 2,
+    "hostGuardCalls": 0,
+    "positiveCalls": 1,
+    "cleanCalls": 1,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "nativeCoverage": [
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 1,
+        "clean": 1
+      }
+    ]
+  },
+  "statementFirstTokens": {
+    "WITH": 3672,
+    "COMMIT": 84,
+    "CREATE": 11544,
+    "PRAGMA": 312,
+    "--": 12,
+    "INSERT": 1534,
+    "ANALYZE": 310,
+    "SELECT": 1051,
+    "DROP": 5508,
+    "DELETE": 16,
+    "UPDATE": 4,
+    "BEGIN": 84,
+    "REPLACE": 28
+  },
+  "checks": {
+    "red-gate": {
+      "exitCode": 1,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/red-gate/profile.json",
+        "sha256": "5b5ae3de6ce6e12656dceedcea8ac9378129d446603a2b30db920a3e67f8cfc6"
+      }
+    },
+    "red-native-coverage": {
+      "exitCode": 101,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/red-native-coverage/profile.json",
+        "sha256": "f1977cf5a44d836246282ddcb34496593381724e37ee5b30db49b3fa7b5280c1"
+      }
+    },
+    "gate-unit": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/gate-unit/profile.json",
+        "sha256": "10d38900a9162b04ce0e0b9b0e203def635ebc77b8db42dd2d24e547cf73b525"
+      }
+    },
+    "native-coverage-with-dependency": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/native-coverage-with-dependency/profile.json",
+        "sha256": "e687e17a69c10762361f56e3893beab3da81205966feb77a5fb51c132a6c50d8"
+      }
+    },
+    "native-coverage-pinned-deps": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/native-coverage-pinned-deps/profile.json",
+        "sha256": "89144e343037546f4113669d913ecf7bddf45851c40670fe7aa576b999341073"
+      }
+    },
+    "profiling-tools": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/profiling-tools/profile.json",
+        "sha256": "f05f98675027edd949f25a8d06c4c7060dfef24beb4953be2001d479d0f2c10b"
+      }
+    },
+    "profiler-clippy": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/profiler-clippy/profile.json",
+        "sha256": "713b0924d21715f78b796bbc43e6a044a64c4f7c0ddf2d4f2228b92c45595a3c"
+      }
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/typecheck/profile.json",
+        "sha256": "12f1d79872d35ffab00a096a18573df02c37d1261e41d7b65bad3f3d03d6bf5d"
+      }
+    },
+    "native-format": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/native-format/profile.json",
+        "sha256": "d954ad86a90abe8f73ecb8b9a63f79806b27526ba2a8111a2f8fe9f38f7777ad"
+      }
+    },
+    "reachability-format": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/reachability-format/profile.json",
+        "sha256": "3225c70ac6556b54123751a1d35bb77a066b14f24dce3643368b8c8c9783a3c4"
+      }
+    },
+    "producer-shape": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/producer-shape/profile.json",
+        "sha256": "76d1b7392c91b50b5dd94df2354642513410db043d9e2663649a08356cd3e848"
+      }
+    },
+    "native-profile-clippy": {
+      "exitCode": -9,
+      "timedOut": true,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/native-profile-clippy/profile.json",
+        "sha256": "b11021a46428ea60293c35859924546799aed6953e8dbe9565d1007fbe2d1dfd"
+      }
+    },
+    "native-profile-lib-clippy": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/native-profile-lib-clippy/profile.json",
+        "sha256": "a0f763071495117ebaf77f0f527c194e5c7cf1bdf1e46dd50f9bb82ff90d18b4"
+      }
+    },
+    "profiling-tools-final": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/profiling-tools-final/profile.json",
+        "sha256": "db611ba2fb0060781c39d97a0205867cfbb7232c8fec127bd10d70cd118ae5bd"
+      }
+    },
+    "profile-summary-final": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/profile-summary-final/profile.json",
+        "sha256": "26036d15154df57b4dffa963e7beb0097d3a6b1f74455239e84410bdaf5bb676"
+      }
+    },
+    "profiling-tools-complete": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/profiling-tools-complete/profile.json",
+        "sha256": "388a10625935cfee7be93a8b99abf9b2cf82d11c68f31467de37875c882a2e3d"
+      }
+    },
+    "final-repository-check": {
+      "exitCode": 0,
+      "timedOut": false,
+      "report": {
+        "path": ".rerail/profiles/sql-budget-recovery-20261023/final-repository-check/profile.json",
+        "sha256": "0a92f6f909ea02186c620edda24305d70fc75c5ec2f36562f348bd80c28d5172"
+      }
+    }
+  },
+  "toolChecks": {
+    "nodePassed": 21,
+    "pythonPassed": 75,
+    "nativeTracerPassed": 6
+  },
+  "acceptance": {
+    "targetParity": "pass",
+    "coverage": "complete",
+    "executionBudget": "failed",
+    "commandExitCode": 1,
+    "elapsedSeconds": 88.89627016702434,
+    "timedOut": false,
+    "targetExitCode": 0,
+    "targetTimedOut": false,
+    "firstAttemptSeconds": 62.87222566700075
+  },
+  "notes": [
+    "The restored acceptance gate fails intentionally on the actual current engine. No increased allowance, skipped test or production fallback is introduced.",
+    "The first native harness invocation failed to compile because its existing tracer tests lacked a tempfile dev-dependency. The dependency was added without updating existing locked dependency versions.",
+    "Instrumented timing includes trace and explanation overhead and is not an aggregate CPU control."
+  ],
+  "currentToolSources": [
+    {
+      "path": "native/src/code_rule_dsl/profile/sql.rs",
+      "sha256": "3814750e3f7ac86221dc3637fa5dd17368f8a3e4b532b4c78522350b7fcbe910"
+    },
+    {
+      "path": "native/src/code_rule_dsl/profile/sql/coverage.rs",
+      "sha256": "f020b8a1c014376148162b4c2bb0b663536b90e33a363f2a4f988277e711b4ee"
+    },
+    {
+      "path": "native/src/code_rule_dsl/profile/sql/tests.rs",
+      "sha256": "da54b00298db0dc6bd87c075d31d2cba5ba7a31c06cb9e40f757b7ddc93c3c6c"
+    },
+    {
+      "path": "benchmark/sql-profile/execution-budget.mjs",
+      "sha256": "425211b3f96e540b8055f6cff6c0d3bcb77a0bebcbbb8324bec7f1e0693ae2c0"
+    },
+    {
+      "path": "benchmark/sql-profile/coverage.mjs",
+      "sha256": "d5177b40f5cb51ec58e98176bfe9ce4f59472b93e8e0347f33882c8fc807051d"
+    },
+    {
+      "path": "benchmark/sql-profile/report.mjs",
+      "sha256": "285d97e13faf456c22ea005072647a121f5ed14bb503dfbe1e08b9e26ac0245b"
+    },
+    {
+      "path": "benchmark/sql-profile/summary.mjs",
+      "sha256": "49a741b5ea9ca825dd5477b453eda858832695c8a1bef58502b5f92a67c8930b"
+    },
+    {
+      "path": "benchmark/sql-profile/summarize.mjs",
+      "sha256": "ebd80407850075bd00165985ee76eff3961d19dd67177717470e9976f2200f7f"
+    },
+    {
+      "path": "scripts/profiling/sql-budget.mjs",
+      "sha256": "ca15ed1a583103b50eab5d01fda988ffa6f9d22796d24396a27cec05b717261e"
+    },
+    {
+      "path": "scripts/profiling/sql-report.mjs",
+      "sha256": "c6a5e013bb3f0382e0d7ddc6a425cae108d39b399472d223492c3469967d3f06"
+    },
+    {
+      "path": "scripts/profiling/run.py",
+      "sha256": "2391bb7ea739ba62602174c9d73a23e98f6b51174b436a87065dd50fdc2d5ab3"
+    },
+    {
+      "path": "scripts/profiling/report.py",
+      "sha256": "186cf25120ebd21e41aceb69a6919e2594d4961bc5c836b5c342fb6afd6992de"
+    },
+    {
+      "path": "test/scripts/sql-execution-budget.test.mjs",
+      "sha256": "c690d89ff65898b7e9d168d18f2160e8bb63e6c499c62a51d5bfc39bdc655637"
+    },
+    {
+      "path": "test/scripts/test_profile.py",
+      "sha256": "4061feae55e22c8efddd9db2725e4463151cb8471e70b6f8cfcc2744e2a14c80"
+    }
+  ],
+  "sourceNote": "Profiling and acceptance changes only. No production rule algorithm changes. Source identities identify the final tools; the captured addon is identified separately by its binary digest.",
+  "ciValidation": "YAML parses with the repository yaml dependency; SQL budget step has no continue-on-error."
+}

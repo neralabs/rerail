@@ -1,0 +1,24 @@
+.policy "ruff-pyi006-bad-version-info-comparison" revision 2
+.description "Compare sys.version_info with only the less-than or greater-than-or-equal operators; the other operators give surprising results on patch releases."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI006 (flake8-pyi), every file: an if or elif test, or an operand of its top-level `and`/`or`, that
+// compares the whole sys.version_info with anything but `<` and `>=`. `> (3, 8)` is true on 3.8.1, and `==`,
+// `in` and `is` do not test a version range.
+//   if sys.version_info > (3, 8):        ← PYI006
+//   if sys.version_info >= (3, 9):       fine
+//   if sys.version_info[0] == 3:         fine: a subscript is PYI003's business
+#include "python/typing.rr"
+
+.violation PYI006(at: node, msg: symbol) code "PYI006" "{msg}"
+    suppress ruff "PYI006"
+PYI006(v, m) :- branch_test(_, t, _), test_part(t, v), version_cmp(v, "whole", o, _), says(o, m).
+.decl says(op: symbol, msg: symbol)
+says(">", "Use `>=` with the next minor version instead of `>`, e.g. `sys.version_info >= (3, 9)` for `> (3, 8)`; `>` is also true on every 3.8 patch release.").
+says("<=", "Use `<` with the next minor version instead of `<=`, e.g. `sys.version_info < (3, 9)` for `<= (3, 8)`; `<=` is false on 3.8 patch releases.").
+says(o, "Use `<` and `>=` instead of `==`/`!=`: `sys.version_info >= (3, 8) and sys.version_info < (3, 9)` selects 3.8; use `or` with the opposite bounds for `!=`.") :-
+    (o = "==" ; o = "!=").
+says(o, "Compare `sys.version_info` with `<` or `>=` against a tuple, e.g. `sys.version_info >= (3, 9)`; `in` and `is` don't behave as version checks.") :-
+    (o = "in" ; o = "not in" ; o = "is" ; o = "is not").

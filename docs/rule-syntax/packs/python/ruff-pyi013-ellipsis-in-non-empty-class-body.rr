@@ -1,0 +1,16 @@
+.policy "ruff-pyi013-ellipsis-in-non-empty-class-body" revision 2
+.description "Remove an ellipsis statement from a class body that has other statements; it is only needed when the body would otherwise be empty."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI013 (flake8-pyi), every file: a `...` statement in a class body that has other statements, a
+// docstring included.
+//   class C:
+//       """Doc."""
+//       ...                ← PYI013
+#include "python/typing.rr"
+
+.violation PYI013(at: node) code "PYI013" "Remove this `...` from the class body; it is redundant because the body has other statements."
+    suppress ruff "PYI013"
+PYI013(s) :- class_body(_, b), body_len(b, k), k > 1, body_stmt(b, s, _), ellipsis_stmt(s).

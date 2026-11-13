@@ -1,0 +1,79 @@
+.policy "eslint-sort-imports" revision 3
+.description "Sort import declarations by import style and then alphabetically, and list the names inside each import alphabetically."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/modules.rr"
+//   import_member(i, m, k, x)  m is the k-th name import i binds; x is its local name (`a as b` binds b)
+//   first_local(i, x)          x is the first of them
+//   import_syntax(i, s)        "none" (import "m"), "all" (* as ns), "multiple" or "single"
+//   import_prev(i, p, gap)     p is the import just before i in the file, with gap lines between
+
+// Options, all off by default: ignoreCase, ignoreDeclarationSort, ignoreMemberSort and allowSeparatedGroups
+// are "true" or unset. memberSyntaxSortOrder lists the four syntaxes; option_item keeps its order, one row
+// per element: ("memberSyntaxSortOrder", 0, "none"), …. syntax_pos(s, k) is s's place in it.
+.decl syntax_pos(s: symbol, k: number)
+syntax_pos(s, k) :- option_item("memberSyntaxSortOrder", k, s).
+syntax_pos(s, k) :- default_order(s, k), !option_item("memberSyntaxSortOrder", _, _).
+.decl default_order(s: symbol, k: number)
+default_order("none", 0). default_order("all", 1). default_order("multiple", 2). default_order("single", 3).
+// key(x, k): what a local name is compared by: itself, or lower-cased under ignoreCase. `<` on symbols is
+// Soufflé's, code point order, as JavaScript's `<` on strings (it uses UTF-16 units: same order below U+E000).
+.decl key(x: symbol, k: symbol)
+key(x, x) :- import_member(_, _, _, x), !option("ignoreCase", "true").
+key(x, @lower(x)) :- import_member(_, _, _, x), option("ignoreCase", "true").
+
+// ---- declarations ----
+// prev(i, p): ESLint compares each import with the one just before it (in traversal order). Under
+// allowSeparatedGroups any line between two imports (blank, comment, code) starts a new group.
+.decl prev(i: node, p: node)
+prev(i, p) :- !option("ignoreDeclarationSort", "true"), import_prev(i, p, g),
+    (g = 0 ; !option("allowSeparatedGroups", "true")).
+
+// Different syntaxes: i's must not come earlier in memberSyntaxSortOrder than p's.
+//   import { a, b } from "m";
+//   import * as ns from "n";      reported by default: "all" goes before "multiple"
+.violation sort_syntax(at: node, a: symbol, b: symbol, p: node) code "sort-imports"
+    "Expected '{a}' syntax before '{b}' syntax: move this import above the one on line {p.line}."
+    suppress eslint "sort-imports"
+    suppress oxlint "sort-imports"
+sort_syntax(i, a, b, p) :- prev(i, p), import_syntax(i, a), import_syntax(p, b),
+    syntax_pos(a, x), syntax_pos(b, y), x < y.
+
+// The same syntax: by first local name.
+//   import b from "b";
+//   import a from "a";            reported
+.violation sort_alpha(at: node, x: symbol, y: symbol, p: node) code "sort-imports"
+    "Imports should be sorted alphabetically: '{x}' goes before '{y}' (line {p.line})."
+    suppress eslint "sort-imports"
+    suppress oxlint "sort-imports"
+sort_alpha(i, x, y, p) :- prev(i, p), import_syntax(i, s), import_syntax(p, s),
+    first_local(i, x), first_local(p, y), key(x, kx), key(y, ky), kx < ky.
+
+// ---- members ----
+// named(i, m, k, x): the names in braces only. ESLint sorts the ImportSpecifiers; a default or namespace
+// name stays where it is. The finding is at the first name that sorts before its left neighbour:
+//   import { b, a, c } from "m";  reported at a
+.decl named(i: node, m: node, k: number, x: symbol)
+named(i, m, k, x) :- !option("ignoreMemberSort", "true"), import_member(i, m, k, x), kind(m, "import_specifier").
+.decl unsorted(i: node, k: number)
+unsorted(i, k) :- named(i, _, k, x), named(i, _, k - 1, y), key(x, kx), key(y, ky), kx < ky.
+.violation sort_member(at: node, x: symbol) code "sort-imports"
+    "Member '{x}' of the import declaration should be sorted alphabetically."
+    suppress eslint "sort-imports"
+    suppress oxlint "sort-imports"
+    fix sort_members "Sort the names in the braces"
+sort_member(m, x) :- unsorted(i, _), k = min j : { unsorted(i, j) }, named(i, m, k, x).
+
+// The fix: each name in the braces is replaced by the one that belongs there, so the commas and line breaks
+// between them stay, as in ESLint's fix. o belongs at position lo + r, where r names sort before it. The sort
+// is stable: equal keys keep source order (ESLint's comparator never returns 0, so its order for equal keys
+// under ignoreCase is whatever its sort gives). Conservative: not offered when any comment is in the braces
+// (ESLint declines only for comments touching a specifier).
+//   import { b, a, c } from "m";  ->  import { a, b, c } from "m";
+sort_members(m, _) :- named(i, m, _, _), nearest(m, b, "named_imports"), !has(b, _, "comment"),
+    lo = min j : { named(i, _, j, _) }, named(i, o, ko, y), key(y, ky),
+    r1 = count : { named(i, _, _, z), key(z, kz), kz < ky },
+    r2 = count : { named(i, _, pz, z), key(z, ky), pz < ko },
+    named(i, a, lo + r1 + r2, _) => replace(a, `$o`).

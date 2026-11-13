@@ -1,0 +1,28 @@
+.policy "typescript-eslint-no-non-null-asserted-optional-chain" revision 5
+.description "Don't put a non-null assertion on an optional chain; the chain can return undefined by design, so the assertion hides a real case."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   non_null, in_chain
+
+// typescript-eslint's no-non-null-asserted-optional-chain: `?.` says the value may be undefined; a `!` on the
+// whole chain says it is not. Two shapes, both reported at the chain:
+//   (x?.y)!   (x?.())!.z       the `!` is on a parenthesised chain (TSNonNullExpression > ChainExpression)
+//   x?.y!     x?.y.z!          the `!` ends the chain (ChainExpression > TSNonNullExpression)
+//   x?.y!.z   x!?.y   x.y!     fine: the `!` is mid-chain, before it, or there is no `?.`
+// No options. The rule's suggestion (remove the `!`) is not offered here.
+.violation no_non_null_asserted_optional_chain(at: node) code "@typescript-eslint/no-non-null-asserted-optional-chain" "Optional chain expressions can return undefined by design - using a non-null assertion is unsafe and wrong."
+    suppress eslint "@typescript-eslint/no-non-null-asserted-optional-chain"
+    suppress oxlint "no-non-null-asserted-optional-chain"
+    suppress biome "lint/suspicious/noNonNullAssertedOptionalChain"
+no_non_null_asserted_optional_chain(x) :- non_null(n, x), in_chain(x), child(n, c, 0),
+    (kind(c, "parenthesized_expression") ; !chain_goes_on(n)).
+
+// chain_goes_on(n): the chain continues past `x?.y!`: `x?.y!.z`, `x?.y![0]`, `x?.y!()`; a second `!` in `x?.y!!`
+// is reported in its place.
+.decl chain_goes_on(n: node)
+chain_goes_on(n) :- kind(n, "non_null_expression"), (field(p, "object", n) ; field(p, "function", n)),
+    (kind(p, "member_expression") ; kind(p, "subscript_expression") ; kind(p, "call_expression")).
+chain_goes_on(n) :- kind(n, "non_null_expression"), child(p, n, 0), kind(p, "non_null_expression").

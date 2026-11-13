@@ -1,0 +1,12 @@
+// expect: UnboundedLattice
+// internal_dead_code.rdl's `hierarchy` without its `widen 64`. A best witness under shortlex is a min over routes, which
+// has infinite descending chains in general, so the front end rejects the declaration. On the class graph the least
+// route is a simple path, bounded by the number of classes: a bound in the data, which the declaration cannot state.
+.decl class(id: symbol)
+.decl base_edges(owner: symbol, base: symbol, ordinal: number)
+.input class, base_edges
+.lattice shortlex_min<symbol> { Lub -> @shortlex_min }
+.decl hierarchy(owner: symbol, base: symbol, route: shortlex_min<>)
+hierarchy(id, id, "") :- class(id).
+hierarchy(o, b, r) :- hierarchy(o, x, r0), base_edges(x, b, ord), r = @concat(r0, @printf("%012d.", ord)).
+.output hierarchy

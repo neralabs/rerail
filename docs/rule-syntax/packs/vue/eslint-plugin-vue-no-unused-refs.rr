@@ -1,0 +1,62 @@
+.policy "eslint-plugin-vue-no-unused-refs" revision 2
+.description "Remove template ref attributes that the Vue component never reads through $refs, useTemplateRef or a setup binding."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vplain(e, a, x), vval(a, v), tfree(r, x, a), vin_script(n), vname(o, g, x, n), vsetup_doc(d), vscript(p, s)
+
+// eslint-plugin-vue's no-unused-refs: a template `ref="name"` that nothing reads. A ref is read by
+//   $refs.name, this.$refs.name, $refs["name"], const { name } = this.$refs     (template or script)
+//   useTemplateRef("name"); a name setup() returns; in a file with <script setup>, any top-level binding name
+// When $refs escapes whole (`const r = this.$refs`, `f($refs)`, `return $refs`, `$refs[key]`) the file is not
+// checked. No options.
+//   <div ref="box" />  with nothing reading it          reported at "box"
+.violation unused_ref(at: node, x: symbol) code "vue/no-unused-refs"
+    "Remove the unused ref '{x}', or read it through the component's refs, useTemplateRef or a matching setup binding."
+    suppress eslint "vue/no-unused-refs"
+unused_ref(q, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), child(a, q, _),
+    kind(q, "quoted_attribute_value"), docof(a, d), !used(d, x), !unknown(d).
+unused_ref(v, x) :- vplain(_, a, n), vlower(n, "ref"), vval(a, v), text(v, x), !child_quoted(a), docof(a, d),
+    !used(d, x), !unknown(d).
+.decl child_quoted(a: node)
+child_quoted(a) :- child(a, q, _), kind(q, "quoted_attribute_value").
+
+// refs(n): a read of $refs: the identifier in template code, `this.$refs` (the member) or `$refs` in a script.
+.decl refs(n: node)
+refs(r) :- tfree(r, "$refs", _).
+refs(m) :- vin_script(i), kind(i, "property_identifier"), text(i, "$refs"), field(m, "property", i).
+refs(i) :- vin_script(i), kind(i, "identifier"), text(i, "$refs").
+// used(d, x): document d reads ref x.
+.decl used(d: number, x: symbol)
+used(d, x) :- refs(n), estree_parent(n, m), static_prop(m, o, x), deparen(o, n), docof(n, d).
+used(d, x) :- refs(n), destructured(n, l), child(l, p, _), vprop_key_pattern(p, x), docof(n, d).
+used(d, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
+    text(f, "useTemplateRef"), call_arg(c, s, 0), (kind(s, "string") ; kind(s, "template_string")), value(s, x),
+    docof(c, d).
+used(d, x) :- vname(o, "setup", x, _), docof(o, d).
+used(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
+// destructured(n, l): `const { a } = $refs` or `({ a } = $refs)`: l is the object pattern.
+.decl destructured(n: node, l: node)
+destructured(n, l) :- refs(n), estree_parent(n, p), kind(p, "variable_declarator"), field(p, "value", w), deparen(w, n),
+    field(p, "name", l), kind(l, "object_pattern").
+destructured(n, l) :- refs(n), estree_parent(n, p), kind(p, "assignment_expression"), field(p, "right", w),
+    deparen(w, n), field(p, "left", l), kind(l, "object_pattern").
+.decl vprop_key_pattern(p: node, x: symbol)  // a property of an object pattern with a static key
+vprop_key_pattern(p, x) :- kind(p, "shorthand_property_identifier_pattern"), text(p, x).
+vprop_key_pattern(p, x) :- kind(p, "pair_pattern"), field(p, "key", k), key_static(k, x).
+vprop_key_pattern(p, x) :- kind(p, "object_assignment_pattern"), field(p, "left", k), text(k, x).
+// unknown(d): $refs escapes, and the plugin stops checking the file.
+.decl unknown(d: number)
+unknown(d) :- refs(n), docof(n, d), escapes(n).
+.decl escapes(n: node)
+escapes(n) :- refs(n), estree_parent(n, m), (kind(m, "member_expression") ; kind(m, "subscript_expression")),
+    field(m, "object", w), deparen(w, n), !static_prop(m, _, _).
+escapes(n) :- refs(n), estree_parent(n, p), kind(p, "variable_declarator"), field(p, "value", w), deparen(w, n),
+    field(p, "name", l), kind(l, "identifier").
+escapes(n) :- refs(n), estree_parent(n, p), kind(p, "assignment_expression"), field(p, "right", w), deparen(w, n),
+    field(p, "left", l), kind(l, "identifier").
+escapes(n) :- refs(n), estree_parent(n, p), kind(p, "arguments").
+escapes(n) :- refs(n), estree_parent(n, p), (kind(p, "return_statement") ; kind(p, "for_in_statement")).
+// A pattern with a computed key or a rest element: `const { [k]: a, ...rest } = $refs`.
+escapes(n) :- destructured(n, l), child(l, p, _), !vprop_key_pattern(p, _).

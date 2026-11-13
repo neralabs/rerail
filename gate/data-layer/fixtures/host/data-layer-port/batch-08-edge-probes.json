@@ -1,0 +1,234 @@
+{
+  "format": "rerail.data-layer-recording/v1",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "checks": [
+    "cached_pure_lazy_allowlist"
+  ],
+  "source_mismatches": [],
+  "pytest_exit_code": 0,
+  "collected_tests": 0,
+  "uncaptured_tests": [],
+  "loaded_source_files_checked": 85,
+  "events": [
+    {
+      "test": "probe:batch8:frozenset-list-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = frozenset([1])\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'",
+          "message": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"9327fd24af07f156e089283cd12279e16e170a3f04408da35853b18902ed45f6\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l3100_profile.edge.compute\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"5ed91dc25a19759d58108ec8ff5c2126d882f6407aa74edcc3befc217782f8f6\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:nested-tuple-is-immutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = (frozenset((1,2)), (None,))\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"9327fd24af07f156e089283cd12279e16e170a3f04408da35853b18902ed45f6\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l3100_profile.edge.compute\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"5ed91dc25a19759d58108ec8ff5c2126d882f6407aa74edcc3befc217782f8f6\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:tuple-fstring-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = (f\"{dynamic}\",)\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'",
+          "message": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"9327fd24af07f156e089283cd12279e16e170a3f04408da35853b18902ed45f6\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l3100_profile.edge.compute\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"5ed91dc25a19759d58108ec8ff5c2126d882f6407aa74edcc3befc217782f8f6\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:negative-number-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = -1\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'",
+          "message": "l3100_profile.edge.compute: cached pure-lazy functions cannot read mutable global state 'STATE'"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"9327fd24af07f156e089283cd12279e16e170a3f04408da35853b18902ed45f6\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l3100_profile.edge.compute\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"5ed91dc25a19759d58108ec8ff5c2126d882f6407aa74edcc3befc217782f8f6\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:complex-is-immutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = 1j\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ],
+      "findings": [],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "policy_violations",
+          "policyEntries": "[{\"allowed_cache_members\": [], \"body_hash\": \"9327fd24af07f156e089283cd12279e16e170a3f04408da35853b18902ed45f6\", \"cache_args\": [\"cache\"], \"cache_types\": [[\"cache\", \"l2070_batching.optimizer_run_cache.OptimizerRunCache\"]], \"function\": \"l3100_profile.edge.compute\", \"owner_scope\": \"optimizer_run\", \"rationale\": \"Reviewed supplemental test contract.\", \"signature_hash\": \"5ed91dc25a19759d58108ec8ff5c2126d882f6407aa74edcc3befc217782f8f6\"}]"
+        }
+      }
+    },
+    {
+      "test": "probe:batch8:memoized-duplicate-distinct-errors",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "call": 1,
+      "upstream_passed": true,
+      "scope": {
+        "include": [
+          "**/*.py"
+        ],
+        "exclude": []
+      },
+      "production_scope": false,
+      "files": [
+        {
+          "path": "l3100_profile/duplicate.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@memoized_pure_lazy(max_entries=2)\ndef compute(x): return x\n@memoized_pure_lazy(max_entries=2)\n@pure_lazy\ndef compute(x): return x*2\n"
+        }
+      ],
+      "findings": [
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "duplicate memoized decorator entry: l3100_profile.duplicate.compute",
+          "message": "duplicate memoized decorator entry: l3100_profile.duplicate.compute"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "duplicate memoized policy entry: l3100_profile.duplicate.compute",
+          "message": "duplicate memoized policy entry: l3100_profile.duplicate.compute"
+        },
+        {
+          "path": "l2055_lazy_result/cached_pure_lazy_policy.py",
+          "line": 1,
+          "column": null,
+          "code": "l3100_profile.duplicate.compute: memoized_pure_lazy requires the canonical pure_lazy marker",
+          "message": "l3100_profile.duplicate.compute: memoized_pure_lazy requires the canonical pure_lazy marker"
+        }
+      ],
+      "compare_message": true,
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": true,
+          "entryPoint": "memoized_policy_violations",
+          "policyEntries": "[{\"body_hash\": \"89d0c281b9d6293c653e69af3f48d898db27bfa8262cd7abc6fd541d69538985\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l3100_profile.duplicate.compute\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 2, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"a6e88e7f117aecd3b79a45092c7dd615be8069d7a02139d0a5bae3197ba96465\"}, {\"body_hash\": \"d180ca2112ff6d4fcc17d88048917706ef68791be3225ad799cbcdff7b6a1efb\", \"cache_lifetime\": \"process\", \"exception_policy\": \"successful_results_only_v1\", \"function\": \"l3100_profile.duplicate.compute\", \"key_policy\": \"bound_explicit_immutable_v1\", \"max_entries\": 2, \"rationale\": \"Reviewed supplemental test contract.\", \"return_policy\": \"immutable_no_alias_v1\", \"signature_hash\": \"a6e88e7f117aecd3b79a45092c7dd615be8069d7a02139d0a5bae3197ba96465\"}]"
+        }
+      }
+    }
+  ]
+}

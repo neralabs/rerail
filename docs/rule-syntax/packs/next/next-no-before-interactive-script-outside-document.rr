@@ -1,0 +1,22 @@
+.policy "next-no-before-interactive-script-outside-document" revision 4
+.description "Use the beforeInteractive strategy of next/script only in pages/_document or the app directory; elsewhere it cannot run before hydration."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-before-interactive-script-outside-document. The default import of next/script used
+// with strategy="beforeInteractive" outside pages/_document and the app directory:
+//   pages/index.js:      <Script src="/a.js" strategy="beforeInteractive" />    reported
+//   pages/_document.js:  the same                                             fine
+// The plugin tests the file name: "/app/" in it, or the part after its first "pages" named _document….
+
+#include "tsx/next.rr"
+
+.violation before(at: node) code "@next/next/no-before-interactive-script-outside-document"
+    "`next/script`'s `beforeInteractive` strategy should not be used outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-before-interactive-script-outside-document"
+    suppress eslint "@next/next/no-before-interactive-script-outside-document"
+    suppress oxlint "no-before-interactive-script-outside-document"
+    suppress biome "lint/correctness/noBeforeInteractiveScriptOutsideDocument"
+before(o) :- tag_of(o, x), docof(o, d), default_import(d, "next/script", x),
+    attr_plain(o, "strategy", "beforeInteractive"), doc(d, p, _), !glob("{app/**,**/app/**}", p), !document_page(d).
+.decl document_page(d: number)  // path.parse(split('pages', 2)[1]).name starts with _document
+document_page(d) :- pages_rest(d, r), document_name(r).

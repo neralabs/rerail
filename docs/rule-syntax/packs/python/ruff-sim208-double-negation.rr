@@ -1,0 +1,22 @@
+.policy "ruff-sim208-double-negation" revision 2
+.description "Remove double negation with not not; use the value itself, or bool() if you need a real boolean."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff SIM208 (flake8-simplify): `not not x`, parentheses or not: `not (not x)`. Ruff's fix is safe: in a
+// boolean test (an if, while or assert test, …) the value itself, elsewhere `bool(x)` when bool is the
+// builtin there.
+//   if not not x: …        ← SIM208: if x: …
+//   y = not not x          ← SIM208: y = bool(x)
+#include "python/simplify.rr"
+//   sim_bool_test(e); c4_builtin_here(n, x) from python/comprehensions
+
+.violation SIM208(at: node, operand: node) code "SIM208" "Use `{operand}` instead of `not (not {operand})`."
+    suppress ruff "SIM208"
+    fix safe drop_negations "Replace with `{operand}` (`bool({operand})` outside a boolean test)"
+SIM208(e, x) :- kind(e, "not_operator"), field(e, "argument", a), unparen(a, i), kind(i, "not_operator"),
+    field(i, "argument", x).
+drop_negations(e, x) :- sim_bool_test(e) => replace(e, `$x`).
+drop_negations(e, x) :- !sim_bool_test(e), c4_builtin_here(e, "bool") => replace(e, `bool($x)`).
+c4_builtin_ask(e, "bool") :- SIM208(e, _).

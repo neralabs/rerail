@@ -1,0 +1,21 @@
+.policy "ruff-c419-unnecessary-comprehension-in-call" revision 2
+.description "Pass a generator expression to any() and all() instead of a list or set comprehension; it saves memory and lets them stop early."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C419 (flake8-comprehensions): the builtin any or all (by name or as `builtins.any`) called with no
+// keywords, whose first argument is a list or set comprehension that does not await. The finding is at the
+// comprehension. Ruff's preview also takes sum, min and max; this is the stable rule. Its fix is unsafe;
+// none here.
+//   any([x.ok for x in xs])     all({x for x in xs})     ← C419: any(x.ok for x in xs)
+//   any(x.ok for x in xs)    any([await f(x) for x in xs])    sum([x for x in xs])    not reported
+#include "python/comprehensions.rr"
+//   c4_builtin(c, x), c4_first(c, a), call_nkwargs(c, 0), c4_comp(e, k), c4_elt(e, x)
+
+.violation C419(at: node, kind: symbol) code "C419"
+    "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
+    suppress ruff "C419"
+C419(e, k) :- c4_builtin(c, f), (f = "any" ; f = "all"), call_nkwargs(c, 0), c4_first(c, e), c4_comp(e, k),
+    (k = "list" ; k = "set"), field(e, "body", b), !kind(b, "await"), !has(b, _, "await"),
+    count : { child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async") } = 0.

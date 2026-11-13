@@ -3,16 +3,15 @@
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
     StoreCapacity, StoreError, StoreResult, TapeId,
 };
-use rusqlite::{OptionalExtension, Params, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
 use std::time::Instant;
 
 const OBJECT_TAPE: i64 = 1;
 const OBJECT_SOURCE: i64 = 2;
-
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
 pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
@@ -45,18 +44,133 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
         transaction.execute(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
+    /// From now on, each source this handle stores (`put_source`, `put_source_and_tape`) or finds through
+    /// [`Self::held_source_by_hash`] is pinned for `owner` until unix second `lease_until`, in the transaction that
+    /// stores or finds it (O95). A run's sources are live only once its manifest names them; held, a collector
+    /// running meanwhile cannot take them, or their tapes' and memo rows' sources, from under it.
+    /// `release_pins(owner)` ends the hold.
+    pub fn hold_sources(&self, owner: &str, lease_until: i64) -> StoreResult<()> {
+        if owner.is_empty() || lease_until <= 0 {
+            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
+        }
+        *self.holder.lock() = Some((owner.to_owned(), lease_until));
+        Ok(())
+    }
+
+    /// Pins `source` under this handle's holder, if it has one, in `transaction`.
+    pub(super) fn pin_held(&self, transaction: &rusqlite::Connection, source: SourceId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
+    }
+
+    /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
+    /// makes them live, so the next run does not parse them again.
+    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Connection, tape: TapeId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
+    }
+
+    fn pin_held_object(&self, transaction: &rusqlite::Connection, kind: i64, id: i64) -> StoreResult<()> {
+        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
+        let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+        transaction
+            .prepare_cached(
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
+                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+            )?
+            .execute(params![kind, id, owner_id, lease_until])?;
+        Ok(())
+    }
+
+    /// The source whose SHA-256 is `hash`, pinned under the holder in the same transaction when the handle has one.
+    pub fn held_source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
+        if self.holder.lock().is_none() {
+            return self.source_by_hash(hash);
+        }
+        self.immediate_transaction(|transaction| {
+            let found = super::objects::source_id_by_hash(transaction, hash)?;
+            if let Some(source) = found {
+                self.pin_held(transaction, source)?;
+            }
+            Ok(found)
+        })
+    }
+
+    /// The stored source of each of `hashes`, in their order: one read, nothing written (no pin). A caller that
+    /// must hold them pins them after, with `pin_held_sources`, on the store's writer (decision 0104).
+    pub fn sources_by_hashes(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        sources_by_hashes(&connection, hashes)
+    }
+
+    /// Pins `sources` under this handle's holder, if it has one: one transaction of a few statements.
+    pub fn pin_held_sources(&self, sources: &[SourceId]) -> StoreResult<()> {
+        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
+        if sources.is_empty() {
+            return Ok(());
+        }
+        self.immediate_transaction(|transaction| {
+            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+            super::bounded_insert::insert(
+                transaction,
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
+                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+                sources.iter().map(|s| {
+                    use rusqlite::types::Value;
+                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
+                }),
+            )?;
+            Ok(())
+        })
+    }
+
+    /// `held_source_by_hash` of each of `hashes`, in their order: one read, and the sources found pinned under the
+    /// holder in the same transaction, a few statements whatever their number.
+    pub fn held_sources_by_hash(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+        if hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = |connection: &rusqlite::Connection| sources_by_hashes(connection, hashes);
+        let Some((owner, lease_until)) = self.holder.lock().clone() else {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            return read(&connection);
+        };
+        self.immediate_transaction(|transaction| {
+            let found = read(transaction)?;
+            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+            super::bounded_insert::insert(
+                transaction,
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
+                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+                found.iter().flatten().map(|s| {
+                    use rusqlite::types::Value;
+                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
+                }),
+            )?;
+            Ok(found)
+        })
+    }
+
+    /// Ends this handle's holding under `owner` (`hold_sources`), in memory only: `release_pins` deletes its pins.
+    pub fn release_holder(&self, owner: &str) {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
         let connection = self
             .connection
             .lock()
@@ -104,16 +218,25 @@ impl ContentStore {
     /// trees are deleted whole, each row with all of its entries, so a surviving tree row always
     /// has its complete entry set: up to `batch` trees whose entries fit the publication budget
     /// `GIT_TREE_BATCH_ENTRIES`, or the first one alone when it is larger.
+    /// Returns an empty report while a cache reader or another collector holds the collection lease.
     pub fn collect(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         if batch == 0 || batch > MAX_COLLECTION_BATCH {
             return Err(StoreError::Invalid(format!(
                 "collection batch must be between 1 and {MAX_COLLECTION_BATCH}"
             )));
         }
+        let Some(_lease) = self.try_collect()? else {
+            return Ok(CollectionReport::default());
+        };
+        self.collect_held(now, batch)
+    }
+
+    /// The caller holds the exclusive collection lease through the complete pass.
+    pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
+        self.decompressed_cache
+            .lock()
+            .expect("decompressed cache mutex poisoned")
+            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;
@@ -121,7 +244,7 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let expired_pins = execute_collect(
             &transaction,
             "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
@@ -186,6 +309,8 @@ impl ContentStore {
             }
         }
         let current_generation = generation(&transaction)?;
+        // Tapes leave in bulk, and their ids may be reused: the working set holds none of them.
+        self.working_set().clear();
         report.tapes = execute_collect(
             &transaction,
             "DELETE FROM tape_objects WHERE tape_id IN (SELECT t.tape_id FROM tape_objects t \
@@ -194,6 +319,8 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM file_documents d WHERE d.document_tape_id=t.tape_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=t.source_id \
+                             AND l.grammar_version=t.grammar_version AND l.tape_format=t.tape_format_version) \
              ORDER BY t.tape_id LIMIT ?3)",
             params![current_generation, OBJECT_TAPE, limit],
         )?;
@@ -205,6 +332,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -216,6 +344,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -227,6 +356,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -238,6 +368,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -339,14 +470,35 @@ impl ContentStore {
              ORDER BY h.hash_id LIMIT ?1)",
             [limit],
         )?;
+        // Facts memo rows cascade from their sources; a plan set no completion row names any
+        // more is dead (facts_memo.rs writes a set in the transaction that first names it).
+        execute_collect(
+            &transaction,
+            "DELETE FROM facts_plan_sets WHERE set_digest IN (\
+             SELECT DISTINCT p.set_digest FROM facts_plan_sets p \
+             WHERE NOT EXISTS (SELECT 1 FROM facts_completions c WHERE c.set_digest=p.set_digest) \
+             ORDER BY p.set_digest LIMIT ?1)",
+            [limit],
+        )?;
+        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A page set
+        // whose binding is still in an unwritten overlay layer can be collected; its next lookup
+        // misses and recomputes it.
+        execute_collect(
+            &transaction,
+            "DELETE FROM tree_pages WHERE page_key IN (\
+             SELECT DISTINCT p.page_key FROM tree_pages p \
+             WHERE NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=p.digest) \
+             ORDER BY p.page_key LIMIT ?1)",
+            [limit],
+        )?;
         execute_collect(
             &transaction,
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",
             [],
         )?;
-        transaction.commit()?;
-        connection
-            .execute_batch("PRAGMA wal_checkpoint(PASSIVE); PRAGMA incremental_vacuum(128);")?;
+        self.commit(transaction)?;
+        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+        incremental_vacuum(&connection, 4096)?;
         drop(connection);
         self.decompressed_cache
             .lock()
@@ -360,7 +512,7 @@ impl ContentStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Every SQL statement `collect` ran on this thread, in execution order.
     pub(super) static EXECUTED_COLLECT_SQL: std::cell::RefCell<Vec<&'static str>> =
@@ -369,19 +521,28 @@ thread_local! {
 
 /// Every statement `collect` runs passes through here, so tests EXPLAIN the exact SQL it executed.
 fn collect_sql(sql: &'static str) -> &'static str {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     EXECUTED_COLLECT_SQL.with(|executed| executed.borrow_mut().push(sql));
     sql
 }
 
 fn execute_collect(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     sql: &'static str,
     params: impl Params,
 ) -> StoreResult<usize> {
     transaction
         .execute(collect_sql(sql), params)
         .map_err(StoreError::from)
+}
+
+/// Returns up to `pages` free pages to the file system (16 MB at 4096: a grammar change frees about 63 MB on the full
+/// corpus, decision 0053). The pragma frees a page per step, so it is stepped to the end: run as a batch, it freed none.
+pub(super) fn incremental_vacuum(connection: &rusqlite::Connection, pages: u32) -> StoreResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
 }
 
 pub(super) fn capacity_state(bytes: u64) -> CapacityState {
@@ -394,4 +555,24 @@ pub(super) fn capacity_state(bytes: u64) -> CapacityState {
     } else {
         CapacityState::Normal
     }
+}
+
+/// The stored source of each of `hashes`, in their order, read on `connection` in one statement.
+fn sources_by_hashes(connection: &rusqlite::Connection, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+    let mut out = vec![None; hashes.len()];
+    if hashes.is_empty() {
+        return Ok(out);
+    }
+    let list = serde_json::to_string(&hashes.iter().map(|h| super::rows::hash_params(*h)).collect::<Vec<_>>()).expect("integers");
+    let mut statement = connection.prepare_cached(
+        "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
+         ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
+         AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
+         JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
+    )?;
+    for row in statement.query_map([&list], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))? {
+        let (at, id) = row?;
+        out[at as usize] = Some(SourceId(id));
+    }
+    Ok(out)
 }

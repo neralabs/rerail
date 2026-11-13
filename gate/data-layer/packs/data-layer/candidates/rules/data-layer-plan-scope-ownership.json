@@ -1,0 +1,4091 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-plan-scope-ownership",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer plan_scope_ownership at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/**/*.py",
+      "data_layer/**/*.py",
+      "_internal/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py",
+      "conform/**/*.py",
+      "data_layer_testing/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.mypy_cache/**",
+      "**/.pytest_cache/**",
+      "**/.ruff_cache/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "contains-Any": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "Any"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "Any"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "matches": "contains-Any",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "contains-Versioned": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "Versioned"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "Versioned"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "matches": "contains-Versioned",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "contains-CtePublicationContract": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "CtePublicationContract"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "CtePublicationContract"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "matches": "contains-CtePublicationContract",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "contains-imported_contract": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "regex": "imported_contract"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "value": {
+                      "regex": "imported_contract"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "matches": "contains-imported_contract",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          },
+          "annotation-atom": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "type"
+                      },
+                      {
+                        "kind": "parenthesized_expression"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "matches": "annotation-atom",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "store-target": {
+            "any": [
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "kind": "augmented_assignment"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_clause"
+                    }
+                  ],
+                  "stopBy": "neighbor",
+                  "field": "left"
+                }
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "pattern_list"
+                        },
+                        {
+                          "kind": "tuple_pattern"
+                        },
+                        {
+                          "kind": "list_pattern"
+                        },
+                        {
+                          "kind": "tuple"
+                        },
+                        {
+                          "kind": "list"
+                        },
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "store-target"
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "as_pattern_target"
+                    },
+                    {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "as_pattern"
+                          },
+                          {
+                            "inside": {
+                              "kind": "with_item",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor",
+                        "field": "alias"
+                      }
+                    }
+                  ],
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "runner-no-parameter",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "has": {
+                          "all": [
+                            {
+                              "any": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "kind": "default_parameter"
+                                },
+                                {
+                                  "kind": "typed_parameter"
+                                },
+                                {
+                                  "kind": "typed_default_parameter"
+                                }
+                              ]
+                            },
+                            {
+                              "not": {
+                                "precedes": {
+                                  "kind": "positional_separator",
+                                  "stopBy": "end"
+                                }
+                              }
+                            },
+                            {
+                              "not": {
+                                "follows": {
+                                  "any": [
+                                    {
+                                      "kind": "keyword_separator"
+                                    },
+                                    {
+                                      "kind": "list_splat_pattern"
+                                    },
+                                    {
+                                      "kind": "dictionary_splat_pattern"
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "kind": "typed_parameter"
+                                        },
+                                        {
+                                          "has": {
+                                            "any": [
+                                              {
+                                                "kind": "list_splat_pattern"
+                                              },
+                                              {
+                                                "kind": "dictionary_splat_pattern"
+                                              }
+                                            ],
+                                            "stopBy": "neighbor"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ],
+                                  "stopBy": "end"
+                                }
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "parameters"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO001",
+        "anchor": "witness.span",
+        "message": "PSO001: runner no parameter"
+      }
+    },
+    {
+      "id": "runner-nominal-false",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "not": {
+                          "has": {
+                            "regex": "_async$",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "kind": "default_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_default_parameter"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "precedes": {
+                                        "kind": "positional_separator",
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "follows": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_separator"
+                                          },
+                                          {
+                                            "kind": "list_splat_pattern"
+                                          },
+                                          {
+                                            "kind": "dictionary_splat_pattern"
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "typed_parameter"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "list_splat_pattern"
+                                                    },
+                                                    {
+                                                      "kind": "dictionary_splat_pattern"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "kind": "default_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_default_parameter"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "precedes": {
+                                            "kind": "positional_separator",
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "follows": {
+                                            "any": [
+                                              {
+                                                "kind": "keyword_separator"
+                                              },
+                                              {
+                                                "kind": "list_splat_pattern"
+                                              },
+                                              {
+                                                "kind": "dictionary_splat_pattern"
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "typed_parameter"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "any": [
+                                                        {
+                                                          "kind": "list_splat_pattern"
+                                                        },
+                                                        {
+                                                          "kind": "dictionary_splat_pattern"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "all": [
+                                  {
+                                    "matches": "annotation-atom"
+                                  },
+                                  {
+                                    "regex": "^SyncPlanScope$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO001",
+        "anchor": "witness.span",
+        "message": "PSO001: runner nominal false"
+      }
+    },
+    {
+      "id": "runner-nominal-true",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "has": {
+                          "regex": "_async$",
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "kind": "default_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_default_parameter"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "precedes": {
+                                        "kind": "positional_separator",
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "follows": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_separator"
+                                          },
+                                          {
+                                            "kind": "list_splat_pattern"
+                                          },
+                                          {
+                                            "kind": "dictionary_splat_pattern"
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "typed_parameter"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "list_splat_pattern"
+                                                    },
+                                                    {
+                                                      "kind": "dictionary_splat_pattern"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "kind": "default_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_default_parameter"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "precedes": {
+                                            "kind": "positional_separator",
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "follows": {
+                                            "any": [
+                                              {
+                                                "kind": "keyword_separator"
+                                              },
+                                              {
+                                                "kind": "list_splat_pattern"
+                                              },
+                                              {
+                                                "kind": "dictionary_splat_pattern"
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "typed_parameter"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "any": [
+                                                        {
+                                                          "kind": "list_splat_pattern"
+                                                        },
+                                                        {
+                                                          "kind": "dictionary_splat_pattern"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "all": [
+                                  {
+                                    "matches": "annotation-atom"
+                                  },
+                                  {
+                                    "regex": "^AsyncPlanScope$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO001",
+        "anchor": "witness.span",
+        "message": "PSO001: runner nominal true"
+      }
+    },
+    {
+      "id": "runner-generic",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "default_parameter"
+                              },
+                              {
+                                "kind": "typed_parameter"
+                              },
+                              {
+                                "kind": "typed_default_parameter"
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "precedes": {
+                                "kind": "positional_separator",
+                                "stopBy": "end"
+                              }
+                            }
+                          },
+                          {
+                            "not": {
+                              "follows": {
+                                "any": [
+                                  {
+                                    "kind": "keyword_separator"
+                                  },
+                                  {
+                                    "kind": "list_splat_pattern"
+                                  },
+                                  {
+                                    "kind": "dictionary_splat_pattern"
+                                  },
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "has": {
+                                          "any": [
+                                            {
+                                              "kind": "list_splat_pattern"
+                                            },
+                                            {
+                                              "kind": "dictionary_splat_pattern"
+                                            }
+                                          ],
+                                          "stopBy": "neighbor"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                ],
+                                "stopBy": "end"
+                              }
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "has": {
+                          "all": [
+                            {
+                              "all": [
+                                {
+                                  "all": [
+                                    {
+                                      "any": [
+                                        {
+                                          "kind": "identifier"
+                                        },
+                                        {
+                                          "kind": "default_parameter"
+                                        },
+                                        {
+                                          "kind": "typed_parameter"
+                                        },
+                                        {
+                                          "kind": "typed_default_parameter"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "not": {
+                                        "precedes": {
+                                          "kind": "positional_separator",
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "not": {
+                                        "follows": {
+                                          "any": [
+                                            {
+                                              "kind": "keyword_separator"
+                                            },
+                                            {
+                                              "kind": "list_splat_pattern"
+                                            },
+                                            {
+                                              "kind": "dictionary_splat_pattern"
+                                            },
+                                            {
+                                              "all": [
+                                                {
+                                                  "kind": "typed_parameter"
+                                                },
+                                                {
+                                                  "has": {
+                                                    "any": [
+                                                      {
+                                                        "kind": "list_splat_pattern"
+                                                      },
+                                                      {
+                                                        "kind": "dictionary_splat_pattern"
+                                                      }
+                                                    ],
+                                                    "stopBy": "neighbor"
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ],
+                                          "stopBy": "end"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "nthChild": {
+                                    "position": 2,
+                                    "ofRule": {
+                                      "all": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "identifier"
+                                            },
+                                            {
+                                              "kind": "default_parameter"
+                                            },
+                                            {
+                                              "kind": "typed_parameter"
+                                            },
+                                            {
+                                              "kind": "typed_default_parameter"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "not": {
+                                            "precedes": {
+                                              "kind": "positional_separator",
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "not": {
+                                            "follows": {
+                                              "any": [
+                                                {
+                                                  "kind": "keyword_separator"
+                                                },
+                                                {
+                                                  "kind": "list_splat_pattern"
+                                                },
+                                                {
+                                                  "kind": "dictionary_splat_pattern"
+                                                },
+                                                {
+                                                  "all": [
+                                                    {
+                                                      "kind": "typed_parameter"
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "any": [
+                                                          {
+                                                            "kind": "list_splat_pattern"
+                                                          },
+                                                          {
+                                                            "kind": "dictionary_splat_pattern"
+                                                          }
+                                                        ],
+                                                        "stopBy": "neighbor"
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              ],
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "generic_type"
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "subscript",
+                                      "stopBy": "end"
+                                    }
+                                  },
+                                  {
+                                    "regex": "\\["
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "type"
+                              }
+                            }
+                          ],
+                          "stopBy": "neighbor"
+                        },
+                        "stopBy": "neighbor",
+                        "field": "parameters"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO008",
+        "anchor": "witness.span",
+        "message": "PSO008: runner generic"
+      }
+    },
+    {
+      "id": "runner-broad",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "name"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "has": {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "any": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "kind": "default_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_parameter"
+                                      },
+                                      {
+                                        "kind": "typed_default_parameter"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "not": {
+                                      "precedes": {
+                                        "kind": "positional_separator",
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "not": {
+                                      "follows": {
+                                        "any": [
+                                          {
+                                            "kind": "keyword_separator"
+                                          },
+                                          {
+                                            "kind": "list_splat_pattern"
+                                          },
+                                          {
+                                            "kind": "dictionary_splat_pattern"
+                                          },
+                                          {
+                                            "all": [
+                                              {
+                                                "kind": "typed_parameter"
+                                              },
+                                              {
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "list_splat_pattern"
+                                                    },
+                                                    {
+                                                      "kind": "dictionary_splat_pattern"
+                                                    }
+                                                  ],
+                                                  "stopBy": "neighbor"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ],
+                                        "stopBy": "end"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "all": [
+                                      {
+                                        "any": [
+                                          {
+                                            "kind": "identifier"
+                                          },
+                                          {
+                                            "kind": "default_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_parameter"
+                                          },
+                                          {
+                                            "kind": "typed_default_parameter"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "not": {
+                                          "precedes": {
+                                            "kind": "positional_separator",
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "not": {
+                                          "follows": {
+                                            "any": [
+                                              {
+                                                "kind": "keyword_separator"
+                                              },
+                                              {
+                                                "kind": "list_splat_pattern"
+                                              },
+                                              {
+                                                "kind": "dictionary_splat_pattern"
+                                              },
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "typed_parameter"
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "any": [
+                                                        {
+                                                          "kind": "list_splat_pattern"
+                                                        },
+                                                        {
+                                                          "kind": "dictionary_splat_pattern"
+                                                        }
+                                                      ],
+                                                      "stopBy": "neighbor"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "regex": "Any|object|Versioned|\\||Union",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      },
+                      "stopBy": "neighbor",
+                      "field": "parameters"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO001",
+        "anchor": "witness.span",
+        "message": "PSO001: runner broad"
+      }
+    },
+    {
+      "id": "runner-pso002",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:callable|getattr|hasattr)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:callable|getattr|hasattr)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$RUNNER"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO002",
+        "anchor": "witness.span",
+        "message": "PSO002: runner pso002",
+        "each": "RUNNER"
+      }
+    },
+    {
+      "id": "runner-pso003",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "attribute"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:_execute_registered_returns|_execute_registered_returns_async|commit|execute|fetch|rollback)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "attribute"
+                          }
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$RUNNER"
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO003",
+        "anchor": "witness.span",
+        "message": "PSO003: runner pso003",
+        "each": "RUNNER"
+      }
+    },
+    {
+      "id": "workflow-SyncReadPlanWorkflow",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:build)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "type",
+                      "stopBy": "neighbor",
+                      "field": "type"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "has": {
+                            "regex": "Callable\\s*\\[\\s*\\[",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "has": {
+                            "regex": "SyncReadTransaction",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "contains-Any",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:SyncReadPlanWorkflow)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO008",
+        "anchor": "witness.span",
+        "message": "PSO008: workflow SyncReadPlanWorkflow"
+      }
+    },
+    {
+      "id": "workflow-SyncWritePlanWorkflow",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:build)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "type",
+                      "stopBy": "neighbor",
+                      "field": "type"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "has": {
+                            "regex": "Callable\\s*\\[\\s*\\[",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "has": {
+                            "regex": "SyncWriteTransaction",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "contains-Any",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:SyncWritePlanWorkflow)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO008",
+        "anchor": "witness.span",
+        "message": "PSO008: workflow SyncWritePlanWorkflow"
+      }
+    },
+    {
+      "id": "workflow-AsyncReadPlanWorkflow",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:build)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "type",
+                      "stopBy": "neighbor",
+                      "field": "type"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "has": {
+                            "regex": "Callable\\s*\\[\\s*\\[",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "has": {
+                            "regex": "AsyncReadTransaction",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "contains-Any",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:AsyncReadPlanWorkflow)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO008",
+        "anchor": "witness.span",
+        "message": "PSO008: workflow AsyncReadPlanWorkflow"
+      }
+    },
+    {
+      "id": "workflow-AsyncWritePlanWorkflow",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:build)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "type",
+                      "stopBy": "neighbor",
+                      "field": "type"
+                    }
+                  },
+                  {
+                    "not": {
+                      "all": [
+                        {
+                          "has": {
+                            "regex": "Callable\\s*\\[\\s*\\[",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "has": {
+                            "regex": "AsyncWriteTransaction",
+                            "stopBy": "neighbor",
+                            "field": "type"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "contains-Any",
+                              "stopBy": "neighbor",
+                              "field": "type"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:AsyncWritePlanWorkflow)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO008",
+        "anchor": "witness.span",
+        "message": "PSO008: workflow AsyncWritePlanWorkflow"
+      }
+    },
+    {
+      "id": "versioned-terminal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^(?:execute_read_workflow|execute_write_workflow)$"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "name"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "has": {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "^(?:AsyncVersionedPlanScope|SyncVersionedPlanScope)$"
+                              }
+                            ],
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO005",
+        "anchor": "witness.span",
+        "message": "PSO005: versioned terminal"
+      }
+    },
+    {
+      "id": "helper-base-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:run_read_plan_scope_workflow|run_read_plan_scope_workflow_async|run_write_plan_scope_workflow|run_write_plan_scope_workflow_async)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:conform/versioned_plan_scope_helpers\\.py|data_layer_testing/versioning/query_helpers\\.py)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO004",
+        "anchor": "witness.span",
+        "message": "PSO004: helper base call"
+      }
+    },
+    {
+      "id": "nested-terminal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:commit|execute|fetch|open_read_plan|open_write_plan|read_transaction|rollback|write_transaction)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:commit|execute|fetch|open_read_plan|open_write_plan|read_transaction|rollback|write_transaction)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "nested_versioned",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": {
+                        "kind": "function_definition"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:conform/versioned_plan_scope_helpers\\.py|data_layer_testing/versioning/query_helpers\\.py|l2000_connection/connection_callback_results\\.py|l2000_connection/connection_plan_workflows\\.py|l2000_connection/plan_scopes\\.py|l7000_versioned_schema/versioned_connection\\.py|l9900_auto_api/_versioning_helpers\\.py)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO006",
+        "anchor": "witness.span",
+        "message": "PSO006: nested terminal"
+      }
+    },
+    {
+      "id": "lifecycle-reflection",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:getattr|hasattr)$"
+                            }
+                          ]
+                        },
+                        {
+                          "all": [
+                            {
+                              "kind": "attribute"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "regex": "^(?:getattr|hasattr)$"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "attribute"
+                              }
+                            }
+                          ]
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "_base_scope"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_base_scope"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "_base_scope"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "_callback_versioned_txn"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_callback_versioned_txn"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "_callback_versioned_txn"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "_executed"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_executed"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "_executed"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "_plan_owner"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "_plan_owner"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "_plan_owner"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "did_publish_branch"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "did_publish_branch"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "did_publish_branch"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "is_active"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "is_active"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "is_active"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "is_committed"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "is_committed"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "is_committed"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "regex": "is_rolled_back"
+                              }
+                            ]
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "is_rolled_back"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "string"
+                                    },
+                                    {
+                                      "kind": "concatenated_string"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": {
+                                    "regex": "is_rolled_back"
+                                  }
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^(?:conform/versioned_plan_scope_helpers\\.py|data_layer_testing/versioning/query_helpers\\.py|l2000_connection/connection_callback_results\\.py|l2000_connection/connection_plan_workflows\\.py|l2000_connection/plan_scopes\\.py|l7000_versioned_schema/versioned_connection\\.py|l9900_auto_api/_versioning_helpers\\.py)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO007",
+        "anchor": "witness.span",
+        "message": "PSO007: lifecycle reflection"
+      }
+    },
+    {
+      "id": "base-versioned-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "matches": "contains-Versioned"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "connection_plan_workflows\\.py$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO009",
+        "anchor": "witness.span",
+        "message": "PSO009: base versioned name"
+      }
+    },
+    {
+      "id": "invent-contract",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "call"
+                  },
+                  {
+                    "has": {
+                      "matches": "contains-imported_contract",
+                      "stopBy": "neighbor",
+                      "field": "function"
+                    }
+                  },
+                  {
+                    "matches": "contains-CtePublicationContract"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO013",
+        "anchor": "witness.span",
+        "message": "PSO013: invent contract"
+      }
+    },
+    {
+      "id": "callback-owner",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "attribute"
+                      },
+                      {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^(?:_callback_versioned_txn)$"
+                            }
+                          ],
+                          "stopBy": "neighbor",
+                          "field": "attribute"
+                        }
+                      },
+                      {
+                        "matches": "store-target"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "all": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "identifier"
+                                },
+                                {
+                                  "regex": "^(?:__aenter__|__aexit__|__enter__|__exit__|__init__|_bind_versioned_write_plan_owner|_cleanup_and_restore_callback_versioned_write_plan|_cleanup_and_restore_callback_versioned_write_plan_async|_restore_versioned_write_plan_owner)$"
+                                }
+                              ],
+                              "stopBy": "neighbor",
+                              "field": "name"
+                            }
+                          }
+                        ],
+                        "stopBy": {
+                          "kind": "function_definition"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO010",
+        "anchor": "witness.span",
+        "message": "PSO010: callback owner"
+      }
+    },
+    {
+      "id": "terminal-state",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "if\\ not\\ txn\\.is_committed\\ and\\ not\\ txn\\.is_rolled_back\\ and\\ not\\ txn\\.did_publish_branch"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "(?<LOCATION>if\\ not\\ txn\\.is_committed\\ and\\ not\\ txn\\.is_rolled_back\\ and\\ not\\ txn\\.did_publish_branch)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO011",
+        "anchor": "capture.LOCATION",
+        "message": "PSO011: terminal state"
+      }
+    },
+    {
+      "id": "contract-fallback",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "all": [
+                      {
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "regex": "imported_contract\\ =\\ imported_contract_fn"
+                          }
+                        ]
+                      },
+                      {
+                        "regex": "else None"
+                      }
+                    ]
+                  },
+                  {
+                    "regex": "(?<LOCATION>imported_contract\\ =\\ imported_contract_fn)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO013",
+        "anchor": "capture.LOCATION",
+        "message": "PSO013: contract fallback"
+      }
+    },
+    {
+      "id": "mode-pair-0",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>execute_read_plan_workflow_async\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ conn,\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ SyncReadPlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 0"
+      }
+    },
+    {
+      "id": "mode-pair-1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>execute_write_plan_workflow_async\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ conn,\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ SyncWritePlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 1"
+      }
+    },
+    {
+      "id": "mode-pair-2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>run_read_plan_workflow_async\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ self\\._async_conn\\(\\),\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ SyncReadPlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 2"
+      }
+    },
+    {
+      "id": "mode-pair-3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>run_write_plan_workflow_async\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ self\\._async_conn\\(\\),\\\n\\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ \\ SyncWritePlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 3"
+      }
+    },
+    {
+      "id": "mode-pair-4",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>execute_read_plan_workflow\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ conn,\\\n\\ \\ \\ \\ \\ \\ \\ \\ AsyncReadPlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 4"
+      }
+    },
+    {
+      "id": "mode-pair-5",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "module"
+                  },
+                  {
+                    "regex": "(?<LOCATION>execute_write_plan_workflow\\(\\\n\\ \\ \\ \\ \\ \\ \\ \\ conn,\\\n\\ \\ \\ \\ \\ \\ \\ \\ AsyncWritePlanWorkflow)"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                            "false": "^"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow",
+                              "false": "^"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PSO012",
+        "anchor": "capture.LOCATION",
+        "message": "PSO012: mode pair 5"
+      }
+    }
+  ]
+}

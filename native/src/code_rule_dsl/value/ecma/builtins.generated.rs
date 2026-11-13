@@ -58,7 +58,7 @@ pub(crate) const BUILTIN_NAMES: &[&str] = &[
 ];
 
 /// Functions whose calls fold.
-pub(crate) const CALL_ALLOWED: &[&str] = &[
+pub const CALL_ALLOWED: &[&str] = &[
     "Array.isArray",
     "Array.of",
     "Array.prototype.at",
@@ -200,7 +200,7 @@ pub(crate) const CALL_ALLOWED: &[&str] = &[
 ];
 
 /// Functions whose calls are their first argument.
-pub(crate) const CALL_PASS_THROUGH: &[&str] = &[
+pub const CALL_PASS_THROUGH: &[&str] = &[
     "Object.freeze",
     "Object.preventExtensions",
     "Object.seal",

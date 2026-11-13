@@ -1,0 +1,20 @@
+.policy "ruff-pth204-os-path-getmtime" revision 2
+.description "Use Path.stat().st_mtime instead of os.path.getmtime(); path objects read better than string-based os.path calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH204 (flake8-use-pathlib): a call of `os.path.getmtime`, however it is imported, with exactly one argument:
+// the `filename` parameter, by position or by keyword. pathlib's form is `Path(p).stat().st_mtime`.
+// Reported at the callee.
+//   os.path.getmtime(p)             ← PTH204
+//   from os.path import getmtime
+//   getmtime(filename=p)            ← PTH204
+//   os.path.getmtime(*ps)           not reported: Ruff does not look past `*`
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH204(at: node, s: node) code "PTH204"
+    "Use `Path({s}).stat().st_mtime` instead of `os.path.getmtime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+    suppress ruff "PTH204"
+PTH204(f, a) :- single_arg(_, "os.path.getmtime", "filename", f, a).

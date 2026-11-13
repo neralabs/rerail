@@ -1,0 +1,604 @@
+{
+  "format": "rerail.data-layer-testsuite-coverage/v1",
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "nativeSha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+  "checks": 80,
+  "nativeCalls": 3961,
+  "hostGuardCalls": 3,
+  "nativePositiveCalls": 2112,
+  "nativeCleanCalls": 1849,
+  "missingNativeCoverage": [],
+  "falsePositives": 0,
+  "falseNegatives": 0,
+  "engineFailures": 0,
+  "executionPathDifferences": 0,
+  "coverage": [
+    {
+      "check": "removed_compat_surfaces",
+      "positive": 3,
+      "clean": 1
+    },
+    {
+      "check": "versioned_lifecycle_legacy_surfaces",
+      "positive": 1,
+      "clean": 2
+    },
+    {
+      "check": "no_api_root_imports",
+      "positive": 2,
+      "clean": 2
+    },
+    {
+      "check": "backend_type_strings",
+      "positive": 43,
+      "clean": 17
+    },
+    {
+      "check": "hasattr_async",
+      "positive": 19,
+      "clean": 14
+    },
+    {
+      "check": "no_source_inspection",
+      "positive": 54,
+      "clean": 18
+    },
+    {
+      "check": "serverplan_name_inference",
+      "positive": 7,
+      "clean": 1
+    },
+    {
+      "check": "no_blanket_grammar_bypass",
+      "positive": 97,
+      "clean": 24
+    },
+    {
+      "check": "serverplan_grammar_surface",
+      "positive": 6,
+      "clean": 1
+    },
+    {
+      "check": "permission_error",
+      "positive": 2,
+      "clean": 3
+    },
+    {
+      "check": "dynamic_module_loading",
+      "positive": 38,
+      "clean": 28
+    },
+    {
+      "check": "forwardref",
+      "positive": 10,
+      "clean": 5
+    },
+    {
+      "check": "unresolved_forward_refs",
+      "positive": 42,
+      "clean": 31
+    },
+    {
+      "check": "classvar_check",
+      "positive": 9,
+      "clean": 7
+    },
+    {
+      "check": "type_safety_patterns",
+      "positive": 37,
+      "clean": 19
+    },
+    {
+      "check": "conn_or_txn_union",
+      "positive": 8,
+      "clean": 7
+    },
+    {
+      "check": "async_executor",
+      "positive": 33,
+      "clean": 14
+    },
+    {
+      "check": "async_patterns",
+      "positive": 27,
+      "clean": 11
+    },
+    {
+      "check": "async_sync_boundary",
+      "positive": 9,
+      "clean": 8
+    },
+    {
+      "check": "admin_async_purity",
+      "positive": 32,
+      "clean": 16
+    },
+    {
+      "check": "plan_scope_side_effects",
+      "positive": 18,
+      "clean": 11
+    },
+    {
+      "check": "plan_scope_ownership",
+      "positive": 21,
+      "clean": 9
+    },
+    {
+      "check": "transaction_closures",
+      "positive": 43,
+      "clean": 61
+    },
+    {
+      "check": "transaction_callback_wrappers",
+      "positive": 7,
+      "clean": 13
+    },
+    {
+      "check": "transaction_patterns",
+      "positive": 29,
+      "clean": 21
+    },
+    {
+      "check": "lazy_result_usage",
+      "positive": 4,
+      "clean": 13
+    },
+    {
+      "check": "swallowed_exceptions",
+      "positive": 17,
+      "clean": 8
+    },
+    {
+      "check": "error_handling",
+      "positive": 8,
+      "clean": 5
+    },
+    {
+      "check": "module_level_caches",
+      "positive": 13,
+      "clean": 10
+    },
+    {
+      "check": "connection_caches",
+      "positive": 32,
+      "clean": 18
+    },
+    {
+      "check": "render_fstrings",
+      "positive": 12,
+      "clean": 25
+    },
+    {
+      "check": "render_raw_strings",
+      "positive": 32,
+      "clean": 21
+    },
+    {
+      "check": "regex_sql_parsing",
+      "positive": 62,
+      "clean": 35
+    },
+    {
+      "check": "sql_grammar_escape_hatches",
+      "positive": 86,
+      "clean": 74
+    },
+    {
+      "check": "grammar_render_methods",
+      "positive": 49,
+      "clean": 26
+    },
+    {
+      "check": "grammar_str_params",
+      "positive": 8,
+      "clean": 11
+    },
+    {
+      "check": "grammar_callable_constructors",
+      "positive": 20,
+      "clean": 7
+    },
+    {
+      "check": "grammar_fragment_usage",
+      "positive": 61,
+      "clean": 19
+    },
+    {
+      "check": "grammar_allowlist_burndown",
+      "positive": 5,
+      "clean": 3
+    },
+    {
+      "check": "rust_sql_grammar_boundary",
+      "positive": 10,
+      "clean": 4
+    },
+    {
+      "check": "missing_async_pairs",
+      "positive": 6,
+      "clean": 9
+    },
+    {
+      "check": "sync_async_signatures",
+      "positive": 4,
+      "clean": 6
+    },
+    {
+      "check": "async_sync_delegation",
+      "positive": 13,
+      "clean": 24
+    },
+    {
+      "check": "public_api_triples",
+      "positive": 23,
+      "clean": 15
+    },
+    {
+      "check": "data_layer_facade_purity",
+      "positive": 8,
+      "clean": 4
+    },
+    {
+      "check": "data_layer_compat_aliases",
+      "positive": 5,
+      "clean": 6
+    },
+    {
+      "check": "layer_violations",
+      "positive": 7,
+      "clean": 4
+    },
+    {
+      "check": "backend_coupling",
+      "positive": 33,
+      "clean": 29
+    },
+    {
+      "check": "internal_dead_code",
+      "positive": 31,
+      "clean": 12
+    },
+    {
+      "check": "imperative_private_functions",
+      "positive": 68,
+      "clean": 5
+    },
+    {
+      "check": "serverplan_bypass",
+      "positive": 4,
+      "clean": 2
+    },
+    {
+      "check": "serverplan_steps",
+      "positive": 64,
+      "clean": 682
+    },
+    {
+      "check": "serverplan_state_tripwires",
+      "positive": 65,
+      "clean": 14
+    },
+    {
+      "check": "serverplan_dispatch_architecture",
+      "positive": 42,
+      "clean": 17
+    },
+    {
+      "check": "serverplan_quality",
+      "positive": 135,
+      "clean": 65
+    },
+    {
+      "check": "serverplan_target_architecture",
+      "positive": 10,
+      "clean": 2
+    },
+    {
+      "check": "execution_authority_bypass",
+      "positive": 4,
+      "clean": 1
+    },
+    {
+      "check": "impl_direct_execution",
+      "positive": 39,
+      "clean": 29
+    },
+    {
+      "check": "raw_execute_regression",
+      "positive": 2,
+      "clean": 2
+    },
+    {
+      "check": "legacy_execution_surfaces",
+      "positive": 52,
+      "clean": 28
+    },
+    {
+      "check": "post_op_side_effects",
+      "positive": 13,
+      "clean": 9
+    },
+    {
+      "check": "post_op_no_internal_dispatch",
+      "positive": 14,
+      "clean": 4
+    },
+    {
+      "check": "executor_publication_repairs",
+      "positive": 3,
+      "clean": 2
+    },
+    {
+      "check": "history_serverplan_projection",
+      "positive": 8,
+      "clean": 4
+    },
+    {
+      "check": "revision_ancestry_invariants",
+      "positive": 4,
+      "clean": 2
+    },
+    {
+      "check": "versioned_merged_identity",
+      "positive": 9,
+      "clean": 4
+    },
+    {
+      "check": "publication_registry_writes",
+      "positive": 15,
+      "clean": 9
+    },
+    {
+      "check": "declared_fact_interrogation",
+      "positive": 29,
+      "clean": 13
+    },
+    {
+      "check": "grammar_mutation_invalidation",
+      "positive": 28,
+      "clean": 17
+    },
+    {
+      "check": "unknown_contract_defaults",
+      "positive": 23,
+      "clean": 7
+    },
+    {
+      "check": "eager_resolve",
+      "positive": 52,
+      "clean": 25
+    },
+    {
+      "check": "lazy_architecture",
+      "positive": 95,
+      "clean": 102
+    },
+    {
+      "check": "pure_lazy_runtime_purity",
+      "positive": 32,
+      "clean": 20
+    },
+    {
+      "check": "cached_pure_lazy_allowlist",
+      "positive": 49,
+      "clean": 5
+    },
+    {
+      "check": "lazy_sql_surface",
+      "positive": 23,
+      "clean": 11
+    },
+    {
+      "check": "plan_helpers_allowlist",
+      "positive": 55,
+      "clean": 27
+    },
+    {
+      "check": "legacy_callback_quarantine",
+      "positive": 9,
+      "clean": 2
+    },
+    {
+      "check": "readthrough_authority_architecture",
+      "positive": 7,
+      "clean": 3
+    },
+    {
+      "check": "authentication_plan_purity",
+      "positive": 5,
+      "clean": 3
+    },
+    {
+      "check": "lazy_adapter_ownership",
+      "positive": 8,
+      "clean": 1
+    }
+  ],
+  "upstream": [
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-01.json",
+      "sha256": "833e2af79755eb69057df802302f2b8694e7307aa4e9765bd8403e7293f3498f",
+      "collected": 567,
+      "passed": 564,
+      "skipped": 3
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-02.json",
+      "sha256": "52437e43963d94774e9628e2c82464a2cf7cadf942ac0243397e18943bc27193",
+      "collected": 700,
+      "passed": 700,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-03.json",
+      "sha256": "7c545a074451128dadca970ebae863f02f87be935ef5eacc127977bd69197302",
+      "collected": 568,
+      "passed": 568,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-04.json",
+      "sha256": "6af641af9150abaddff3d0f8ab2f24592e88a8efe98c9e10f5ed1234778449f9",
+      "collected": 605,
+      "passed": 605,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-05.json",
+      "sha256": "1867cfef28817667786741f0cbfb57322505f63a040a4b15ad6b0b8f74088829",
+      "collected": 646,
+      "passed": 646,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-06.json",
+      "sha256": "1709ac5a15046aff277367355f8df4ea225a8dee6ab89ea54b5e2d1e9a2c98b6",
+      "collected": 933,
+      "passed": 933,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-07.json",
+      "sha256": "b995f75f7b176fbb510524d5db541f63d0fa38c2fb964e51e67a189fffa139f2",
+      "collected": 208,
+      "passed": 208,
+      "skipped": 0
+    },
+    {
+      "recording": ".rerail/data-layer-batch-eight/audit-original-08.json",
+      "sha256": "5cd4d58c2c34d81df509ac3d473a6caa065eb7a78a1586ff6d34d3204d6c63ab",
+      "collected": 456,
+      "passed": 456,
+      "skipped": 0
+    }
+  ],
+  "upstreamTestsCollected": 4683,
+  "upstreamTestsPassed": 4680,
+  "upstreamTestsSkipped": 3,
+  "caseLedger": "fixtures/host/data-layer-port/batch-08-case-coverage.json",
+  "caseLedgerSha256": "ef6a279846d4ec45e182a9bcad56eeff7307ef5a72044e763ce6b37c1c2b1ed2",
+  "discovery": {
+    "tests": [
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[]",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[@cached_pure_lazy(cache_args=())\\n]",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@\\uff43\\uff41\\uff43\\uff48\\uff45\\uff44_\\uff50\\uff55\\uff52\\uff45_\\uff4c\\uff41\\uff5a\\uff59(cache_args=())]",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@unresolved(\\uff43\\uff41\\uff43\\uff48\\uff45_\\uff41\\uff52\\uff47\\uff53=())]",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy"
+    ],
+    "positive": 14,
+    "clean": 1,
+    "syntaxContracts": [
+      "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_unrelated_syntax_errors"
+    ],
+    "failures": [],
+    "differences": []
+  },
+  "typescriptTestsPassed": 86,
+  "pythonHarnessTestsPassed": 9,
+  "sixthBatchShards": {
+    "parts": 24,
+    "completed": 24,
+    "calls": 1259,
+    "coverage": [
+      {
+        "check": "execution_authority_bypass",
+        "positive": 4,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 39,
+        "clean": 29
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 52,
+        "clean": 28
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_bypass",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 42,
+        "clean": 17
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 135,
+        "clean": 65
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 65,
+        "clean": 14
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 64,
+        "clean": 682
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 10,
+        "clean": 2
+      }
+    ],
+    "nativeSha256": [
+      "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b"
+    ],
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0
+  },
+  "recordings": {
+    "batch-02-recording.json": "e1d741901e7938f85d82594da6a527b9cd398afaf77a414000e92b88a3d6d10c",
+    "batch-05-recording.json": "4b8a3a2eb62e22d665bd41430958f41d4aa78c00b3f49f2faec080aaf9436f0a",
+    "batch-05-probes.json": "cfa84c65293cabcc60011d16b994de1d76a5c6ee281f225874d7632a110b4b12",
+    "batch-04-recording.json": "ba3510d463199852460b048afbaccd91555f8c319f37dac2f88ba989e145cdab",
+    "batch-03-recording.json": "6c9a169ca763b79501bda4bce33a056c634aae5af4b6901db8d69fbe62b94328",
+    "batch-01-recording.json": "0d5fe8bddb7f15d3e0487f4b979d06647dc3062e51d846ebace27fc0b9dbddf8",
+    "batch-06-recording.json": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b",
+    "batch-06-probes.json": "3929777c02349b0dc43ac737dda73e41fb63b425f1704f004767b4f22885dbad",
+    "batch-05-remaining-graph-probes.json": "61a4090d2593fcc12cc2e8aef800e5fa4005f43021fc90e9aef2a8e79173f82c",
+    "batch-07-recording.json": "369bbde9fb994c37c62a5dfeb96b8bc1540df2453787d158aa20ad0afa282d8a",
+    "batch-03-probes.json": "8c7810ef43ff9b57d5bd569e18d1ca5decc085f3a76577b6f585c6c8fc8e22b8",
+    "batch-05-relational-probes.json": "002c7960b067af0c7d9bbb849d2068979e24d6e57fee87643b049b79513858c4",
+    "batch-08-recording.json": "5cd4d58c2c34d81df509ac3d473a6caa065eb7a78a1586ff6d34d3204d6c63ab",
+    "batch-04-probes.json": "e2e69a5569f257f3579e24fe86b6881561cbde033952155f766f404b01b5ca42",
+    "batch-08-probes.json": "dbeae7b28266265241ffa0097bf550f60a6a51f4774fc5ff0651e7813ae30643",
+    "batch-02-probes.json": "fb73d7ddb5815d4d47a34013a2742dd792e0bcc26aa4afd9ce4755abbe66765a",
+    "batch-05-graph-probes.json": "7ab886576c3199c32d136560cf20b05de990f8945cd28ebeed4a3797e2c508ec",
+    "batch-07-probes.json": "6aa1881200342bc8ffe6b5939ee31ae3e91e9ccccf5aa23382d3da8371ad5190"
+  },
+  "qualifications": [
+    "Native scanner counts prove every eligible recorded call was replayed, including every positive.",
+    "Scanner parity compares finding multiplicity, path, line and code, plus recorded semantic fields.",
+    "Cached discovery compares every DecoratedFunction field through snapshot and workspace APIs.",
+    "Original helper, CLI, signing, I/O and Python structure assertions are separate from native scanner observations.",
+    "Original fact-source inputs do not certify the helper assertions that inspect them.",
+    "Diagnostic prose is not compared unless it is the recorded diagnostic identity.",
+    "No full-repository cold execution was performed for this audit.",
+    "Three host signature observations are excluded from native counts.",
+    "Batches one through seven replay the existing committed corpus. Fresh unchanged upstream suites were also run for all eight batches.",
+    "The native Rust suite was not rerun; this audit changes no engine code."
+  ]
+}

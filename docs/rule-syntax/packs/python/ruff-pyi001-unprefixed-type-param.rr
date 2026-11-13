@@ -1,0 +1,23 @@
+.policy "ruff-pyi001-unprefixed-type-param" revision 2
+.description "Start the names of TypeVar, ParamSpec and TypeVarTuple variables in stub files with an underscore, so the stub does not export them."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI001 (flake8-pyi), stubs only: a TypeVar, ParamSpec or TypeVarTuple assigned in a stub is exported
+// unless its name starts with `_`. Ruff checks plain one-target assignments outside functions; it reports the
+// call. A target that is not a plain name (`a.b = TypeVar("X")`, `[L] = …`) is reported too.
+//   T = TypeVar("T")          ← PYI001
+//   _T = TypeVar("_T")        fine
+//   T = U = TypeVar("T")      not checked: two targets (PYI017's business)
+#include "python/typing.rr"
+
+.violation PYI001(at: node, msg: symbol) code "PYI001" "{msg}; stubs should not export type variables."
+    suppress ruff "PYI001"
+PYI001(c, "Rename this type variable to start with an underscore (`T` becomes `_T`) and update its uses here and in any module importing it") :-
+    typevar_decl(c, t), plain_target(t, x), !prefix("_", x).
+PYI001(c, "Assign this type variable to a single plain name starting with an underscore, as in `_T = TypeVar(\"_T\")`") :-
+    typevar_decl(c, t), !plain_target(t, _).
+// typevar_decl(c, t): `t = c`, c a type-variable call, in a stub and not in a function.
+.decl typevar_decl(c: node, t: node)
+typevar_decl(c, t) :- simple_assign(_, t, c), typevar_call(c, _), in_stub(c), !inside(c, _, "function_definition").

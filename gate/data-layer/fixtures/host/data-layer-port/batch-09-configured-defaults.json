@@ -1,0 +1,208 @@
+{
+  "format": "rerail.data-layer-configured-defaults/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 121,
+  "sourceSha256": {
+    "scripts/lint_bootstrap_cache_health.py": "38ca210fd097f4de0a1002f2712bd43f25454415044efda31765ab40c4e6e44b",
+    "scripts/lint_bootstrap_engine_invariants_plugin.py": "f3b215a20bb9cfeee5b669ad3037242121abf743f6bb29c2b789c7c28635c5e2",
+    "scripts/lint_bootstrap_lazy_sql.py": "c4541d43ff3ae383b5c8b3eb0bb1a7c13a10f6a60195c5a19ab04e2cd4dbb749",
+    "scripts/lint_connection_mode_split.py": "6609bd0bde17b3a14c2f3fa62cf9e32ffe7a0e8e2292a4e6915e51c1e9d50eea",
+    "scripts/lint_lib/fact_engine.py": "3256ab77785f1a63a9afdd30f55669fb3ce7fadb660558a9d7032c0eced3decd",
+    "scripts/lint_schema_architecture_plugin.py": "4156ae253e047f74e2831a9cca4dc009473669fc9e029aa593b0f902cec002be"
+  },
+  "cases": [
+    {
+      "id": "bootstrap_cache_health-parser",
+      "check": "bootstrap_cache_health",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "source": "create_tables(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "conform/test_probe.py": {
+          "bootstrap_cache_health.violations": "SyntaxError: '(' was never closed (test_probe.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "bootstrap_lazy_sql-parser",
+      "check": "bootstrap_lazy_sql",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "table_exists_many(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "report",
+      "errors": {
+        "l3200_metadata/bootstrap_state.py": {
+          "bootstrap_lazy_sql.violations": "SyntaxError: '(' was never closed (bootstrap_state.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "bootstrap_eager_resolve-parser",
+      "check": "bootstrap_eager_resolve",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "table_exists_many(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "report",
+      "errors": {
+        "l3200_metadata/bootstrap_state.py": {
+          "bootstrap_lazy_sql.violations": "SyntaxError: '(' was never closed (bootstrap_state.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "connection_mode_split-parser",
+      "check": "connection_mode_split",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class DatabaseConnection(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "api/probe.py": {
+          "connection_mode_split.violations": "SyntaxError: '(' was never closed (probe.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "schema_architecture-parser",
+      "check": "schema_architecture",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "source": "SchemaTransaction = (\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP000",
+          "path": "l2000_connection/probe.py",
+          "line": 1,
+          "message": "cannot inspect schema lifecycle ownership: SyntaxError: '(' was never closed (probe.py, line 1)",
+          "severity": "error"
+        }
+      ],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l2000_connection/probe.py": {
+          "schema_architecture.lifecycle": "SyntaxError: '(' was never closed (probe.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "bootstrap_engine_invariants-parser",
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "bootstrap = (\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l3200_metadata/bootstrap_state.py": {
+          "bootstrap_engine_invariants.file_violations": "SyntaxError: '(' was never closed (bootstrap_state.py, line 1)"
+        }
+      }
+    },
+    {
+      "id": "invalid-coordinator",
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "pass\n\n# COLD_APPLICATION\n"
+        },
+        {
+          "path": "l3200_metadata/bootstrap_coordinator.py",
+          "source": "bootstrap = (\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l3200_metadata/bootstrap_coordinator.py": {
+          "bootstrap_engine_invariants.file_violations": "SyntaxError: '(' was never closed (bootstrap_coordinator.py, line 1)"
+        },
+        "scripts/lint_bootstrap_engine_invariants_plugin.py": {
+          "bootstrap_engine_invariants.violations": "SyntaxError: '(' was never closed (<unknown>, line 1)"
+        }
+      }
+    },
+    {
+      "id": "invalid-enum-with-coordinator",
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "pass\n\n# COLD_APPLICATION\n"
+        },
+        {
+          "path": "l3200_metadata/bootstrap_coordinator.py",
+          "source": "pass\n"
+        },
+        {
+          "path": "l3200_metadata/bootstrap_data_plan.py",
+          "source": "class BootstrapDataPrimitiveKind(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l3200_metadata/bootstrap_data_plan.py": {
+          "bootstrap_engine_invariants.file_violations": "SyntaxError: '(' was never closed (bootstrap_data_plan.py, line 1)"
+        },
+        "scripts/lint_bootstrap_engine_invariants_plugin.py": {
+          "bootstrap_engine_invariants.violations": "SyntaxError: '(' was never closed (<unknown>, line 1)"
+        }
+      }
+    },
+    {
+      "id": "invalid-enum-without-coordinator",
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "pass\n\n# COLD_APPLICATION\n"
+        },
+        {
+          "path": "l3200_metadata/bootstrap_data_plan.py",
+          "source": "class BootstrapDataPrimitiveKind(\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "bootstrap_engine_invariants",
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 3,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced",
+          "severity": "error"
+        }
+      ],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l3200_metadata/bootstrap_data_plan.py": {
+          "bootstrap_engine_invariants.file_violations": "SyntaxError: '(' was never closed (bootstrap_data_plan.py, line 1)"
+        }
+      }
+    }
+  ]
+}

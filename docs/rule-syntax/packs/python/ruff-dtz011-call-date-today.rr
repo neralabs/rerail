@@ -1,0 +1,16 @@
+.policy "ruff-dtz011-call-date-today" revision 2
+.description "Derive today's date from a timezone-aware current datetime instead of the naive local date; the local date depends on the machine's timezone."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ011 (flake8-datetimez): `datetime.date.today()`, the date in the machine's local timezone. Ruff
+// reports it even when `.astimezone` follows. Reported at the call. Only in a file that imports datetime.
+//   datetime.date.today()                        ← DTZ011
+//   from datetime import date; date.today()      ← DTZ011
+#include "python/datetime.rr"
+
+.violation DTZ011(at: node) code "DTZ011"
+    "Use `datetime.datetime.now(tz=...).date()` with the timezone whose calendar date you need; `date.today()` is the naive local date, so keep it only if that is intended."
+    suppress ruff "DTZ011"
+DTZ011(c) :- dt_call(c, "datetime.date.today").

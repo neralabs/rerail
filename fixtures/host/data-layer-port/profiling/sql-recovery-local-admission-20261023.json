@@ -1,0 +1,22 @@
+{
+  "format": "rerail.sql-recovery/v1",
+  "date": "2026-10-23",
+  "change": "local candidate admission before preparation",
+  "previousExecutions": 24159,
+  "executions": 22181,
+  "limit": 100,
+  "status": "budget-exceeded",
+  "coverageProblems": [],
+  "phases": {
+    "connectionSetup": 936,
+    "catalogPublication": 1232,
+    "filePublication": 272,
+    "candidatePreparation": 16402,
+    "relationalEvaluation": 3339,
+    "cleanup": 0,
+    "unknown": 0
+  },
+  "nativeSha256": "dd93cf4327b9aa852f5f0a487afd21cfe16bece2eac2123e2ff20104845e9ca6",
+  "evidence": ".rerail/profiles/sql-recovery-tdd-20261023/admission-acceptance/capture",
+  "note": "Full original positive/clean snapshot and workspace parity passes. Instrumented counts do not establish unprofiled CPU improvement."
+}

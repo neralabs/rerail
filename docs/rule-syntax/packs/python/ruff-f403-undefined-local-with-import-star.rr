@@ -1,0 +1,16 @@
+.policy "ruff-f403-undefined-local-with-import-star" revision 2
+.description "Avoid from module import * star imports; they hide where names come from and stop undefined names from being detected."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F403 (pyflakes): `from m import *`, anywhere. A star import hides where names come from, so undefined
+// names cannot be detected. `from __future__ import *` is F407's business instead.
+//   from os.path import *         ← F403 "`from os.path import *` used; …"
+//   from os.path import join      not reported
+#include "python/pyflakes.rr"
+//   star_import(i, m)  i is `from m import *`; m as written ("os.path", ".", "..pkg")
+
+.violation F403(at: node, m: symbol) code "F403" "`from {m} import *` used; unable to detect undefined names"
+    suppress ruff "F403"
+F403(i, m) :- star_import(i, m).

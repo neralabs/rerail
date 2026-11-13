@@ -1,0 +1,20 @@
+.policy "ruff-d411-no-blank-line-before-section" revision 2
+.description "Put a blank line before each docstring section header, such as Args or Returns, to separate it from the text above."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D411 (pydocstyle): a docstring section header with no blank line above it. Sections are found in the
+// `pydocstyle.convention` (Google or NumPy; unset, each docstring's own), as python/docstrings-sections says.
+//   """Sum.
+//
+//   Text.
+//   Returns:                 ← D411
+//       int
+//   """
+#include "python/docstrings-sections.rr"
+
+.violation D411(at: span, k: symbol) code "D411"
+    "Add a blank line before the `{k}` section so it is separated from the text above."
+    suppress ruff "D411"
+D411(at, v) :- doc_section(s, i, v, _, _, _), !doc_blank(s, i - 1), doc_at(s, i, at).

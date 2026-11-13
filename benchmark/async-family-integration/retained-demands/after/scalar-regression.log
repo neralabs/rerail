@@ -1,0 +1,6 @@
+
+running 1 test
+test code_rule_dsl::logic::plan::tests::native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3228 filtered out; finished in 0.03s
+

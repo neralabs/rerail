@@ -1,0 +1,32 @@
+.policy "ruff-rse102-unnecessary-paren-on-raise-exception" revision 2
+.description "Remove the empty parentheses when raising an exception class; raise instantiates the class itself."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RSE102 (flake8-raise): `raise E()` with empty parentheses. `raise E` instantiates the class itself. A
+// callee that is a def in the file is a factory and keeps its call. A callee that is neither a class in the
+// file nor a builtin is judged by its name: a lowercase one (`_` prefix aside) is taken for a function, and so
+// is `ctypes.WinError`. Only the raised value is checked, not the `from` cause. Reported at the `()`.
+//   raise TypeError()          ← RSE102
+//   raise future.Exception()   ← RSE102: looks like a class
+//   raise return_error()       not reported: a def
+//   raise AttributeError("m")  not reported: arguments
+#include "python/bugbear.rr"
+
+.violation RSE102(at: node) code "RSE102"
+    "Remove the empty parentheses so the class is raised directly; keep them if the callee is a function that returns the exception."
+    suppress ruff "RSE102"
+RSE102(al) :- kind(r, "raise_statement"), child(r, e0, 0), !field(r, "cause", e0), unparen(e0, c), kind(c, "call"),
+    field(c, "arguments", al), kind(al, "argument_list"), !bb_arg(c, _), field(c, "function", f0), unparen(f0, f),
+    !factory(f).
+.decl factory(f: node)
+factory(f) :- callee_kind(f, "def").
+factory(f) :- !callee_kind(f, "def"), !callee_kind(f, "class"), leaf_name(f, x), !kind(f, "subscript"),
+    match("_?[a-z].*", x).
+factory(f) :- !callee_kind(f, "def"), !callee_kind(f, "class"), sym_of(f, "ctypes.WinError").
+// callee_kind(f, k): name f is bound to a def or a class in the file, or is a builtin (taken as a class).
+.decl callee_kind(f: node, k: symbol)
+callee_kind(f, "def") :- kind(f, "identifier"), ref_site(f, s), site_form(s, "def").
+callee_kind(f, "class") :- kind(f, "identifier"), ref_site(f, s), site_form(s, "class").
+callee_kind(f, "class") :- builtin_ref(f, _).

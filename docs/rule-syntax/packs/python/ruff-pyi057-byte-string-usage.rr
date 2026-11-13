@@ -1,0 +1,23 @@
+.policy "ruff-pyi057-byte-string-usage" revision 2
+.description "Avoid ByteString from typing and collections.abc; it is deprecated and unclear, so use Buffer or a union of bytes types instead."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI057 (flake8-pyi), every file: `ByteString` from typing or collections.abc, deprecated since 3.9 and
+// removed in 3.14. Ruff reports the import of the name, and each dotted use (`typing.ByteString`, also as a
+// match class pattern and inside a string annotation); a bare `ByteString` after the import is not reported again.
+//   from typing import ByteString          ← PYI057 at `ByteString`
+//   def f(x: collections.abc.ByteString)   ← PYI057
+#include "python/typing.rr"
+
+.violation PYI057(at: node) code "PYI057" "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
+    suppress ruff "PYI057"
+PYI057(a) :- kind(i, "import_from_statement"), from_module_raw(i, m), bytestring_module(m), field(i, "name", a),
+    (kind(a, "dotted_name"), text(a, "ByteString") ; kind(a, "aliased_import"), field(a, "name", n), text(n, "ByteString")).
+PYI057(e) :- kind(e, "attribute"), sym_of(e, q), split_dot(q, m, "ByteString"), bytestring_module(m).
+// `case typing.ByteString():` is a dotted name in a class pattern, not an attribute.
+PYI057(n) :- kind(c, "class_pattern"), child(c, n, 0), kind(n, "dotted_name"), text(n, t),
+    split_dot(t, m, "ByteString"), bytestring_module(m).
+.decl bytestring_module(m: symbol)
+bytestring_module("typing"). bytestring_module("collections.abc").

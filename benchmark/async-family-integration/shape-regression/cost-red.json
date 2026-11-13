@@ -1,0 +1,33 @@
+{
+  "passed": false,
+  "gates": {
+    "full_workload": true,
+    "full_parity": true,
+    "positive_workload": true,
+    "positive_parity": true,
+    "corpus_profiled": true,
+    "corpus_statement_budget": true,
+    "corpus_vm_ceiling": false,
+    "positive_profiled": true,
+    "positive_statement_budget": true,
+    "positive_vm_ceiling": false
+  },
+  "measurements": {
+    "corpus": {
+      "profiled": true,
+      "files": 5725,
+      "findings": 0,
+      "executions": 81,
+      "vm": 4971727,
+      "ceiling": 3600000
+    },
+    "positive": {
+      "profiled": true,
+      "files": 24,
+      "findings": 120,
+      "executions": 9,
+      "vm": 806490,
+      "ceiling": 150000
+    }
+  }
+}

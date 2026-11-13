@@ -1,0 +1,187 @@
+{
+  "spans": [
+    {
+      "allocatedBytes": 268851035024,
+      "calls": 782,
+      "cpuSeconds": 217.61411699999869,
+      "footprintRiseBytes": 2183595520,
+      "freedBytes": 183309153952,
+      "name": "local/run/stratum rr_agg59/native/engine run (joins)",
+      "ownAllocatedBytes": 268851035024,
+      "ownCpuSeconds": 217.61411699999869,
+      "ownFootprintRiseBytes": 2183595520
+    },
+    {
+      "allocatedBytes": 267796406288,
+      "calls": 782,
+      "cpuSeconds": 212.44102600000224,
+      "footprintRiseBytes": 1898399208,
+      "freedBytes": 182824860544,
+      "name": "local/run/stratum rr_in_annotation_1_rr_agg59/native/engine run (joins)",
+      "ownAllocatedBytes": 267796406288,
+      "ownCpuSeconds": 212.44102600000224,
+      "ownFootprintRiseBytes": 1898399208
+    },
+    {
+      "allocatedBytes": 224631327520,
+      "calls": 391,
+      "cpuSeconds": 181.20152399999978,
+      "footprintRiseBytes": 7139071304,
+      "freedBytes": 153694682912,
+      "name": "local/run/stratum unbound_ref/native/engine open (load inputs, build indexes)",
+      "ownAllocatedBytes": 224631327520,
+      "ownCpuSeconds": 181.20152399999978,
+      "ownFootprintRiseBytes": 7139071304
+    },
+    {
+      "allocatedBytes": 80186190552,
+      "calls": 391,
+      "cpuSeconds": 69.4080950000004,
+      "footprintRiseBytes": 0,
+      "freedBytes": 78530494816,
+      "name": "local/guests",
+      "ownAllocatedBytes": 46436124576,
+      "ownCpuSeconds": 31.49444900000374,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 19874944432,
+      "calls": 551,
+      "cpuSeconds": 13.81066099999942,
+      "footprintRiseBytes": 0,
+      "freedBytes": 15447354392,
+      "name": "local/guests/batch with guests/project and intern",
+      "ownAllocatedBytes": 19645054560,
+      "ownCpuSeconds": 12.928338000000696,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 2500512176,
+      "calls": 7,
+      "cpuSeconds": 10.390711999999894,
+      "footprintRiseBytes": 0,
+      "freedBytes": 1644873776,
+      "name": "cross/stratum rr_in_annotation_0_rr_up52/native/engine run (joins)",
+      "ownAllocatedBytes": 2500512176,
+      "ownCpuSeconds": 10.390711999999894,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 97247616,
+      "calls": 506498,
+      "cpuSeconds": 9.919272999976654,
+      "footprintRiseBytes": 0,
+      "freedBytes": 113455520,
+      "name": "local/guests/tape cache lookup",
+      "ownAllocatedBytes": 97247616,
+      "ownCpuSeconds": 9.919272999976654,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 2500512192,
+      "calls": 7,
+      "cpuSeconds": 7.9207029999998895,
+      "footprintRiseBytes": 0,
+      "freedBytes": 1644873792,
+      "name": "cross/stratum rr_up52/native/engine run (joins)",
+      "ownAllocatedBytes": 2500512192,
+      "ownCpuSeconds": 7.9207029999998895,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 923530267624,
+      "calls": 391,
+      "cpuSeconds": 750.7989939999995,
+      "footprintRiseBytes": 11233141544,
+      "freedBytes": 920510620224,
+      "name": "local/run",
+      "ownAllocatedBytes": 1702327288,
+      "ownCpuSeconds": 5.847382000003957,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 7941477592,
+      "calls": 391,
+      "cpuSeconds": 6.408535000000019,
+      "footprintRiseBytes": 0,
+      "freedBytes": 5730020872,
+      "name": "worker batch/project and intern",
+      "ownAllocatedBytes": 7813698552,
+      "ownCpuSeconds": 5.834692000000036,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 1489688192,
+      "calls": 782,
+      "cpuSeconds": 4.025831000001024,
+      "footprintRiseBytes": 0,
+      "freedBytes": 1464597264,
+      "name": "local/run/stratum region/native/engine run (joins)",
+      "ownAllocatedBytes": 1489688192,
+      "ownCpuSeconds": 4.025831000001024,
+      "ownFootprintRiseBytes": 0
+    },
+    {
+      "allocatedBytes": 6116488592,
+      "calls": 782,
+      "cpuSeconds": 3.9118490000018733,
+      "footprintRiseBytes": 0,
+      "freedBytes": 4034777792,
+      "name": "local/run/stratum pre_311/native/engine run (joins)",
+      "ownAllocatedBytes": 6116488592,
+      "ownCpuSeconds": 3.9118490000018733,
+      "ownFootprintRiseBytes": 0
+    }
+  ],
+  "native_plans": [
+    {
+      "span": "local/run/stratum rr_agg59/native",
+      "work": "74381995",
+      "steps_in_out": "391:24793868,24793868:24793868,24793868:24793868,24793868:1342302187",
+      "plan": "seed rr_agg59($p, $s, $x): rr_inside_ks7($s, $p) , $p < 6917529027641081856 , $s < 6917529027641081856 , bound_in($p, $x)"
+    },
+    {
+      "span": "local/run/stratum rr_in_annotation_1_rr_agg59/native",
+      "work": "24794259",
+      "steps_in_out": "391:24793868,24793868:1342302187",
+      "plan": "seed rr_in_annotation_1_rr_agg59($p, $s, $x): rr_inside_ks7($s, $p) , rr_in_annotation_0_bound_in($p, $x)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "15382379",
+      "steps_in_out": "391:2448355,2448355:2448339,2448339:2448283,2448283:2447310,2447310:1701620,1701620:1701620,1701620:730380,730380:730380,730380:725605,725605:96,96:0",
+      "plan": "seed unbound_ref($n, $x): load_ref($n, $x) , $x != 120 , $x != 117 , !annotated_on_chain($n, $x) , look($n, $x, $s) , $rr_agg55 = count { rr_agg56(_, $n, $s, $x) } , 0 = $rr_agg55 , $rr_agg58 = count { rr_agg59(_, $s, $x) } , 0 = $rr_agg58 , rr_nearest_ks14($n, $s) , kind($s, 1178)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "15382379",
+      "steps_in_out": "391:2448355,2448355:2448339,2448339:2448283,2448283:2447310,2447310:1701620,1701620:1701620,1701620:730380,730380:730380,730380:725605,725605:96,96:0",
+      "plan": "seed unbound_ref($n, $x): rr_in_annotation_0_load_ref($n, $x) , $x != 120 , $x != 117 , !annotated_on_chain($n, $x) , rr_in_annotation_2_look($n, $x, $s) , $rr_agg55 = count { rr_agg56(_, $n, $s, $x) } , 0 = $rr_agg55 , $rr_agg58 = count { rr_in_annotation_1_rr_agg59(_, $s, $x) } , 0 = $rr_agg58 , rr_nearest_rr_in_annotation_ks14($n, $s) , kind($s, 1178)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "7201928",
+      "steps_in_out": "391:5725,5725:839700,839700:839700,839700:839700,839700:839700,839700:794035,794035:794035,794035:794035,794035:793856,793856:661051,661051:22",
+      "plan": "seed unbound_ref($n, $x): kind($s, 1132) , look($n, $x, $s) , $x != 120 , $x != 117 , $rr_agg55 = count { rr_agg56(_, $n, $s, $x) } , 0 = $rr_agg55 , $rr_agg58 = count { rr_agg59(_, $s, $x) } , 0 = $rr_agg58 , !annotated_on_chain($n, $x) , load_ref($n, $x) , rr_nearest_ks14($n, $s)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "7201928",
+      "steps_in_out": "391:5725,5725:839700,839700:839700,839700:839700,839700:839700,839700:794035,794035:794035,794035:794035,794035:793856,793856:661051,661051:22",
+      "plan": "seed unbound_ref($n, $x): kind($s, 1132) , rr_in_annotation_2_look($n, $x, $s) , $x != 120 , $x != 117 , $rr_agg55 = count { rr_agg56(_, $n, $s, $x) } , 0 = $rr_agg55 , $rr_agg58 = count { rr_in_annotation_1_rr_agg59(_, $s, $x) } , 0 = $rr_agg58 , !annotated_on_chain($n, $x) , rr_in_annotation_0_load_ref($n, $x) , rr_nearest_rr_in_annotation_ks14($n, $s)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "1096522",
+      "steps_in_out": "391:554901,554901:541230,541230:360037",
+      "plan": "seed unbound_ref($n, $x): miss($n, $x) , !annotated_on_chain($n, $x) , load_ref($n, $x)"
+    },
+    {
+      "span": "local/run/stratum unbound_ref/native",
+      "work": "1096522",
+      "steps_in_out": "391:554901,554901:541230,541230:360037",
+      "plan": "seed unbound_ref($n, $x): miss($n, $x) , !annotated_on_chain($n, $x) , rr_in_annotation_0_load_ref($n, $x)"
+    }
+  ],
+  "explanation": "Step outputs count emitted join bindings across chunks, before final relation deduplication. They are not simultaneous resident row counts."
+}

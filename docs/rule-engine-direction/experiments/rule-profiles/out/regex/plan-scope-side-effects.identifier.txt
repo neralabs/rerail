@@ -1,0 +1,10 @@
+(?i)^(?:asyncio|httpx|os|requests|shutil|socket|subprocess|time)$
+^(?:Popen|delete|get|open|patch|post|put|request|run|sleep)$
+^(?:count|count_async|execute|execute_async|execute_one|execute_one_async|first|first_async|select_one|select_one_async)$
+^(?:execute_raw|fetchall_raw|fetchone_raw|nonportably_execute_sql)$
+^(?:open)$
+^(?:open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)$
+^(?:open_provider_versioned_write_plan|open_provider_write_plan|open_write_plan)$
+^(?:read|read_async|write|write_async)$
+^(?:resolved_value)$
+^(?:resolve|resolve_async)$

@@ -1,0 +1,96 @@
+{
+  "calibration_s": 0.000018875,
+  "compile_s": 0.007573709,
+  "distinct_leaf_texts": 47,
+  "expansions": 2323,
+  "files": 1,
+  "index_dispatch": false,
+  "keys": [
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",100,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",103,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",106,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",109,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",112,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",115,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",118,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",91,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",94,\"sync_async_signature_mismatch\"]",
+    "[\"data-layer-sync-async-signatures\",\"l2050_transaction/synthetic_sync.py\",97,\"sync_async_signature_mismatch\"]"
+  ],
+  "load_s": 0.00147975,
+  "nodes": 1341,
+  "op_classes": {
+    "all": 47,
+    "any": 16,
+    "bind": 5,
+    "call": 2,
+    "compare": 1,
+    "const": 2,
+    "kind": 18,
+    "layout": 1,
+    "named": 1,
+    "not": 9,
+    "nth": 1,
+    "regex": 6,
+    "rel.neighbor": 36,
+    "rel.range": 8,
+    "util.backref": 3,
+    "value": 3
+  },
+  "ops": 159,
+  "program_nodes_actual": 1341,
+  "program_nodes_scope": 1341,
+  "programs": 1,
+  "regexes": 6,
+  "reordered_all_nodes": 8,
+  "results": [
+    {
+      "counters": {
+        "bind_memo_hits": 0,
+        "dispatch": 40,
+        "evals": 2871,
+        "mask_builds": 2,
+        "mask_cells": 80,
+        "memo_cells": 36207,
+        "memo_hits": 79,
+        "regex_bytes": 3127,
+        "regex_calls": 45,
+        "regex_sym_hits": 56,
+        "scan_visits": 1550,
+        "util_depth_cut": 0
+      },
+      "findings": 10,
+      "mode": "memo",
+      "ns_per_eval": 42.08777429467092,
+      "ns_per_program_node_actual": 90.10738255033573,
+      "ns_per_program_node_scope": 90.10738255033573,
+      "ns_per_scope_node": 90.10738255033573,
+      "seconds_min": 0.00012083400000000022,
+      "top_files": [
+        [
+          "l2050_transaction/synthetic_sync.py",
+          1341,
+          0.000115416
+        ]
+      ],
+      "top_programs_by_evals": [
+        [
+          "data-layer-sync-async-signatures",
+          "transaction-connection",
+          2871
+        ]
+      ],
+      "wall_seconds_min": 0.00012125
+    }
+  ],
+  "rules": [
+    {
+      "id": "data-layer-sync-async-signatures",
+      "programs": 1,
+      "scope_files": 1,
+      "scope_nodes": 1341
+    }
+  ],
+  "syntax_error_files": [],
+  "trie": true
+}

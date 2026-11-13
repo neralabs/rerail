@@ -1,0 +1,22 @@
+.policy "phpstan-missing-function-return-type" revision 2
+.description "Declare a return type on PHP functions, natively or with a @return doc tag; methods and closures are not checked."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/phpdoc.rr"
+//   doc_comment(n, c)   c is a /** */ comment right before n (only comments between)
+//   doc_type(c, t, ty)  PHPDoc c has tag @t (or @phpstan-t, @psalm-t) with type ty
+
+// PHPStan's MissingFunctionReturnTypehintRule (missingType.return, level 6): a function, not a method or closure,
+// with neither a native return type nor a PHPDoc @return:
+//   function f($a) {}                  reported
+//   function f(): int {}               /** @return int */ function f() {}       not reported
+//   /** @return */ function f() {}     reported: a tag with no type is no @return to PHPStan
+.violation missing_return(at: node, x: symbol) code "missingType.return" "Function {x}() has no return type specified."
+    suppress phpstan "missingType.return"
+missing_return(f, x) :- kind(f, "function_definition"), !field(f, "return_type", _), field(f, "name", n), text(n, x),
+    !returns_doc(f).
+.decl returns_doc(f: node)
+returns_doc(f) :- doc_comment(f, c), doc_type(c, "return", _).

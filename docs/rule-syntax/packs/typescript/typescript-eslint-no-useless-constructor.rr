@@ -1,0 +1,71 @@
+.policy "typescript-eslint-no-useless-constructor" revision 6
+.description "Remove TypeScript constructors that are empty or only pass their arguments to super; the class behaves the same without them."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   ctor, fn_block, fn_param, call_arg, deparen
+#include "tsx/eslint-b-control.rr"
+//   member_runs_on
+
+// typescript-eslint's no-useless-constructor: ESLint's rule, which does what the implicit constructor does: an
+// empty body in a base class, or only `super(…)` passing the parameters on in a derived class (`super(a, ...b)` for
+// `(a, ...b)`, or `super(...arguments)`), every parameter a plain name or a rest. TypeScript adds:
+//   class A { constructor(private a: string) {} }            fine: a parameter property declares a field
+//   class A { constructor(@inject() a) {} }                  fine: a decorated parameter
+//   class A { private constructor() {} }                     fine: private and protected change who may construct
+//   class B extends A { public constructor() { super(); } }  fine: public may widen a protected base constructor
+//   class A { public constructor() {} }   class A implements I { constructor() {} }    → reported
+// Types do not matter: `(a: string)` and `(a?: string)` are plain names. Overload signatures have no body and are
+// not constructors here. The suggestion deletes the constructor, leaving `;` where a following `[key]` member
+// would join the line before. No options.
+.violation no_useless_constructor(at: node) code "@typescript-eslint/no-useless-constructor" "Useless constructor."
+    suppress eslint "@typescript-eslint/no-useless-constructor"
+    suppress oxlint "no-useless-constructor"
+    suppress biome "lint/complexity/noUselessConstructor"
+    fix remove "Remove the constructor."
+no_useless_constructor(m) :- ctor(m), fn_block(m, b), !derived(m), stmts(b, 0), !kept(m).
+no_useless_constructor(m) :- ctor(m), fn_block(m, b), derived(m), stmts(b, 1), child(b, s, _), !not_stmt(s),
+    kind(s, "expression_statement"), child(s, e, 0), deparen(e, c), kind(c, "call_expression"),
+    field(c, "function", f), kind(f, "super"), !kept(m), !odd_param(m), passes_on(m, c).
+
+remove(m) :- keep_semi(m) => replace(m, `;`).
+remove(m) :- no_useless_constructor(m), !keep_semi(m) => delete(m).
+.decl keep_semi(m: node)
+keep_semi(m) :- ctor(m), token_after(m, t), text(t, "["), member_runs_on(m).
+
+// kept(m): TypeScript's reasons to keep a constructor that looks useless.
+.decl kept(m: node)
+kept(m) :- ctor(m), access(m, a), (a = "private" ; a = "protected").
+kept(m) :- ctor(m), access(m, "public"), derived(m).
+kept(m) :- ctor(m), fn_param(m, p, _), child(p, c, _), (kind(c, "accessibility_modifier") ; kind(c, "override_modifier") ;
+    kind(c, "decorator")).
+kept(m) :- ctor(m), fn_param(m, p, _), (kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly").
+.decl access(m: node, a: symbol)
+access(m, a) :- ctor(m), child(m, c, _), kind(c, "accessibility_modifier"), text(c, a).
+.decl derived(m: node)  // m's class has `extends` (an `implements` alone is no superclass)
+derived(m) :- child(b, m, _), kind(b, "class_body"), field(c, "body", b), child(c, h, _), kind(h, "class_heritage"),
+    child(h, x, _), kind(x, "extends_clause").
+.decl stmts(b: node, k: number)
+stmts(b, k) :- kind(b, "statement_block"), k = count : { child(b, s, _), !not_stmt(s) }.
+// name_of(p, x, rest): parameter p is the plain name x (rest = 0) or `...x` (rest = 1), types aside.
+.decl name_of(p: node, x: symbol, rest: number)
+name_of(p, x, 0) :- fn_param(m, p, _), ctor(m), (kind(p, "required_parameter") ; kind(p, "optional_parameter")),
+    !field(p, "value", _), field(p, "pattern", n), kind(n, "identifier"), text(n, x).
+name_of(p, x, 1) :- fn_param(m, p, _), ctor(m), kind(p, "required_parameter"), field(p, "pattern", r),
+    kind(r, "rest_pattern"), child(r, n, 0), kind(n, "identifier"), text(n, x).
+name_of(p, x, 0) :- fn_param(m, p, _), ctor(m), kind(p, "identifier"), text(p, x).
+.decl odd_param(m: node)  // a default, a destructuring pattern
+odd_param(m) :- fn_param(m, p, _), ctor(m), !name_of(p, _, _).
+// passes_on(m, c): super's arguments are m's parameters in order (`...xs` for `...xs`), or `...arguments`.
+.decl passes_on(m: node, c: node)
+passes_on(m, c) :- ctor(m), call_arg(c, a, 0), !call_arg(c, _, 1), kind(a, "spread_element"), child(a, x, 0),
+    kind(x, "identifier"), text(x, "arguments").
+passes_on(m, c) :- ctor(m), kind(c, "call_expression"), field(c, "function", f), kind(f, "super"),
+    k = count : { fn_param(m, _, _) }, k = count : { call_arg(c, _, _) },
+    count : { fn_param(m, p, i), !same_arg(p, c, i) } = 0.
+.decl same_arg(p: node, c: node, i: number)
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), name_of(p, x, 0), kind(a, "identifier"), text(a, x).
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), name_of(p, x, 1), kind(a, "spread_element"),
+    child(a, y, 0), kind(y, "identifier"), text(y, x).

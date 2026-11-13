@@ -1,0 +1,18 @@
+.policy "ruff-d105-undocumented-magic-method" revision 2
+.description "Add a docstring to each magic method of a public class, describing what the operation does and returns."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D105 (pydocstyle): a dunder method of a public class with no docstring, other than `__init__` (D107),
+// `__new__` and `__call__` (D102). Not checked: `@overload`/`@override` methods, defs decorated with a
+// `pydocstyle.ignore-decorators` entry, and `.pyi` stubs.
+//   class C:
+//       """Doc."""
+//       def __eq__(self, o): …   ← D105 at `__eq__`
+#include "python/docstrings.rr"
+
+.violation D105(at: node, x: symbol) code "D105"
+    "Add a docstring to magic method `{x}` describing its behavior, arguments and return value."
+    suppress ruff "D105"
+D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(x), x != "__init__", x != "__new__", x != "__call__".

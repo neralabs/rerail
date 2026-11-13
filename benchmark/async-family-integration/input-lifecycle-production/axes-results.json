@@ -1,0 +1,66 @@
+[
+  {
+    "processCpu": 1.19458,
+    "processWall": 1.086802624980919,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "logic::plan::tests::measure_inside_three_ways",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "way": "baseline"
+  },
+  {
+    "processCpu": 0.9033339999999999,
+    "processWall": 0.6816549160284922,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "logic::plan::tests::measure_inside_three_ways",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "way": "baseline"
+  },
+  {
+    "processCpu": 1.293514,
+    "processWall": 0.9440951249562204,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/input-lifecycle-production/baseline-tests",
+      "logic::plan::tests::measure_inside_three_ways",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "baseline",
+    "way": "tape"
+  },
+  {
+    "processCpu": 1.0183239999999998,
+    "processWall": 0.6534929589834064,
+    "command": [
+      "nice",
+      "-n",
+      "19",
+      "/Users/jeremy/orca/artifacts/async-family-comparison/target/profiling/deps/rerail_engine-9943fa461d0e6845",
+      "logic::plan::tests::measure_inside_three_ways",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "arm": "production",
+    "way": "tape"
+  }
+]

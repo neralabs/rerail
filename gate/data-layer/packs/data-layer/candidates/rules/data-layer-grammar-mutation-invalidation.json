@@ -1,0 +1,729 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-grammar-mutation-invalidation",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer grammar_mutation_invalidation at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2100_sql_grammar/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "targets",
+      "define": {
+        "language": "python",
+        "utils": {
+          "private-target": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "attribute",
+                    "has": {
+                      "field": "attribute",
+                      "kind": "identifier",
+                      "regex": "^_"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^self$"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "matches": "private-target"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mutation",
+      "require_each": {
+        "subject": {
+          "evidence": {
+            "as": "mutator",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "pattern": "$METHOD"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "name",
+                                                    "kind": "identifier",
+                                                    "regex": "^(?:SqlBinaryOp|SqlColumnRef|SqlDiffCtePart|SqlDynamicSelectStmt|SqlExecutedRowsQuery|SqlLifecycleInputRowsQuery|SqlPublishedRowsQuery|SqlRequestInputRowsQuery|SqlSelect|SqlSelectFromCteWithOverrides|SqlSelectSparseKeyset|SqlSelectSparseSingleObject|SqlSelectStarSparseVersioned|SqlTypedEmptyRowsQuery|SqlUnionAll)$"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "body",
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "decorated_definition"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "function_definition"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "field": "name",
+                                                                  "kind": "identifier",
+                                                                  "regex": "^render$"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "decorator"
+                                                              },
+                                                              {
+                                                                "regex": "memoize_in_read_only_scope$"
+                                                              }
+                                                            ]
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "pattern": "$OWNER"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "block"
+                                        },
+                                        {
+                                          "inside": {
+                                            "all": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "class_definition"
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "name",
+                                                          "kind": "identifier",
+                                                          "regex": "^(?:SqlBinaryOp|SqlColumnRef|SqlDiffCtePart|SqlDynamicSelectStmt|SqlExecutedRowsQuery|SqlLifecycleInputRowsQuery|SqlPublishedRowsQuery|SqlRequestInputRowsQuery|SqlSelect|SqlSelectFromCteWithOverrides|SqlSelectSparseKeyset|SqlSelectSparseSingleObject|SqlSelectStarSparseVersioned|SqlTypedEmptyRowsQuery|SqlUnionAll)$"
+                                                        }
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "field": "body",
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "decorated_definition"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "function_definition"
+                                                                    },
+                                                                    {
+                                                                      "has": {
+                                                                        "field": "name",
+                                                                        "kind": "identifier",
+                                                                        "regex": "^render$"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "decorator"
+                                                                    },
+                                                                    {
+                                                                      "regex": "memoize_in_read_only_scope$"
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "pattern": "$OWNER"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "regex": "^(?:__init__|__new__|__post_init__)$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "kind": "named_expression"
+                              },
+                              {
+                                "has": {
+                                  "field": "name",
+                                  "matches": "private-target"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "assignment"
+                                  },
+                                  {
+                                    "kind": "augmented_assignment"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "field": "left",
+                                  "matches": "private-target"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "kind": "delete_statement"
+                              },
+                              {
+                                "has": {
+                                  "matches": "private-target"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "all": [
+                                  {
+                                    "kind": "call"
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "function",
+                                      "any": [
+                                        {
+                                          "kind": "identifier",
+                                          "regex": "^(?:add|append|clear|discard|extend|insert|pop|remove|reverse|sort|update)$"
+                                        },
+                                        {
+                                          "kind": "attribute",
+                                          "has": {
+                                            "field": "attribute",
+                                            "kind": "identifier",
+                                            "regex": "^(?:add|append|clear|discard|extend|insert|pop|remove|reverse|sort|update)$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "field": "function",
+                                  "has": {
+                                    "field": "object",
+                                    "matches": "private-target"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "all": [
+                            {
+                              "kind": "call"
+                            },
+                            {
+                              "has": {
+                                "field": "function",
+                                "any": [
+                                  {
+                                    "kind": "identifier",
+                                    "regex": "^forget_memoized_render_fragments$"
+                                  },
+                                  {
+                                    "kind": "attribute",
+                                    "has": {
+                                      "field": "attribute",
+                                      "kind": "identifier",
+                                      "regex": "^forget_memoized_render_fragments$"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "stopBy": "end"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "owner": "capture.OWNER.startByte",
+              "method": "capture.METHOD"
+            }
+          }
+        },
+        "evidence": {
+          "evidence": {
+            "as": "edge",
+            "query": {
+              "ast": {
+                "language": "python",
+                "syntax": "valid",
+                "rule": {
+                  "all": [
+                    {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "identifier",
+                            "pattern": "$METHOD"
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "block"
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "all": [
+                                            {
+                                              "kind": "class_definition"
+                                            },
+                                            {
+                                              "any": [
+                                                {
+                                                  "has": {
+                                                    "field": "name",
+                                                    "kind": "identifier",
+                                                    "regex": "^(?:SqlBinaryOp|SqlColumnRef|SqlDiffCtePart|SqlDynamicSelectStmt|SqlExecutedRowsQuery|SqlLifecycleInputRowsQuery|SqlPublishedRowsQuery|SqlRequestInputRowsQuery|SqlSelect|SqlSelectFromCteWithOverrides|SqlSelectSparseKeyset|SqlSelectSparseSingleObject|SqlSelectStarSparseVersioned|SqlTypedEmptyRowsQuery|SqlUnionAll)$"
+                                                  }
+                                                },
+                                                {
+                                                  "has": {
+                                                    "field": "body",
+                                                    "has": {
+                                                      "all": [
+                                                        {
+                                                          "kind": "decorated_definition"
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "function_definition"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "field": "name",
+                                                                  "kind": "identifier",
+                                                                  "regex": "^render$"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        {
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "decorator"
+                                                              },
+                                                              {
+                                                                "regex": "memoize_in_read_only_scope$"
+                                                              }
+                                                            ]
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "pattern": "$OWNER"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "inside": {
+                                "all": [
+                                  {
+                                    "kind": "decorated_definition"
+                                  },
+                                  {
+                                    "inside": {
+                                      "all": [
+                                        {
+                                          "kind": "block"
+                                        },
+                                        {
+                                          "inside": {
+                                            "all": [
+                                              {
+                                                "all": [
+                                                  {
+                                                    "kind": "class_definition"
+                                                  },
+                                                  {
+                                                    "any": [
+                                                      {
+                                                        "has": {
+                                                          "field": "name",
+                                                          "kind": "identifier",
+                                                          "regex": "^(?:SqlBinaryOp|SqlColumnRef|SqlDiffCtePart|SqlDynamicSelectStmt|SqlExecutedRowsQuery|SqlLifecycleInputRowsQuery|SqlPublishedRowsQuery|SqlRequestInputRowsQuery|SqlSelect|SqlSelectFromCteWithOverrides|SqlSelectSparseKeyset|SqlSelectSparseSingleObject|SqlSelectStarSparseVersioned|SqlTypedEmptyRowsQuery|SqlUnionAll)$"
+                                                        }
+                                                      },
+                                                      {
+                                                        "has": {
+                                                          "field": "body",
+                                                          "has": {
+                                                            "all": [
+                                                              {
+                                                                "kind": "decorated_definition"
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "function_definition"
+                                                                    },
+                                                                    {
+                                                                      "has": {
+                                                                        "field": "name",
+                                                                        "kind": "identifier",
+                                                                        "regex": "^render$"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              },
+                                                              {
+                                                                "has": {
+                                                                  "all": [
+                                                                    {
+                                                                      "kind": "decorator"
+                                                                    },
+                                                                    {
+                                                                      "regex": "memoize_in_read_only_scope$"
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                        }
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "pattern": "$OWNER"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "has": {
+                        "all": [
+                          {
+                            "kind": "call"
+                          },
+                          {
+                            "has": {
+                              "field": "function",
+                              "all": [
+                                {
+                                  "kind": "attribute",
+                                  "has": {
+                                    "field": "attribute",
+                                    "kind": "identifier",
+                                    "regex": ".*"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "object",
+                                    "kind": "identifier",
+                                    "regex": "^self$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "attribute",
+                                    "pattern": "$CALLEE"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "project": {
+              "path": "file.path",
+              "owner": "capture.OWNER.startByte",
+              "caller": "capture.METHOD",
+              "callee": "capture.CALLEE",
+              "private_callee": {
+                "source": "capture.CALLEE",
+                "regex": "^(_.*)$",
+                "group": 1
+              },
+              "public_caller": {
+                "source": "capture.METHOD",
+                "regex": "^([^_].*)$",
+                "group": 1
+              }
+            },
+            "each": "CALLEE",
+            "closure": [
+              {
+                "name": "construction",
+                "seeds": [
+                  "__init__",
+                  "__new__",
+                  "__post_init__"
+                ],
+                "partition_by": [
+                  "path",
+                  "owner"
+                ],
+                "edges": {
+                  "from": "caller",
+                  "to": "private_callee"
+                },
+                "contains": {
+                  "from_construction": "callee"
+                }
+              },
+              {
+                "name": "runtime",
+                "seed_field": "public_caller",
+                "partition_by": [
+                  "path",
+                  "owner"
+                ],
+                "edges": {
+                  "from": "caller",
+                  "to": "callee"
+                },
+                "contains": {
+                  "from_runtime": "callee"
+                }
+              }
+            ],
+            "where": {
+              "all": [
+                {
+                  "eq": [
+                    "edge.path",
+                    "mutator.path"
+                  ]
+                },
+                {
+                  "eq": [
+                    "edge.owner",
+                    "mutator.owner"
+                  ]
+                },
+                {
+                  "eq": [
+                    "edge.callee",
+                    "mutator.method"
+                  ]
+                },
+                {
+                  "eq": [
+                    "edge.from_construction",
+                    true
+                  ]
+                },
+                {
+                  "eq": [
+                    "edge.from_runtime",
+                    false
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "MUTATION_WITHOUT_INVALIDATION",
+        "anchor": "witness.span",
+        "message": "Mutation without memo invalidation"
+      }
+    }
+  ]
+}

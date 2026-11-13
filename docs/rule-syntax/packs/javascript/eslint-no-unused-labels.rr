@@ -1,0 +1,38 @@
+.policy "eslint-no-unused-labels" revision 3
+.description "Remove labels that no break or continue statement uses; they are dead code that confuses readers."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   label_of, jump_label, deparen, function_node
+
+// ESLint's no-unused-labels: a labelled statement whose label no `break` or `continue` names. It is reported at
+// the label. The fix removes `x:`, unless a comment sits between the label and the body, or the body would
+// become a directive: a string statement at the top of a program or function body.
+//   a: for (;;) break;          → reported; fix: for (;;) break;
+//   a: for (;;) break a;        fine
+//   function f() { a: "x"; }    → reported, no fix ("x" would become a directive)
+// No options.
+.violation no_unused_labels(at: node, x: symbol) code "no-unused-labels" "'{x}:' is defined but never used."
+    suppress eslint "no-unused-labels"
+    suppress oxlint "no-unused-labels"
+    suppress biome "lint/correctness/noUnusedLabels"
+    fix unlabel "Remove the label"
+no_unused_labels(n, x) :- unused(l, x), field(l, "label", n).
+.decl unused(l: node, x: symbol)
+unused(l, x) :- label_of(l, x), count : { jump_label(_, x, l) } = 0.
+
+// The fix: the statement becomes its body (ESLint removes from the label up to the body).
+unlabel(n, _) :- field(l, "label", n), field(l, "body", b), !commented(l, b), !may_be_directive(l, b) => replace(l, `$b`).
+.decl commented(l: node, b: node)  // a comment between the label and the body:  a: /* c */ for (;;) {}
+commented(l, b) :- unused(l, _), field(l, "body", b), kind(c, "comment"), child(l, c, _), precedes(c, b).
+// may_be_directive(l, b): l (with any labels around it) is a statement of a program or a function's block,
+// and b is a string literal or a template without substitutions.
+.decl may_be_directive(l: node, b: node)
+may_be_directive(l, b) :- unused(l, _), field(l, "body", b), kind(b, "expression_statement"), child(b, e, 0),
+    deparen(e, s), (kind(s, "string") ; kind(s, "template_string"), count : { child(s, _, _) } = 0),
+    top(l, t), (kind(t, "program") ; kind(t, "statement_block"), field(f, "body", t), function_node(f)).
+.decl top(l: node, t: node)  // t is the parent of the outermost labelled statement around l
+top(l, t) :- kind(l, "labeled_statement"), child(t, l, _), !kind(t, "labeled_statement").
+top(l, t) :- kind(l, "labeled_statement"), child(p, l, _), kind(p, "labeled_statement"), top(p, t).

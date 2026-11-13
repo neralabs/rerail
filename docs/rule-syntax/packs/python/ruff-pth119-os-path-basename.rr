@@ -1,0 +1,20 @@
+.policy "ruff-pth119-os-path-basename" revision 2
+.description "Use the name property of a Path object instead of os.path.basename; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH119 (flake8-use-pathlib): a call of `os.path.basename`, however it is imported, with exactly one argument:
+// the `p` parameter, by position or by keyword. pathlib's form is `Path(p).name`.
+// Reported at the callee.
+//   os.path.basename(p)             ← PTH119
+//   from os.path import basename
+//   basename(p=p)                   ← PTH119
+//   os.path.basename(path=p)        not reported: the parameter is `p`
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH119(at: node, s: node) code "PTH119"
+    "Use `Path({s}).name` instead of `os.path.basename({s})`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
+    suppress ruff "PTH119"
+PTH119(f, a) :- single_arg(_, "os.path.basename", "p", f, a).

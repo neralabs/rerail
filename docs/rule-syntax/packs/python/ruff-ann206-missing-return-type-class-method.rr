@@ -1,0 +1,18 @@
+.policy "ruff-ann206-missing-return-type-class-method" revision 2
+.description "Annotate the return type of class methods; the annotation documents what they return and lets a type checker verify it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN206 (flake8-annotations): a method decorated with the builtin @classmethod with no return
+// annotation, dunders included. An implicit class method (`__init_subclass__` without the decorator) is
+// ANN204. The implementation after an @overload is not checked.
+//   class C:
+//       @classmethod
+//       def make(cls): ...           ← ANN206
+#include "python/annotations.rr"
+
+.violation ANN206(at: node, name: symbol) code "ANN206"
+    "Add a return type annotation to class method `{name}`, such as `-> Self` for an alternate constructor, naming the type it returns."
+    suppress ruff "ANN206"
+ANN206(nm, x) :- ann_missing_return(f, "ANN206"), field(f, "name", nm), text(nm, x).

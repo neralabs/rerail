@@ -1,0 +1,41 @@
+.policy "clippy-redundant-static-lifetimes" revision 2
+.description "Drop explicit 'static lifetimes from the types of Rust const and static items; they are already implied there."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   msrv_older(n, v)   n is under a #[clippy::msrv] older than v
+
+// Clippy's redundant_static_lifetimes (style): `'static` in the type of a `const` or `static` item, where it
+// is implied. Clippy reads the item's type down through arrays, slices, tuples and references, and reports
+// a `&'static` that borrows a path, array, slice or tuple type.
+//   const S: &'static str   static V: [&'static [u8]; 2]   const T: (&'static str, u8)     reported
+//   const F: &'static dyn Fn()   const O: Option<&'static str>   const P: &'static (dyn Send + Sync)
+//   impl X { const C: &'static str = ""; }
+//                                                                                          not reported
+// Associated consts (in impl and trait blocks) are left out: there `'static` cannot be elided. Under
+// #[clippy::msrv] older than 1.17 nothing is reported.
+.violation redundant_static_lifetimes(at: node) code "redundant_static_lifetimes"
+    "Remove this 'static; it is already implied in a const or static type."
+    suppress clippy "clippy::redundant_static_lifetimes", "clippy::all", "clippy::style", "warnings"
+redundant_static_lifetimes(l) :- visited(r), kind(r, "reference_type"), child(r, l, _), kind(l, "lifetime"),
+    text(l, "'static"), field(r, "type", t), kind(t, k), borrowed(k), !paren_type(t), !msrv_older(l, "1.17").
+
+// visited(t): a type Clippy's visit_type reaches from a const or static item's type.
+.decl visited(t: node)
+visited(t) :- (kind(i, "const_item") ; kind(i, "static_item")), field(i, "type", t), !associated(i).
+visited(t) :- visited(a), kind(a, "array_type"), field(a, "element", t).
+visited(t) :- visited(a), kind(a, "reference_type"), field(a, "type", t).
+visited(t) :- visited(a), kind(a, "tuple_type"), !paren_type(a), child(a, t, _).
+// `(T)` is a tuple_type here and TyKind::Paren in rustc, which Clippy neither reports nor reads into.
+.decl paren_type(t: node)
+.stored paren_type "a tuple_type of one child has a comma only as its trailing comma, which the tape stores"
+paren_type(t) :- kind(t, "tuple_type"), child(t, _, 0), !child(t, _, 1), !op(t, ",").
+.decl associated(i: node)  // in an impl or trait block, and not in a fn body there
+associated(i) :- nearest(i, b, item_scope), (kind(b, "impl_item") ; kind(b, "trait_item")).
+.decl item_scope(k: symbol)
+item_scope("impl_item"). item_scope("trait_item"). item_scope("function_item").
+.decl borrowed(k: symbol)  // TyKind::Path, Slice, Array, Tup
+borrowed("type_identifier"). borrowed("scoped_type_identifier"). borrowed("generic_type").
+borrowed("primitive_type"). borrowed("array_type"). borrowed("tuple_type"). borrowed("unit_type").

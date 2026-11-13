@@ -92,10 +92,10 @@ impl T {
 
 /// A token: its type, its bytes `start..end` and its line (from 1).
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Token {
+pub struct Token {
     pub(super) ty: T,
-    pub(super) start: usize,
-    pub(super) end: usize,
+    pub start: usize,
+    pub end: usize,
     pub(super) line: u32,
 }
 

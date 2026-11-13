@@ -36,7 +36,7 @@ pub(super) struct Context {
 }
 
 /// The document's shared tables; `None` where one was given up.
-pub(super) struct SharedTables<'a> {
+pub struct SharedTables<'a> {
     languages: BTreeMap<&'a str, Language<'a>>,
     tables: RefCell<HashMap<TableKey, Option<Table>>>,
 }
@@ -201,7 +201,8 @@ impl Table {
     ) -> Option<()> {
         let conflicts = RefCell::new(BTreeSet::new());
         // A seed's collector refuses a `calls` term.
-        let calls = CallsCollector::new(String::new(), true);
+        // The seed collector refuses a `calls` term before reading its pattern limit.
+        let calls = CallsCollector::new(String::new(), true, 0);
         let instances = Instances::default();
         let scope = UtilScope {
             table: Arc::downgrade(&self.table),

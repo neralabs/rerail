@@ -1,0 +1,21 @@
+.policy "ruff-up011-lru-cache-without-parameters" revision 2
+.description "Drop the empty parentheses from a functools.lru_cache decorator; it works without them, with a default cache size, since Python 3.8."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP011 (pyupgrade): a decorator `@functools.lru_cache()` with no arguments. Since Python 3.8 the
+// decorator takes the function directly, with the same defaults; below a 3.8 target the rule is off. The
+// finding is at the parentheses.
+//   @functools.lru_cache()        ← UP011 at `()`
+//   @lru_cache(maxsize=64)        not reported
+#include "python/upgrade.rr"
+//   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
+
+.violation UP011(at: node) code "UP011"
+    "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older."
+    suppress ruff "UP011"
+    fix safe drop_call "Remove the unnecessary parentheses"
+UP011(al) :- targets(8), decorator(_, c), kind(c, "call"), field(c, "function", f), sym_at(f, "functools.lru_cache"),
+    field(c, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 0.
+drop_call(al) => delete(al).

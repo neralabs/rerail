@@ -1,0 +1,80 @@
+// python/misc2-self: whether `o` in `o._x` is the class's own instance or the class itself, as Ruff's flake8-self
+// (SLF001) decides it: by spelling, by the binding in effect, by annotation and by initializer.
+//
+// Interface
+//   slf_super(o)              o is a `super()` call
+//   slf_receiver_name(o)      o is the name `self`, `cls` or `mcs`, whatever it is bound to
+//   slf_bind(n, b)            name n reads binding b: in n's own scope the latest one before n (a later one in
+//                             the same function does not exist yet), in an outer scope the last one (a function
+//                             body runs after the module)
+//   slf_own_class(o)          o names a class from inside that class's body or methods
+//   slf_same_instance(o, e)   in attribute access e = `o.attr`, o holds an instance of the class around e: a
+//                             method's first positional parameter (not a staticmethod's), a parameter annotated
+//                             `Self` or with that class (`Foo`, `Foo[int]`, `Annotated[Foo, …]`), or a variable
+//                             assigned `self` (a parameter), `cls()`, `mcs()`, `Foo()`, `Foo[T]()` or
+//                             `super().__new__(…)`
+//
+//   class Foo:
+//       def f(self, other: Foo):
+//           other._x                     slf_same_instance(<other>, <other._x>): annotated with the class
+//           Foo._y                       slf_own_class(<Foo>)
+//       @staticmethod
+//       def s(this): this._x             nothing: a staticmethod has no receiver
+#include "python/ast.rr"
+
+.decl slf_receiver_name(o: node)
+slf_receiver_name(o) :- dotted_expr(o, x), (x = "self" ; x = "cls" ; x = "mcs").
+
+.decl slf_super(o: node)
+slf_super(o) :- kind(o, "call"), field(o, "function", f), dotted_expr(f, "super").
+// slf_bind(n, b): the binding name n reads, in source order where it is n's own scope (a later assignment in
+// the function does not count yet), and the last one where it is an outer scope (its body runs later).
+.decl slf_bind(n: node, b: node)
+slf_bind(n, b) :- kind(n, "identifier"), look(n, x, s), nearest(n, s, lscope),
+    b = max k : { binding(s, x, k, _), k < n, !within(n, k) }.
+slf_bind(n, b) :- kind(n, "identifier"), look(n, x, s), !nearest(n, s, lscope), b = max k : { binding(s, x, k, _) }.
+// A class named in its own body or methods; also before any local binding of the name.
+.decl slf_own_class(o: node)
+slf_own_class(o) :- slf_bind(o, c), kind(c, "class_definition"), within(o, c).
+slf_own_class(o) :- kind(o, "identifier"), text(o, x), !slf_bind(o, _), inside(o, c, "class_definition"),
+    def_name(c, x).
+.decl slf_same_instance(o: node, e: node)
+// A method's first positional parameter (not a staticmethod's).
+slf_same_instance(o, e) :- attr_of(e, o, _), slf_bind(o, p), sig_param(f, p, _, i, _, _, _), slf_positional(f, i),
+    i = min j : { slf_positional(f, j) }, nearest(f, c, scope), kind(c, "class_definition"), !slf_static(f).
+.decl slf_positional(f: node, i: number)
+slf_positional(f, i) :- sig_param(f, _, _, i, k, _, _), (k = "posonly" ; k = "pos").
+slf_same_instance(o, e) :- attr_of(e, o, _), slf_bind(o, p), sig_param(_, p, _, _, _, a, _), slf_class_type(a, e).
+slf_same_instance(o, e) :- attr_of(e, o, _), slf_bind(o, b), binding_value(b, v), unparen(v, m), slf_class_value(m, e).
+.decl slf_static(f: node)
+slf_static(f) :- decorator(f, d), sym_of(d, "builtins.staticmethod").
+// slf_class_type(t, e): annotation t is `Self`, or a class around e: `Foo`, `Foo[int]`, `Annotated[Foo, …]`.
+.decl slf_class_type(t: node, e: node)
+slf_class_type(t, e) :- attr_of(e, _, _), slf_ann(t), slf_ann_head(t, h), slf_class_head(h, e).
+.decl slf_ann(t: node)
+slf_ann(t) :- sig_param(_, _, _, _, _, t, _), !unset(t).
+slf_ann(t) :- kind(f, "call"), field(f, "function", t), kind(t, "subscript").
+.decl slf_ann_head(t: node, h: node)
+slf_ann_head(t, t) :- slf_ann(t).
+slf_ann_head(t, h) :- slf_ann_head(t, m), (kind(m, "type") ; kind(m, "parenthesized_expression")), child(m, h, 0).
+slf_ann_head(t, h) :- slf_ann_head(t, m), kind(m, "generic_type"), child(m, g, 0), !slf_annotated(g), h = g.
+slf_ann_head(t, h) :- slf_ann_head(t, m), kind(m, "generic_type"), child(m, g, 0), slf_annotated(g),
+    child(m, l, 1), child(l, h, 0).
+slf_ann_head(t, h) :- slf_ann_head(t, m), kind(m, "subscript"), field(m, "value", g), !slf_annotated(g), h = g.
+slf_ann_head(t, h) :- slf_ann_head(t, m), kind(m, "subscript"), field(m, "value", g), slf_annotated(g),
+    field(m, "subscript", h).
+.decl slf_annotated(g: node)
+slf_annotated(g) :- (sym_of(g, "typing.Annotated") ; sym_of(g, "typing_extensions.Annotated")).
+.decl slf_class_head(h: node, e: node)
+slf_class_head(h, e) :- attr_of(e, _, _), (sym_of(h, "typing.Self") ; sym_of(h, "typing_extensions.Self")).
+slf_class_head(h, e) :- attr_of(e, _, _), kind(h, "identifier"), text(h, x), inside(e, c, "class_definition"),
+    def_name(c, x).
+// slf_class_value(m, e): `self` (a parameter), `cls()`, `mcs()`, `Foo()`, `Foo[T]()`, `super().__new__(…)`.
+.decl slf_class_value(m: node, e: node)
+slf_class_value(m, e) :- attr_of(e, _, _), kind(m, "identifier"), text(m, "self"), slf_bind(m, p),
+    binding(_, _, p, "param").
+slf_class_value(m, e) :- attr_of(e, _, _), kind(m, "call"), field(m, "function", f), slf_class_type(f, e).
+slf_class_value(m, e) :- attr_of(e, _, _), kind(m, "call"), field(m, "function", f), kind(f, "identifier"),
+    (text(f, "cls") ; text(f, "mcs") ; slf_class_head(f, e)).
+slf_class_value(m, e) :- attr_of(e, _, _), kind(m, "call"), field(m, "function", f), attr_of(f, s, "__new__"),
+    slf_super(s).

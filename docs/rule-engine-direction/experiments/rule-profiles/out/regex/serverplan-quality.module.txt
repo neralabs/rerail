@@ -1,0 +1,2 @@
+CompiledStep|HandleTransactionEntryStep|PipelineLifecycleEffect|_legacy_module_preflight|legacy_module_preflight|pending_pipeline_callbacks|pending_pipeline_effects|success_callbacks
+MAINTENANCE|ORDERED_SEMANTIC

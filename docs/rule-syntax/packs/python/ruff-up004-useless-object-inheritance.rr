@@ -1,0 +1,20 @@
+.policy "ruff-up004-useless-object-inheritance" revision 2
+.description "Omit object from a class's base list; every Python 3 class already inherits from it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP004 (pyupgrade): `object`, the builtin (or `builtins.object`), among a class's bases. Every Python 3
+// class inherits from it. Each such base is a finding, at the base.
+//   class A(object): ...           ← UP004
+//   class B(A, object): ...        ← UP004 at `object`
+//   object = A
+//   class C(object): ...           not reported: `object` is A here
+#include "python/upgrade.rr"
+//   builtin_at(e, x): e reads the builtin x, at that point of the module
+
+.violation UP004(at: node, cls: symbol) code "UP004"
+    "Remove `object` from the bases of `{cls}`; Python 3 classes inherit from it already. Keep it only if the code must still run on Python 2."
+    suppress ruff "UP004"
+UP004(b, x) :- kind(c, "class_definition"), def_name(c, x), field(c, "superclasses", al), child(al, b, _),
+    builtin_at(b, "object").

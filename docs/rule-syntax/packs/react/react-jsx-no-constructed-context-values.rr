@@ -1,0 +1,53 @@
+.policy "react-jsx-no-constructed-context-values" revision 2
+.description "Memoize the value passed to a React context provider; an object, array or function created during render gives every consumer a new value and rerenders it."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-constructed-context-values: inside a component, a context provider's value={…} that builds a new
+// value on each render: an object, array, function, class, `new`, regex or JSX, also behind ?:, &&, ||, a member
+// (value={{ a }.a}), an assignment or `as`, or a variable of the provider's own scope initialised to one.
+//   <Ctx.Provider value={{ user }}>         <ThemeContext value={[a, b]}>   (ThemeContext = createContext())
+//   const v = { user }; return <Ctx.Provider value={v}>      reported at the object, on v's line
+// A provider is any <X.Provider>, or a <X> whose X is declared `= createContext(…)` or React.createContext(…).
+#include "tsx/react-class.rr"
+//   parent_component(n, c)   n is inside component c: a class, a spec, or a function component
+
+.violation context_value(at: node)
+    code "react/jsx-no-constructed-context-values"
+    "Wrap this context value in useMemo (a function in useCallback), or move it out of the component when it reads no props or state, so consumers don't rerender on every render."
+    suppress eslint "react/jsx-no-constructed-context-values"
+    suppress oxlint "jsx-no-constructed-context-values"
+context_value(at) :- jsx_prop(o, "value", a), provider(o), child(a, j, 1), kind(j, "jsx_expression"), child(j, e, 0),
+    deparen(e, v), constructed(o, v, at), parent_component(o, _), docof(o, d), react_doc(d).
+
+.decl provider(o: node)
+provider(o) :- jsx_open(_, o), field(o, "name", n), kind(n, "member_expression"), field(n, "property", p),
+    text(p, "Provider").
+// isReactContext looks the tag's name up the scope chain (a JSX tag is not a reference to tsx/names).
+provider(o) :- jsx_open(_, o), field(o, "name", n), kind(n, "identifier"), text(n, x), decl_site(sc, x, v, _, "value"),
+    (within(o, sc) ; kind(sc, "program")), kind(v, "variable_declarator"), field(v, "value", c), kind(c,
+    "call_expression"), field(c, "function", f),
+    (kind(f, "identifier"), text(f, "createContext") ;
+     field(f, "object", r), text(r, "React"), field(f, "property", p), text(p, "createContext")).
+
+// constructed(o, v, at): expression v, in provider o's value, is a new value built at node at (isConstruction).
+.decl constructed(o: node, v: node, at: node)
+constructed(o, v, v) :- value_of(o, v), kind(v, k), fresh_kind(k).  // react-class: fragments count here
+constructed(o, v, at) :- value_of(o, v), (kind(v, "ternary_expression"), (field(v, "consequence", e) ;
+    field(v, "alternative", e)) ; kind(v, "binary_expression"), (op(v, "&&") ; op(v, "||") ; op(v, "??")),
+    (field(v, "left", e) ; field(v, "right", e)) ; kind(v, "member_expression"), field(v, "object", e) ;
+    kind(v, "assignment_expression"), field(v, "right", e) ; kind(v, "as_expression"), child(v, e, 0)),
+    deparen(e, w), constructed(o, w, at).
+// A variable declared in the provider's own scope (not an enclosing one): its initialiser, or the function.
+constructed(o, v, at) :- value_of(o, v), kind(v, "identifier"), text(v, x), own_decl(o, x, s),
+    (kind(s, "function_declaration"), at = s ; kind(s, "variable_declarator"), field(s, "value", i), deparen(i, w),
+     constructed(o, w, at)).
+.decl value_of(o: node, v: node)  // the expressions constructed() looks at: the value and its parts
+value_of(o, v) :- jsx_prop(o, "value", a), provider(o), child(a, j, 1), kind(j, "jsx_expression"), child(j, e, 0),
+    deparen(e, v).
+value_of(o, w) :- value_of(o, v), (child(v, e, _) ; kind(v, "identifier"), text(v, x), own_decl(o, x, s),
+    field(s, "value", e)), deparen(e, w).
+.decl own_decl(o: node, x: symbol, s: node)  // x is declared (var, let, const, function) in o's innermost scope
+own_decl(o, x, s) :- value_of(o, v), kind(v, "identifier"), text(v, x), ref_site(v, s), decl_site(sc, x, s, f, _),
+    (f = "var" ; f = "let" ; f = "function"), nearest(o, h, escope_node), (sc = h ; field(h, "body", sc)).

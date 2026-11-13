@@ -1,0 +1,19 @@
+.policy "next-no-document-import-in-page" revision 4
+.description "Import next/document only in pages/_document; the custom Document API does not work in regular pages or components."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-document-import-in-page. `import … from "next/document"` anywhere but in a file
+// whose name, after its last "pages", starts with /_document:
+//   pages/index.js:            import Document from "next/document"     reported
+//   components/layout.js:      the same                                 reported: no "pages" at all
+//   pages/_document.page.tsx:  the same                                 fine
+
+#include "tsx/next.rr"
+
+.violation document_import(at: node) code "@next/next/no-document-import-in-page"
+    "`<Document />` from `next/document` should not be imported outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-document-import-in-page"
+    suppress eslint "@next/next/no-document-import-in-page"
+    suppress oxlint "no-document-import-in-page"
+    suppress biome "lint/suspicious/noDocumentImportInPage"
+document_import(i) :- import_stmt(i, d, "next/document"), pages_last(d, r), r != "", !prefix("/_document", r).

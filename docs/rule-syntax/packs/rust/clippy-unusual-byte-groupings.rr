@@ -1,0 +1,17 @@
+.policy "clippy-unusual-byte-groupings" revision 3
+.description "Split Rust binary, octal and hexadecimal literals into equal-size digit groups; uneven groups hide the bit layout."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax-literals.rr"
+//   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
+
+// Clippy's unusual_byte_groupings (style): a hexadecimal, octal or binary literal whose `_` groups differ
+// in size, or whose first group is longer than the others.
+//   0x1_23456   0b11_0110_1   0x1234_56     reported
+//   0x1_2345    0b1011_0110   0xDEAD_BEEF   not reported
+.violation unusual_byte_groupings(at: node) code "unusual_byte_groupings"
+    "Regroup this literal's digits into equal-size groups, e.g. 0xFFFF_FFFF or 0b1010_1010."
+    suppress clippy "clippy::unusual_byte_groupings", "clippy::all", "clippy::style", "warnings"
+unusual_byte_groupings(n) :- grouping_lint(n, "unusual_byte_groupings", "true").

@@ -1,0 +1,75 @@
+.policy "eslint-prefer-destructuring" revision 7
+.description "Use destructuring when assigning an array element at a fixed index, or an object property to a variable of the same name."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-control.rr"
+//   deparen, number_lit, value, id_value, optional_link
+
+// ESLint's prefer-destructuring: a declarator or `=` assignment whose value is a member read.
+//   var x = array[0];   x = array[1];            → Use array destructuring:  [x] = array
+//   var foo = object.foo;   foo = object["foo"]  → Use object destructuring: { foo } = object  (fix for the var)
+//   var bar = object.foo;   var x = a?.b;   var y = super.y;   var z = this.#z    fine
+// Options. The first is { array, object } for both forms, or { VariableDeclarator: { array, object },
+// AssignmentExpression: { array, object } } (rerail options "VariableDeclarator.array" and so on); a kind not
+// given is off, and with no option everything is on. enforceForRenamedProperties (default false) also reports
+// `var bar = object.foo` and `bar = object[key]`.
+.violation prefer_destructuring(at: node, t: symbol) code "prefer-destructuring" "Use {t} destructuring."
+    suppress eslint "prefer-destructuring"
+    suppress oxlint "prefer-destructuring"
+    fix to_pattern "Destructure the property."
+prefer_destructuring(n, "array") :- read(n, w, _, m), index_read(m), enabled(w, "array").
+prefer_destructuring(n, "object") :- read(n, w, _, m), !index_read(m), enabled(w, "object"),
+    option("enforceForRenamedProperties", "true").
+prefer_destructuring(n, "object") :- read(n, w, l, m), !index_read(m), enabled(w, "object"),
+    !option("enforceForRenamedProperties", "true"), kind(l, "identifier"), id_value(l, x), same_name(m, x).
+
+// read(n, w, l, m): n assigns the member read m to l. w is ESLint's node type. Not a `using` declaration, which
+// cannot destructure; not a chain (`a?.b`, ESTree's ChainExpression), `super.x` or a private `#x`.
+.decl read(n: node, w: symbol, l: node, m: node)
+read(n, "VariableDeclarator", l, m) :- kind(n, "variable_declarator"), field(n, "name", l), field(n, "value", v),
+    deparen(v, m), member_read(m), !using(n).
+read(n, "AssignmentExpression", l, m) :- kind(n, "assignment_expression"), field(n, "left", l0), deparen(l0, l),
+    field(n, "right", v), deparen(v, m), member_read(m).
+.decl member_read(m: node)
+member_read(m) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", o),
+    !kind(o, "super"), !private_read(m), !optional_link(m).
+.decl private_read(m: node)  // this.#x
+private_read(m) :- field(m, "property", p), kind(p, "private_property_identifier").
+.decl using(n: node)
+using(n) :- child(d, n, _), kind(d, "using_declaration").
+// index_read(m): `a[0]`, `a[1.0]`: an integer index (Number.isInteger of the literal's value).
+.decl index_read(m: node)
+index_read(m) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, x), number_lit(x), value(x, v),
+    match("-?[0-9]+", v).
+// same_name(m, x): m reads property x: `o.x` or `o["x"]` (a string literal; not a template or another name).
+.decl same_name(m: node, x: symbol)
+same_name(m, x) :- kind(m, "member_expression"), field(m, "property", p), kind(p, "property_identifier"), id_value(p, x).
+same_name(m, x) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, s), kind(s, "string"), value(s, x).
+
+// enabled(w, d): the option shapes. ESLint reads the flat form when it has `array` or `object`.
+.decl enabled(w: symbol, d: symbol)
+enabled(w, d) :- form(w), form_of(d), !flat(), !nested().
+enabled(w, d) :- form(w), form_of(d), flat(), opt(d, "true").
+enabled(w, d) :- form(w), form_of(d), !flat(), nested(), opt(cat(w, cat(".", d)), "true").
+.decl form(w: symbol)
+form("VariableDeclarator"). form("AssignmentExpression").
+.decl form_of(d: symbol)
+form_of("array"). form_of("object").
+.decl flat()
+flat() :- form_of(d), opt(d, _).
+.decl nested()
+nested() :- form(w), form_of(d), opt(cat(w, cat(".", d)), _).
+.decl opt(k: symbol, v: symbol)  // an option by its dotted name; rrlab flattens with "/"
+opt(k, v) :- option(k, v).
+opt(k, v) :- option(j, v), k = @replace_all(j, "/", "."), k != j.
+
+// The fix, for `var foo = object.foo` only: `{foo} = object`, parenthesised when the object is a sequence; not
+// where a comment outside the object would go.
+to_pattern(n, "object") :- read(n, "VariableDeclarator", l, m), kind(l, "identifier"), kind(m, "member_expression"),
+    field(m, "property", p), text(p, x), text(l, x), field(m, "object", o), !lost_comment(n, o), text(o, t),
+    deparen(o, s), (kind(s, "sequence_expression"), !kind(o, "parenthesized_expression"), u = cat("(", cat(t, ")")) ;
+    !(kind(s, "sequence_expression"), !kind(o, "parenthesized_expression")), u = t) => replace(n, `{$x} = $u`).
+.decl lost_comment(n: node, o: node)
+lost_comment(n, o) :- read(n, _, _, m), field(m, "object", o), has(n, c, "comment"), !within(c, o).

@@ -1,0 +1,23 @@
+.policy "bladestan-identical-always-true" revision 2
+.description "Remove strict === comparisons in Blade templates that are always true from values the template itself sets; the check is dead logic or hides a bug."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/values.rr"
+//   blade_code(n)   n is in the compiled PHP;  php_identical(e, r)  `a === b` expression e is r from the values
+
+// Bladestan's identical.alwaysTrue: PHPStan's StrictComparisonOfDifferentTypesRule (level 4) over the PHP the
+// template compiles to. A `===` that is always true from values the template itself sets:
+//   @php $mode = 'list'; @endphp  @if($mode === 'list') … @endif      reported, at the comparison
+//   {{ 1 === 1 ? 'a' : 'b' }}                                          reported
+//   @if($mode === 'list')   (view data)                                not reported: unknown
+// PHPStan reports the last @elseif's always-true condition (with no @else after it) as a dead branch of its own,
+// not as this, so that one is left out:
+//   @if($a) … @elseif($mode === 'list') … @endif
+.violation identical_always_true(at: node) code "identical.alwaysTrue" "Strict comparison using === will always evaluate to true."
+identical_always_true(e) :- php_identical(e, "true"), blade_code(e), !last_elseif(e).
+.decl last_elseif(e: node)  // e is the condition of an else_if_clause that no elseif or else follows
+last_elseif(e) :- kind(d, "else_if_clause"), field(d, "condition", p), child(p, e, 0), !later_branch(d).
+.decl later_branch(d: node)
+later_branch(d) :- kind(d, "else_if_clause"), precedes(d, x), (kind(x, "else_if_clause") ; kind(x, "else_clause")).

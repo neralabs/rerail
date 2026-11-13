@@ -1,0 +1,49 @@
+.policy "typescript-eslint-explicit-function-return-type" revision 4
+.description "Declare an explicit return type on TypeScript functions and methods, except typed callbacks, higher-order functions and const-asserted arrows."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a-returns.rr"
+//   fn_value, fn_decl, valid_expr_return, ancestor_return, valid_return, return_head
+
+// typescript-eslint's explicit-function-return-type: functions and methods say what they return.
+//   function f() { return 1; }        reported         function f(): number { return 1; }
+//   const g: Handler = () => 1;       typed by its declarator (allowTypedFunctionExpressions)
+//   const h = () => () => 1;          h only returns a function (allowHigherOrderFunctions); the inner one is typed
+// Constructors and setters need none. The finding sits on the function's head: a method's start, an arrow's `=>`.
+// allowExpressions, allowConciseArrowFunctionExpressionsStartingWithVoid, allowFunctionsWithoutTypeParameters,
+// allowIIFEs and allowedNames widen what is left alone.
+.violation explicit_function_return_type(at: loc) code "@typescript-eslint/explicit-function-return-type"
+    "Missing return type on function."
+    suppress eslint "@typescript-eslint/explicit-function-return-type"
+    suppress oxlint "explicit-function-return-type"
+explicit_function_return_type(h) :- fn_value(f), !void_arrow(f), !allowed(f),
+    !typed_skip(f), !valid_return(f), return_head(f, h).
+explicit_function_return_type(h) :- fn_decl(f), !allowed(f), !valid_return(f), return_head(f, h).
+
+
+// typed_skip(f): typed by its place, or (as upstream, only while allowTypedFunctionExpressions is on) left alone
+// by allowExpressions or an `as const` body.
+.decl typed_skip(f: node)
+typed_skip(f) :- !option("allowTypedFunctionExpressions", "false"), (valid_expr_return(f) ; ancestor_return(f)).
+
+// void_arrow(f): `() => void g()` with allowConciseArrowFunctionExpressionsStartingWithVoid.
+.decl void_arrow(f: node)
+void_arrow(f) :- option("allowConciseArrowFunctionExpressionsStartingWithVoid", "true"), kind(f, "arrow_function"),
+    field(f, "body", b), deparen(b, x), kind(x, "unary_expression"), op(x, "void").
+
+// allowed(f): isAllowedFunction. No type parameters; an IIFE, which upstream takes as any function whose parent
+// is a call (`(() => 1)()`, and `foo(() => 1)` too); or a name in allowedNames: the function's own, its
+// declarator's, or its method's, property's or class field's plain key.
+.decl allowed(f: node)
+allowed(f) :- option("allowFunctionsWithoutTypeParameters", "true"), function_node(f), !field(f, "type_parameters", _).
+allowed(f) :- option("allowIIFEs", "true"), fn_value(f), (estree_parent(f, c) ; call_arg_of(f, c)),
+    kind(c, "call_expression").
+allowed(f) :- fn_name(f, x), option_item("allowedNames", _, x).
+.decl fn_name(f: node, x: symbol)
+fn_name(f, x) :- function_node(f), !kind(f, "method_definition"), field(f, "name", n), kind(n, "identifier"), text(n, x).
+fn_name(f, x) :- held_name(f, x).
+fn_name(f, x) :- kind(f, "method_definition"), field(f, "name", n), kind(n, "property_identifier"), text(n, x).
+fn_name(f, x) :- fn_value(f), !field(f, "name", _), estree_parent(f, p), (kind(p, "pair"), field(p, "key", n) ;
+    property_def(p), field(p, "name", n)), kind(n, "property_identifier"), text(n, x).

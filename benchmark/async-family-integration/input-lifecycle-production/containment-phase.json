@@ -1,0 +1,12 @@
+[
+  {
+    "nodes": 8416,
+    "referenceCpu": 1.484115,
+    "relationAndComparisonsCpu": 0.030071
+  },
+  {
+    "nodes": 8416,
+    "referenceCpu": 1.42513,
+    "relationAndComparisonsCpu": 0.029751
+  }
+]

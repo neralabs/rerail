@@ -1,0 +1,318 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-schema-bootstrap-contracts",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer schema_bootstrap_contracts at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2000_connection/schema_transaction.py",
+      "l2000_connection/connection_caches.py",
+      "l3200_metadata/bootstrap_state.py",
+      "impl/common/l2200_sql_dialect/sql_connection.py",
+      "impl/common/l2200_sql_dialect/sql_schema_services.py",
+      "impl/common/l2200_sql_dialect/sql_versioning_services.py",
+      "impl/common/l7245_versioned_backends/generic_sparse.py",
+      "l7000_versioned_schema/physical_keys.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "bootstrap-contracts",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "raw_annotation_names",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "annotation_names"
+              ],
+              "expand": "annotations"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "decorators",
+            "query": "WITH RECURSIVE d(__path,fn,root,id) AS (\n      SELECT __path,parent,id,id FROM a WHERE field='decorator_list'\n      UNION ALL SELECT d.__path,d.fn,d.root,n.id FROM d JOIN a n ON n.__path=d.__path AND n.parent=d.id AND n.field='func'\n      JOIN a c ON c.__path=d.__path AND c.id=d.id AND c.kind='Call')\n      SELECT d.__path,d.fn,d.root,n.id,n.kind,n.name FROM d JOIN a n ON n.__path=d.__path AND n.id=d.id WHERE n.kind IN ('Name','Attribute')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "annotation_names",
+            "query": "SELECT __path,CAST(annotation AS INTEGER) AS annotation,name FROM raw_annotation_names",
+            "indexes": [
+              [
+                "__path",
+                "annotation",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "params",
+            "query": "SELECT p.*,v.id AS annotation_id,f.name AS function_name,f.name_repr AS function_repr,\n CASE p.field WHEN 'posonlyargs' THEN 0 WHEN 'args' THEN 1 WHEN 'kwonlyargs' THEN 2 WHEN 'vararg' THEN 3 ELSE 4 END*10000+p.position AS param_order\n FROM parameters p JOIN functions f ON f.__path=p.__path AND f.id=p.fn\n LEFT JOIN a v ON v.__path=p.__path AND v.parent=p.id AND v.field='annotation' WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "param_types",
+            "query": "SELECT p.__path,p.id,n.name FROM params p JOIN annotation_names n ON n.__path=p.__path AND n.annotation=p.annotation_id",
+            "indexes": [
+              [
+                "__path",
+                "id",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "function_annotations",
+            "query": "SELECT p.__path,p.fn,v.id AS annotation,0 AS category,p.param_order AS ordinal FROM params p JOIN a v ON v.__path=p.__path AND v.id=p.annotation_id\n UNION ALL SELECT v.__path,v.parent,v.id,1,0 FROM a v WHERE v.field='returns'\n UNION ALL SELECT f.__path,f.id,v.id,2,n.bfs FROM functions f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last AND n.kind='AnnAssign' JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='annotation'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "annotation"
+              ]
+            ]
+          },
+          {
+            "name": "forbidden_annotations",
+            "query": "SELECT x.__path,x.fn,x.annotation,x.category,x.ordinal,group_concat(n.name,', ') AS names FROM function_annotations x JOIN annotation_names n ON n.__path=x.__path AND n.annotation=x.annotation WHERE n.name IN ('AsyncDatabaseConnection','AsyncReadTransaction','AsyncSchemaTransaction','AsyncVersionedDatabaseConnection','AsyncWriteTransaction','SyncDatabaseConnection','SyncReadTransaction','SyncSchemaTransaction','SyncVersionedDatabaseConnection','SyncWriteTransaction') GROUP BY x.__path,x.fn,x.annotation,x.category,x.ordinal",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "broad_params",
+            "query": "SELECT p.__path,p.id,group_concat(t.name,', ') AS names FROM params p JOIN param_types t ON t.__path=p.__path AND t.id=p.id WHERE t.name IN ('Any','Collection','Iterable','Mapping','MutableMapping','MutableSequence','Sequence') GROUP BY p.__path,p.id",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "schema_params",
+            "query": "SELECT p.__path,p.id,group_concat(t.name,', ') AS names FROM params p JOIN param_types t ON t.__path=p.__path AND t.id=p.id WHERE t.name IN ('AsyncSchemaTransaction','SyncSchemaTransaction') GROUP BY p.__path,p.id",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "readonly_params",
+            "query": "SELECT p.__path,p.id FROM params p JOIN a ann ON ann.__path=p.__path AND ann.id=p.annotation_id AND ann.kind='Subscript'\n JOIN a root ON root.__path=ann.__path AND root.parent=ann.id AND root.field='value'\n JOIN a element ON element.__path=ann.__path AND element.parent=ann.id AND element.field='slice'\n WHERE substr(p.function_name,1,1)!='_' AND EXISTS(SELECT 1 FROM a n WHERE n.__path=root.__path AND n.id BETWEEN root.id AND root.last AND n.kind IN ('Name','Attribute') AND n.name='Sequence')\n AND NOT EXISTS(SELECT 1 FROM a n WHERE n.__path=root.__path AND n.id BETWEEN root.id AND root.last AND n.kind IN ('Name','Attribute') AND n.name!='Sequence')\n AND EXISTS(SELECT 1 FROM annotation_names n WHERE n.__path=element.__path AND n.annotation=element.id)\n AND NOT EXISTS(SELECT 1 FROM annotation_names n WHERE n.__path=element.__path AND n.annotation=element.id AND n.name IN ('Any','bytes','bytearray','float','int','object','str'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC001' AS issue,n.name||'() ends with _lazy but is not decorated with @pure_lazy' AS message,n.id||':SBC001:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE substr(n.name,-5)='_lazy' AND NOT EXISTS(SELECT 1 FROM decorators d WHERE d.__path=n.__path AND d.fn=n.id AND d.name='pure_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC006' AS issue,f.name||'() uses sync/async type annotation '||x.names||' inside a lazy function; use LazySchemaTransaction or another lazy-universe contract' AS message,n.id||':SBC006:'||(f.id+0.01+x.category*0.01+x.ordinal*0.00000001) AS identity,0 AS phase,f.id+0.01+x.category*0.01+x.ordinal*0.00000001 AS ordering,'' AS symbol,'' AS sort_name FROM functions f JOIN forbidden_annotations x ON x.__path=f.__path AND x.fn=f.id JOIN a n ON n.__path=x.__path AND n.id=x.annotation WHERE substr(f.name,-5)='_lazy' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC002' AS issue,'parameter '||n.function_name||'('||n.name||') is missing an explicit type annotation' AS message,n.id||':SBC002:'||(n.fn+0.1+n.param_order*0.000001) AS identity,0 AS phase,n.fn+0.1+n.param_order*0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM params n WHERE n.name NOT IN ('self','cls') AND n.annotation_id IS NULL UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC002' AS issue,'parameter '||n.function_name||'('||n.name||') uses broad annotation '||b.names||'; use a concrete contract type' AS message,n.id||':SBC002:'||(n.fn+0.1+n.param_order*0.000001) AS identity,0 AS phase,n.fn+0.1+n.param_order*0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM params n JOIN broad_params b ON b.__path=n.__path AND b.id=n.id WHERE n.name NOT IN ('self','cls') AND NOT (b.names='Sequence' AND EXISTS(SELECT 1 FROM readonly_params r WHERE r.__path=n.__path AND r.id=n.id)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC006' AS issue,'parameter '||n.function_name||'('||n.name||') uses sync/async schema transaction type '||b.names||'; use LazySchemaTransaction' AS message,n.id||':SBC006:'||(n.fn+0.1000001+n.param_order*0.000001) AS identity,0 AS phase,n.fn+0.1000001+n.param_order*0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM params n JOIN schema_params b ON b.__path=n.__path AND b.id=n.id WHERE n.name IN ('current_schema_txn','schema_transaction','schema_txn') AND substr(n.function_name,-5)!='_lazy' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC004' AS issue,n.name||'() accepts both connection-like and transaction-like parameters; remove the connection and make the transaction authoritative' AS message,n.id||':SBC004:'||(n.id+0.9) AS identity,0 AS phase,n.id+0.9 AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE EXISTS(SELECT 1 FROM params p WHERE p.__path=n.__path AND p.fn=n.id AND (p.annotation_id IS NOT NULL AND p.name NOT IN ('self','cls') AND (p.name IN ('async_conn','conn','connection','db_connection','sql_conn','sync_conn') OR EXISTS(SELECT 1 FROM param_types t WHERE t.__path=p.__path AND t.id=p.id AND t.name IN ('AsyncDatabaseConnection','AsyncVersionedDatabaseConnection','SyncDatabaseConnection','SyncVersionedDatabaseConnection','_DatabaseConnectionCore','_SqlConnectionCore'))))) AND EXISTS(SELECT 1 FROM params p WHERE p.__path=n.__path AND p.fn=n.id AND (p.annotation_id IS NOT NULL AND p.name NOT IN ('self','cls') AND (p.name IN ('current_schema_txn','read_txn','schema_transaction','schema_txn','transaction','txn','write_txn') OR EXISTS(SELECT 1 FROM param_types t WHERE t.__path=p.__path AND t.id=p.id AND t.name IN ('AsyncReadTransaction','AsyncSchemaTransaction','AsyncWriteTransaction','LazySchemaTransaction','ReadTransaction','SyncReadTransaction','SyncSchemaTransaction','SyncWriteTransaction','WriteTransaction'))))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC003' AS issue,n.callee||'() is forbidden in schema/bootstrap contract files (current function: '||coalesce(f.name,'<module>')||'); use explicit typed attributes or protocols' AS message,n.id||':SBC003:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n LEFT JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE n.callee IN ('delattr','getattr','hasattr','setattr') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SBC005' AS issue,n.callee||'() is forbidden in schema/bootstrap contract files (current function: '||coalesce(f.name,'<module>')||'); use concrete typed collaborators instead' AS message,n.id||':SBC005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n LEFT JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE n.callee IN ('isinstance','issubclass')",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

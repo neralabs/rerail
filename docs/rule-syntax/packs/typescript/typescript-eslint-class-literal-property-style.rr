@@ -1,0 +1,100 @@
+.policy "typescript-eslint-class-literal-property-style" revision 7
+.description "Use a readonly field instead of a getter that just returns a literal value, unless a subclass overrides that getter as an accessor."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-common.rr"
+//   deparen, static_string, key_static, static_prop, function_kind
+
+// typescript-eslint's class-literal-property-style: a class exposes a literal one way.
+//   "fields" (the default):  get a() { return "x"; }     → readonly a = "x";
+//   "getters":               readonly a = "x";           → get a() { return "x"; }
+// A getter that a setter of the same name pairs with, or that overrides, is left alone; so is a readonly field
+// that the class's constructor assigns (`this.a = …`, directly in the constructor, not in a nested function).
+// A literal is a string, number, boolean, null, regex or BigInt, or a template without `${…}`, tagged or not.
+.violation class_literal_property_style(at: node, id: symbol, msg: symbol) code "@typescript-eslint/class-literal-property-style"
+    "{msg}"
+    suppress eslint "@typescript-eslint/class-literal-property-style"
+    suppress oxlint "class-literal-property-style"
+    fix to_field "Replace the literals with readonly fields."
+    fix to_getter "Replace the literals with getters."
+class_literal_property_style(k, "preferFieldStyle", "Replace this getter with a readonly field set to the literal, unless a subclass overrides it with `override get`.") :-
+    !option("option", "getters"), literal_getter(g, _), key_node(g, k).
+class_literal_property_style(k, "preferGetterStyle", "Literals should be exposed using getters.") :-
+    option("option", "getters"), literal_field(p, _), key_node(p, k).
+
+.decl literal(e: node)
+literal(e) :- deparen(e, x), (kind(x, "string") ; kind(x, "number") ; kind(x, "true") ; kind(x, "false") ;
+    kind(x, "null") ; kind(x, "regex") ; plain_template(x) ; kind(x, "call_expression"), field(x, "arguments", t),
+    plain_template(t)).
+.decl plain_template(t: node)
+plain_template(t) :- kind(t, "template_string"), !has(t, _, "template_substitution").
+
+// key_node(m, k): the key, inside its brackets when computed.
+.decl key_node(m: node, k: node)
+key_node(m, k) :- field(m, "name", k), !kind(k, "computed_property_name").
+key_node(m, k) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, k, _), !kind(k, "comment").
+
+// literal_getter(g, v): `get a() { return v; … }`, the first statement returning a literal; not `override`, and
+// no `set a(…)` beside it.
+.decl literal_getter(g: node, v: node)
+literal_getter(g, v) :- kind(g, "method_definition"), op(g, "get"), !kid(g, "override_modifier"),
+    field(g, "body", b), first_stmt(b, s), kind(s, "return_statement"), child(s, v, _), !kind(v, "comment"),
+    literal(v), !has_setter(g).
+.decl first_stmt(b: node, s: node)
+first_stmt(b, s) :- child(b, s, i), !kind(s, "comment"), i = min j : { child(b, c, j), !kind(c, "comment") }.
+.decl kid(m: node, k: symbol)
+kid(m, k) :- child(m, x, _), kind(x, k).
+.decl has_setter(g: node)
+has_setter(g) :- kind(g, "method_definition"), op(g, "get"), member_static(g, x), child(b, g, _), child(b, s, _),
+    kind(s, "method_definition"), op(s, "set"), member_static(s, x).
+// A computed key with no static value pairs by its text (8.70 does; 8.56 reports `get [k]()` beside `set [k](v)`).
+has_setter(g) :- kind(g, "method_definition"), op(g, "get"), field(g, "name", n), kind(n, "computed_property_name"),
+    key_node(g, k), text(k, x), child(b, g, _), child(b, s, _), kind(s, "method_definition"), op(s, "set"),
+    field(s, "name", o), kind(o, "computed_property_name"), key_node(s, y), text(y, x).
+// member_static(m, x): getStaticMemberAccessValue of a class member; a private `#a` reads as "a".
+.decl member_static(m: node, x: symbol)
+member_static(m, x) :- field(m, "name", k), key_static(k, x).
+member_static(m, substr(t, 1, strlen(t) - 1)) :- field(m, "name", k), kind(k, "private_property_identifier"), text(k, t).
+
+// literal_field(p, v): `readonly a = v`, not `declare` or `override`, that no constructor of its class assigns.
+.decl literal_field(p: node, v: node)
+literal_field(p, v) :- kind(p, "public_field_definition"), op(p, "readonly"), !op(p, "declare"),
+    !kid(p, "override_modifier"), field(p, "value", v), literal(v), !ctor_assigned(p).
+.decl ctor_assigned(p: node)
+ctor_assigned(p) :- kind(p, "public_field_definition"), op(p, "readonly"), member_static(p, x), child(b, p, _),
+    ctor_write(b, x).
+// ctor_write(b, x): `this.x = …` (or ++, delete, destructuring) whose own function is a constructor of body b.
+.decl ctor_write(b: node, x: symbol)
+ctor_write(b, x) :- kind(t, "this"), estree_parent(t, e), this_access(e, t, x), assignee(e),
+    nearest(t, c, function_kind), field(c, "name", n), text(n, "constructor"), child(b, c, _).
+.decl this_access(e: node, t: node, x: symbol)
+this_access(e, t, x) :- static_prop(e, t, x).
+this_access(e, t, substr(y, 1, strlen(y) - 1)) :- kind(e, "member_expression"), field(e, "object", t),
+    field(e, "property", p), kind(p, "private_property_identifier"), text(p, y).
+// assignee(e): isAssignee. e is written: `e = 1`, `e += 1`, `e++`, `delete e`, `[e] = …`, `({ a: e } = …)`,
+// also through `!`, `as`, `satisfies` and `<T>`.
+.decl assignee(e: node)
+assignee(e) :- estree_parent(e, a), (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), deparen(l, e).
+assignee(e) :- estree_parent(e, u), kind(u, "unary_expression"), op(u, "delete").
+assignee(e) :- estree_parent(e, u), kind(u, "update_expression").
+assignee(e) :- estree_parent(e, a), (kind(a, "array_pattern") ; kind(a, "rest_pattern") ; kind(a, "pair_pattern")).
+assignee(e) :- estree_parent(e, w), (kind(w, "non_null_expression") ; kind(w, "as_expression") ;
+    kind(w, "satisfies_expression") ; kind(w, "type_assertion")), assignee(w).
+
+// The suggestions: modifiers as printNodeModifiers prints them (accessibility, then static), then the key as
+// written. The field keeps the `;` after it, a harmless empty member after the getter.
+.decl modifiers(m: node, s: symbol)
+modifiers(m, cat(a, t)) :- (kind(m, "method_definition") ; kind(m, "public_field_definition")),
+    (child(m, x, _), kind(x, "accessibility_modifier"), text(x, y), a = cat(y, " ") ;
+    !kid(m, "accessibility_modifier"), a = ""),
+    (op(m, "static"), t = "static " ; !op(m, "static"), t = "").
+// The fix sits on the finding's node: a computed key's inside, while the text keeps its brackets.
+to_field(a, _, _) :- literal_getter(g, v), key_node(g, a), field(g, "name", k), modifiers(g, m), text(k, x), text(v, y),
+    z = cat(m, cat("readonly ", cat(x, cat(" = ", cat(y, ";")))))
+    => replace(g, `$z`).
+to_getter(a, _, _) :- literal_field(p, v), key_node(p, a), field(p, "name", k), modifiers(p, m), text(k, x), text(v, y),
+    z = cat(m, cat("get ", cat(x, cat("() { return ", cat(y, "; }")))))
+    => replace(p, `$z`).

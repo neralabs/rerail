@@ -6,7 +6,7 @@ use super::view::View;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::scope::php::{Defined, Quiet};
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
-use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::code_rule_dsl::value::Context;
 use crate::code_rule_dsl::value::php::{decode, tests::agrees};
 use ast_grep_core::{AstGrep, Doc, Node};
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("blade/blade")
+    PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("blade/blade")
 }
 
 fn expected() -> Json {
@@ -122,7 +122,7 @@ fn blade_view_reads_the_regions_blade_compiles() {
 /// whose nodes stand for template bytes (`origin::InFile`); `None` where it embeds none.
 fn view(source: &str) -> Option<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
-    let image = TapeImage::encode_template(&grammar, source, &|| false).expect("encodes");
+    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).expect("encodes");
     let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
         .expect("restores");
     let guests = host.guests().expect("owned");
@@ -214,7 +214,7 @@ fn compare_definedness(
     )
     .expect("table builds");
     let program = doc.root();
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let inside = |at: usize| foreign.iter().any(|span| span.contains(&at));
     // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
     // guarded, `None` nothing.
@@ -349,7 +349,7 @@ fn a_template_variable_some_paths_define_is_unknown() {
         Reading::default(),
     )
     .expect("table builds");
-    let flow = table.php.as_deref().expect("a PHP flow");
+    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
     let read = descendants(&doc.root())
         .into_iter()
         .filter(|node| node.kind() == "variable_name" && node.text() == "$x")

@@ -1,0 +1,32 @@
+.policy "ruff-try203-useless-try-except" revision 2
+.description "Remove exception handlers that only re-raise; the try block adds nothing when every handler immediately raises the same error again."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY203 (tryceratops): a try whose every handler starts by re-raising what it caught, so the try does
+// nothing. Each handler is reported. Only a handler's first statement is read.
+//   try: f()
+//   except ValueError: raise            ← TRY203
+//   except TypeError as e: raise e      ← TRY203
+//
+//   try: f()
+//   except ValueError: raise            not reported: the other handler does something
+//   except TypeError: log()
+#include "python/exceptions.rr"
+//   exc_handler(t, x), exc_body(x, b), exc_alias(x, e), exc_raise(r, e), exc_cause(r)
+
+.violation TRY203(at: node) code "TRY203"
+    "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`."
+    suppress ruff "TRY203"
+TRY203(x) :- exc_handler(t, x), !useful(t).
+// useful(t): some handler of t does not begin with `raise` or `raise e` (e its own name), without `from`.
+.decl useful(t: node)
+useful(t) :- exc_handler(t, x), !reraises_first(x).
+.decl reraises_first(x: node)
+reraises_first(x) :- first_stmt(x, r), kind(r, "raise_statement"), !exc_cause(r), !child(r, _, 0).
+reraises_first(x) :- first_stmt(x, r), !exc_cause(r), exc_raise(r, n), kind(n, "identifier"), text(n, e),
+    exc_alias(x, e).
+.decl first_stmt(x: node, s: node)
+first_stmt(x, s) :- exc_body(x, b), child(b, s, i), !kind(s, "comment"),
+    count : { child(b, c, j), j < i, !kind(c, "comment") } = 0.

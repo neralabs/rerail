@@ -1,0 +1,58 @@
+.policy "eslint-use-isnan" revision 5
+.description "Use Number.isNaN() instead of comparing with NaN or switching on NaN; NaN never equals anything, itself included."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-literals.rr"
+//   binop, deparen, static_prop; compare_op; ref_site (tsx/names)
+
+// ESLint's use-isnan: NaN is unequal to everything, itself included, so comparing with it is always false
+// (or always true for !=). NaN is the global `NaN` or `Number.NaN`, or a sequence ending in one, `(f(), NaN)`.
+// A local NaN or Number is not (ESLint 10, the recorded tool; 9.39 went by name):  let NaN; x === NaN  is fine.
+//   x === NaN   NaN < x   x != Number.NaN                     → reported (any of < > <= >= == != === !==)
+//   switch (NaN) {…}   case NaN:                              → reported unless enforceForSwitchCase is "false"
+//   a.indexOf(NaN)   a.lastIndexOf(NaN, 1)                    → reported if enforceForIndexOf is "true"
+// Fixes are ESLint's suggestions: `x === NaN` → `Number.isNaN(x)` (`!Number.isNaN(x)` for !=, !==), and
+// `a.indexOf(NaN)` → `a.findIndex(Number.isNaN)`.
+.violation use_isnan(at: node, msg: symbol) code "use-isnan" "{msg}"
+    suppress eslint "use-isnan"
+    suppress oxlint "use-isnan"
+    suppress biome "lint/correctness/useIsNan"
+    fix is_nan "Replace with Number.isNaN."
+    fix find_index "Replace with Array.prototype.findIndex or findLastIndex."
+use_isnan(n, "Replace this NaN comparison with Number.isNaN(value); NaN never equals anything, itself included.") :-
+    binop(n, o, l, r), compare_op(o), (nan(l) ; nan(r)).
+use_isnan(s, "'switch(NaN)' can never match a case clause. Use Number.isNaN instead of the switch.") :-
+    !option("enforceForSwitchCase", "false"), kind(s, "switch_statement"), field(s, "value", v), nan(v).
+use_isnan(c, "'case NaN' can never match. Use Number.isNaN before the switch.") :-
+    !option("enforceForSwitchCase", "false"), kind(c, "switch_case"), field(c, "value", v), nan(v).
+use_isnan(c, cat(cat("Use findIndex or findLastIndex with Number.isNaN instead of ", m), "(NaN), which never finds NaN.")) :-
+    option("enforceForIndexOf", "true"), nan_index_of(c, _, m, a), nan(a), call_arg_count(c, k), k <= 2.
+
+// nan(e): isNaNIdentifier, parentheses aside.   NaN   Number.NaN   Number?.["NaN"]   (a, NaN)
+.decl nan(e: node)
+nan(e) :- deparen(e, x), kind(x, "identifier"), text(x, "NaN"), !ref_site(x, _).
+nan(e) :- deparen(e, x), static_prop(x, o, "NaN"), kind(o, "identifier"), text(o, "Number"), !ref_site(o, _).
+nan(e) :- deparen(e, x), kind(x, "sequence_expression"), nan_last(x, y), nan(y).
+.decl nan_last(s: node, y: node)  // the last expression of a sequence
+nan_last(s, y) :- kind(s, "sequence_expression"), child(s, y, i), i = max j : { child(s, z, j), !kind(z, "comment") }.
+
+// nan_index_of(c, p, m, a): c is `o.m(a, …)` or `o["m"](a, …)`, optional or parenthesized or not, for m indexOf
+// or lastIndexOf; p is the property, a the first argument.
+.decl nan_index_of(c: node, p: node, m: symbol, a: node)
+nan_index_of(c, p, m, a) :- kind(c, "call_expression"), field(c, "function", g), deparen(g, f), static_prop(f, _, m),
+    (m = "indexOf" ; m = "lastIndexOf"), (field(f, "property", p) ; field(f, "index", p)), call_arg(c, a, 0).
+
+// The suggestions, for an equality whose NaN is not a sequence. A sequence compared with NaN keeps its parentheses.
+is_nan(n, _) :- nan_test(n, x, "="), !kind(x, "sequence_expression") => replace(n, `Number.isNaN($x)`).
+is_nan(n, _) :- nan_test(n, x, "!"), !kind(x, "sequence_expression") => replace(n, `!Number.isNaN($x)`).
+is_nan(n, _) :- nan_test(n, x, "="), kind(x, "sequence_expression") => replace(n, `Number.isNaN(($x))`).
+is_nan(n, _) :- nan_test(n, x, "!"), kind(x, "sequence_expression") => replace(n, `!Number.isNaN(($x))`).
+.decl nan_test(n: node, x: node, sense: symbol)  // n compares x with NaN y; sense "!" for != and !==
+nan_test(n, x, g) :- binop(n, o, l, r), equality(o, _), (nan(l), x = r, y = l ; !nan(l), nan(r), x = l, y = r),
+    !kind(y, "sequence_expression"), (o = "==", g = "=" ; o = "===", g = "=" ; o = "!=", g = "!" ; o = "!==", g = "!").
+find_index(c, _) :- nan_index_of(c, p, m, a), deparen(a, x), !kind(x, "sequence_expression"), call_arg_count(c, 1),
+    kind(p, "property_identifier"), nan_find(m, w) => replace(p, `$w`), replace(a, `Number.isNaN`).
+.decl nan_find(m: symbol, w: symbol)
+nan_find("indexOf", "findIndex"). nan_find("lastIndexOf", "findLastIndex").
