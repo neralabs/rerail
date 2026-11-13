@@ -462,6 +462,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
       if (error === null && signal?.aborted !== true) settle({ ended: "printed", stdout });
     },
   );
+  releaseStderrOnceDone(child);
   // execFile's own `close` listener comes first and answers with the output. This one answers every other end, saying
   // whether the time limit or `signal` ended the read, and a Git that was ended and whose output stays open.
   settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
@@ -723,33 +724,100 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
 const EXIT_DRAIN_MS = 500;
 
 /**
- * How often a Git read checks its time limit. Each check counts this long however late it runs, so the limit counts the
- * time the event loop ran, not the time it stalled: a Git that finished during a stall has its exit handled first.
+ * Stops reading `child`'s stderr, which no answer uses, once Git has exited and its stdout has ended: a process Git
+ * started that outlives it (a repository's clean filter can leave one) may hold stderr open, and the read would wait for
+ * it until its time limit, then answer that Git did not finish. Git's whole output is read by then, so it answers at once.
+ */
+function releaseStderrOnceDone(child: ChildProcess): void {
+  let waiting = 2;
+  const done = (): void => {
+    waiting -= 1;
+    if (waiting === 0) child.stderr?.destroy();
+  };
+  child.once("exit", done);
+  child.stdout?.once("end", done);
+}
+
+/**
+ * How often a Git read looks at its time limit. Each look counts this long however late it runs, so the count is the
+ * time the event loop ran, not the time it stalled.
  */
 const TIME_LIMIT_TICK_MS = 1_000;
 
 /**
- * How many times its time limit a Git read may run on the clock, however few of its ticks a stalling event loop runs:
- * a Git that hangs while the loop stalls again and again is ended then, not ten stalls later.
+ * How many times its time limit a Git read whose output still grows may run on the clock, however few of its looks a
+ * stalling event loop runs.
  */
 const CLOCK_LIMIT_FACTOR = 3;
 
+/** What a Git read has had so far: the length of its output, and how many of Git's exit and its output's end. */
+interface ReadProgress {
+  output: number;
+  ends: number;
+}
+
 /**
- * A Git read's time limit, asked at each of its ticks: whether the read is past it. It is once the ticks count `limitMs`,
- * each counting `tickMs` however late it runs, or at the first tick after one that found the read past
- * {@link CLOCK_LIMIT_FACTOR} times `limitMs` on the clock. Not at that tick itself: it may run right after a stall,
- * before the loop handles the exit of a Git that finished during it, and the loop handles that exit before the next.
+ * A Git read's time limit, asked at each look ({@link lookPastTimeLimit}) with what the read has had so far: whether it
+ * may go on. It may while its looks count less than `limitMs` and it has run less than `limitMs` on the clock, as
+ * execFile's `timeout` allowed. Past that it may go on only while it moves: once more after Git exited or its output
+ * ended since the last look, since the read closes then; and while its looks count less than `limitMs`, so long as its
+ * output grew since the last look, up to {@link CLOCK_LIMIT_FACTOR} times `limitMs` on the clock. A listing that Git
+ * could not write while a stalled loop was not reading still ends whole, and a Git that prints nothing ends when
+ * execFile's `timeout` ended it.
  */
-function timeLimit(limitMs: number, tickMs: number): () => boolean {
+function timeLimit(limitMs: number, tickMs: number): (progress: Readonly<ReadProgress>) => boolean {
   const startedAt = performance.now();
   let counted = 0;
-  let pastClockLimit = false;
-  return () => {
+  let before: Readonly<ReadProgress> = { output: 0, ends: 0 };
+  return progress => {
     counted += tickMs;
-    if (counted >= limitMs || pastClockLimit) return true;
-    pastClockLimit = performance.now() - startedAt >= limitMs * CLOCK_LIMIT_FACTOR;
-    return false;
+    const grew = progress.output > before.output;
+    const ending = progress.ends > before.ends;
+    before = { ...progress };
+    if (ending) return true;
+    if (counted >= limitMs) return false;
+    const onClock = performance.now() - startedAt;
+    return onClock < limitMs || (grew && onClock < limitMs * CLOCK_LIMIT_FACTOR);
   };
+}
+
+/** What `child`'s read has had so far ({@link ReadProgress}), kept up to date. */
+function readProgress(child: ChildProcess): Readonly<ReadProgress> {
+  const progress: ReadProgress = { output: 0, ends: 0 };
+  const ended = (): void => {
+    progress.ends += 1;
+  };
+  child.stdout?.on("data", (chunk: string | Buffer) => {
+    progress.output += chunk.length;
+  });
+  child.stdout?.once("end", ended);
+  child.once("exit", ended);
+  return progress;
+}
+
+/**
+ * Calls `end` once `child`'s read is past its time limit (`limitMs`, {@link timeLimit}), and returns what stops it. It
+ * looks one loop turn after each tick: after a stall, Node runs its timers before it reads what a Git that finished
+ * during the stall printed and handles its exit, and the look sees both.
+ */
+function lookPastTimeLimit(child: ChildProcess, limitMs: number, end: () => void): () => void {
+  const tickMs = Math.min(TIME_LIMIT_TICK_MS, limitMs);
+  const mayGoOn = timeLimit(limitMs, tickMs);
+  const progress = readProgress(child);
+  let look: NodeJS.Immediate | undefined;
+  const stop = (): void => {
+    clearInterval(ticks);
+    clearImmediate(look);
+  };
+  const ticks = setInterval(() => {
+    look ??= setImmediate(() => {
+      look = undefined;
+      if (mayGoOn(progress)) return;
+      stop();
+      end();
+    });
+  }, tickMs);
+  return stop;
 }
 
 /** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
@@ -766,13 +834,14 @@ interface ReadLimits {
  * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
  * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
  * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
- * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time, within
- * a ceiling on the clock ({@link timeLimit}). `settle` is told whether `timeoutMs` or `signal` ended the read.
+ * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time, and a
+ * read past it on the clock goes on only while it moves ({@link timeLimit}). `settle` is told whether `timeoutMs` or
+ * `signal` ended the read.
  */
 function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
-    clearInterval(ticks);
+    stopLooking();
     signal?.removeEventListener("abort", end);
   };
   const drain = (): void => {
@@ -783,17 +852,13 @@ function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, {
     }, EXIT_DRAIN_MS).unref();
   };
   const end = (): void => {
-    clearInterval(ticks);
+    stopLooking();
     ended = true;
     // A child that has exited has no tree left to reach, and its pid may name another process by now.
     if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
     else drain();
   };
-  const tick = Math.min(TIME_LIMIT_TICK_MS, timeoutMs);
-  const pastLimit = timeLimit(timeoutMs, tick);
-  const ticks = setInterval(() => {
-    if (pastLimit()) end();
-  }, tick);
+  const stopLooking = lookPastTimeLimit(child, timeoutMs, end);
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
     forget();
