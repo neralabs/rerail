@@ -15,28 +15,10 @@ pub fn max() -> usize {
 }
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// the addon, `lib.rs`, never its constructor). The engine's `main` calls it with `this_thread`, so its main thread
+/// is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
-}
-
-/// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
 }
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
