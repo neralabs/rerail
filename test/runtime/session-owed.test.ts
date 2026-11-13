@@ -248,6 +248,23 @@ describe("what a session owes its agent while it is closed", () => {
     }
   });
 
+  // A scan opens a suspended session with no event, so the steer its ledger gave back stays owed. The session was then
+  // suspended again at the next idle close, and the agent's next edit was checked only at the turn's end.
+  it("keeps a session a scan opened again in memory at the idle limit while it owes the steer its ledger gave back", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await owing.runtime.resumeSession(owing.session);
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId)).toEqual({ kind: "owing" });
+      expect((await owing.prompt("back")).map(delivery => delivery.content)).toEqual([STEER]);
+      expect(owing.evaluators).toBe(2);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
   it("does not give the agent a steer owed across a close once its file changed while the session was closed", async () => {
     const owing = await owingSession();
     try {

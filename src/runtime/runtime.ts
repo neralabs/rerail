@@ -2095,14 +2095,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Whether the session still owes its agent something that would reach it later, or not at all, were it suspended and
    * opened again: a tool call of its turn waiting for its result (the result of a session opened again comes while its
    * evaluator opens, so the call's edit is not checked at it), an edit check still running, a steer not yet delivered
-   * or a finding held for the yield's digest, or a scan (`#owesScan`). A steer would reach the agent with the next event
-   * all the same, but the session that event opened again would hold the agent's next tool call while its rules compile
-   * again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn end in a host that does not wait: a session left
-   * in memory checks it at once.
+   * or a finding held for the yield's digest, among them those its ledger gave back as it opened again (`owed`: a scan
+   * opens a suspended session with no event to take them), or a scan (`#owesScan`). A steer would reach the agent with
+   * the next event all the same, but the session that event opened again would hold the agent's next tool call while its
+   * rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn end in a host that does not wait:
+   * a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
     return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
-      || state.missedFindings.length > 0 || this.#owesScan(state);
+      || state.missedFindings.length > 0 || state.owed.steers.length + state.owed.findings.length > 0 || this.#owesScan(state);
   }
 
   /**
