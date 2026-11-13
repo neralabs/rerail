@@ -113,7 +113,8 @@ pub struct Put {
 }
 
 /// One admitted fact relation. Durable rows remain encoded until a consumer needs them.
-/// Queued rows share the writer's allocation. This value belongs to the run, not a separate cache.
+/// A queued frame is encoded as it is queued: the snapshot and the writer share it. This value belongs to the run, not a
+/// separate cache.
 pub struct Admitted {
     pub stored: Stored,
     data: Data,
@@ -122,7 +123,6 @@ pub struct Admitted {
 #[derive(Clone)]
 enum Data {
     Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>> },
-    Queued(Arc<Put>),
     Metadata,
     /// A relation's rows as its base frame (part 0) and the deltas written after it, oldest first (decision 0117
     /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
@@ -172,7 +172,6 @@ fn apply_deltas(mut rows: Rows, deltas: &[Arc<Admitted>]) -> StoreResult<Rows> {
 
 fn rows_of(data: &Data) -> StoreResult<Rows> {
     match data {
-        Data::Queued(p) => Ok(p.rows.clone()),
         Data::Encoded { types, n, bytes } => {
             let width = types.len();
             let mut cols = vec![Vec::new(); width];
@@ -210,7 +209,6 @@ impl Admitted {
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
             Data::Chain { .. } => rows_of(&self.data),
-            Data::Queued(p) => Ok(p.rows.clone()),
             Data::Encoded { types, n, bytes } => {
                 let width = types.len();
                 let mut cols = vec![Vec::new(); width];
@@ -229,7 +227,6 @@ impl Admitted {
     pub fn len(&self) -> Option<usize> {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
-            Data::Queued(p) => Some(p.rows.n),
             Data::Chain { n, .. } => Some(*n),
             Data::Metadata => None,
         }
@@ -242,7 +239,7 @@ impl Admitted {
                 let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
                 b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
             }
-            Data::Queued(_) | Data::Metadata => 0,
+            Data::Metadata => 0,
         }
     }
 }
@@ -687,7 +684,14 @@ impl ContentStore {
             return Ok(0);
         }
         let n = gone.len();
-        self.keep_frame_refs(space, &[], &[], &[], &[], &gone, None)?;
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for key in &gone {
+                held.remove(key);
+            }
+        }
+        self.write_frames(space, &[], 0, &[], &[], &gone, None)?;
         Ok(n)
     }
 
@@ -726,17 +730,31 @@ impl ContentStore {
         })
     }
 
-    /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
+    /// `keep_frames`, queued behind the run (decision 0102): encoded here, as each is queued, and written by the store's
+    /// writer. The snapshot and the queued write share the encoded frame. Queued as rows, a frame's rows were held by
+    /// the queue while the writer encoded a copy of them: on internal_dead_code the run's last writes held 309 MB of
+    /// rows beside 138 MB of their encoding (and the kept part's own rows they were copied from).
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_frames_retagged(space, puts, Vec::new(), Vec::new(), gone, used)
+        self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), Vec::new(), Vec::new(), gone, used)
+    }
+
+    /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
+    /// rows only until it is encoded.
+    pub fn queue_encoded(&self, space: [u8; 32], frames: Vec<Encoded>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_retagged(space, frames, Vec::new(), Vec::new(), gone, used)
     }
 
     /// `queue_frames`, with `retags` (frames whose rows stay, with their reads told again: no rows are written) and
     /// `deltas` (a relation's rows gone and added, written after its frame: decision 0117 step 4). A frame put whole
     /// (part 0) ends the deltas after it.
     pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), retags, deltas, gone, used)
+    }
+
+    /// `queue_frames_retagged` of frames encoded as they were made (`Put::encoded`); its deltas are encoded here.
+    pub fn queue_encoded_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
-        let mut delta_puts: Vec<Arc<Put>> = Vec::new();
+        let mut delta_frames: Vec<Encoded> = Vec::new();
         let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
         // A relation's deltas queued in this call so far (two of one relation follow each other).
         let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
@@ -760,28 +778,27 @@ impl ContentStore {
             }
             let mut types = vec![DELTA];
             types.extend_from_slice(&d.types);
-            let put = Arc::new(Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } });
-            let frame = Arc::new(Admitted { stored: Stored { digest: 0, reads: Vec::new() }, data: Data::Queued(Arc::clone(&put)) });
-            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, frame, ng, na))));
+            let delta = Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } }.encoded();
+            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, Arc::clone(&delta.frame), ng, na))));
             let mut stored_reads = d.reads.clone();
             stored_reads.push((CHAIN.to_owned(), (k + 1) as u64));
             heads.push((d.rel, d.digest, stored_reads));
-            delta_puts.push(put);
+            delta_frames.push(delta);
         }
-        let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>() + delta_puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>();
+        let bytes: usize = frames.iter().chain(&delta_frames).map(|e| e.frame.encoded_bytes()).sum();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
         if bytes > 4 << 20 && (std::env::var_os("RERAIL_PROFILE").is_some() || std::env::var_os("RERAIL_WRITES").is_some()) {
             let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
-            for p in &puts {
-                let e = by.entry(p.rel.name.as_str()).or_default();
+            for f in &frames {
+                let e = by.entry(f.rel.name.as_str()).or_default();
                 e.0 += 1;
-                e.1 += p.rows.n;
-                e.2 += p.rows.rows.len() * 8;
+                e.1 += f.frame.len().unwrap_or(0);
+                e.2 += f.frame.encoded_bytes();
             }
             let mut by: Vec<_> = by.into_iter().collect();
             by.sort_by(|a, b| b.1.2.cmp(&a.1.2));
             let top: Vec<String> = by.iter().take(15).map(|(r, (f, n, b))| format!("{r}: {f} frames, {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
-            eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, puts.len(), by.len(), top.join("; "));
+            eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, frames.len(), by.len(), top.join("; "));
             if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
                 let mut tsv = String::from("relation\tframes\trows\tbytes\n");
                 for (r, (f, n, b)) in &by {
@@ -791,15 +808,15 @@ impl ContentStore {
             }
         }
         let mut gone = gone;
-        gone.extend(self.ended_deltas(&space, puts.iter()));
-        let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
-        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
-            let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });
-            (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
-        }).collect();
+        gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
+            .iter()
+            .map(|f| (frame_key(&space, &f.rel, f.part), Some(Arc::new(Some(Arc::clone(&f.frame))) as Arc<dyn std::any::Any + Send + Sync>)))
+            .collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
         keys.extend(composed.iter().map(|(rel, f)| (frame_key(&space, rel, 0), Some(Arc::new(Some(Arc::clone(f))) as Arc<dyn std::any::Any + Send + Sync>))));
-        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
+        // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`), the queued frames
+        // themselves.
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(space).or_default();
@@ -814,22 +831,19 @@ impl ContentStore {
                     held.insert((r.rel.clone(), r.part), frame);
                 }
             }
-            for p in &puts {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
+            for f in &frames {
+                held.insert((f.rel.clone(), f.part), Arc::clone(&f.frame));
             }
             for key in &gone {
                 held.remove(key);
             }
             drop(snapshot);
-            // The confirmations as the writer will leave them (`keep_frame_refs`).
+            // The confirmations as the writer will leave them (`write_frames`).
             if let Some(snapshot) = self.snapshot() {
                 let mut snapshot = snapshot.lock().expect("the frames' snapshot");
                 let map = snapshot.confirmed.entry(space).or_default();
-                for p in &puts {
-                    map.remove(&confirm_key(&p.rel, p.part));
-                }
-                for p in &delta_puts {
-                    map.remove(&confirm_key(&p.rel, p.part));
+                for f in frames.iter().chain(&delta_frames) {
+                    map.remove(&confirm_key(&f.rel, f.part));
                 }
                 for (rel, _, _) in &heads {
                     map.remove(&confirm_key(rel, 0));
@@ -844,9 +858,8 @@ impl ContentStore {
         }
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
-            let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &retags, &delta_refs, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
+            let rows: Vec<Framed> = frames.iter().chain(&delta_frames).filter_map(Encoded::framed).collect();
+            let _ = store.write_frames(&space, &rows, delta_frames.len(), &retags, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
             Ok(())
         }));
     }
@@ -856,7 +869,7 @@ impl ContentStore {
     /// the last [`RUNS`] runs did not use.
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let mut gone = gone.to_vec();
-        gone.extend(self.ended_deltas(space, puts.iter()));
+        gone.extend(self.ended_deltas(space, puts.iter().map(|p| (&p.rel, p.part))));
         // Written now, not queued: the confirmations this process holds lose these frames now too.
         if let Some(snapshot) = self.snapshot()
             && let Some(map) = snapshot.lock().expect("the frames' snapshot").confirmed.get_mut(space)
@@ -868,40 +881,51 @@ impl ContentStore {
                 map.remove(&confirm_key(rel, *part));
             }
         }
-        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], &[], &[], &gone, used)
+        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        let stored: Vec<Stored> = puts.iter().map(|p| Stored { digest: p.digest, reads: p.reads.clone() }).collect();
+        let rows: Vec<Framed> = puts
+            .iter()
+            .zip(&blocks)
+            .zip(&stored)
+            .map(|((p, bytes), stored)| Framed { rel: &p.rel, part: p.part, stored, types: &p.rows.types, n: p.rows.n, bytes })
+            .collect();
+        let written = self.write_frames(space, &rows, 0, &[], &[], &gone, used);
+        drop(rows);
+        // The snapshot holds what is written, the blocks moved into it once written. Cloned into it before the write,
+        // the blocks were held twice while the transaction ran.
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for ((p, block), stored) in puts.iter().zip(blocks).zip(stored) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block) } }));
+            }
+            for key in &gone {
+                held.remove(key);
+            }
+        }
+        written
     }
 
     /// The delta frames that `puts` end (decision 0117 step 4): those after a frame put whole, as the snapshot holds
     /// them. Without a snapshot none is named; its reads name no deltas, so they are not read, and the next delta
     /// writes over them.
-    fn ended_deltas<'p>(&self, space: &[u8; 32], puts: impl Iterator<Item = &'p Put>) -> Vec<(Rel, i64)> {
+    fn ended_deltas<'p>(&self, space: &[u8; 32], puts: impl Iterator<Item = (&'p Rel, i64)>) -> Vec<(Rel, i64)> {
         let Some(snapshot) = self.snapshot() else { return Vec::new() };
         let snapshot = snapshot.lock().expect("the frames' snapshot");
         let Some(held) = snapshot.get(space) else { return Vec::new() };
         let mut out = Vec::new();
-        for p in puts.filter(|p| p.part == 0) {
-            if let Some(f) = held.get(&(p.rel.clone(), 0)) {
-                out.extend((1..=f.chain().0).map(|i| (p.rel.clone(), delta_part(i))));
+        for (rel, _) in puts.filter(|(_, part)| *part == 0) {
+            if let Some(f) = held.get(&(rel.clone(), 0)) {
+                out.extend((1..=f.chain().0).map(|i| (rel.clone(), delta_part(i))));
             }
         }
         out
     }
 
+    /// Writes encoded `rows` into `space` (each replacing its frame; the last `deltas` of them delta frames), with
+    /// `retags`, the deltas' `heads`, and `gone` forgotten, in one transaction; with `used`, as `keep_frames`.
     #[allow(clippy::too_many_arguments)]
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], delta_puts: &[&Put], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
-        let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        let delta_blocks: Vec<Vec<u8>> = delta_puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
-        if let Some(snapshot) = self.snapshot() {
-            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
-            let held = snapshot.entry(*space).or_default();
-            for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block.clone()) } }));
-            }
-            for key in gone {
-                held.remove(key);
-            }
-        }
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], deltas: usize, retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
@@ -917,7 +941,7 @@ impl ContentStore {
             // A frame put whole has no deltas after it: its reads name none (`CHAIN`), so those left are not read.
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for batch in puts.iter().zip(&blocks).chain(delta_puts.iter().zip(&delta_blocks)).collect::<Vec<_>>().chunks(96) {
+            for batch in rows.chunks(96) {
                 let values = (0..batch.len()).map(|i| {
                     let p=3+9*i;
                     format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
@@ -926,24 +950,24 @@ impl ContentStore {
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET digest=excluded.digest, reads=excluded.reads, \
                     width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used");
                 let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
-                for (p,data) in batch {
-                    args.extend([p.rel.name.clone().into(),p.rel.ident.to_vec().into(),p.part.into(),(p.digest as i64).into(),
-                        encode_reads(&p.reads).into(),(p.rows.types.len() as i64).into(),(p.rows.n as i64).into(),p.rows.types.clone().into(),(*data).clone().into()]);
+                for f in batch {
+                    args.extend([f.rel.name.clone().into(),f.rel.ident.to_vec().into(),f.part.into(),(f.stored.digest as i64).into(),
+                        encode_reads(&f.stored.reads).into(),(f.types.len() as i64).into(),(f.n as i64).into(),f.types.to_vec().into(),f.bytes.to_vec().into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
             // Each frame's use, apart from its record (`frame_part_used`): three values a frame, so 300 a statement.
-            for batch in puts.iter().chain(delta_puts.iter()).collect::<Vec<_>>().chunks(300) {
+            for batch in rows.chunks(300) {
                 let values = (0..batch.len()).map(|i| format!("(?1,?{},?{},?{},?2)", 3 + 3 * i, 4 + 3 * i, 5 + 3 * i)).collect::<Vec<_>>().join(",");
                 let sql = format!("INSERT INTO frame_part_used(space,rel,ident,part,used) VALUES {values} \
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET used=excluded.used");
                 let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), run.into()];
-                for p in batch {
-                    args.extend([p.rel.name.clone().into(), p.rel.ident.to_vec().into(), p.part.into()]);
+                for f in batch {
+                    args.extend([f.rel.name.clone().into(), f.rel.ident.to_vec().into(), f.part.into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            lap(&format!("{} puts, {} deltas", puts.len(), delta_puts.len()));
+            lap(&format!("{} puts, {} deltas", rows.len() - deltas, deltas));
             // A relation with a delta after its frame: the frame's digest and reads are the relation's now.
             for (rel, digest, reads) in heads {
                 t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
@@ -955,13 +979,13 @@ impl ContentStore {
             // space's confirmations name it with its reads' hash now, one row for the space. A frame put, given a
             // delta's head or forgotten here loses its confirmation in the same transaction: a confirmation never
             // vouches for rows written after it.
-            if !(retags.is_empty() && puts.is_empty() && heads.is_empty() && gone.is_empty())  {
+            if !(retags.is_empty() && rows.is_empty() && heads.is_empty() && gone.is_empty()) {
                 let was: Option<Vec<u8>> = t.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
                 if was.is_some() || !retags.is_empty() {
                     let mut map = was.as_deref().map(decode_confirmed).unwrap_or_default();
                     let before = map.clone();
-                    for p in puts.iter().chain(delta_puts.iter()) {
-                        map.remove(&confirm_key(&p.rel, p.part));
+                    for f in rows {
+                        map.remove(&confirm_key(f.rel, f.part));
                     }
                     for (rel, _, _) in heads {
                         map.remove(&confirm_key(rel, 0));
@@ -1088,6 +1112,44 @@ fn encode_confirmed(map: &HashMap<u64, u64>) -> Vec<u8> {
 
 fn decode_confirmed(bytes: &[u8]) -> HashMap<u64, u64> {
     bytes.chunks_exact(16).map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
+}
+
+/// A frame encoded to be queued (`Put::encoded`, `queue_encoded`): the queue, the snapshot and the writer share it.
+pub struct Encoded {
+    rel: Rel,
+    part: i64,
+    frame: Arc<Admitted>,
+}
+
+impl Encoded {
+    /// The frame as the writer writes it (none for a frame without rows).
+    fn framed(&self) -> Option<Framed<'_>> {
+        match &self.frame.data {
+            Data::Encoded { types, n, bytes } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes }),
+            Data::Metadata | Data::Chain { .. } => None,
+        }
+    }
+}
+
+impl Put {
+    /// This frame encoded, its rows dropped.
+    pub fn encoded(self) -> Encoded {
+        let Put { rel, part, digest, reads, rows } = self;
+        let bytes = super::cross_rows::encode(rows.types.len(), &rows.rows);
+        let Rows { types, n, rows } = rows;
+        drop(rows);
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes) } }) }
+    }
+}
+
+/// An encoded frame to write (`write_frames`).
+struct Framed<'a> {
+    rel: &'a Rel,
+    part: i64,
+    stored: &'a Stored,
+    types: &'a [u8],
+    n: usize,
+    bytes: &'a [u8],
 }
 
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {

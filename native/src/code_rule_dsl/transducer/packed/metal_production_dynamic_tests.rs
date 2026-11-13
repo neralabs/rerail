@@ -60,7 +60,7 @@ fn parity(programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) ->
         .count();
     assert!(seeds <= 1 && repeats <= 1 && seeds + repeats >= 1);
     assert!(trace.iter().all(
-        |r| r.peak_application_buffer_bytes <= super::super::metal_backend::METAL_BUFFER_LIMIT
+        |r| r.peak_application_buffer_bytes <= super::super::metal_backend::metal_buffer_limit()
     ));
     (
         trace.len(),

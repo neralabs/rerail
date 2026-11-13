@@ -39,19 +39,20 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
-/// The device's buffers share one budget of 256 MB in the process (`metal_backend`'s ledger), with the buffer pool's
-/// 64 MB and the other lanes. The device joins keep within about half of it:
+/// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
+/// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
+/// below are those at 512 MB, scaled with the budget, `metal_share`):
 /// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
-const TABLE_MAX: usize = 48 << 20;
+fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 /// the most bytes one submission's tables may take: past it the rules after go into the next submission;
-const BATCH_MAX: usize = 64 << 20;
+fn batch_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// The largest text arena a batch runs again with; past it, the stratum's texts are made on the host.
-const ARENA_MAX: usize = 64 << 20;
+fn arena_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// the most bytes the relations kept on the device may take on a thread;
-const RESIDENT_MAX: usize = 80 << 20;
+fn resident_max() -> usize { rerail_accel::budget::metal_share(80 << 20) }
 /// the budget a submission leaves for its stages run again after an overflow: with less left, the rules after go
 /// into the next submission.
-const HEADROOM: usize = 48 << 20;
+fn headroom() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 
 /// How a stage reads.
 #[derive(Clone)]
@@ -1036,10 +1037,10 @@ impl Resident {
     fn trim(&mut self, room: usize) {
         self.entries.retain(|e| e.rel.strong_count() > 0);
         self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
-        if self.bytes() + room > RESIDENT_MAX {
+        if self.bytes() + room > resident_max() {
             self.unions.clear();
         }
-        while self.bytes() + room > RESIDENT_MAX && !self.entries.is_empty() {
+        while self.bytes() + room > resident_max() && !self.entries.is_empty() {
             let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
             self.entries.swap_remove(at);
         }
@@ -1107,7 +1108,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
                 // and the pool's free buffers give theirs back first.
-                if mj::device_bytes_left() < 8 * k * n + HEADROOM {
+                if mj::device_bytes_left() < 8 * k * n + headroom() {
                     res.entries.clear();
                     res.bytes = 0;
                     mj::give_back();
@@ -1447,7 +1448,7 @@ impl<'p> Run<'p> {
                         self.caps[o] = self.guess(k, cap_in, right.map_or(0, |r| r.0.rows));
                     }
                     let cap = self.caps[o];
-                    if 8 * self.plan.nslots.max(1) * cap > TABLE_MAX {
+                    if 8 * self.plan.nslots.max(1) * cap > table_max() {
                         return Err(format!("a binding table of {cap} rows past the device's budget"));
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
@@ -1508,7 +1509,7 @@ impl<'p> Run<'p> {
             return Some("lower of a name past ASCII (Unicode's mapping is the host's)".to_owned());
         }
         if self.arena_full() {
-            return Some(format!("its texts past the device's text arena of {ARENA_MAX} bytes"));
+            return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
         None
     }
@@ -1624,6 +1625,12 @@ thread_local! {
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
+    // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
+    // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
+    if mj::device_bytes_left() < headroom() {
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata run apart: the wave's budget was spent", 1);
+        return Ok(None);
+    }
     // As `run_here`: a rule over an empty input is not encoded; `resume` gives it no rows.
     let live = live(rules);
     let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
@@ -1703,11 +1710,16 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
+    // A lease past the Metal budget is refused here (decision 0126): the stratum then runs on the CPU, named.
+    rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names))
+}
+
+fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
     let mut runs: Vec<Run<'static>> = Vec::with_capacity(rules.len());
     let mut bytes = 0;
     for (plan, _, _) in rules {
-        if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
+        if !runs.is_empty() && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
             break;
         }
         let mut r = match Run::new(plan) {
@@ -1755,7 +1767,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             let r = &mut runs[k];
             let over = r.overflow();
             let wanted = r.arena.as_ref().map_or(0, |a| a.wanted());
-            let full = r.arena_full() && wanted <= ARENA_MAX;
+            let full = r.arena_full() && wanted <= arena_max();
             if over.is_none() && !full {
                 continue;
             }
@@ -2005,6 +2017,14 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
+    // A lattice head folds each round by key on the device (decision 0124): its fold, and its key table.
+    let mut lattices: HashMap<usize, (mj::LatCode, mj::LatKeys)> = HashMap::new();
+    for &h in heads {
+        if let Some(lat) = store.rels[h].device_lattice() {
+            let (code, top, after) = lat?;
+            lattices.insert(h, (mj::LatCode { code, top, after }, mj::LatKeys::default()));
+        }
+    }
     let mut made = vec![0u64; seeds.len() + deltas.len()];
     let mut rounds = 0;
     let mut first = true;
@@ -2020,6 +2040,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         // relation's rows: its new rows.
         let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
         let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
+        // A lattice head's round: its new keys' rows (with their change counts), its changed rows, their counts.
+        let mut folded: Vec<(usize, mj::Table, mj::Table, mj::Words)> = Vec::new();
         // What the encoded work reads, held until it completes (a pooled buffer dropped early is written again).
         let mut hold: Vec<mj::Table> = Vec::new();
         for &h in heads {
@@ -2045,6 +2067,16 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 }).collect();
                 batch.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's rows")), *n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
                 at += n;
+            }
+            if let Some((lat, keys)) = lattices.get_mut(&h) {
+                let new_keys = mj::Table::new(k + 1, cap).map_err(|e| format!("{e:?}"))?;
+                let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+                let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
+                let total = own.total.get(&h).cloned();
+                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed).map_err(|e| format!("{e:?}"))?;
+                folded.push((h, new_keys, changed, counters));
+                hold.push(union);
+                continue;
             }
             let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
             words.set(0, cap as u32);
@@ -2105,6 +2137,33 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             own.delta.insert(h, Rc::new(delta));
             own.sorts.retain(|(r, _, _), _| *r != h);
             rows_held.push(rows);
+        }
+        // A lattice head: its held rows were updated in place; its new keys' rows onto it, its changed rows its delta.
+        for (h, new_keys, changed, counters) in folded {
+            let (n, added) = (counters.get(0) as usize, counters.get(1) as usize);
+            own.sorts.retain(|(r, _, _), _| *r != h);
+            if n == 0 {
+                own.delta.remove(&h);
+                continue;
+            }
+            any = true;
+            let k = store.rels[h].k;
+            if added > 0 {
+                let ident: Vec<mj::Col> = (0..=k).map(mj::Col::From).collect();
+                let had = own.total.get(&h).map_or(0, |t| t.rows);
+                let total = mj::DevRel::empty(k + 1, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
+                if let Some(old) = own.total.get(&h) {
+                    batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
+                }
+                batch.copy_rows(mj::Rows::Table(&new_keys), added, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
+                old.extend(own.total.insert(h, Rc::new(total)));
+            }
+            let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
+            let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
+            batch.copy_rows(mj::Rows::Table(&changed), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
+            own.delta.insert(h, Rc::new(delta));
+            rows_held.push(new_keys);
+            rows_held.push(changed);
         }
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
         drop((old, rows_held));

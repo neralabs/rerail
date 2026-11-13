@@ -202,7 +202,7 @@ fn check(states: &[(State, u32)], bucket_bits: u32) -> usize {
     assert!(
         trace
             .iter()
-            .all(|d| d.peak_application_buffer_bytes <= super::metal_backend::METAL_BUFFER_LIMIT)
+            .all(|d| d.peak_application_buffer_bytes <= super::metal_backend::metal_buffer_limit())
     );
     assert!(
         trace

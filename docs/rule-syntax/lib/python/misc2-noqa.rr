@@ -44,8 +44,10 @@ noqa_file_exempts(d, "PGH004") :- noqa_file_after(c, R), docof(c, d),
     match("\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]+)*PGH004(?:[\\s,#].*)?", R).
 
 .decl own_line_comment(c: node)
-own_line_comment(c) :- kind(c, "comment"), !token_before(c, _).
-own_line_comment(c) :- kind(c, "comment"), token_before(c, t), line(t, lt), line(c, l), lt < l.
+// Its line holds only whitespace before it. The token before it is no test: the tape leaves out tokens the grammar
+// implies (the `)` of `(a\n.b()\n)  # c`), so the last stored token may stand on an earlier line.
+own_line_comment(c) :- kind(c, "comment"), docof(c, d), line(c, l), col(c, k), tape_line(d, l, sp), text(sp, s),
+    match("[ \t\f]*", @slice(s, 0, k)).
 
 // Ruff (blanket_type_ignore.rs): at any `#`, whitespace, `type` or `pyright`, a colon right away, whitespace,
 // `ignore`; then nothing, or another comment, is a blanket. `ignore[...]` names codes (an empty `[]` too).

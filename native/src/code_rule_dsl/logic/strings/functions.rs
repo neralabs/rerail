@@ -109,6 +109,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rx_extract", &[Text, Text, Number], Text),
     ("rx_replace", &[Text, Text, Text], Text),
     ("rr_to_string", &[Number], Text),
+    // C's `%0Nd`: an integer's digits zero-padded to `width` columns, the sign first, never truncated (`@printf`'s
+    // lowering, `rr::lower::printf_pieces`).
+    ("zero_pad", &[Number, Number], Text),
     // A node's text past `text`'s inline bound (`facts::vtab::syntax::long_node_text`): none for a shorter one, which
     // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
     ("rr_node_text", &[Number], Text),
@@ -290,6 +293,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
+        "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
