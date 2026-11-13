@@ -328,6 +328,22 @@ describe("Rerail daemon control", () => {
     expect(asked).toEqual([home, home, home]);
   });
 
+  // The lock cannot be asked where the engine does not load or the lock file does not open (`posix` asks none). The
+  // daemon a start launches then takes the lock itself, or exits naming the daemon that holds it.
+  it("takes a home lock it cannot ask as free: a stop answers at once, and a start goes on to launch", async () => {
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    // The record a holder killed outright left, naming a pid another process that runs has taken since.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+    const asked = Date.now();
+    expect(await stopDaemon(home, posix)).toBe("not-running");
+    const launching = new Error("the start went on to launch a daemon");
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    await expect(startDaemon({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, posix))
+      .rejects.toBe(launching);
+    expect(Date.now() - asked).toBeLessThan(5_000);
+  }, 40_000);
+
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const repaired: string[] = [];
