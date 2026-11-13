@@ -1079,7 +1079,9 @@ mod tests {
     }
 
     /// A path's canonical form is resolved once: under a root the journal says is unchanged, the next run answers it
-    /// with no `realpath`, and a symlink retargeted under the root is resolved again.
+    /// with no `realpath`, and a symlink retargeted under the root is resolved again. The journal is FSEvents (on other
+    /// systems there is none unless Watchman is installed), as above.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));

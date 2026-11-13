@@ -185,7 +185,8 @@ mod tests {
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(124), "{err}");
-        assert!(err.contains("a_test_past_its_limit_ends_the_run` ran"), "{err}");
+        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS, `test_watchdog::` on Linux).
+        assert!(err.contains(&format!("`{}` ran", short("test_watchdog::tests::a_test_past_its_limit_ends_the_run"))), "{err}");
         assert!(t0.elapsed() < Duration::from_secs(20));
     }
 
@@ -209,8 +210,9 @@ mod tests {
         let err = String::from_utf8_lossy(&out.stderr);
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(out.status.signal(), Some(libc::SIGSEGV), "{err}");
-        assert!(err.contains("a segmentation fault on thread `test_watchdog::tests::a_segmentation_fault_names_the_test`"), "{err}");
-        assert!(err.contains("  test_watchdog::tests::a_segmentation_fault_names_the_test\n"), "{err}");
+        let name = short("test_watchdog::tests::a_segmentation_fault_names_the_test");
+        assert!(err.contains(&format!("a segmentation fault on thread `{name}`")), "{err}");
+        assert!(err.contains(&format!("  {name}\n")), "{err}");
     }
 }
 
