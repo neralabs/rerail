@@ -10,6 +10,33 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Relative-root composition and final filesystem replay
+
+Eight additional cases check relative roots through discovery, repository scans, explicit scopes, and the content API.
+The source recording passes all 47 filesystem cases.
+The first native replay fails three relative-root repository cases.
+One failure adds a finding, one adds an extra finding, and one tests file kind before source path composition.
+
+The source passes `rglob` paths into an explicit scope. FactEngine joins a relative path to the caller's root again.
+The rule now preserves that composition before checking file kind.
+Absolute roots keep their previous behavior.
+The adapter supplies the caller's root spelling; Datalog makes the selection decisions.
+A shared parent-directory demand serves repository and explicit scopes.
+This repair needs no engine change or rebuild.
+
+CLI `69fd43262751e202…` passes all **47 filesystem cases, 35 scanner cases, and seven unchanged original tests through both interfaces**.
+The [updated receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-files-current.json.gz) retains the three relative-root failures and their complete source inputs.
+Its checks also reject final replays that mix different revisions of one program or library.
+The 64-file positive witness still uses one native invocation per interface and preserves every complete finding.
+
+All **790 tooling tests pass**, without skips, in two disjoint shards of 395 tests.
+Their test times are 55.425 and 59.721 seconds. The retained logs include every selected test ID.
+A preceding single-process attempt reaches the 110-second deadline; it does not count as a passing run.
+The final nine filesystem-receipt checks run again after the evidence bundle is refreshed.
+
+The inventory remains 22 historical admissions, 77 drafts, and one absent translation.
+Side-effects conversion helpers, CLI, production reports, history, updates, removal controls, and strict admission remain open.
+
 ## 2026-11-13 — Integration hub and filesystem API parity
 
 The branch includes integration hub `9bfdb4cd5`, through merge `3fd200bf6`.
@@ -49,7 +76,7 @@ The source sorts errors by `Path` components and findings by complete path strin
 The rule now supplies distinct ordering keys for these two behaviors.
 
 The external-file omissions reveal a scheduler defect.
-The recursive execution path resumes deferred requests, but the complete-request path publishes the protocol rows without resuming them.
+The recursive execution path resumes deferred requests, but the complete-request path leaves the protocol response unhandled.
 A new regression first returns zero of 1,000 expected positives.
 The repair resumes deferred keys by request family before dependent consumers run.
 Both wholly deferred and mixed batches now retain all 1,000 exact values and use two whole-batch callbacks.
