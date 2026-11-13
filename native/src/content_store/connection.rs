@@ -340,20 +340,26 @@ impl ThreadConnection {
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        ALL_CONNECTIONS.lock().retain(|(path, connection)| {
-            let Some(connection) = connection.upgrade() else {
-                return false;
-            };
-            // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
-            if *path == self.database_path
-                && let Some(mut connection) = connection.try_lock()
-                && connection.as_ref().is_none_or(Connection::is_autocommit)
-            {
-                connection.take();
-            }
-            true
-        });
+        release_all_at(&self.database_path);
     }
+}
+
+/// Closes every thread's idle connection to the database at `database_path`, whichever store it opened there; one in
+/// use stays open.
+pub(super) fn release_all_at(database_path: &std::path::Path) {
+    ALL_CONNECTIONS.lock().retain(|(path, connection)| {
+        let Some(connection) = connection.upgrade() else {
+            return false;
+        };
+        // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
+        if path == database_path
+            && let Some(mut connection) = connection.try_lock()
+            && connection.as_ref().is_none_or(Connection::is_autocommit)
+        {
+            connection.take();
+        }
+        true
+    });
 }
 
 /// A connection's page cache at rest, in KiB.

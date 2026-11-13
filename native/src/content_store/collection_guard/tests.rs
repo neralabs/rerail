@@ -143,7 +143,7 @@ fn process_exit_releases_the_lease_and_aliases_share_it() {
         alias
     };
     #[cfg(not(unix))]
-    let child_path = path.clone();
+    let child_path = path.to_path_buf();
     let mut child = KillOnDrop(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", CHILD_TEST, "--nocapture"])
