@@ -2,10 +2,10 @@ import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import Database from "better-sqlite3";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, opendirSync, type Dir, type Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, opendir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
@@ -210,6 +210,25 @@ async function unreadableDirectory(directory: string): Promise<() => Promise<voi
   await writeFile(join(directory, "x.py"), "NEEDLE\n");
   await chmod(directory, 0o000);
   return () => chmod(directory, 0o755);
+}
+
+/**
+ * `directory`, whose listing fails with EIO once it has given `after` entries, as a listing on a network or FUSE
+ * filesystem can; the names it gave go to `listed`.
+ */
+function failingListing(directory: Dir, { after, listed }: { after: number; listed: string[] }): Dir {
+  async function* entries(): AsyncGenerator<Dirent> {
+    try {
+      for (let entry = await directory.read(); entry !== null; entry = await directory.read()) {
+        if (listed.length === after) throw Object.assign(new Error("EIO: i/o error, readdir"), { code: "EIO" });
+        listed.push(entry.name);
+        yield entry;
+      }
+    } finally {
+      await directory.close();
+    }
+  }
+  return Object.defineProperty(directory, Symbol.asyncIterator, { value: entries });
 }
 
 /** Clean directories the shared content store records as complete. */
@@ -1243,6 +1262,33 @@ describe("mechanical code rule regressions", () => {
       expect(await repositoryAudit(checkout)).toEqual(walked);
     } finally {
       for (const restore of restores) await restore();
+    }
+  }, 60_000);
+
+  it("audits the entries a folder listed before its listing failed partway, and reports the folder", async () => {
+    const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
+    roots.push(plain);
+    await mkdir(join(plain, "api", "flaky"), { recursive: true });
+    for (const name of ["a", "b", "c", "d", "e"]) await writeFile(join(plain, "api", "flaky", `${name}.py`), "NEEDLE\n");
+    await writeFile(join(plain, "api", "top.py"), "NEEDLE\n");
+    const flaky = join(await realpath(plain), "api", "flaky");
+    const listed: string[] = [];
+    // This file's `opendir` is the spy being mocked, and so is what `vi.importActual` returns: the listing opens through
+    // `opendirSync`, as the spool test above reads through `open`.
+    vi.mocked(opendir).mockImplementation(async (path, options) => {
+      const directory = opendirSync(path, options);
+      return String(path) === flaky ? failingListing(directory, { after: 2, listed }) : directory;
+    });
+    try {
+      const result = await repositoryAudit(plain);
+      expect(listed).toHaveLength(2);
+      expect(result).toEqual({
+        status: "failed",
+        paths: [...listed.map(name => `api/flaky/${name}`), "api/top.py"].toSorted(),
+        failures: ["api/flaky source-incomplete"],
+      });
+    } finally {
+      vi.mocked(opendir).mockReset();
     }
   }, 60_000);
 
