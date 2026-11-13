@@ -9,7 +9,7 @@
  * so a stop reaches it between two tries. The `VACUUM` that ends the move holds the write lock for as long as it copies
  * the file, so in the daemon it runs in a process of its own and gives way whenever the daemon's thread waits for that
  * lock (`vacuum-giving-way.ts`). A move whose `VACUUM` a stop or a skip cut short leaves the free space in the file, and
- * a later run gives it back while it is more than half the file and `OWED_FREE_BYTES` (`shrinkOwed`).
+ * a later run gives it back while it is more than `OWED_FREE_BYTES` (`shrinkOwed`).
  */
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, statfsSync, statSync } from "node:fs";
@@ -52,8 +52,8 @@ const PAUSE_MS = 150;
 const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
 
 /**
- * The free space a later run gives back, once the move has ended, when it is also more than half the file
- * (`shrinkOwed`): a move whose `VACUUM` was cut short leaves most of the file free (1.3 GB of 1.4 GB for 4,000 audits),
+ * The free space a later run gives back once the move has ended (`shrinkOwed`): a move whose `VACUUM` was cut short
+ * leaves the provenance it moved as free pages (1.3 GB of 1.4 GB for 4,000 audits), however much else the file holds,
  * and a `VACUUM` that ran leaves none. 64 MB is what the move frees from about 290 audits whose provenance took 221 KB
  * each (767 rules on), a seventh of the smallest file reported; below it, a start leaves the space to new history, which
  * fills it as it comes (39.9 KB per audited edit), and the line the cut wrote names `rerail scrub`.
@@ -315,12 +315,11 @@ function workLeft(path: string): boolean {
 
 /**
  * Whether a `VACUUM` the move ran up to is owed: an audit that started before the step names a stored provenance (the
- * move moved it), and the free pages are more than half the file and more than `OWED_FREE_BYTES`. A move whose `VACUUM`
- * was stopped, skipped or failed leaves the file so; a `VACUUM` that ran leaves no free page.
+ * move moved it), and the free pages come to more than `OWED_FREE_BYTES`. A move whose `VACUUM` was stopped, skipped or
+ * failed leaves the file so; a `VACUUM` that ran leaves no free page, and new history reuses what later deletes free.
  */
 function shrinkOwed(client: Client, upTo: number): boolean {
-  const free = pragmaNumber(client, "freelist_count");
-  return 2 * free > pragmaNumber(client, "page_count") && free * pragmaNumber(client, "page_size") > OWED_FREE_BYTES
+  return pragmaNumber(client, "freelist_count") * pragmaNumber(client, "page_size") > OWED_FREE_BYTES
     && client.prepare<[number], number>("SELECT 1 FROM audits WHERE rule_provenance_id IS NOT NULL AND started_at <= ? LIMIT 1")
       .pluck().get(upTo) !== undefined;
 }

@@ -496,8 +496,10 @@ describe("audit rule provenance", () => {
 
   it("ends its VACUUM at once when stopped, leaves the file whole, and a later run finishes the shrink", async () => {
     const path = await fileOfTheBuildBefore();
-    // About 80 MB of provenance, more than the 64 MB of free space a later run leaves to new history.
+    // About 80 MB of provenance, more than the 64 MB of free space a later run leaves to new history, beside 100 MB of
+    // other history: what the move frees can be a small part of a file that has recorded much else.
     const written = writeInlineAudits(path, Array.from({ length: 800 }, () => provenanceOf("/home/dev/app", 200)));
+    fillPages(path, 100_000_000);
     // A VACUUM that would hold the write lock 30 s, as one of a large file on a loaded machine does.
     const held = join(dirname(path), "vacuum-held");
     const stop = new AbortController();
