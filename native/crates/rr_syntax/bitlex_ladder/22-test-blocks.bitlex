@@ -168,6 +168,10 @@ mask f_dot      = code & dot & prev(num) & next(digit)
 mask frac       = fill(prev(f_dot), ~digit)
 escape "a float's `.` after a fraction" when f_dot & prev(frac)
 mask int        = num & ~frac                   # an integer's digits
+# A float is one token, as simdjson's number is one scalar. Its last digit marks the token
+# after it (`float_after`), and tier 2 makes the number it took a float there. A float the file
+# ends with, no token after it, goes to the engine.
+mask frac_last  = frac & ~next(frac)
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
 # checked by it. A float's digits are its text: no limit. Checked at the number's token
 # (decision 0133's local check): tier 1 marks a number's first digit with a digit 18 bytes on,
@@ -203,9 +207,9 @@ token code_literal = start tick & o_tick last t1_last | t2_last | t3_last | e2_l
 token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
 keywords hash_word { "#include" } required
 token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
-token number     = start digit & int & ~prev(int) last int & ~next(int)
-# A float's `.` and its fraction: tier 2 merges it into the number before it.
-token fraction   = start f_dot last frac & ~next(frac)
+# A float's `.` and fraction are its number's: one token.
+mask numeral    = int | f_dot | frac
+token number     = start digit & int & ~prev(int) last numeral & ~next(numeral)
 token punct      = start punct & p_start last p_last
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
@@ -219,8 +223,10 @@ skip code & ws
 # --- Line breaks -------------------------------------------------------------------------------
 
 # Every grammar token's start (the comments' left out): a mark goes before the next one.
-mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & int & ~prev(int)) | f_dot | p_start
+mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & int & ~prev(int)) | p_start
 mask after_comma = fill(code & comma & p_start, starts_g)
+# The token after a float: first of the marks, as tier 2 reads it right after the number.
+mark float_after = frac_last
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
@@ -245,6 +251,7 @@ mark newline     = lf & ~after_comma, end
 # A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments. After the
 # line breaks' marks, which a statement before it takes.
 mark end_on      = tokens "." "end"
+escape "a float the file ends with" when last_byte & fill(frac_last, starts_g)
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
 mask in_str      = f_str & ~o_str
@@ -320,7 +327,7 @@ tree rr {
   # JSON, every token merged into the document's leaf.
   choice json_document nested = '{' as json_object [json_member (merge json_object ',' json_member)*] merge json_object '}'
   choice json_member    = merge json_object string merge json_object ':' json_value
-  choice json_value     = merge json_object string | merge json_object number [merge json_object fraction] | merge json_object '-' merge json_object number [merge json_object fraction]
+  choice json_value     = merge json_object string | merge json_object number | merge json_object '-' merge json_object number
                         | merge json_object 'true' | merge json_object 'false' | merge json_object 'null'
                         | json_inner_object | json_inner_array
   choice json_inner_object nested = merge json_object '{' [json_member (merge json_object ',' json_member)*] merge json_object '}'
@@ -421,8 +428,8 @@ tree rr {
   # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
   # argument's name.
   choice primary        = numeric | unsigned
-  # A number, and a fraction after it: one float leaf.
-  choice numeric        = number [merge float fraction]
+  # A number, a float where the mark after it says so: one leaf.
+  choice numeric        = number [relabel _ as float float_after]
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
                         | identifier as variable [wrap call function as identifier arguments: argument_list
                                                  | unless no_named (wrap named_argument name as identifier ':' value: term)]
@@ -430,9 +437,9 @@ tree rr {
                         | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
                           | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
                         | parenthesized_expression
-  # `-` and a number: one number leaf (a float, with a fraction). Else `-` and its operand,
+  # `-` and a number: one number leaf (a float, where its mark says so). Else `-` and its operand,
   # a primary that is no number.
-  choice minus          = '-' (merge number number [merge float fraction] | wrap unary_expression _ drop operand: unsigned)
+  choice minus          = '-' (merge number number [relabel _ as float float_after] | wrap unary_expression _ drop operand: unsigned)
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
   # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
@@ -519,6 +526,6 @@ tree rr {
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens
+  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens
   extra comment
 }

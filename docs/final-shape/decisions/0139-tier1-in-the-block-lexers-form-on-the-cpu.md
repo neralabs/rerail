@@ -173,3 +173,33 @@ Tier 1 through the JIT went 494.7M to 492.8M, ahead of time 471.8M to 469.9M.
 Spills stayed at 277: `f_dot`'s values now hold the registers in the rounds'
 place (4,189 points over them), live from the classes to the tokens that read
 them.
+
+## A float one token
+
+simdjson's number is one scalar, whatever is in it. A float is now one token
+too, its number's: the `fraction` token is gone. What makes it a float is a
+mark on the token after it, from the float's last digit. Tier 2 makes the
+leaf it just made a float there:
+
+```
+token number = start digit & int & ~prev(int) last numeral & ~next(numeral)
+mark float_after = frac_last          # hidden: skipped where no arm reads it
+choice numeric = number [relabel _ as float float_after]
+# no token after it to mark: the engine reads it
+escape "a float the file ends with" when last_byte & fill(frac_last, starts_g)
+```
+
+Its mark is the first one, as tier 2 reads it right after the number, before
+a line's marks on the same token. It is hidden: inside JSON or a raw line the
+number is merged into a leaf of another kind, and the mark is skipped.
+
+The grammar compiler had refused this shape: a `relabel` with no field broke
+its count of the nodes a choice leaves (`grammar::one_node`). Every rule with
+a field around a `numeric` became a call, and tier 2 grew to 4,928 words. A
+relabel to a kind alone (not `drop`) now keeps the count: 3,322 words, from
+3,563.
+
+Ahead of time the whole parse went 917.0M to 911.1M (tier 1 469.9M to
+465.9M, tier 2 404.3M to 402.5M). Through the JIT it went 1,020.3M to 1,026.0M:
+tier 1 492.8M to 501.5M, from the mark's mask. The 4,928-word form ran tier 2
+in 372.1M ahead of time; why the calls were cheaper is open.

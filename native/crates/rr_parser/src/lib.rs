@@ -256,7 +256,8 @@ pub mod tests {
         // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
         // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
         // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3563, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -1282,7 +1283,7 @@ pub mod tests {
         ];
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {
@@ -1317,7 +1318,7 @@ pub mod tests {
         }
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {
@@ -1344,10 +1345,17 @@ pub mod tests {
             cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
             cases.push((format!("{head}a(1.2.3).\n"), false));
             cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = -1.5, y = -20.\n"), true));
+            cases.push((format!("{head}.limit 1.5\na(1).\n"), true));
+            cases.push((format!("{head}.options {{\"a\": 1.5, \"b\": -0.25, \"c\": 3}}\n"), true));
+            cases.push((format!("{head}a(1.5, 1234.5, 2)."), true));
         }
+        // A float the file ends with: no token after it to mark.
+        cases.push((".decl a(x: number)\n.limit 1.5".to_string(), false));
+        cases.push((".decl a(x: number)\n.limit 1.5 // a comment".to_string(), false));
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {
