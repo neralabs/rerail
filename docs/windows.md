@@ -268,7 +268,8 @@ waits about 21 seconds for such a share, and a process that started that read co
 briefly it waited for the answer, so no open starts it, and the daemon reads a drive only for a request from a folder
 on it. A folder that is gone from a drive that is there keeps its key: the file system holds no spelling for it, and a
 session opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its
-key, and the database still opens. On macOS and Linux the step reads and copies nothing.
+key, and the database still opens. A lookup that fails for a reason that can pass (a busy file, a share that did not
+answer) leaves the key waiting for a later open from its drive. On macOS and Linux the step reads and copies nothing.
 
 Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
 runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version

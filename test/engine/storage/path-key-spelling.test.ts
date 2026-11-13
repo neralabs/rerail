@@ -874,4 +874,38 @@ describe("path keys an earlier build stored under another spelling", () => {
       .resolves.toMatchObject({ presence: "silent", repositoryState: "started" });
     expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
   }, 60_000);
+
+  // A lookup that failed for any reason read as a folder that keeps its spelling, and the key was never looked up again:
+  // a share that did not answer once, or a busy file, left that folder's settings unread for good.
+  it("leave a key waiting where its lookup failed for a reason that can pass, and copy its rows at a later open", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    let answers = false;
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      if (path === stored && !answers) throw Object.assign(new Error("ETIMEDOUT: connection timed out, access"), { code: "ETIMEDOUT" });
+      return path === stored ? folder : path;
+    });
+    openRerailDatabase(databasePath).$client.close();
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+
+    answers = true;
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "completed", auditId: "audit-1" }));
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
+  });
+
+  // `existsSync` reads any failure as a folder that is not there, so a folder the check could not read kept its spelling.
+  // Two links that lead to each other fail the check with ELOOP; Windows answers it for two such junctions without an
+  // error, so the case is made off Windows, with the lookup run as on Windows.
+  it.runIf(process.platform !== "win32")("throw, rather than read as a folder that is gone, where the check of a folder fails otherwise", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-key-spelling-")));
+    temporaryDirectories.push(root);
+    symlinkSync(join(root, "b"), join(root, "a"));
+    symlinkSync(join(root, "a"), join(root, "b"));
+
+    expect(() => actual.currentPathKey(join(root, "a"), "win32")).toThrow(expect.objectContaining({ code: "ELOOP" }));
+    expect(actual.currentPathKey(join(root, "gone"), "win32")).toBe(join(root, "gone"));
+  });
 });

@@ -14,7 +14,7 @@
  * each reader of a folder's records makes before it reads them: the start-state check of hooks and commands, `rerail
  * start` and `rerail stop`, and the daemon's answer to a hook or a status line (`DatabaseApiStores.copyWaitingKeys`).
  */
-import { existsSync } from "node:fs";
+import { accessSync } from "node:fs";
 import { resolve, win32 } from "node:path";
 import { sql } from "drizzle-orm";
 import { physicalPath } from "../catalog/checkout-control.js";
@@ -101,10 +101,35 @@ const PATH_KEY_SPELLINGS_TABLE = "CREATE TABLE IF NOT EXISTS `path_key_spellings
  * kept the spelling a caller passed (`c:\work\app` from VS Code), and the stores of every table above look a folder
  * that exists up by that spelling (`physicalPath`, or `checkoutRealpath` in the audit controls). A folder that is gone
  * keeps `stored`: the file system holds no spelling for it, and the audit controls look it up by the spelling a session
- * there gave, which is the old key. Elsewhere it is `stored` itself, since the realpath there did not change.
+ * there gave, which is the old key. Elsewhere it is `stored` itself, since the realpath there did not change. A check
+ * that fails otherwise (a busy file, a share that did not answer) throws: it says nothing of the folder.
  */
 export function currentPathKey(stored: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" && existsSync(stored) ? physicalPath(stored, platform) : stored;
+  return platform === "win32" && folderIsThere(stored) ? physicalPath(stored, platform) : stored;
+}
+
+/** Whether `path` is there; false only when the file system says it is not, and the error of any other failure. */
+function folderIsThere(path: string): boolean {
+  try {
+    accessSync(path);
+    return true;
+  } catch (error) {
+    if (isGone(error)) return false;
+    throw error;
+  }
+}
+
+/** An error that says the path names nothing: it, or a folder on the way, is not there. */
+function isGone(error: unknown): boolean {
+  return ["ENOENT", "ENOTDIR"].includes(String((error as { code?: unknown } | undefined)?.code));
+}
+
+/**
+ * An error after which a key keeps its spelling for good: its folder is gone, or this user may not read it, so this
+ * build cannot key it by the file system's spelling either. Any other failure can pass, and the key waits.
+ */
+function keepsSpelling(error: unknown): boolean {
+  return isGone(error) || ["EACCES", "EPERM"].includes(String((error as { code?: unknown } | undefined)?.code));
 }
 
 /**
@@ -208,10 +233,10 @@ export function lookUpWaitingKeys(database: RerailDatabase, keyOf: PathKeyOf): P
  * Under the lock: copies the rows under every path key the file holds to the key `lookups` found for it where that
  * differs, merging the rows that come to one key (the newer stays, `PathKeyedTable.newer`, and a checkout keeps a start
  * state either row had), and records each spelling that moved in `path_key_spellings`, the audit history's among them:
- * those read before the lock, and those of rows written since. A key with no key found, or one written after the
- * lookups (`lookedUp`), goes there with none, for a later open to look up. A key `keyOf` could not resolve (it threw: a
- * folder Rerail may not read) stays as it is, so the open never fails on one folder, and so does a key the step does
- * not look up ({@link looksUp}). `keyOf` must give back unchanged a key it returned, as a realpath does: rows copied to
+ * those read before the lock, and those of rows written since. A key with no key found (its lookup failed for a reason
+ * that can pass, such as a share that did not answer), or one written after the lookups (`lookedUp`), goes there with
+ * none, for a later open to look up. A key whose folder is gone or that Rerail may not read stays as it is, so the open
+ * never fails on one folder, and so does a key the step does not look up ({@link looksUp}). `keyOf` must give back unchanged a key it returned, as a realpath does: rows copied to
  * a key that would itself move could stay short of the last one.
  */
 export function respellPathKeys(database: RerailDatabase, lookups: PathKeyLookups): void {
@@ -308,11 +333,16 @@ function looksUp(stored: string): boolean {
   return resolve(stored) === stored;
 }
 
+/**
+ * `keyOf`'s key for `stored`. A lookup that fails where the folder is gone or may not be read keeps `stored`, so the open
+ * never fails on one folder; one that fails otherwise (a busy file, a network error) is undefined, so the key waits for
+ * a later open from its drive rather than reading as one that keeps its spelling.
+ */
 function keyOrStored(keyOf: PathKeyOf, stored: string): string | undefined {
   try {
     return keyOf(stored);
-  } catch {
-    return stored;
+  } catch (error) {
+    return keepsSpelling(error) ? stored : undefined;
   }
 }
 
