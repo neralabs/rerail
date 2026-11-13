@@ -585,6 +585,8 @@ interface RuntimeSessionState {
   controlsVersion: number | undefined;
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
+  /** Set while `repositoryAudit` runs: the idle close lets it finish (`#owesScan`). */
+  repositoryAuditRunning?: true;
   pendingCodeRuleCalls: PendingCodeRuleCall[];
   /**
    * The tool calls of the session's current turn still waiting for their result, which may come long after the call
@@ -631,8 +633,17 @@ export interface SessionSuspension {
   readonly databasePath: string;
 }
 
-/** The suspended sessions a runtime opens again, by session id: an engine service keeps them across its runtimes. */
+/**
+ * The suspended sessions a runtime keeps and opens again, by session id: an engine service keeps them across its
+ * runtimes.
+ */
 export interface SuspendedSessions {
+  /**
+   * Keeps the suspension of a session `closeIdleSession` is letting go, before its close runs: a scan asked for it while
+   * it closes finds it suspended, and a close that fails leaves it suspended, not open in the database with nobody
+   * holding it.
+   */
+  keep(suspension: SessionSuspension): void;
   get(sessionId: string): SessionSuspension | undefined;
   /** Ends the session's suspension as a runtime claims it again, and returns it; undefined once another has taken it. */
   take(sessionId: string): SessionSuspension | undefined;
@@ -1649,12 +1660,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Claims the session for this runtime, which delivers its steers in the background when it can, else at the next event.
    * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
    * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
-   * meanwhile registers as before, and is refused while this one owns it.
+   * meanwhile registers as before, and is refused while this one owns it. It is taken only once the claim is made: an
+   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record.
    */
   #registerOwner(sessionId: string): PolicyOwnerClaim {
-    const kept = this.#suspendedSessions?.take(sessionId)?.ownerClaim;
-    if (kept !== undefined && this.#controls.holdsOwner(sessionId, kept)) return kept;
-    return this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
+    const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
+    const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
+      ? kept
+      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
+    this.#suspendedSessions?.take(sessionId);
+    return claim;
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -1828,12 +1843,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
       const state = this.#sessions.get(sessionId);
       if (state === undefined) return { kind: "not-held" };
-      if (options.evenIfOwing !== true && this.#owesAgent(state)) return { kind: "owing" };
+      const owing = (): boolean => options.evenIfOwing !== true && this.#owesAgent(state);
+      if (owing()) return { kind: "owing" };
       const suspension = await this.#suspension(state);
-      state.suspending = true;
-      await this.#router(state.descriptor.host).stop(sessionId);
+      // Asked again: the control timer may have claimed a scan while the walks were read, which the session now runs.
+      if (owing()) return { kind: "owing" };
+      await this.#suspend(state, suspension);
       return { kind: "suspended", suspension };
     });
+  }
+
+  /**
+   * Closes `state`'s session in memory and keeps it open in the database, owned. Its suspension is kept first
+   * (`SuspendedSessions.keep`), with no await from the last check of what it owes: a scan asked for it from now on queues
+   * for its next open, and a close that fails still leaves it suspended, ended when its daemon stops.
+   */
+  async #suspend(state: RuntimeSessionState, suspension: SessionSuspension): Promise<void> {
+    state.suspending = true;
+    this.#suspendedSessions?.keep(suspension);
+    await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
   }
 
   /** What `state`'s session keeps while suspended: its owner claim, and where its walks stand once its evaluator is open. */
@@ -1858,11 +1886,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
    * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
-   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   * still running, a steer or held finding not yet delivered, or a scan (`#owesScan`).
    */
   #owesAgent(state: RuntimeSessionState): boolean {
     return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
-      || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
+      || state.missedFindings.length > 0 || this.#owesScan(state);
+  }
+
+  /**
+   * Whether the session runs a scan or its checkout audit, which the evaluator's close would interrupt, or has a scan
+   * queued that its control timer has not claimed yet: the open session claims it within a tick, where a suspended one
+   * would leave it queued until its next open. The queue costs one indexed read, made only by the idle close.
+   */
+  #owesScan(state: RuntimeSessionState): boolean {
+    return state.auditRequestWork !== undefined || state.repositoryAuditRunning === true
+      || this.#controls.hasQueuedRequest(state.descriptor.sessionId);
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -1951,12 +1989,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, auditId ?? null, status, error);
       },
     };
+    state.repositoryAuditRunning = true;
     try {
       await state.codeRuleBridge!.audit({ scope: "repository", mode: "log", audit });
     } catch (error) {
       for (const checkoutRoot of claimed) {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, null, "failed", error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      delete state.repositoryAuditRunning;
     }
   }
 

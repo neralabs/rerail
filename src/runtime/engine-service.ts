@@ -234,9 +234,13 @@ interface SuspendedEntry {
   readonly suspension: SessionSuspension;
 }
 
-/** The service's suspended sessions as its runtimes see them: one opening a session takes its suspension back. */
-function suspendedSessions(state: EngineRoutingState): SuspendedSessions {
+/**
+ * The service's suspended sessions as the runtime at `runtimeKey` sees them: it keeps the sessions it suspends there, and
+ * one opening a session takes its suspension back.
+ */
+function suspendedSessions(state: EngineRoutingState, runtimeKey: string): SuspendedSessions {
   return {
+    keep: suspension => keepSuspended(state, runtimeKey, suspension),
     get: sessionId => state.suspended.get(sessionId)?.suspension,
     take: (sessionId) => {
       const entry = state.suspended.get(sessionId);
@@ -323,14 +327,22 @@ async function routeEngineEvent(
     return runtime.ingest(event);
   });
   track(state, execution);
-  const deliveries = await execution;
-  if (event.kind === "session-end") {
-    state.lastEventAt.delete(lane);
-    // An end opens a suspended session again and closes it; one its runtime dropped (a stopped repository) ends here.
-    endIfSuspended(state, sessionId);
-    releaseSessionRuntime(state, sessionId, runtimeKey);
+  try {
+    return await execution;
+  } finally {
+    if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
   }
-  return deliveries;
+}
+
+/**
+ * The session has ended, whether its runtime recorded the end or not: it is no longer quiet, its suspension, when its
+ * runtime did not open it again (a stopped repository, or an open that failed), ends its record here, and the runtime it
+ * used retires once no other session uses it.
+ */
+function afterSessionEnd(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
+  state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
+  endIfSuspended(state, sessionId);
+  releaseSessionRuntime(state, sessionId, runtimeKey);
 }
 
 /** The runtime at `runtimeKey` is about to be used: it is no longer one to close for want of use. */
@@ -349,7 +361,7 @@ function runtimeFor(
   const open = state.runtimes.get(runtimeKey);
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-  const runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state) });
+  const runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey) });
   state.runtimes.set(runtimeKey, runtime);
   state.runtimeOptions.set(runtimeKey, runtimeOptions);
   return runtime;
@@ -398,9 +410,9 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       const quiet = quietFor(lane);
       if (quiet < idleMs) return false;
       const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
+      // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it.
       const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing });
       if (idle?.kind === "owing") return false;
-      if (idle?.kind === "suspended") keepSuspended(state, runtimeKey, idle.suspension);
       state.lastEventAt.delete(lane);
       return true;
     });
@@ -413,7 +425,11 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
   }));
 }
 
-/** Keeps a suspended session, with how to make its runtime again, for its next open. */
+/**
+ * Keeps a suspended session, with how to make its runtime again, for its next open. Its runtime keeps it as the close
+ * begins (`RerailRuntime.closeIdleSession`), so a scan asked for it meanwhile opens it again behind the close, in its
+ * lane, and a close that fails leaves it here to end at the service's close.
+ */
 function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension: SessionSuspension): void {
   state.suspended.set(suspension.descriptor.sessionId, { runtimeKey, runtimeOptions: state.runtimeOptions.get(runtimeKey), suspension });
 }
@@ -703,8 +719,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       for (const timer of routing.idle.values()) clearTimeout(timer);
       routing.idle.clear();
       await Promise.allSettled(routing.pending);
-      await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
-      endSuspended(routing);
+      try {
+        await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      } finally {
+        // Also when a runtime's close failed: a suspended session left open would read as live with no daemon.
+        endSuspended(routing);
+      }
     },
   };
   server.requestTimeout = 30_000;

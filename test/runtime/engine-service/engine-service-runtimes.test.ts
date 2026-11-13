@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,6 +19,7 @@ type CodeRuleEditBatch = Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1];
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(services.splice(0).map(service => service.close()));
   // A session's source walk can still hold a checkout folder open for a moment after its runtime closed, which fails an
   // immediate remove on Windows (EBUSY).
@@ -142,18 +144,31 @@ describe("the engine service's runtimes", () => {
   });
 });
 
+/** An evaluator that checks nothing. */
+function quietAuditor(): CodeRuleAuditor {
+  return {
+    openWorkspace: async () => undefined,
+    acceptsPath: () => true,
+    auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+    close: async () => undefined,
+  };
+}
+
 /**
  * An evaluator that checks nothing and records every batch of edits it is given (`batches`) and the paths a walk asked
- * it about (`looked`); its scans (`scans`) complete with no finding, each recorded in the audit store as a real scan is.
- * Every evaluator after the first opens once `reopening` settles, as one compiling its rules does, and `reopened`
- * settles as the second begins to.
+ * it about (`looked`); its scans (`scans`) complete with no finding once `auditing` settles, each recorded in the audit
+ * store as a real scan is. Every evaluator after the first opens once `reopening` settles, as one compiling its rules
+ * does, and `reopened` settles as the second begins to. The first evaluator to close does so once `closing` settles, and
+ * fails to with `closeFails`; `closeBegun` settles as it begins to.
  */
-function recordingAuditor(options: { reopening?: Promise<void> } = {}) {
+function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promise<void>; closeFails?: boolean; auditing?: Promise<void> } = {}) {
   const batches: CodeRuleEditBatch[] = [];
   const scans: string[] = [];
   const looked = new Set<string>();
   const reopened = Promise.withResolvers<void>();
+  const closeBegun = Promise.withResolvers<void>();
   let opened = 0;
+  let closed = 0;
   const create = ({ workspaceRoot, audits }: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
     openWorkspace: async () => {
       opened += 1;
@@ -171,15 +186,22 @@ function recordingAuditor(options: { reopening?: Promise<void> } = {}) {
     },
     audit: async (sessionId, input) => {
       scans.push(input.scope);
+      await options.auditing;
       const auditId = audits.start({
         sessionId, workspaceRoot, scope: input.scope, mode: input.mode, revision: 0, catalogRevision: "test", ruleRevisions: [], paths: [],
       });
       audits.finish(auditId, { status: "completed", violations: [], failures: [] });
       return [auditId];
     },
-    close: async () => undefined,
+    close: async () => {
+      closed += 1;
+      if (closed > 1) return;
+      closeBegun.resolve();
+      await options.closing;
+      if (options.closeFails === true) throw new Error("close failed");
+    },
   });
-  return { create, batches, scans, looked, reopened: reopened.promise };
+  return { create, batches, scans, looked, reopened: reopened.promise, closeBegun: closeBegun.promise };
 }
 
 /** Each audited edit of `path`: the text it left, and the text it was measured from, or why there was none. */
@@ -213,12 +235,7 @@ describe("the engine service's idle close", () => {
       // The runtime closes when its last session does, so the closed session's runtime goes with it.
       idleRuntimeMs: 0,
       now: () => clock.now,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
+      createAuditor: quietAuditor,
       ...options,
     });
     services.push(service);
@@ -347,6 +364,63 @@ describe("the engine service's idle close", () => {
     }
   });
 
+  // The open session claims a queued scan at its control timer's next tick. One queued just before the sweep, which the
+  // API found the session open for, was left queued by the suspension until the session's next event.
+  it("keeps a quiet session open while a scan asked for it waits to be claimed, and runs the scan", async () => {
+    // The control timer ticks only as the test moves it, so the sweep comes before the claim.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const { create, scans } = recordingAuditor();
+      const { clock, service, start, databasePath } = await idleService({ createAuditor: create });
+      await start("a");
+      clock.now += 60_000;
+      const controls = new SqliteAuditControlStore(databasePath);
+      try {
+        const request = controls.requestAudit("a", { scope: "repository" });
+        await service.resumeSession("a");
+        await service.closeIdleSessions();
+        await vi.waitFor(() => {
+          expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+        }, { timeout: 10_000, interval: 50 });
+        expect(scans).toEqual(["repository"]);
+        expect(service.openRuntimes()).toBe(1);
+      } finally {
+        controls.close();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  // A scan asked for while the session closed queued for it, but the API found no suspension to open again until the
+  // close had finished.
+  it("runs a scan asked for a quiet session while its close runs", async () => {
+    const closing = Promise.withResolvers<void>();
+    const { create, scans, looked, closeBegun } = recordingAuditor({ closing: closing.promise });
+    const { first, clock, service, start, databasePath } = await idleService({ createAuditor: create });
+    await writeFile(join(first, "app.py"), "x = 1\n");
+    await start("a");
+    // The evaluator is open, so the sweep's close waits for it.
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    clock.now += 60_000;
+    const sweeping = service.closeIdleSessions();
+    await closeBegun;
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      const resuming = service.resumeSession("a");
+      closing.resolve();
+      await Promise.all([sweeping, resuming]);
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
   it("ends a quiet session's record when its end comes, also from a repository stopped since", async () => {
     const { first, second, clock, service, session, send, start, ended, databasePath } = await idleService();
     await start("a");
@@ -359,6 +433,60 @@ describe("the engine service's idle close", () => {
     await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b", second) });
     expect(ended("a")).not.toBeNull();
     expect(ended("b")).not.toBeNull();
+  });
+
+  // The end opens the suspended session again to close it. An open that failed lost the end: the record stayed open and
+  // owned, read as live until the daemon stopped, and the runtime made for the end stayed open as long.
+  it("ends a quiet session's record when its end comes and it cannot be opened again, and closes the runtime made for it", async () => {
+    let made = 0;
+    const { clock, service, session, send, start, ended, live } = await idleService({
+      createAuditor: () => {
+        made += 1;
+        if (made > 1) throw new Error("evaluator unavailable");
+        return quietAuditor();
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    await expect(send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") })).rejects.toThrow(/evaluator unavailable/u);
+    expect(made).toBe(2);
+    expect(ended("a")).not.toBeNull();
+    expect(live("a")).toBe(false);
+    expect(service.openRuntimes()).toBe(0);
+  });
+
+  // A suspension whose close failed was kept by nobody: its next event could not open it, its owner still active, and
+  // its record stayed open and owned after the daemon stopped.
+  it("keeps a quiet session suspended when its close fails, so its next event opens it again", async () => {
+    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { first, clock, service, start, prompt, ended, live } = await idleService({ createAuditor: create });
+    await writeFile(join(first, "app.py"), "x = 1\n");
+    await start("a");
+    // The evaluator is open, so the sweep's close waits for it, and fails.
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(ended("a")).toBeNull();
+    expect(live("a")).toBe(true);
+    await prompt("a", "back");
+    expect(live("a")).toBe(true);
+  });
+
+  it("ends a quiet session whose close failed when the service stops", async () => {
+    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { first, clock, service, start, ended, live } = await idleService({ createAuditor: create });
+    await writeFile(join(first, "app.py"), "x = 1\n");
+    await start("a");
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(ended("a")).toBeNull();
+    services.splice(services.indexOf(service), 1);
+    await service.close();
+    expect(ended("a")).not.toBeNull();
+    expect(live("a")).toBe(false);
   });
 
   // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded
@@ -458,6 +586,27 @@ describe("the engine service's idle close", () => {
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
     expect(ended("a")).toBeNull();
+  });
+
+  // Internal testing: the session's first checkout audit runs in its evaluator, which the suspension closes.
+  it("lets a quiet session's checkout audit finish before it suspends the session", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
+    const auditing = Promise.withResolvers<void>();
+    const { create, scans } = recordingAuditor({ auditing: auditing.promise });
+    const { clock, service, start } = await idleService({ createAuditor: create });
+    await start("a");
+    await vi.waitFor(() => expect(scans).toEqual(["repository"]));
+    clock.now += 60_000;
+    const sweeping = service.closeIdleSessions();
+    await Promise.race([sweeping, delay(2_000)]);
+    auditing.resolve();
+    await sweeping;
+    expect(service.openRuntimes()).toBe(1);
+    // Once the audit has finished, the next sweep suspends the session.
+    await vi.waitFor(async () => {
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
+    });
   });
 
   it("suspends a session that waits on a tool call once it has been quiet a day, so an agent killed at a permission prompt does not keep its memory forever", async () => {

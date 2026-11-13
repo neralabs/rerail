@@ -344,6 +344,11 @@ export class SqliteAuditControlStore {
     }).run();
     return this.listAuditRequests(sessionId).find(request => request.id === id)!;
   }
+  /** Whether a scan request for the session waits in its queue, not yet claimed. */
+  hasQueuedRequest(sessionId: string): boolean {
+    return this.#database.select({ id: auditRequests.id }).from(auditRequests)
+      .where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).limit(1).get() !== undefined;
+  }
   listAuditRequests(sessionId: string): AuditRequest[] {
     requireSession(this.#database, sessionId);
     this.#owner(sessionId);

@@ -10,6 +10,10 @@ import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.j
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
+
+/** The store of suspended sessions an engine service gives its runtimes, and what it keeps for one session. */
+type SuspendedSessions = NonNullable<ConstructorParameters<typeof RerailRuntime>[0]["suspendedSessions"]>;
+type SessionSuspension = Parameters<SuspendedSessions["keep"]>[0];
 import { temporaryDirectories, testEmbedder } from "../../support/hook-events.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -817,16 +821,28 @@ describe("source-scoped steers", () => {
       const databasePath = join(root, "rerail.sqlite");
       const attachments = gateStorageAttachments();
       attachments.gated = false;
+      // The engine service's store of suspended sessions: the idle close keeps the session's owner claim there, and its
+      // reopen takes it back.
+      const suspended = new Map<string, SessionSuspension>();
       const runtime = new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
         createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+        suspendedSessions: {
+          keep: suspension => void suspended.set(suspension.descriptor.sessionId, suspension),
+          get: sessionId => suspended.get(sessionId),
+          take: sessionId => {
+            const suspension = suspended.get(sessionId);
+            suspended.delete(sessionId);
+            return suspension;
+          },
+        },
       });
       const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
       try {
         await runtime.ingest({ kind: "session-start", eventId: "start", session });
         await runtime.codeRulesOpened(session.sessionId);
         await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: session.sessionId, text: "" });
-        expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+        expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
         // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
         attachments.gated = true;
         await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, session, text: "go on" });

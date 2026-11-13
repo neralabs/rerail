@@ -234,6 +234,7 @@ are not waited for further: that edit is checked by the first pass once they ope
 
 - A change another program made while the session was quiet, to a file the session had edited, is recorded in Log
   when the session opens again, as it is while a session is active.
+- A session running a scan, or with one waiting to start, keeps its memory until the scan has run.
 - Stopping the daemon ends the session, as it ends every open one.
 
 </details>
