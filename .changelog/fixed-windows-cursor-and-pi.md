@@ -1,0 +1,1 @@
+On Windows, Rerail records Cursor sessions: set-up registers Cursor's hooks in a form PowerShell runs, a workspace Cursor sends in any path form is found, and the Cursor CLI's file tools are kept out of Rerail's data. Pi's `rerail_fix` tool starts a Bun-built `pi.exe` without a stray argument.

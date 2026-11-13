@@ -82,7 +82,7 @@ packs/<id>/
   "license": "Apache-2.0 AND MIT",
   "repository": { "type": "git", "url": "git+https://github.com/neralabs/rerail.git", "directory": "packs/typescript" },
   "files": ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"],
-  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
   "publishConfig": { "access": "public" }
 }
@@ -97,7 +97,9 @@ packs/<id>/
 <details>
 <summary>Why these fields</summary>
 
-- The peer range is a declaration, not an import. The `-0` admits core's prereleases (`0.1.0-next.0`).
+- The peer range is a declaration, not an import. It names the oldest core the pack fits and no newest, so a core
+  release never leaves installed packs out by its version alone; a pack whose rules need a newer core raises the
+  oldest. The `-0` admits core's prereleases (`0.1.0-next.0`).
 - Rerail's catalog enforces the range: an installed pack whose range excludes the active core is left out
   ([rule packs](rule-packs.md#installing-packs)). npm doesn't, since core is never installed beside the packs in
   `$RERAIL_HOME/packs`.

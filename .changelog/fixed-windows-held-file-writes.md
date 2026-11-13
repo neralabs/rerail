@@ -1,0 +1,1 @@
+On Windows, when another program holds open a file Rerail is replacing for longer than Rerail waits, Rerail no longer leaves a `.tmp` file beside it, in the Rerail home or a repository's `.claude` folder, and the error says that another program held the file.

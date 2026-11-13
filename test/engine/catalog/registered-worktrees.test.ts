@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync } from "node:fs";
+import { copyFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -11,6 +11,7 @@ import { runGit } from "../../../src/engine/git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
@@ -29,7 +30,7 @@ function git(cwd: string, ...args: string[]): void {
 /** A started repository's main checkout, recorded, with one `.git` file naming its Git folder. */
 async function startedRepository() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-registered-worktrees-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   const main = join(root, "main");
   await mkdir(main);
   git(main, "init", "--quiet");
@@ -49,7 +50,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 

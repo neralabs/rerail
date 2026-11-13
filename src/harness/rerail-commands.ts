@@ -6,6 +6,7 @@
  */
 
 import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
+import { powershellQuotesTwice, type Shell } from "../engine/command-line.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -60,6 +61,16 @@ export function rerailCommandList(sigil: CommandSigil): string {
   ].join("\n");
 }
 
+/**
+ * The fence a command for `shell` goes in. A PowerShell line (`& '<node>' …`) in a `sh` fence invites an agent with a
+ * POSIX shell at hand to run it there, where the `&` puts node in the background with no arguments.
+ */
+const FENCES: Record<Shell, string> = { posix: "```sh", powershell: "```powershell" };
+
+export function commandFence(shell: Shell = "posix"): string {
+  return FENCES[shell];
+}
+
 export interface CreateRuleInstructionsInput {
   /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli/cli.js'`. */
   cli: string;
@@ -67,6 +78,8 @@ export interface CreateRuleInstructionsInput {
   packageRoot: string;
   /** The person's sentence; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
   request: string;
+  /** The shell `cli` is written for, which names the fence its commands go in. */
+  shell?: Shell;
 }
 
 /** The skill `/rerail-create` follows, inside the installed package. */
@@ -79,7 +92,7 @@ export function createRuleSkillPath(packageRoot: string): string {
  * the package holds the steps; this keeps the commands and the one promise that matters in the command itself: test before
  * showing, and add only after the person says yes.
  */
-export function createRuleInstructions({ cli, packageRoot, request }: CreateRuleInstructionsInput): string {
+export function createRuleInstructions({ cli, packageRoot, request, shell }: CreateRuleInstructionsInput): string {
   return [
     `Create a Rerail rule for this repo. The person's words: ${request}`,
     "",
@@ -93,7 +106,7 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     "",
     "The commands it uses:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} rules evidence --json`,
     `${cli} rules export --output <tmp>/rules.json`,
     `${cli} rules show <id>`,
@@ -110,13 +123,13 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
 }
 
 /** `/rerail-uninstall`: say what goes and what stays, ask once, and remove only on an explicit yes (design A9, A10). */
-export function uninstallInstructions(cli: string, sigil: CommandSigil): string {
+export function uninstallInstructions(cli: string, sigil: CommandSigil, shell: Shell = "posix"): string {
   return [
     "Remove Rerail from this computer, if the person confirms.",
     "",
     "First, see what would be removed, without changing anything:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} install --remove --dry-run`,
     "```",
     "",
@@ -142,7 +155,7 @@ export function uninstallInstructions(cli: string, sigil: CommandSigil): string 
     "",
     "If they pick 1, run:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} install --remove`,
     "```",
     "",
@@ -171,6 +184,8 @@ export interface ShowMeInstructionsInput {
   sigil: CommandSigil;
   /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
   write: ObservedFileWrite;
+  /** The shell the agent runs commands in: PowerShell for Codex on Windows (`windowsCommandShell`), which has no heredoc. */
+  shell?: Shell;
 }
 
 /**
@@ -178,9 +193,12 @@ export interface ShowMeInstructionsInput {
  * the file straight after so the steer reaches it (Claude Code and Cursor deliver it with the next tool call), fixes
  * it, and always runs `rerail show-me --cleanup`. The steer is recognised by the rule id, never faked.
  */
-export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInput): string {
+export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowMeInstructionsInput): string {
+  const example = shell === "powershell"
+    ? `\`Set-Content -NoNewline -LiteralPath '<file>' -Value @'\` … \`'@\`, with ${powershellQuotesTwice("`<file>`")}`
+    : "`cat > '<file>' <<'EOF'` … `EOF`";
   const how = write === "shell"
-    ? "with one shell command, not a file-change, edit, write or apply_patch tool (for example `cat > '<file>' <<'EOF'` … `EOF`)"
+    ? `with one shell command, not a file-change, edit, write or apply_patch tool (for example ${example})`
     : "with your file edit or write tool";
   return [
     "Show the person how Rerail works, on this repo, in under a minute: add a demo rule, break it on purpose, let Rerail",
@@ -188,7 +206,7 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "",
     "1. Run exactly this and read its JSON output:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} show-me --json`,
     "```",
     "",
@@ -209,7 +227,7 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "",
     "6. Always clean up, whatever happened. Run exactly this:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} show-me --cleanup`,
     "```",
     "",
@@ -238,6 +256,8 @@ export interface BugReportInstructionsInput {
   packageRoot: string;
   /** The person's words; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
   request: string;
+  /** The shell `cli` is written for, which names the fence its commands go in. */
+  shell?: Shell;
 }
 
 /** The skill `/rerail-bug-report` follows, inside the installed package. */
@@ -250,7 +270,7 @@ export function bugReportSkillPath(packageRoot: string): string {
  * in the package holds the steps; this keeps the commands and the promise that matters in the command itself: an issue is
  * public, so sending anything is the person's to decide.
  */
-export function bugReportInstructions({ cli, packageRoot, request }: BugReportInstructionsInput): string {
+export function bugReportInstructions({ cli, packageRoot, request, shell }: BugReportInstructionsInput): string {
   return [
     `Work out what went wrong with Rerail, then fix it or report it. The person's words: ${request}`,
     "",
@@ -262,7 +282,7 @@ export function bugReportInstructions({ cli, packageRoot, request }: BugReportIn
     "",
     "The commands it uses:",
     "",
-    "```sh",
+    commandFence(shell),
     `${cli} support-bundle --json`,
     `${cli} support-bundle --json --session <id>`,
     `${cli} update check`,

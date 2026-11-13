@@ -2,13 +2,14 @@
  * The conformance check spread over shards (conformance/languages/shards.ts): every job runs in exactly one shard, and a
  * report is made only from a result for every job, each from one shard of the same plan.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { JobResult } from "../../conformance/languages/runner.js";
 import { parseShard, readResults, shardJobs, writeResults, type JobOutline } from "../../conformance/languages/shards.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 /** Fixture units of three languages, interleaved as test files interleave them, then sample rules of uneven weight. */
 const JOBS: JobOutline[] = [
@@ -45,7 +46,7 @@ describe("parseShard", () => {
 describe("readResults", () => {
   let directory: string | undefined;
   afterEach(() => {
-    if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
+    if (directory !== undefined) removeFolderSync(directory);
   });
   const result = (job: number): JobResult => ({ errors: [`job ${job}`], workspaces: [] });
 

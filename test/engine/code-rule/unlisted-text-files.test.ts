@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,9 +9,10 @@ import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(async path => await removeFolder(path))); });
 
 /** A regex rule on every file: it reads text, so the files no language lists are read for it. */
 const REGEX_ANYWHERE = codeRuleSchema.parse({
@@ -63,14 +64,14 @@ async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Rea
     workspaceRoot: root, steerDelivery: { requestSteer: vi.fn(async () => undefined) }, audits: recorder,
     scope: "ai-output", timingLog: line => lines.push(line),
   });
-  /** One log-only audit: its status, the sorted paths it reports, and its failures. */
+  /** One log-only audit: its status, and the sorted paths and failures it reports (a directory walk follows the file system's entry order). */
   const audit = async (scope: "repository" | "touched-files", paths?: string[]) => {
     const [auditId] = await enforcer.audit("unlisted", { scope, mode: "log", ...(paths === undefined ? {} : { paths }) });
     const result = audits.get(auditId!)?.result;
     return {
       status: result?.status,
       paths: (result?.violations ?? []).map(violation => violation.path).toSorted(),
-      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
+      failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`).toSorted(),
     };
   };
   return { root, enforcer, audit, lines };

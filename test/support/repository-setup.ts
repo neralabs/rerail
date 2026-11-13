@@ -5,7 +5,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -15,6 +15,7 @@ import { onRuleCount, type RepositorySetupIo } from "../../src/runtime/index.js"
 import { attachedPacks } from "./attached-packs.js";
 import { repositoryPackVersions } from "./directory-pack-store.js";
 import type { FakeSetupEnvironment } from "./fake-setup-environment.js";
+import { removeFolder } from "./platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -134,5 +135,5 @@ export function offerReview(fixture: Fixture, repo = fixture.repo): { repository
 
 /** Removes every fixture made since the last call. */
 export async function removeFixtures(): Promise<void> {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 }
