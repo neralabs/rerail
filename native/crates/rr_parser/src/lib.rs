@@ -94,7 +94,12 @@ fn compile() -> Result<Compiled, String> {
 
 /// The grammar compiled with tier 2 in `shape`.
 pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
-    let stmts = ::bitlex::syntax::parse(GRAMMAR)?;
+    compile_text(GRAMMAR, shape)
+}
+
+/// `compile_with` of a grammar's text (a test's variant of the `.rr` grammar).
+pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
+    let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
         if let Some(at) = names.iter().position(|n| *n == name).filter(|&at| at > 0) {
@@ -1329,6 +1334,30 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    /// A token's end by its rule (`run`, `pair`, decision 0177) is the last-byte mask it was
+    /// written as before: the same positions, every token's, over a corpus sample and the
+    /// samples, from the grammar both ways.
+    #[test]
+    fn token_rules_are_their_last_masks() {
+        let old = crate::GRAMMAR
+            .replace("start hash & directive run code & word", "start hash & directive last hashword & ~next(hashword & ~directive)")
+            .replace("start alpha & ident & ~prev(ident) run ident", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
+            .replace("start digit & int & ~prev(int) run numeral", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last");
+        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
+        let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let (ra, rb) = (a.program.block_programs[0].records.as_ref().expect("records"), b.program.block_programs[0].records.as_ref().expect("records"));
+        for f in &inputs {
+            let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
+            assert_eq!(x.positions[usize::from(ra.starts)], y.positions[usize::from(rb.starts)], "the starts");
+            assert_eq!(x.positions[usize::from(ra.lasts)], y.positions[usize::from(rb.lasts)], "the lasts");
+        }
+        eprintln!("{} files: the same starts and lasts", inputs.len());
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

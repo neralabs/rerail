@@ -516,7 +516,7 @@ impl Lowering {
                     let (up, down) = (self.expr(up)?, self.expr(down)?);
                     self.pending_counts.push((name.clone(), up, down, *max));
                 }
-                Stmt::Token { kind, start, through, last } => {
+                Stmt::Token { kind, start, through, last, .. } => {
                     let start = self.expr(start)?;
                     let through = match through {
                         Some(t) => Some(TokenEnd::Through(self.expr(t)?)),

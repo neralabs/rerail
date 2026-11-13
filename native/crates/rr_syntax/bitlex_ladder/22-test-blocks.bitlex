@@ -199,18 +199,20 @@ mask p_last     = (p_start & ~two_start) | second
 
 error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
 
+# A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
+# bit (decision 0177); the others by their last byte's mask.
 # --- Tokens ------------------------------------------------------------------------------------
 
 token string     = start quote & o_str last closing
 token comment    = start slash & (o_line | o_block) last line_last | block_last
 token code_literal = start tick & o_tick last t1_last | t2_last | t3_last | e2_last
-token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
+token hash_word  = start hash & directive run code & word
 keywords hash_word { "#include" } required
-token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
+token identifier = start alpha & ident & ~prev(ident) run ident
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
-token number     = start digit & int & ~prev(int) last numeral & ~next(numeral)
-token punct      = start punct & p_start last p_last
+token number     = start digit & int & ~prev(int) run numeral
+token punct      = start punct & p_start pair two_start
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
 # aggregates' words, `by` and `sep`, only where an aggregate can be; a `.violation`'s words

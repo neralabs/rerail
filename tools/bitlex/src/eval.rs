@@ -358,7 +358,7 @@ impl<'a> Ev<'a> {
                     self.vars.insert(name.clone(), Val::M(m));
                 }
             }
-            Stmt::Token { kind, start, through, last } => {
+            Stmt::Token { kind, start, through, last, .. } => {
                 let start = self.mask(start)?;
                 let through = match through {
                     Some(t) => Some(self.mask(t)?),
