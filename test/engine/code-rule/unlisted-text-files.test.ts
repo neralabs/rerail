@@ -73,7 +73,7 @@ async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Rea
       failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`).toSorted(),
     };
   };
-  return { root, enforcer, audit, lines };
+  return { root, enforcer, audit, audits, lines };
 }
 
 async function settledViolationPaths(enforcer: NativeCodeRuleEnforcer): Promise<string[]> {
@@ -203,7 +203,7 @@ const IN_PATH_ORDER = [
 
 describe("a repository audit's failure list", () => {
   it.each(WALKS)("names the first 20 failures in path order through %s, whatever order a folder lists its entries in", async (_name, git) => {
-    const { root, enforcer, audit } = await workspace(git, [REGEX_ANYWHERE]);
+    const { root, enforcer, audits } = await workspace(git, [REGEX_ANYWHERE]);
     // A TypeScript file holding a NUL byte cannot be read as source: one failure each. They are made in an order that
     // is neither path order nor its reverse (7 and 22 share no factor), so a filesystem that lists a folder in the
     // order its entries were made, or in the reverse, lists them in neither.
@@ -214,7 +214,14 @@ describe("a repository audit's failure list", () => {
     }
     try {
       await enforcer.openWorkspace("unlisted");
-      await expect(audit("repository")).resolves.toEqual({
+      // The failure list as the audit records it: the workspace's `audit` sorts failures, which would hide the order.
+      const [auditId] = await enforcer.audit("unlisted", { scope: "repository", mode: "log" });
+      const result = audits.get(auditId!)?.result;
+      expect({
+        status: result?.status,
+        paths: (result?.violations ?? []).map(violation => violation.path).toSorted(),
+        failures: (result?.failures ?? []).map(failure => `${failure.path ?? ""} ${failure.code}`),
+      }).toEqual({
         status: "completed", paths: ["Justfile", "LICENSE", "deps/yarn.lock", "web/a.ts"],
         failures: IN_PATH_ORDER.slice(0, 20).map(path => `${path} source-incomplete`),
       });
