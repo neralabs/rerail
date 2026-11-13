@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 671 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #671</div>
+  <h1>Code rules: a closed session&#x27;s folder keeps only its own observations</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Is every change a later session meets still seen and checked as before, with closed sessions&#x27; observations and lookups dropped?</p>
+  <ol><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A session reopened in a closed folder reads the other worktrees again. <b>Changes the intent.</b></li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>After a runtime&#x27;s last close, the next session looks every folder up again.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> approve it if the trade #661 asks about is acceptable: a later session&#x27;s steers and records match main&#x27;s in our test, and a closed folder keeps 561 KB where it kept 36,091 KB.</p>
+  <div class="big">
+    <div><b class="w">256 lines</b><span>in 6 files. 43 ship, 213 are tests and text.</span></div><div><b class="w">Careful lane</b><span>A code owner approves.</span></div><div><b class="w">Waits on nothing</b><span>A code owner approved 714e8d97a; CI passes.</span></div><div><b class="w">5 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/671">GitHub</a> on 13 November 2026, at head 714e8d97a.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr class="intent"><td class="k"><span class="lb">A</span><b>Shared observations</b></td><td class="in" data-l="Intended">Observations are &quot;shared so later sessions reuse digests of unchanged sources&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">A close leaves every worktree&#x27;s files shared: 9 entries in a test, 2 its own. <span class="tagx">bridge test</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 1.</b> A close keeps the folder&#x27;s own sources only. A maintainer must agree.</td></tr><tr><td class="k"><span class="lb">A</span><b>The 15 minutes</b></td><td class="in" data-l="Intended">A session back within 15 minutes &quot;finds its rules compiled and its checkout walked&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">Main frees it all at the limit; inside it, about 36 MB a closed folder. <span class="tagx">memory probe</span></td><td class="now" data-l="Now"><b>Closes the gap</b> inside the window only: this ends no leak that lasts the daemon&#x27;s life.</td></tr><tr><td class="k"><span class="lb">B</span><b>Folder lookups</b></td><td class="in" data-l="Intended">&quot;Each folder&#x27;s <code>.git</code> entry is looked at once, and each candidate root is confirmed once&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">15,471 answers outlive the sessions at 190 worktrees, until the runtime closes. <span class="tagx">memory probe</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> At its last close a runtime keeps one answer per checkout.</td></tr></tbody></table>
+<figcaption>Found at about 190 worktrees on Windows 11 (#548); measured 13 November 2026.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Shared observations</td><td data-l="Where main states the intent"><code>src/engine/code-rule/code-rule-bridge.ts</code> line 100, above <code>SourceObservationCache</code>: &quot;Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources.&quot; Line 1562, in <code>#scanSources</code>: &quot;An earlier session&#x27;s baseline of this workspace lets unchanged sources skip the read.&quot; Neither says which sources: the folder&#x27;s own, or every worktree&#x27;s.</td><td data-l="The cause, and what was measured">Line 1596, the last of <code>#applyWalk</code>, copies the session&#x27;s whole map into the shared one after every walk: <code>this.#observations?.set(this.#cwd, new Map(this.#observed))</code>. After the worktrees&#x27; walk that map holds every file of every worktree. <code>close()</code> clears the session&#x27;s own map (line 1272) and leaves the shared one. At 190 worktrees of 500 Python files: 34,755, 71,571 and 108,273 KB kept after 1, 2 and 3 closed folders.</td></tr><tr><td class="k">A. The 15 minutes</td><td data-l="Where main states the intent"><code>src/runtime/engine-service.ts</code> lines 193 to 196, above <code>IDLE_RUNTIME_MS</code>: &quot;How long a checkout&#x27;s runtime stays open after its last session ends. A session that starts there again within it finds its rules compiled and its checkout walked&quot;. Lines 363 to 367, above <code>retireUnusedRuntime</code>, say why a runtime is disposed: a daemon that kept every runtime &quot;grew until its heap ran out&quot;.</td><td data-l="The cause, and what was measured">Since #503, <code>retireUnusedRuntime</code> disposes a runtime 15 minutes after its last session, and the shared observations and the lookups go with it. The same probe at main with the limit at 3 minutes: 36,060 KB per closed folder while the runtimes lived; once they had closed, the heap read 37,838 KB below its reading after the first session. So the growth stops at the folders sessions close in inside one window.</td></tr><tr><td class="k">B. Folder lookups</td><td data-l="Where main states the intent"><code>src/engine/catalog/checkout-owner.ts</code> lines 38 to 41, above <code>CheckoutOwners</code>: &quot;Resolves owning checkouts for one runtime. Each folder&#x27;s `.git` entry is looked at once, and each candidate root is confirmed once with Git, so a lookup costs a map access per file once its folders are known.&quot; The comment then names the one time answers are forgotten: when the recorded checkouts change.</td><td data-l="The cause, and what was measured"><code>#gitRoot</code> (lines 137 to 155) keeps an answer in <code>#roots</code> for every folder a lookup passes, and <code>#confirm</code> (line 157) one in <code>#confirmed</code> for every folder it tests. A session&#x27;s walk of the other worktrees looks up every folder of every worktree. Only <code>#revalidate</code> (line 119) clears them, when the recorded checkouts change. With A alone a closed folder still keeps 2,996 KB; with both, 561 KB.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 245" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, A close keeps its own observations, medium risk, 25 lines; B, A runtime forgets its folder lookups, medium risk, 18 lines. Read first: code-rule-bridge.ts, checkout-owner.ts, runtime.ts. To skim: 212 lines of tests and 1 line of one release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk med"/><text x="49" y="38" class="t s">Medium risk, 25 lines</text><text x="128" y="59" text-anchor="end" class="t s">code-rule-bridge.ts</text><g><title>code-rule-bridge.ts: 25 changed lines, medium risk</title><path d="M134 50h3.5a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-3.5z" class="rk med"/></g><text x="146.5" y="59" class="t n">25</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><rect x="4.5" y="73.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="87" text-anchor="middle" class="t b">B</text><rect x="30" y="78" width="14" height="10" rx="2" class="rk med"/><text x="49" y="87" class="t s">Medium risk, 18 lines</text><text x="128" y="108" text-anchor="end" class="t s">checkout-owner.ts</text><g><title>checkout-owner.ts: 16 changed lines, medium risk</title><path d="M134 99h0.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-0.8z" class="rk med"/></g><text x="143.8" y="108" class="t n">16</text><text x="336" y="108" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="104" r="8.5" class="nc"/><text x="254" y="108" text-anchor="middle" class="t b inv">2</text><text x="128" y="125" text-anchor="end" class="t s">runtime.ts</text><g><title>runtime.ts: 2 changed lines, medium risk</title><path d="M134 116h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk med"/></g><text x="139.6" y="125" class="t n">2</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="139" x2="336" y2="139" class="ar thin"/><text x="4" y="159" class="t b">Skim: tests and text</text><text x="128" y="179" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 130 changed lines, skim</title><path d="M134 170h35a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-35z" class="rk skim"/></g><text x="178" y="179" class="t n">130</text><text x="128" y="196" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 82 changed lines, skim</title><path d="M134 187h20.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-20.6z" class="rk skim"/></g><text x="163.6" y="196" class="t n">82</text><text x="128" y="213" text-anchor="end" class="t s">release note</text><g><title>One release note: 1 line</title><path d="M134 204h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk skim"/></g><text x="139.3" y="213" class="t n">1</text><rect x="4" y="229" width="14" height="10" rx="2" class="rk high"/><text x="22" y="238" class="t s">High</text><rect x="62.8" y="229" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="238" class="t s">Medium</text><rect x="133" y="229" width="14" height="10" rx="2" class="rk low"/><text x="151" y="238" class="t s">Low risk</text><rect x="214.6" y="229" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="238" class="t s">Skim</text></svg>
+<figcaption>A: the bridge. B: two files.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>code-rule-bridge.ts</code>: <code>inSessionFolder</code>, <code>#shareOwnObservations</code></b><span class="min">6 min</span><span class="x"><code>observedText</code> and <code>failFolder</code> now answer as in a new folder: acceptable?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>checkout-owner.ts</code>: <code>forgetFolders</code>, <code>cachedFolders</code></b><span class="min">4 min</span><span class="x">Negative answers go too: is asking again about each folder right?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>runtime.ts</code>: <code>closeSession</code></b><span class="min">2 min</span><span class="x">Is an empty <code>#sessions</code> the right moment to forget?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">5 min</span><span class="x">The tests only add. The later-session test pins each steer and log record.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 191" role="img" aria-label="The changes by risk, high on top, against six checks. A, Close&#x27;s trim, medium risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Lookups forgot, medium risk: users lose nothing does not hold yet, Windows 11: no new failure holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="82" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Close&#x27;s trim</text><g><title>Close&#x27;s trim, fails without the fix: Two bridge tests fail over main&#x27;s source, on Linux x64 and on Windows 11: the folder shares 9 entries where 2 are expected, and 7 where 3 are. Five mutations of the trim each fail at least one of the two.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Close&#x27;s trim, independent review: A code owner approved 714e8d97a on 13 November 2026. The automated reviewer approved it with no finding: it checked concurrent sessions in one folder, a later session&#x27;s audits after the trim, and `wt/w1-notes` beside `wt/w1`. An earlier review of ours found the filter&#x27;s cost on the event loop: cf73cfca8 filters in place.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Close&#x27;s trim, users lose nothing: The later-session test passes at main and here, on Linux x64 and Windows 11. The limits: a reopened session reads the other worktrees again (answer 1); `observedText` and `failFolder` then answer as in a new folder, in log-mode records, not run; a daemon&#x27;s first closes block the event loop 17 to 22 ms longer.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Close&#x27;s trim, rules scan: nothing new: The rules scan as the automated reviewer runs it, against f277c6e29: 0 new findings, 18 existing. Complexity: `inSessionFolder` 3, `#shareOwnObservations` 4.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Close&#x27;s trim, Windows 11: no new failure: On Windows 11 the two bridge tests fail over main&#x27;s source with the same messages and pass at the head. Heap kept per closed folder there: 38,992 KB at main, 1,359 KB here. The limit: of the 31 test files, one `audit-cli.test.ts` test failed beside another run. It fails in main&#x27;s run there too, and 0 of 5 times alone.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Close&#x27;s trim, CI at this head: CI run 43502427962 at 714e8d97a, read on 13 November 2026: of 40 checks on the pull request, 34 passed, 6 were skipped and none failed. Both Windows unit jobs passed.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Lookups forgot</text><g><title>Lookups forgot, fails without the fix: The runtime test fails over main&#x27;s source on Linux x64 and on Windows 11: `owners.cachedFolders is not a function`, and 20 against 4 with the count alone added. Four mutations pin both sides: 20 against 4 when the forget keeps `#roots` or the unconfirmed folders, 0 against 4 when it drops the confirmed top levels too.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Lookups forgot, independent review: A code owner approved 714e8d97a on 13 November 2026. The automated reviewer checked that the forget runs after `bridge.close()` and found nothing. An independent check from its own clone ran the two changed test files and `checkout-owner.test.ts` at 714e8d97a on Linux x64: 117 passed, 1 skipped, 0 failed.</title><circle cx="184" cy="84" r="8" class="mh"/><path d="M180 84l3 3l5 -6" class="mt"/></g><g><title>Lookups forgot, users lose nothing: Linux x64 holds, 10 reopens each: 22.0 s of CPU at main, 22.1 s here; slowest hook 606 against 620 ms. Windows 11 is not settled: one comparable run on a busy machine, one sample each of two reopened sessions: slowest hook 1,259 and 1,134 ms at main, 1,481 and 1,430 ms here. CPU was lower here.</title><circle cx="218" cy="84" r="7.4" class="mo"/></g><g><title>Lookups forgot, rules scan: nothing new: 0 new findings. Complexity: `forgetFolders` 3, `cachedFolders` 1. `closeSession` goes from 5 to 6 with the one added `if`.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Lookups forgot, Windows 11: no new failure: The runtime test fails over main&#x27;s source on Windows 11 and passed 20 of 20 times here. The limit: the 31 test files ran there at a commit with the head&#x27;s tree but for the release note&#x27;s text, and one `audit-cli.test.ts` test failed, as in main&#x27;s run there.</title><circle cx="286" cy="84" r="7.4" class="ml"/><path d="M286 76.6A7.4 7.4 0 0 0 286 91.4Z" class="mlf"/></g><g><title>Lookups forgot, CI at this head: CI run 43502427962 at 714e8d97a, read on 13 November 2026: of 40 checks on the pull request, 34 passed, 6 were skipped and none failed. Both Windows unit jobs passed.</title><circle cx="320" cy="84" r="8" class="mh"/><path d="M316 84l3 3l5 -6" class="mt"/></g><text x="8" y="121" class="t s">1  fails without the fix</text><text x="168" y="121" class="t s">2  independent review</text><text x="8" y="137" class="t s">3  users lose nothing</text><text x="168" y="137" class="t s">4  rules scan: nothing new</text><text x="8" y="153" class="t s">5  Windows 11: no new failure</text><text x="168" y="153" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="177" r="8" class="mh"/><path d="M10 177l3 3l5 -6" class="mt"/></g><text x="28" y="181" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="177" r="7.4" class="ml"/><path d="M92 169.6A7.4 7.4 0 0 0 92 184.4Z" class="mlf"/></g><text x="106" y="181" class="t s">holds with a limit</text><g><title>does not hold yet</title><circle cx="244.1" cy="177" r="7.4" class="mo"/></g><text x="258.1" y="181" class="t s">not yet</text></svg>
+<figcaption>Start at A. B&#x27;s open mark: a reopened session&#x27;s hook cost on Windows 11.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">A. Close&#x27;s trim</td><td data-l="Check">users lose nothing</td><td data-l="Its limit, or why it does not hold yet">The later-session test passes at main and here, on Linux x64 and Windows 11. The limits: a reopened session reads the other worktrees again (answer 1); <code>observedText</code> and <code>failFolder</code> then answer as in a new folder, in log-mode records, not run; a daemon&#x27;s first closes block the event loop 17 to 22 ms longer.</td></tr><tr><td class="k">A. Close&#x27;s trim</td><td data-l="Check">Windows 11: no new failure</td><td data-l="Its limit, or why it does not hold yet">On Windows 11 the two bridge tests fail over main&#x27;s source with the same messages and pass at the head. Heap kept per closed folder there: 38,992 KB at main, 1,359 KB here. The limit: of the 31 test files, one <code>audit-cli.test.ts</code> test failed beside another run. It fails in main&#x27;s run there too, and 0 of 5 times alone.</td></tr><tr><td class="k">B. Lookups forgot</td><td data-l="Check">users lose nothing</td><td data-l="Its limit, or why it does not hold yet">Linux x64 holds, 10 reopens each: 22.0 s of CPU at main, 22.1 s here; slowest hook 606 against 620 ms. Windows 11 is not settled: one comparable run on a busy machine, one sample each of two reopened sessions: slowest hook 1,259 and 1,134 ms at main, 1,481 and 1,430 ms here. CPU was lower here.</td></tr><tr><td class="k">B. Lookups forgot</td><td data-l="Check">Windows 11: no new failure</td><td data-l="Its limit, or why it does not hold yet">The runtime test fails over main&#x27;s source on Windows 11 and passed 20 of 20 times here. The limit: the 31 test files ran there at a commit with the head&#x27;s tree but for the release note&#x27;s text, and one <code>audit-cli.test.ts</code> test failed, as in main&#x27;s run there.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>A close keeps its own observations</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">Kept per closed folder: 36,091 KB at main, 2,996 KB with A, 561 KB with B too.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>Each folder a session closed in keeps an observation of every file of every worktree until its runtime closes, 15 minutes after its last session. Nothing reads them unless a session reopens in the folder.</dd>
+<dt>Who meets it</dt><dd>A person whose sessions end in several folders of a repository with many linked worktrees inside 15 minutes, as with one worktree per task. How often is not measured. #548 lists this among its causes.</dd>
+<dt>What it does</dt><dd><code>close()</code> calls <code>#shareOwnObservations</code> before it clears the session. It filters the folder&#x27;s shared map in one pass and keeps a path when <code>inSessionFolder</code> says the folder&#x27;s own walk covers it: no <code>..</code> in front, and under no worktree root. The other worktrees&#x27; sources go, and so do files a tool wrote outside the folder.</dd>
+<dt>Risk</dt><dd>Medium. A later session in the folder starts from less. A trim that keeps too little costs it file reads. Its edits are judged against its own observations, never the shared ones.</dd>
+<dt>Check</dt><dd>Four places read the shared observations, all in a walk&#x27;s scan: <code>staleStamp</code> skips a read, <code>knownDigest</code> carries a digest, <code>observedText</code> decides whether the walk keeps a file&#x27;s text, <code>failFolder</code> marks known sources under an unreadable folder. Without the worktrees&#x27; entries the last two answer as in a new folder: acceptable? Can a second session live in the folder lose anything when the first closes? Does <code>inSessionFolder</code> keep <code>wt/w1-notes</code> when <code>wt/w1</code> is a worktree?</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Heap the engine service keeps per closed session folder on Linux x64, at 190 worktrees of 500 Python files: 36,091 KB at main, 2,996 KB with A alone and 561 KB at the head, with B too." class="dg pic"><text x="4" y="17" class="t b">A alone, at d8c703db8</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>A alone, at d8c703db8, main: 36,091 KB</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">36,091 KB</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>A alone, at d8c703db8, this change: 2,996 KB</title><path d="M80 41h11.7724a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-11.7724z" class="rk now"/></g><text x="101.772" y="51" class="t n">2,996 KB</text><text x="4" y="75" class="t b">A and B, the head</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>A and B, the head, main: 36,091 KB</title><path d="M80 82h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="92" class="t n">36,091 KB</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>A and B, the head, this change: 561 KB</title><path d="M80 99h0a2.95337 2.95337 0 0 1 2.95337 2.95337v6.09326a2.95337 2.95337 0 0 1 -2.95337 2.95337h-0z" class="rk now"/></g><text x="88.9534" y="109" class="t n">561 KB</text></svg><figcaption>Method: the engine service in one Node 24.21 process on Linux x64. A repository of 190 worktrees of 500 Python files in 60 folders; one session in the main checkout, then three sessions one after another, each in its own worktree. Heap is <code>heapUsed</code> after full collections, once the walks finished. Main, d8c703db8 alone and the head ran side by side.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>A runtime forgets its folder lookups</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">Lookups held: 15,471 folders live, 191 after the last close.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A session&#x27;s walk of the other worktrees looks up the owner of every folder of every worktree. The runtime keeps each answer after its sessions end, until it closes 15 minutes later.</dd>
+<dt>Who meets it</dt><dd>The same person as A: sessions that end in several folders of a repository with many linked worktrees. With A alone a closed folder keeps 2,996 KB; these answers are most of it.</dd>
+<dt>What it does</dt><dd><code>forgetFolders</code> clears <code>#roots</code> and drops every <code>#confirmed</code> entry that is not a top level Git confirmed. <code>closeSession</code> calls it once <code>#sessions</code> is empty, after the bridge has closed. <code>cachedFolders</code> counts the folders held; only the test calls it. <code>#submodules</code> and <code>#plainRoots</code> stay.</dd>
+<dt>Risk</dt><dd>Medium. The next session there looks its folders up again. A forget that dropped the confirmed top levels would cost a Git process per checkout. A lookup decides which checkout&#x27;s rules judge a file.</dd>
+<dt>Check</dt><dd>After the forget, a lookup starts from the confirmed top levels alone. Is keeping them and <code>#submodules</code> safe, as main keeps them? Answers that said a folder holds no checkout go too, so the next session asks again: a folder that became a checkout meanwhile gets its own answer, where main keeps the old one. <code>#abandonSession</code> also removes a session and does not forget: that session ran no walk. <code>cachedFolders</code> is public for the test alone.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="Folders a runtime&#x27;s lookups hold at 190 worktrees of 500 Python files in 60 folders: 15,471 while a session lives, which main keeps after the last close, and 191 after the last close with this change, one per checkout." class="dg pic"><text x="4" y="17" class="t b">Folders held after the last close</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Folders held after the last close, main: 15,471</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">15,471</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Folders held after the last close, this change: 191</title><path d="M80 41h0a2.34568 2.34568 0 0 1 2.34568 2.34568v7.30864a2.34568 2.34568 0 0 1 -2.34568 2.34568h-0z" class="rk now"/></g><text x="88.3457" y="51" class="t n">191</text></svg><figcaption>Method: the same memory probe, Linux x64 and Windows 11: <code>cachedFolders()</code> read while a session lives and after its last close, at the head. Main has no count. Its bar is the head&#x27;s count while a session lives, since nothing at main drops an answer before the runtime closes or the recorded checkouts change.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>What does a folder keep once its session closes? <span class="chip intent"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>ask 1</span></h3>
+<p><b>We chose</b> its own sources&#x27; observations: no check reads the others.</p>
+<p><b>Would change our mind:</b> one walk of the other worktrees shared by all sessions: no copy to trim.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Trim at the close <span class='tag new'>chosen</span></td><td data-l="What a user gets">36,091 KB per closed folder becomes 2,996 KB with this alone, and 561 KB with the lookups forgotten too.</td><td data-l="Cost">A session reopened in the folder inside 15 minutes reads the other worktrees&#x27; files again on its first walk. One pass over the shared map at each close.</td><td data-l="What it breaks">No steer or log record in our tests. Two walk decisions answer as in a new folder, in the worktrees&#x27; walk only: <a href="#gaps">part 8</a>.</td></tr><tr><td class="k">Keep everything until the runtime closes, as main does</td><td data-l="What a user gets">Nothing new.</td><td data-l="Cost">About 36 MB per closed folder for 15 minutes at this shape.</td><td data-l="What it breaks">Nothing.</td></tr><tr><td class="k">Close an idle runtime sooner</td><td data-l="What a user gets">The same memory freed sooner.</td><td data-l="Cost">The whole runtime closes, not only these entries. What a session that returns after the limit then pays is not measured.</td><td data-l="What it breaks">Not measured.</td></tr><tr><td class="k">One walk of the other worktrees for all sessions of a repository</td><td data-l="What a user gets">No copy per folder to trim.</td><td data-l="Cost">A new design, not built here.</td><td data-l="What it breaks">Not measured.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a session closes</div><svg viewBox="0 0 340 181" role="img" aria-label="At main, when a session closes, its folder keeps an observation of every file of every worktree and its runtime keeps an answer for every folder looked up. Fifteen minutes after the runtime&#x27;s last session the runtime closes and all of it is freed." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a session closes</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">its folder keeps every file of every worktree</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="38" rx="8" class="bx "/><text x="170" y="102.5" text-anchor="middle" class="t s">its runtime keeps every folder its walks looked</text><text x="170" y="115.5" text-anchor="middle" class="t s">up</text><line x1="170" y1="125" x2="170" y2="134" class="ar " marker-end="url(#ah)"/><rect x="20" y="135" width="300" height="38" rx="8" class="bx "/><text x="170" y="151.5" text-anchor="middle" class="t s">15 minutes after the last session: all of it</text><text x="170" y="164.5" text-anchor="middle" class="t s">freed</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 181" role="img" aria-label="With this change, when a session closes, its folder keeps its own sources&#x27; observations. When the runtime&#x27;s last session closes, one answer per checkout stays. Fifteen minutes after the last session the runtime closes, as at main." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a session closes</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">its folder keeps its own sources&#x27; observations</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="102.5" text-anchor="middle" class="t s">last session of the runtime: one answer per</text><text x="170" y="115.5" text-anchor="middle" class="t s">checkout stays</text><line x1="170" y1="125" x2="170" y2="134" class="ar " marker-end="url(#ah)"/><rect x="20" y="135" width="300" height="38" rx="8" class="bx "/><text x="170" y="151.5" text-anchor="middle" class="t s">15 minutes after the last session: freed, as at</text><text x="170" y="164.5" text-anchor="middle" class="t s">main</text></svg></div></div><p><b>Evidence.</b> Heap kept per closed folder, read after full collections once the walks had finished, main against the head: 36,091 against 561 KB on Linux x64 (a second, independent run: 36,033 against 547 KB) and 38,992 against 1,359 KB on Windows 11. The later-session test passes at main, here, and under each of 9 mutations of the fix, while another test of the change fails under each one.</p></details></div>
+<div class="dblock"><h3>What do a runtime&#x27;s lookups keep after its last session?</h3>
+<p><b>We chose</b> the top levels Git confirmed: each took a Git process to learn.</p>
+<p><b>Would change our mind:</b> a Windows measurement where the lookups cost a reopened session&#x27;s hooks more than they save.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Forget the folders, keep the confirmed top levels <span class='tag new'>chosen</span></td><td data-l="What a user gets">15,471 kept folders become 191. Per closed folder, 2,996 KB becomes 561 KB.</td><td data-l="Cost">The next session there looks its folders up again, about 15,000 at this shape, one <code>lstat</code> each. A <code>.git</code> entry Git refused costs its Git process again.</td><td data-l="What it breaks">Nothing found on Linux. Not settled on Windows 11: <a href="#gaps">part 8</a>.</td></tr><tr><td class="k">Forget everything</td><td data-l="What a user gets">191 entries fewer at this shape.</td><td data-l="Cost">A Git process per checkout for the next session.</td><td data-l="What it breaks">Not measured.</td></tr><tr><td class="k">Keep everything until the runtime closes, as main does</td><td data-l="What a user gets">Nothing new.</td><td data-l="Cost">An entry for every folder of every worktree, for 15 minutes.</td><td data-l="What it breaks">Nothing.</td></tr><tr><td class="k">One <code>CheckoutOwners</code> for the whole engine service</td><td data-l="What a user gets">One copy, shared by the live runtimes too.</td><td data-l="Cost">It ties together the runtimes&#x27; plain roots and their recorded-checkout versions.</td><td data-l="What it breaks">Not built.</td></tr></tbody></table></div><p><b>Evidence.</b> The runtime test walks a repository with three worktrees and counts the folders its lookups hold after the session ends: 20 without the call, 4 with it, one per checkout. A session reopened in the folder, Linux x64, 10 reopens each, main against the head: 22.0 against 22.1 s of CPU, hook time summed 2,832 against 2,876 ms, slowest hook 606 against 620 ms.</p></details></div>
+<div class="dblock"><h3>Where does the trim run?</h3>
+<p><b>We chose</b> inside the close, in one pass.</p>
+<p><b>Would change our mind:</b> several hundred thousand shared observations: chunks then win.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">One pass inside the close <span class='tag new'>chosen</span></td><td data-l="What a user gets">The folder is trimmed before the close answers.</td><td data-l="Cost">On a daemon&#x27;s first closes the longest event-loop block is about 17 to 22 ms longer and the session-end hook 17 to 60 ms longer. Hooks of other sessions that arrive then wait that much longer.</td><td data-l="What it breaks">Nothing: once warm it equals main.</td></tr><tr><td class="k">After the session-end&#x27;s answer, in chunks that yield</td><td data-l="What a user gets">No longer block in the close.</td><td data-l="Cost">More code: the chunking, and replacing the folder&#x27;s entry only if it is still the same map.</td><td data-l="What it breaks">Not built.</td></tr></tbody></table></div><p><b>Evidence.</b> The longest event-loop block in a session&#x27;s close, main against the head: 33 to 54 ms against 44 to 67 ms over 7 closes on Linux x64, 44 to 49 against 50 to 86 ms over 5 on a second Linux machine, 40 to 71 against 34 to 80 ms over 7 on a busy Windows 11 machine. The filter alone, once, in a new process: 9.6 to 11.1 ms over 95,500 observations, 39 to 40 ms over 382,000.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 292" role="img" aria-label="#671 is based on main at f277c6e29 and merges clean with main at c438bc813. A code owner approved it, answering issue #661. No open pull request needs it. One fix of ours, not open, for a worktree made over a folder a session found plain, adds to its code. It conflicts in one hunk with the draft #680, and the drafts #665 and #532 keep the one hunk each has against main. It merges clean with #679, #667 and #526." class="dg fit"><rect x="4" y="4" width="160" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at f277c6e29</text><text x="14" y="38" class="t s">merges clean since</text><rect x="176" y="4" width="160" height="50" rx="8" class="bx good"/><text x="186" y="23" class="t b">Issue #661</text><text x="186" y="38" class="t s">a code owner approved</text><line x1="84" y1="55" x2="84" y2="79" class="ar " marker-end="url(#ah)"/><line x1="256" y1="55" x2="256" y2="79" class="ar " marker-end="url(#ah)"/><text x="90" y="71" class="t s">based on</text><text x="250" y="71" text-anchor="end" class="t s">answered for</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#671</text><text x="170" y="116" text-anchor="middle" class="t s">two changes, three files</text><line x1="170" y1="127" x2="170" y2="151" class="ar dash" marker-end="url(#ah)"/><text x="176" y="143" class="t s">adds to it</text><rect x="4" y="152" width="332" height="50" rx="8" class="bx "/><text x="14" y="171" class="t b">Worktree over plain folder</text><text x="14" y="186" class="t s">not open</text><text x="4" y="222" class="t b">Trial merges with open work</text><rect x="4" y="230" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="247" class="t b">#680</text><text x="12" y="263" class="t s">1 hunk</text><text x="12" y="277" class="t s">in conflict</text><rect x="116" y="230" width="108" height="58" rx="8" class="bx warn"/><text x="124" y="247" class="t b">#665, #532</text><text x="124" y="263" class="t s">1 hunk each,</text><text x="124" y="277" class="t s">as against main</text><rect x="228" y="230" width="108" height="58" rx="8" class="bx good"/><text x="236" y="247" class="t b">Clean merges</text><text x="236" y="263" class="t s">#679, #667</text><text x="236" y="277" class="t s">and #526</text></svg></figure>
+<div><p>It stands on main alone, merges clean at c438bc813, and a code owner approved it.</p>
+<details class="ev"><summary>The shared files, by pull request</summary><p>#680 (ours, a draft): <code>runtime.ts</code>, the bridge and its test; 1 conflict hunk at the end of <code>closeSession</code>. Whichever lands second keeps both edits; we make that merge. #665 (ours, a draft) and #532 (the team&#x27;s, a draft): 1 hunk each, the one each has against main alone. #679 (ours, a draft), #667 and #526 (the team&#x27;s): the bridge or <code>runtime.ts</code>, other lines, clean. A fix of ours, not open, for a worktree made over a folder a session found plain, adds to <code>forgetFolders</code> and opens after this merges.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>Windows 11:</b> a reopened session&#x27;s slowest hook: 1,481 and 1,430 ms, 1,259 and 1,134 at main, one busy run.</li>
+<li><b><code>observedText</code> and <code>failFolder</code></b> then answer as in a new folder, in log-mode records only: read, not run.</li>
+<li><b>Lookups after the last close</b> ask again about a folder that held no checkout: no test.</li>
+<li><b>The field:</b> no count of closes in many folders inside 15 minutes.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, six limits that stay</summary><ul class="facts">
+<li><b>The Windows 11 run.</b> Its first session, the same code at both, took 84.4 s of CPU at main and 81.2 s here: the machine was busy. A second run could not be compared: main&#x27;s half ran beside five other runs. A quiet run in alternating order would settle it.</li>
+<li><b>The two walk decisions.</b> <code>observedText</code> keeps a file&#x27;s text only when its digest differs from the one seen before. <code>failFolder</code> gives each source under an unreadable folder its read error. Without the worktrees&#x27; entries both answer as in a new folder, in the worktrees&#x27; walk alone, which steers no session.</li>
+<li><b>A refused <code>.git</code> entry.</b> <code>forgetFolders</code> drops every answer that is not a confirmed top level. A folder whose <code>.git</code> entry Git refused then costs its Git process again in the next session. Read in the code, not measured.</li>
+<li><b>#548&#x27;s report.</b> It gives 4 GB of heap in under ten minutes at about 190 worktrees and lists this among its causes. We have not checked whether that build had the 15-minute limit.</li>
+<li><b>The Windows run of the 31 files.</b> It ran at a commit with the head&#x27;s tree but for the release note&#x27;s text. CI&#x27;s two Windows unit jobs ran the head itself and passed.</li>
+<li><b>Main since the base.</b> Main moved to c438bc813 after this head&#x27;s base, f277c6e29. The trial merge is clean, and the four source files quoted here are the same at both. No run of ours tested that merge.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>Main frees all of this when the runtime closes, 15 minutes after its last session. This lowers the heap inside that window. It ends no leak that lasts the daemon&#x27;s life.</li>
+<li>A live session&#x27;s memory does not change: it holds an observation of every file of every worktree while it runs, 41,214 KB at this shape against 41,338 KB at main.</li>
+<li>After each walk the bridge still copies the session&#x27;s whole map into the shared one: 10 to 12 ms at 95,500 observations, about 300 ms at 955,000, in a new process on Linux.</li>
+<li>A session reopened in the folder inside the 15 minutes reads the other worktrees&#x27; files again on its first walk and looks its folders up again: about 15,000 at this shape, one <code>lstat</code> each.</li>
+<li>The trim runs inside the close, in one pass: a daemon&#x27;s first closes block the event loop about 17 to 22 ms longer, and the session-end hook takes 17 to 60 ms longer. Once warm, a close equals main&#x27;s.</li>
+<li>Files a tool wrote outside the folder leave the shared observations too. No walk covers them. The later-session test pins a tool write there against the text the file held at the call.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/661">#661</a>: may a later session read the other worktrees again on its first walk?</b> We recommend yes: a session in a new folder already does.</div></li>
+</ol>
+<p><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Answer 2 asks no ruling. One <code>lstat</code> per folder; its hook cost on Windows 11 is not settled.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description is the record: see &quot;How you tested it&quot;, &quot;The decisions&quot; and &quot;Not covered&quot;.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43502427962 at 714e8d97a, read on 13 November 2026</td><td data-l="Result">Of 40 checks on the pull request, 34 passed, 6 were skipped and none failed. <code>Unit tests (1/2)</code> and <code>(2/2)</code>, both Windows unit jobs, <code>Integration tests</code>, <code>Lint and type-check</code>, <code>Build</code> and the licence gate passed. The automated reviewer approved 714e8d97a: 0 blockers, 0 follow-ups, 0 nits. A code owner then approved 714e8d97a.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The head&#x27;s two test files over main&#x27;s source (f277c6e29)</td><td data-l="Result">3 tests fail on both, with the same messages: 9 entries where 2 are expected, 7 kept where 3 are, and <code>owners.cachedFolders is not a function</code> (20 against 4 with the count alone added). The later-session test passes. At the head all 4 pass on both.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The 31 test files that import the bridge, <code>CheckoutOwners</code>, <code>RerailRuntime</code> or the engine service, at 714e8d97a</td><td data-l="Result">528 passed, 2 skipped, 0 failed. No test fails that passed at the base.</td></tr><tr><td class="k">Windows 11 x64</td><td data-l="What ran">The same 31 files, at a commit with the head&#x27;s tree but for the release note&#x27;s text; then the runtime test 20 times</td><td data-l="Result">509 passed, 20 skipped, 1 failed: an <code>audit-cli.test.ts</code> test, beside another run, that also fails in main&#x27;s run there. Alone it failed 0 of 5 times at main and 0 of 5 here. The runtime test: 0 of 20 failed.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">An independent check from its own clone: the two changed test files and <code>checkout-owner.test.ts</code> at 714e8d97a, and the memory probe at main and at the head</td><td data-l="Result">117 passed, 1 skipped, 0 failed. Heap kept per closed folder: 36,033 against 547 KB on Linux, 38,992 against 1,359 KB on Windows 11. On both a runtime&#x27;s lookups hold 15,471 folders while a session lives and 191 after its last close.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Nine mutations of the fix, each run against the four new tests</td><td data-l="Result">The later-session test passes under all nine. Under each one another test of the change fails: five mutate the trim, four the forget.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The memory probe at main with the runtimes&#x27; idle limit at 3 minutes</td><td data-l="Result">36,060 KB per closed folder while the runtimes lived. Once they had closed, no runtime was open and the heap read 37,838 KB below its reading after the first session.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The rules scan as the automated reviewer runs it: Rerail 0.1.1, <code>complexity</code> 0.1.7, the diff against f277c6e29</td><td data-l="Result">18 findings, all at main already, 0 new. Complexity: <code>inSessionFolder</code> 3, <code>#shareOwnObservations</code> 4, <code>forgetFolders</code> 3, <code>cachedFolders</code> 1; <code>closeSession</code> goes from 5 to 6.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>Two changes, by what a close drops.</b> The description&#x27;s table has four rows, one per commit. This report groups them by what a reviewer rules on. A is the bridge&#x27;s trim: d8c703db8, and cf73cfca8, which made its filter cheaper. B is the lookups: 114a93734. The later-session test, 714e8d97a, is A&#x27;s third check.</li>
+<li><b>A change of intent, marked.</b> The description asks nothing and points at #661. This report marks answer 1 as a change of what line 100 of the bridge says the shared observations are for, and carries #661&#x27;s question as ask 1.</li>
+<li><b>Four places read the shared observations, not two.</b> The description names <code>staleStamp</code> and the carried digest, and says records stay as on main. <code>observedText</code> (line 309) and <code>failFolder</code> (line 335) read them too. Without the worktrees&#x27; entries, a worktree file rewritten with the same bytes between a session&#x27;s open and its first worktrees&#x27; walk is recorded in log mode, and sources under an unreadable worktree folder do not get its error. As in a new folder. Not run.</li>
+<li><b>The trimmed state exists at main.</b> Read at main: line 1596 copies the session&#x27;s map after each walk it applies, and the folder&#x27;s own walk applies first. A session that closes before its worktrees&#x27; walk applies leaves the folder&#x27;s own sources, and files a tool wrote outside it. The trim brings every close to that state, less those outside files.</li>
+<li><b>Lookups after the last close start again.</b> Read at the head: <code>forgetFolders</code> also drops the answers that said a folder holds no checkout. A folder that became a checkout while the runtime lived is then asked about again by the next session; at main that answer stays until the recorded checkouts change. No test pins it, and the description does not say it. The class comment still names one time answers are forgotten.</li>
+<li><b>A code owner approved this head.</b> Read on GitHub on 13 November 2026: a code owner approved 714e8d97a after the automated reviewer did, and wrote that it may ship. We take that as the answer to #661, which has no comment of its own.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #671, its diff, its reviews and its CI, and issue #661, read on GitHub on 13 November 2026. Rerail at main (c438bc813) for each quoted intent. Our run records, the decision record of the change and its build record for the measurements and the trial merges.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
