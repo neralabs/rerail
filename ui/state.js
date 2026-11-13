@@ -85,8 +85,9 @@ export const data = {
   /** Why the last Merge Assist read failed; `null` once one succeeds. */
   mergeAssistError: null,
   /**
-   * Whether the daemon runs Merge Assist's experiment: `null` until a Merge Assist read answers, `false` once one
-   * answered `404 experimental-off` (the sidebar then shows no Merge Assist and nothing reads it again), else `true`.
+   * Whether the daemon runs Merge Assist's experiment: `null` until a Merge Assist read answers (a failed read leaves
+   * it as it was), `false` once one answered `404 experimental-off` (the sidebar then shows no Merge Assist and nothing
+   * reads it again), `true` once one succeeded.
    * The daemon's, so a scope change keeps it.
    */
   mergeAssistExperiment: null,

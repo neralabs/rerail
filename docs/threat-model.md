@@ -326,7 +326,7 @@ in code or by running it when this model was written; unmarked items are code re
 | T12 | Native engine crash or hang | Malicious repo | Partly mitigated | Low |
 | T13 | CI and release compromise | Malicious PR, compromised action | Mostly mitigated | Low–Medium (maintainers) |
 | T14 | Smaller local exposures | Other OS users | Partly mitigated | Low |
-| T15 | An agent saves a command the daemon later runs as the person (Merge Assist's conflict hook) | Prompt-injected agent with a shell | Partly mitigated: experimental switch, people-only operations, host permission prompt | Medium where Merge Assist is on, none otherwise |
+| T15 | An agent saves a command the daemon later runs as the person (Merge Assist's conflict hook) | Prompt-injected agent with a shell | Partly mitigated: people-only MCP operations, host permission prompt; the experimental switch only keeps it off by default | Medium where Merge Assist is on, Low otherwise |
 
 ### T1: Agent escalates from `agent` to `person`
 
@@ -836,7 +836,9 @@ first, except in an auto-approve mode.
 
 - **Off by default**, twice: the experimental switch, then the per-repository opt-in. With the switch unset, its
   operations answer `404 experimental-off`, the CLI refuses, and the daemon runs no hook command, even one saved
-  earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`).
+  earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`). The switch keeps people from
+  coming on the feature by accident; it is no barrier to an agent with a shell, which can set the variable for its own
+  `rerail merge-assist` command and may be able to restart the daemon with it set.
 - **People only on MCP:** `merge_assist_settings_set` (turning it on, setting the command) and
   `merge_assist_conflict_dismiss` answer an `agent` `403 agent-not-permitted`. An agent may read the status and the
   settings of its own repository and scan only its own checkout.
@@ -853,7 +855,8 @@ first, except in an auto-approve mode.
 <summary>What remains, and the rest of Merge Assist's surface</summary>
 
 - An unsandboxed agent, or one in an auto-approve mode, can save a hook command through the CLI or `/api` (always
-  `person`, T1), as it can run any other `rerail` command; this one outlives the session. The dashboard's Merge Assist
+  `person`, T1), with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` in its own command's environment if the switch is unset, as
+  it can run any other `rerail` command; this one outlives the session. The dashboard's Merge Assist
   page and `rerail merge-assist settings` show the saved command.
 - **Subprocesses:** `gh` (`auth status`, `pr list`, `api` with `GET` only) with the person's own sign-in, prompts and
   colour off and Enterprise tokens stripped, from the temporary folder, with a 20 second timeout and a 4 MiB output

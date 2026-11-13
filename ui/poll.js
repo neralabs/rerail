@@ -291,11 +291,14 @@ function takeMergeAssist(body) {
   return true;
 }
 
-/** A Merge Assist read failed with `error`, kept for the page and the sidebar. Whether anything shown changed. */
+/**
+ * A Merge Assist read failed with `error`, kept for the page. It says nothing of whether the daemon runs Merge Assist:
+ * only a read that answers shows its sidebar item. Whether anything shown changed.
+ */
 function takeMergeAssistFailure(error) {
   mergeAssistRead.at = Date.now();
-  const changed = data.mergeAssistError !== error.message || data.mergeAssistExperiment !== true;
-  Object.assign(data, { mergeAssistError: error.message, mergeAssistExperiment: true });
+  const changed = data.mergeAssistError !== error.message;
+  data.mergeAssistError = error.message;
   return changed;
 }
 
