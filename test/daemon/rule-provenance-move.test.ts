@@ -151,17 +151,17 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(longest).toBeLessThan(2_000);
   }, TEST_MS);
 
-  it("records an edit's audit and event while the move's VACUUM holds the database, and the file still shrinks", async () => {
+  it("answers on its thread and records a session start sent to it, then an audit on that thread, each while the move's VACUUM holds the database", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
     startTestRepository(home, databasePath);
-    // The store the daemon records an edit's audit through, open before the move as the daemon's stores are, on this
-    // thread, which is the daemon's: it waits for the write lock here, up to its 5 s busy timeout.
+    // The store class the daemon's runtime records an edit's audit through, open before the move as the daemon's stores
+    // are, on this thread, which is the daemon's: it waits for the write lock here, up to its 5 s busy timeout.
     const audits = new SqliteAuditStore(databasePath);
     cleanups.push(() => audits.close());
-    // A VACUUM that holds the write lock 12 s, past the 5 s any Rerail writer waits for it: the VACUUM after 4,000
-    // audits held it 8.9 s on a loaded Windows machine.
+    // The first two VACUUMs each hold the write lock 12 s, past the 5 s any Rerail writer waits for it: the VACUUM after
+    // 4,000 audits held it 8.9 s on a loaded Windows machine.
     const held = join(home, "vacuum-held");
-    const restore = slowVacuumNext({ held, holdMs: 12_000 });
+    const restore = slowVacuumNext({ held, holdMs: 12_000, holds: 2 });
     let daemon: RerailDaemon;
     try {
       daemon = await RerailDaemon.start({
@@ -171,30 +171,48 @@ describe("the daemon's move of audit rule provenance", () => {
       restore();
     }
     cleanups.push(() => daemon.close());
+
+    // Each write below succeeds, and the thread answers within the 2 s a hook's health probe waits. Waiting out the lock,
+    // each failed once SQLite's 5 s busy timeout ran out.
+    const answered = { failure: undefined, heldTwoSeconds: false };
+
+    // A session start sent to the daemon's engine socket, as a hook sends it: the daemon records the session through its
+    // own store, on its thread, while the first VACUUM holds the lock.
     await untilExists(held, SLOW_MOVE_MS);
-
-    let failure: string | undefined;
-    const longest = await longestGapWhile(async () => {
-      try {
-        audits.finish(audits.start({
-          sessionId: "during-vacuum", workspaceRoot: home, scope: "touched-files", mode: "steer", revision: 1,
-          catalogRevision: "catalog", ruleRevisions: [], paths: ["src/a.ts"], ruleProvenance: [],
-        }), { status: "completed" });
-        await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: daemon.state().accessToken! }, {
-          kind: "session-start", eventId: "start-during-vacuum", session: { host: "claude-code", sessionId: "during-vacuum", cwd: home },
-        });
-      } catch (error) {
-        failure = (error as { code?: string }).code ?? String(error);
-      }
-    });
-
-    // Neither write fails, and the thread answered within the 2 s a hook's health probe waits. Waiting out the lock, the
-    // audit failed with SQLITE_BUSY after 5 s.
-    expect({ failure, heldTwoSeconds: longest >= 2_000 }, `longest gap ${Math.round(longest)} ms`)
-      .toEqual({ failure: undefined, heldTwoSeconds: false });
-    expect(rowsWith(databasePath, "audits", "session_id", "during-vacuum")).toBe(1);
+    const start = await writtenWhileHeld(() => ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: daemon.state().accessToken! }, {
+      kind: "session-start", eventId: "start-during-vacuum", session: { host: "claude-code", sessionId: "during-vacuum", cwd: home },
+    }));
+    expect(start, `longest gap ${start.longest} ms`).toMatchObject(answered);
     expect(rowsWith(databasePath, "sessions", "session_id", "during-vacuum")).toBe(1);
-    // The VACUUM that gave way runs again once no one writes, and gives the space back.
+
+    // That VACUUM gave way. The next one starts once no one has written for 4 s, and holds the lock too: an audit
+    // recorded on the daemon's thread meets it.
+    await untilExists(`${held}.2`, SLOW_MOVE_MS);
+    const audit = await writtenWhileHeld(async () => {
+      audits.finish(audits.start({
+        sessionId: "during-vacuum", workspaceRoot: home, scope: "touched-files", mode: "steer", revision: 1,
+        catalogRevision: "catalog", ruleRevisions: [], paths: ["src/a.ts"], ruleProvenance: [],
+      }), { status: "completed" });
+    });
+    expect(audit, `longest gap ${audit.longest} ms`).toMatchObject(answered);
+    expect(rowsWith(databasePath, "audits", "session_id", "during-vacuum")).toBe(1);
+    // The third VACUUM runs once no one writes, and gives the space back.
     await until(() => moved(databasePath), SLOW_MOVE_MS);
-  }, 3 * SLOW_MOVE_MS);
+  }, 4 * SLOW_MOVE_MS);
 });
+
+/**
+ * What `write` met, run on this thread (the daemon's) while a VACUUM holds the write lock: what it threw, if anything,
+ * whether the thread went 2 s or more without running a timer, and that longest gap.
+ */
+async function writtenWhileHeld(write: () => Promise<unknown>): Promise<{ failure: string | undefined; heldTwoSeconds: boolean; longest: number }> {
+  let failure: string | undefined;
+  const longest = await longestGapWhile(async () => {
+    try {
+      await write();
+    } catch (error) {
+      failure = (error as { code?: string }).code ?? String(error);
+    }
+  });
+  return { failure, heldTwoSeconds: longest >= 2_000, longest: Math.round(longest) };
+}

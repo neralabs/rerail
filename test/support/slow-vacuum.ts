@@ -5,9 +5,10 @@ const PRELOAD = new URL("./slow-vacuum-preload.mjs", import.meta.url).href;
 
 /** What `slowVacuumNext` makes the VACUUMs of the threads and processes started next do (`slow-vacuum-preload.mjs`). */
 export interface SlowVacuum {
-  /** The first VACUUM holds the write lock `holdMs` before it runs, and creates `held` once it holds it. */
+  /** The first `holds` (default 1) VACUUMs hold the write lock `holdMs` before they run, each creating `held` (`.n`). */
   readonly held?: string;
   readonly holdMs?: number;
+  readonly holds?: number;
   /** A VACUUM that has committed creates `committed`, waits `lingerMs` before its checkpoint, then creates `.done`. */
   readonly committed?: string;
   readonly lingerMs?: number;
@@ -23,6 +24,7 @@ export function slowVacuumNext(slow: SlowVacuum): () => void {
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${PRELOAD}`.trim(),
     RERAIL_TEST_VACUUM_HELD: slow.held,
     RERAIL_TEST_VACUUM_HOLD_MS: slow.holdMs === undefined ? undefined : String(slow.holdMs),
+    RERAIL_TEST_VACUUM_HOLDS: slow.holds === undefined ? undefined : String(slow.holds),
     RERAIL_TEST_VACUUM_COMMITTED: slow.committed,
     RERAIL_TEST_VACUUM_LINGER_MS: slow.lingerMs === undefined ? undefined : String(slow.lingerMs),
   };

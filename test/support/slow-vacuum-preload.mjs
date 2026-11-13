@@ -3,9 +3,9 @@
  * (`slow-vacuum.ts`), so it reaches the thread or process that runs the move's VACUUM, which a spy set in the test's own
  * thread does not. Plain JavaScript: it loads before `tsx` does.
  *
- * With RERAIL_TEST_VACUUM_HELD, the first VACUUM any of them runs takes the write lock, creates that file, and holds the
- * lock RERAIL_TEST_VACUUM_HOLD_MS before it rolls back and runs, as a VACUUM of a large file holds it. A VACUUM that
- * finds that file already there runs at once.
+ * With RERAIL_TEST_VACUUM_HELD, the first RERAIL_TEST_VACUUM_HOLDS (default 1) VACUUMs any of them runs each take the
+ * write lock, create a file (RERAIL_TEST_VACUUM_HELD for the first, `<that path>.<n>` for the nth), and hold the lock
+ * RERAIL_TEST_VACUUM_HOLD_MS before they roll back and run, as a VACUUM of a large file holds it. Later ones run at once.
  *
  * With RERAIL_TEST_VACUUM_COMMITTED, a VACUUM that has committed creates that file and waits
  * RERAIL_TEST_VACUUM_LINGER_MS before the checkpoint its commit runs, then creates `<that path>.done`: the moment after
@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 
 const held = process.env.RERAIL_TEST_VACUUM_HELD;
 const holdMs = Number(process.env.RERAIL_TEST_VACUUM_HOLD_MS ?? "0");
+const holds = Number(process.env.RERAIL_TEST_VACUUM_HOLDS ?? "1");
 const committed = process.env.RERAIL_TEST_VACUUM_COMMITTED;
 const lingerMs = Number(process.env.RERAIL_TEST_VACUUM_LINGER_MS ?? "0");
 
@@ -24,20 +25,28 @@ if ((held !== undefined && holdMs > 0) || committed !== undefined) {
   const exec = Database.prototype.exec;
   Database.prototype.exec = function (source) {
     if (source !== "VACUUM") return exec.call(this, source);
-    if (held !== undefined && holdMs > 0) holdFirst(this, exec);
+    if (held !== undefined && holdMs > 0) hold(this, exec);
     if (committed === undefined) return exec.call(this, source);
     return lingerAfterCommit(this, exec);
   };
 }
 
-/** Takes the write lock on `client` and, when no VACUUM held it before, holds it `holdMs` (blocking, as VACUUM does). */
-function holdFirst(client, exec) {
+/** Takes the write lock on `client` and, when fewer than `holds` VACUUMs held it before, holds it `holdMs`. */
+function hold(client, exec) {
   exec.call(client, "BEGIN IMMEDIATE");
   try {
-    if (create(held)) sleep(holdMs);
+    if (claimHold()) sleep(holdMs);
   } finally {
     exec.call(client, "ROLLBACK");
   }
+}
+
+/** Whether this VACUUM is one of the first `holds` to hold the lock: it creates the first marker none before it did. */
+function claimHold() {
+  for (let index = 1; index <= holds; index += 1) {
+    if (create(index === 1 ? held : `${held}.${index}`)) return true;
+  }
+  return false;
 }
 
 /** VACUUM with the checkpoint after its commit put off `lingerMs`, the markers created on either side of that wait. */
