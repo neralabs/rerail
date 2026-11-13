@@ -2518,9 +2518,17 @@ fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`), another dialect's tapes, for the
+    // lean ECMAScript parser's oracle (`rerail-ecma-lean`).
+    let dialect = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
+        Ok("javascript") => GrammarDialect::JavaScript,
+        Ok("typescript") => GrammarDialect::TypeScript,
+        Ok("tsx") => GrammarDialect::Tsx,
+        _ => GrammarDialect::Python,
+    };
+    let grammar = Grammar::new(dialect).unwrap();
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
+    parser.set_language(&dialect.get_ts_language()).unwrap();
     // With `RERAIL_PY_CUTS=k`, also each file cut at `k` places, as a file is while it is written:
     // `<n>-<j>.txt`, the path and the cut on the first line, and an `ERROR` line before the tape
     // where tree-sitter-python's tree has an error.

@@ -3248,6 +3248,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-ecma-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
