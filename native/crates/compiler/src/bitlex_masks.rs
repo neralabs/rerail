@@ -2014,6 +2014,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                             }
                         }
                     }
+                    // Refused by the syntax in a mark's first element.
+                    TokenElem::Not(_) | TokenElem::End => return Err("a `~` or `end` as a token mark's first token".into()),
                 }
             }
             let word = match seq[0].as_slice() {
@@ -2264,7 +2266,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
     // tell them apart, and the mark is not compiled.
-    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
+    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
     let starts_kind = |name: &str, b: usize| (0..rows.len()).any(|r| token_rows[r].0 == name && rows[r].first[b / 64] >> (b % 64) & 1 == 1);
@@ -2342,9 +2344,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();
-        for (order, elems) in &lowered.token_marks {
+        for (order, refuses, elems) in &lowered.token_marks {
             let mut out = Vec::new();
-            for (offset, names, words) in elems {
+            for (offset, names, words, not, end) in elems {
                 let mut set = 0u64;
                 for name in names {
                     for b in (0..256).filter(|&b| starts_kind(name, b)) {
@@ -2355,9 +2357,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone() });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), not: *not, end: *end });
             }
-            tms.push(crate::program::TokenMark { order: *order, elems: out });
+            tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses });
         }
         crate::rir_text::token_mark_rows(&mut lowered.text, &tms);
     }

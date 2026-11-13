@@ -115,7 +115,9 @@ pub struct Lowered {
     pub mark_words: Vec<(u8, u16)>,
     /// The token marks (`Mark::tokens`), rising by order: each element's offset, its kinds'
     /// names and its words (strings). The kinds become the records' (`Words::token_marks`).
-    pub token_marks: Vec<(u8, Vec<(i8, Vec<String>, Vec<u16>)>)>,
+    /// Each element: its offset, kinds, words, whether it is a `~` of them, whether the file's
+    /// end takes it (`::bitlex::syntax::TokenElem`). The flag: the mark refuses (`refusing`).
+    pub token_marks: Vec<(u8, bool, Vec<(i8, Vec<String>, Vec<u16>, bool, bool)>)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
@@ -789,7 +791,7 @@ impl Emit<'_> {
             .filter_map(|k| {
                 let m = &self.marks[k];
                 let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
-                (arm.is_some() || !m.hidden || st.refuses.contains(&m.kind)).then_some((k, arm))
+                (!refusing(m, self.arms) && (arm.is_some() || !m.hidden || st.refuses.contains(&m.kind))).then_some((k, arm))
             })
             .collect();
         // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
@@ -945,8 +947,15 @@ pub const LASTS: u16 = 0;
 ///
 /// `rules`: a function a rule (`grammar::build_shaped`). The words are laid out rule by rule,
 /// each rule's first place in `Lowered::rules`, and words are shared within a rule only.
+/// A token mark the grammar takes nowhere, not hidden: wherever it holds the file is refused,
+/// at every level. `TOKEN` tests it, once a token (`program::TokenMark::refuses`), and no
+/// state does: a test of it in each state would be two words a state.
+fn refusing(m: &Mark, arms: &[ArmRow]) -> bool {
+    m.tokens.is_some() && !m.hidden && !m.end && arms.iter().all(|a| a.token != m.kind)
+}
+
 /// The marks each state tests after its `TOKEN`, in order: each it takes, and each not hidden
-/// or that its level refuses.
+/// or that its level refuses (no refusing token mark: `TOKEN` tests those).
 fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usize>> {
     let mut takes: Vec<Vec<u16>> = vec![Vec::new(); states.len()];
     for a in arms {
@@ -955,7 +964,7 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
     states
         .iter()
         .enumerate()
-        .map(|(s, st)| (0..marks.len()).filter(|&k| takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind)).collect())
+        .map(|(s, st)| (0..marks.len()).filter(|&k| !refusing(&marks[k], arms) && (takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind))).collect())
         .collect()
 }
 
@@ -1015,16 +1024,28 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let mut elems = Vec::new();
         let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
         for (offset, choices) in at {
-            let (mut kinds, mut words) = (Vec::new(), Vec::new());
+            let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
+            let (not, choices) = match choices.as_slice() {
+                [::bitlex::syntax::TokenElem::Not(inner)] => (true, inner.as_slice()),
+                c => (false, c),
+            };
             for c in choices {
                 match c {
                     ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                     ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                    ::bitlex::syntax::TokenElem::End => end = true,
+                    ::bitlex::syntax::TokenElem::Not(_) => return Err("a `~` inside a `~`".into()),
                 }
             }
-            elems.push((offset, kinds, words));
+            elems.push((offset, kinds, words, not, end));
         }
-        token_marks.push((k as u8, elems));
+        // A refusing one's word: its bit in the record is the word's alone (no state tests it,
+        // so no `MARK` names the word).
+        if let (true, Some(w)) = (refusing(m, arms), &m.word) {
+            let s = e.string(w);
+            e.mark_words.insert(k as u8, s);
+        }
+        token_marks.push((k as u8, refusing(m, arms), elems));
     }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));

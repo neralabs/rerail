@@ -253,8 +253,10 @@ pub mod tests {
         // With a rule file's tests in the grammar (0130, More-ergonomic) on these calls: 413 states,
         // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348). With
         // Parser-generators' tier 2 merged (token marks from the records, 0129; tier 1's checks at
-        // the token, 0133): 3,932 words, the states and arms the same.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3932, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
+        // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
+        // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3563, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -538,6 +540,14 @@ pub mod tests {
             eprintln!("{name:>20}: {:7.1}M instructions{}", best as f64 / 1e6, if last > 0 { format!(" ({:+.1}M)", (best as f64 - last as f64) / 1e6) } else { String::new() });
             last = best;
         }
+    }
+
+    /// Tier 2's words as text, to `RR_WORDS` (a probe of what the marks cost).
+    #[test]
+    #[ignore = "a probe: run by hand with RR_WORDS"]
+    fn rr_words_text() {
+        let c = crate::compiled().expect("compiles");
+        std::fs::write(std::env::var("RR_WORDS").expect("set RR_WORDS"), format!("{}\n---\n{}", c.words, c.machine)).expect("writes");
     }
 
     /// The grammar's regions walked (the CPU's form, decision 0139) are its rounds' fixed point
@@ -1238,6 +1248,113 @@ pub mod tests {
                         assert_eq!(t, crate::engine_tape(&src), "{agg}: the engine's tape");
                     }
                     Err(_) => assert!(!taken, "{agg}: refused"),
+                }
+            }
+        }
+    }
+
+    /// The token marks the grammar takes nowhere (`TokenMark::refuses`): `TOKEN` tests them, once
+    /// a token, and no state does. A functor named, not called, before a token that can not
+    /// follow it; an I/O directive with no relation before an `#include` or at the end: refused
+    /// by every shape and the interpreter, comments between the tokens or none; else taken, as
+    /// the engine's tape.
+    #[test]
+    fn refusing_token_marks_refuse_at_any_level() {
+        let c = crate::compiled().expect("compiles");
+        let refusing = c.program.token_marks.iter().filter(|m| m.refuses).count();
+        assert_eq!(refusing, 3, "`no_value`, `fn_uncalled`, `io_bare`");
+        let words = c.program.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::MARK);
+        assert!(words.clone().all(|&w| !c.program.token_marks.iter().any(|m| m.refuses && m.order == rerail_compiler::program::split(w).1 % 32)), "no state tests a refusing mark");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(x: number)\n";
+        let cases = [
+            (format!("{head}a(x) :- a(y), x = @f(y).\n"), true),
+            (format!("{head}a(x) :- a(y), x = @f /* c */ (y).\n"), true),
+            (format!("{head}a(x) :- a(y), x = @f.\n"), false),
+            (format!("{head}a(x) :- a(y), x = @f /* c */ .\n"), false),
+            (format!("{head}a(x) :- a(y), x = @f + 1.\n"), false),
+            (format!("{head}.input a\n"), true),
+            (format!("{head}.output a, a\n.input a\n"), true),
+            (format!("{head}.input\n.decl b(x: number)\n"), true),
+            (format!("{head}.input\n"), false),
+            (format!("{head}.output /* c */\n"), false),
+            (format!("{head}.input\n#include \"x.rr\"\n"), false),
+        ];
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
+    /// A number of 19 digits or more goes to the engine, checked at its token (decision 0133's
+    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape. In
+    /// a block or across two, by every shape and the interpreter.
+    #[test]
+    fn long_numbers_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.values.iter().all(|v| !["sig", "sig16", "long_int"].contains(&v.name.as_str())), "no mask counts digits");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let d18 = "123456789012345678";
+        let d19 = "1234567890123456789";
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a({d18}).\n"), true));
+            cases.push((format!("{head}a({d18}.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d18}.\n"), true));
+            cases.push((format!("{head}a({d19}).\n"), false));
+            cases.push((format!("{head}a({d19}0).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d19}.\n"), false));
+        }
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
+    /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
+    /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
+    #[test]
+    fn chained_floats_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 55, 58, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a(1.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + 12.25 * 3.0.\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
+            cases.push((format!("{head}a(1.2.3).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+        }
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
                 }
             }
         }
