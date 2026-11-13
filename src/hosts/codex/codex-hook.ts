@@ -35,7 +35,7 @@ export async function runCodexHook(input: HookInput, options: HookOptions = {}):
   try {
     return await runHostHook("codex", workspace, requiredText(input, "session_id"), startsSession, waiting, (runtime, storageRoot) =>
       handleCodexEvent(input, runtime, storageRoot), event)
-      .catch((error: unknown) => answerAutostartOff(error, line => ({ systemMessage: line })));
+      .catch((error: unknown) => answerAutostartOff(error, startsSession, line => ({ systemMessage: line })));
   } catch (error) {
     if (!startsSession || !(error instanceof DaemonUnreachableError)) throw error;
     process.stderr.write(`rerail hook: ${error.message}\n`);

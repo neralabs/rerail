@@ -22,9 +22,10 @@ export async function runCursorHook(
   const waiting = withDaemonDeadline(options);
   const workspace = cursorWorkspace(input);
   if (!await hookRerailStarted("cursor", workspace, options.databasePath)) return {};
-  return await runHostHook("cursor", workspace, cursorSession(input).sessionId, input.hook_event_name === "sessionStart", waiting, (runtime, storageRoot, lock) =>
+  const startsSession = input.hook_event_name === "sessionStart";
+  return await runHostHook("cursor", workspace, cursorSession(input).sessionId, startsSession, waiting, (runtime, storageRoot, lock) =>
     handleCursorEvent(input, runtime, storageRoot, lock), String(input.hook_event_name))
-    .catch((error: unknown) => answerAutostartOff(error, cursorRelayedLine));
+    .catch((error: unknown) => answerAutostartOff(error, startsSession, cursorRelayedLine));
 }
 
 // `serveHook` answers `{}` and exits 0 whatever fails, as Rerail does where it is not started, so Cursor carries on: a

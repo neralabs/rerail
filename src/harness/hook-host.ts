@@ -118,12 +118,14 @@ function autostartTurnedOff(error: unknown): boolean {
 }
 
 /**
- * The session-start hook's answer when `RERAIL_AUTOSTART` kept it from starting a daemon and none runs (only that hook
- * throws for it): `answer` given the line `rerail status` prints (`daemonNotRunningMessage`), so the person learns as
- * the session starts that nothing in it is recorded or checked, and how to change that. Any other failure is rethrown.
+ * The session-start hook's answer when `RERAIL_AUTOSTART` kept it from starting a daemon and none runs: `answer` given
+ * the line `rerail status` prints (`daemonNotRunningMessage`), so the person learns as the session starts that nothing
+ * in it is recorded or checked, and how to change that. A later hook can meet the same error, when the daemon of
+ * another package it went to replace is gone before the replacement looks again; that hook (`startsSession` false), and
+ * any other failure, is rethrown, so it answers as any failed hook does.
  */
-export function answerAutostartOff<Output>(error: unknown, answer: (line: string) => Output): Output {
-  if (!autostartTurnedOff(error)) throw error;
+export function answerAutostartOff<Output>(error: unknown, startsSession: boolean, answer: (line: string) => Output): Output {
+  if (!startsSession || !autostartTurnedOff(error)) throw error;
   return answer(daemonNotRunningMessage());
 }
 
