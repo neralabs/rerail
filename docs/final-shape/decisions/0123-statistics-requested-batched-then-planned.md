@@ -145,8 +145,8 @@ again go out with the next wave. The test flushes 1 wave of 20 launches.
 
 **Measured.** On the O125 replay a step has one waiting stratum (1 wave of 1 launch, in both modes), so the wave
 count does not move there. The cross part's retired instructions are at parity (41.5 / 58.7 / 67.3 G for steps
-06–08 with the switch off, 41.6 / 57.2 / 65.9 G on), same as full: true. The run thread's profile moves more,
-because resumed members now run on it where the jobs ran before; the profile records the run's thread only.
+06–08 with the switch off, 41.6 / 57.2 / 65.9 G on), same as full: true. The run thread's spans moved more, because
+resumed members ran on it where the jobs ran before. Until §8 the profile missed a job's work.
 
 ## 7. Greedy first, held to what it did
 
@@ -177,9 +177,40 @@ taken greedily.
 | orders searched + taken greedily (run 2) | 1,523 + 425 | 2,723 + 1,991 | 1,836 + 1,434 | 1,529 + 421 |
 
 So the session's steps save 0.2–3.1%, and the cold run is at parity (+0.3%). The orders are counted over the
-process (`RERAIL_PLAN_CACHE_COUNTS`); the run thread's spans are not, as a job's planning is not in them.
+process (`RERAIL_PLAN_CACHE_COUNTS`).
+
+**Still over at step 06.** With jobs in the profile (§8), step 06 spends 0.54 s searching and keying (4,573
+searches) against 0.41 s of joins and 0.15 M rows of work. Steps 07 and 08 are within the rule (0.31 s against
+1.85 s; 0.27 s against 1.71 s). Greedy first takes only bodies of three joins or more. Most of step 06's searches
+are smaller bodies, whose search is the fixed cost alone.
 
 **Not bounded: an order's first run.** Before a line has run, nothing measured holds it; only its price does. In a
 cold run every line is in its first run, so the cold run's regret is 0132's: +1.3% join work against a search a
 third cheaper.
+
+## 8. The profile counts a job's work
+
+**The gap.** A component's job (0113) runs on an executor's thread, which has no span open. Its spans and native
+records opened at the profile's root, not under the run: at step 06, 805,547 rows of work were recorded under no
+span, against 66,883 under the cross part. So the cross part's planning and joins, read from the profile, were the
+run thread's alone. They read 0.01–0.02 s of planning at steps 06–08, which was not so.
+
+**Now.** The run's `Ambient` takes the profile's path where it issues jobs (`profile::here`). A job entering it
+opens its spans under that path (`profile::based`, a thread's base path, used when no span is open on it). Each
+member a job runs is a span of its own, `stratum … (in a job)`, and `… (in a job, after its device wave)` when
+resumed. So a stratum's work is profiled under the run, whichever thread ran it. Its CPU is its own thread's.
+The run's span over it keeps its own thread's CPU, so a parent's total can be less than its children's.
+`a_jobs_spans_open_under_the_run_that_issued_it` tests it.
+
+**Measured** (O125 replay, profiled, same as full: true). Nothing is recorded under no span. The cross part's
+`search` spans count 4,573 at step 06, against 4,714 orders the process searched or took greedily. In the cross
+part, by step:
+
+| step | search | re-price | explain records | joins | work | in jobs |
+|---|---|---|---|---|---|---|
+| 06 | 4,573, 0.52 s | 0 | 0.30 s | 0.41 s | 0.15 M | 3.40 s |
+| 07 | 1,753, 0.23 s | 954, 0.05 s | 0.11 s | 1.85 s | 1.17 M | 4.62 s |
+| 08 | 1,958, 0.18 s | 1,938, 0.07 s | 0.08 s | 1.71 s | 1.44 M | 4.04 s |
+
+The numbers measured before this (§3 here, 0122 §1) read the run's thread. Where jobs ran, they undercount.
 

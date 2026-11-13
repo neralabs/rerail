@@ -412,6 +412,8 @@ pub struct Thread {
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
+    /// Where its spans open when none is open on it (`based`): a job's, the path of the run that issued it.
+    base: Option<String>,
     /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
 }
@@ -430,6 +432,7 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         port,
         counters: memory::Counters::mine(),
         opens: Vec::new(),
+        base: None,
         statement: None,
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -458,7 +461,27 @@ pub fn here() -> Option<String> {
     if !on() {
         return None;
     }
-    STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
+    STACK.with(|s| { let s = s.lock(); s.opens.last().map(|o| o.path.clone()).or_else(|| s.base.clone()) })
+}
+
+/// While held, this thread's spans open under `path` when none is open on it: a job run on an executor's thread is
+/// profiled at the path of the run that issued it (`here` on the run's thread), as it would be run there. Its spans'
+/// CPU is the job thread's; the run's span over them keeps its own thread's.
+pub struct Based(Option<Option<String>>);
+
+pub fn based(path: Option<String>) -> Based {
+    if !on() || path.is_none() {
+        return Based(None);
+    }
+    Based(Some(STACK.with(|s| std::mem::replace(&mut s.lock().base, path))))
+}
+
+impl Drop for Based {
+    fn drop(&mut self) {
+        if let Some(was) = self.0.take() {
+            STACK.with(|s| s.lock().base = was);
+        }
+    }
 }
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
@@ -481,9 +504,13 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
         return Span(false);
     }
     let name = name();
-    let path = STACK.with(|s| match s.lock().opens.last() {
-        Some(top) => format!("{}/{name}", top.path),
-        None => name,
+    let path = STACK.with(|s| {
+        let s = s.lock();
+        match (s.opens.last(), &s.base) {
+            (Some(top), _) => format!("{}/{name}", top.path),
+            (None, Some(base)) => format!("{base}/{name}"),
+            (None, None) => name,
+        }
     });
     open(path)
 }
@@ -568,7 +595,7 @@ pub fn peaks() -> String {
 
 /// This thread's open span's path, `-` outside any.
 pub(in crate::code_rule_dsl) fn current() -> String {
-    STACK.with(|s| s.lock().opens.last().map_or_else(|| "-".to_owned(), |o| o.path.clone()))
+    STACK.with(|s| { let s = s.lock(); s.opens.last().map(|o| o.path.clone()).or_else(|| s.base.clone()).unwrap_or_else(|| "-".to_owned()) })
 }
 
 /// Charges one run of statement `text` to the current span.

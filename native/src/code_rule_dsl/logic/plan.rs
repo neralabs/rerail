@@ -5285,6 +5285,12 @@ fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> St
     }
 }
 
+/// A stratum's key as its span names it: at most 80 bytes of it.
+fn stratum_label(scc: &BTreeSet<String>) -> String {
+    let key = stratum_key(scc);
+    if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -5483,25 +5489,27 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: placement::Binding,
     explain: bool,
+    /// The profile's path where the run issues its jobs: a job's spans open under it (`profile::based`).
+    path: Option<String>,
 }
 
 impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, path: super::profile::here() }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Based);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), super::profile::based(self.path.clone()))
     }
 }
 
@@ -5691,6 +5699,7 @@ impl<'a> Strand<'a> {
             while !waiting.is_empty() {
                 super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
                 for (k, d) in std::mem::take(waiting) {
+                    let _span = super::profile::span(|| format!("stratum {} (in a job, after its device wave)", stratum_label(&members[k].0)));
                     match run.native_resume(d)? {
                         Native::Ran => {}
                         Native::Waiting(d) => waiting.push((k, d)),
@@ -5711,7 +5720,7 @@ impl<'a> Strand<'a> {
                 return (0, Some(Err(e)));
             }
             times[k].0 = std::time::Instant::now();
-            let stop = match self.0.native_stratum(scc, rules) {
+            let stop = match { let _span = super::profile::span(|| format!("stratum {} (in a job)", stratum_label(scc))); self.0.native_stratum(scc, rules) } {
                 Ok(Native::Ran) => {
                     times[k].1 = std::time::Instant::now();
                     continue;
@@ -5761,6 +5770,7 @@ impl<'a> Strand<'a> {
     /// on a wave again stay in `waiting`, for the next flush.
     fn resume_parked(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut [(std::time::Instant, std::time::Instant)]) -> Result<()> {
         for (k, d) in std::mem::take(waiting) {
+            let _span = super::profile::span(|| format!("stratum {} (in a job, after its device wave)", stratum_label(&members[k].0)));
             match self.0.native_resume(d)? {
                 Native::Ran => times[k].1 = std::time::Instant::now(),
                 Native::Waiting(d) => waiting.push((k, d)),
