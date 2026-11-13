@@ -10,6 +10,57 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Native plugin reports and selective capture
+
+The side-effects plugin metadata and supplied-fact reporter now execute through native policies.
+The final replay uses CLI `85f4fc1383defc39…`, built from `35c046058` over integration hub `aab36c283`.
+All six engine source trees and the executable bytes match the registered receipt.
+The source pin remains unchanged. The rule remains a draft.
+
+Both APIs pass all 97 source-recorded plugin cases, seven value cases, and three capture-demand cases.
+Metadata comparisons include the caller's original `FileScopeSpec` identity and complete required-fact descriptors.
+Report comparisons include positives, duplicates, defaults, malformed containers, severity filtering, large integer lines, boolean lines, and stable ordering.
+Value cases cover 74 binary64 patterns, nested non-string dictionary keys, tuples, special floats, unrelated families, and lexical roots.
+The [retained receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-plugin-current.json.gz) preserves complete observations, consumed programs, harness revisions, and the failures that drove repair.
+
+The reporter uses flat typed columns instead of JSON field selectors.
+Container entry and exit positions delimit each value's subtree.
+The shared Datalog library assembles representation tokens without recursive aggregation.
+Scalar strings stay direct values. Other scalars use their native formatters.
+Only requested container subtrees produce representation tokens.
+The existing native Python float formatter now has a generic rule-facing function.
+Its two Rust tests pass after a recorded missing-function failure, including signed zero, NaN payloads, and malformed bit strings.
+No Python process or rule-specific native detector implements these decisions.
+
+Actual porting exposes three further defects before repair:
+
+- The first reporter orders path components. The source orders complete `as_posix()` strings.
+- Concatenating roots changes `/` to `//` and changes `//` to `/`.
+- The first transport recursively captures unread values. A skipped audit row and an unused field each contain a 5,001-digit integer.
+  The source returns normally, but the transport fails before native evaluation.
+
+Each failure has a source recording and a failing native observation before its fix.
+Capture now follows two native batches. The first receives row shapes and the severity values the source reads.
+It returns selected row ordinals. The second receives only those rows and the metadata-declared field set.
+Inactive payloads, unused descendants, and unrelated fact families are not recursively captured.
+The 100-positive-row witness returns all findings with exactly one selection call and one value call through each API.
+Each row also contains the unread large integer, so successful execution proves that capture boundary remains effective.
+
+The affected regressions pass on this same binary through both APIs:
+all seven unchanged original tests, all 35 scanner cases, all 17 callback cases, and all 58 discovery/update observations.
+These checks include full positive findings and complete fact/state comparisons.
+They do not re-certify the earlier whole migration corpus on this new engine.
+All **781 tooling tests pass in 53.843 seconds**, including eight plugin-receipt checks and three typed-column transport checks.
+The receipt checks reject dropped positives, boolean-to-integer substitutions, duplicate cases, missing consumed bytes, and split batches.
+
+The successful incremental root build costs 8.43 seconds wall, 55.88 seconds user CPU, and 2.82 seconds system CPU.
+An earlier nine-second build exposes the formatter's crate-private visibility; the final source makes that existing formatter public.
+These are compilation costs. No full-repository or whole-batch cold execution runs.
+All build and test commands retain high nice priority and bounded execution.
+
+Remaining side-effects work includes the other public helpers and scanners, CLI, integrated production, history, updates, and removal controls.
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**. No new full rule admission is claimed.
+
 ## 2026-11-13 — Hub integration and callback-state parity
 
 The branch includes integration hub `aab36c283`, through merge `b2104f85e`.
