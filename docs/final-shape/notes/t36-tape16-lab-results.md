@@ -552,7 +552,15 @@ cut off when the run was stopped.
 - **The tape cache trips the strict-SQL abort.** The E7 runs had to set `RERAIL_TAPE_CACHE=off` and
   use a fresh output directory per rule, because a warm store aborts (the next item). Every run then
   parsed and decoded the whole repository from scratch: 20–116 s and 2–8 GB a rule. Measurement
-  runs must keep their caches, so the abort has to be fixed, not avoided.
+  runs must keep their caches, so the abort has to be fixed, not avoided. **Fixed for the warm
+  store (decision 0171).** A lease taken again after a phase's end had forgotten that every atom
+  was held. And a store of a few large segments (154 MB in 7) is now read whole before the first
+  wave, because a lookup reads its segment whole anyway.
+- **A cold run with the tape cache on stops on the writer's back-pressure.** It queues about 295 MB
+  of tapes and sources (9,839 jobs) against the writer's 192 MB queue cap, and under strict mode the
+  wait is refused (`wait_in_wave`). This was seen at load average 79, with the writer at nice 19.
+  Decision 0138 cleared cold runs on a quiet machine. Not yet traced: whether the writer is too slow,
+  or the run outpaces any writer and needs the tapes written outside the bounded queue.
 
 - **Strict SQL against atom lookup.** On a warm store, every rule of the `datalog` candidates and of
   `rr` aborts under `RERAIL_SQL_STRICT`: `SELECT id FROM atom_key WHERE h IN rarray(?1)` runs inside
