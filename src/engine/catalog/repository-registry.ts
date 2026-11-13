@@ -454,18 +454,29 @@ export function listedCheckoutStates(repository: RepositoryListing): (checkoutPa
     byFolder.set(key, [...(byFolder.get(key) ?? []), row]);
   }
   return checkoutPath => {
-    let own: boolean | null = null;
-    const parents: RecordedCheckout[] = [];
-    for (const folder of folderAndAbove(checkoutPath)) {
-      for (const row of byFolder.get(listedFolderKey(folder)) ?? []) {
-        if (row.checkoutPath === checkoutPath) own = row.started;
-        else parents.push(row);
-      }
-    }
-    // In parentCheckouts' order, so a folder recorded under two spellings gives both readers the same parent.
-    parents.sort(nearestFirst);
+    const { own, parents } = listedRowsAt(byFolder, checkoutPath);
     return { status: statusOf(repository, own, parents), parentCheckoutPath: parents[0]?.checkoutPath ?? null };
   };
+}
+
+/**
+ * The rows of `byFolder` (a listing's rows by {@link listedFolderKey}) at `checkoutPath`'s folder and at each folder
+ * above it: the on/off of the row at `checkoutPath` itself, and the others as its parents, in parentCheckouts' order,
+ * so a folder recorded under two spellings gives both readers the same parent.
+ */
+function listedRowsAt(
+  byFolder: ReadonlyMap<string, readonly RecordedCheckout[]>,
+  checkoutPath: string,
+): { own: boolean | null; parents: RecordedCheckout[] } {
+  let own: boolean | null = null;
+  const parents: RecordedCheckout[] = [];
+  for (const folder of folderAndAbove(checkoutPath)) {
+    for (const row of byFolder.get(listedFolderKey(folder)) ?? []) {
+      if (row.checkoutPath === checkoutPath) own = row.started;
+      else parents.push(row);
+    }
+  }
+  return { own, parents: parents.sort(nearestFirst) };
 }
 
 /**
