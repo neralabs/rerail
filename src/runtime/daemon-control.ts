@@ -724,8 +724,22 @@ async function startUnderLock(home: string, start: () => Promise<StartDaemonResu
 }
 
 /**
+ * Whether a daemon holds `home`, its daemon.json or not. As for the main instance ({@link mainInstanceHolderRuns}), the
+ * pid rule answers first and loads nothing: the holder records its pid beside the lock and removes the record when it
+ * lets go, so a home whose daemon stopped, was killed or never ran is answered without the engine. Asking the lock
+ * loads the engine from the running version's folder, and Windows keeps a loaded DLL from being deleted: the uninstall,
+ * which stops the daemon before it removes `versions/`, could not have removed it. Only a recorded holder that runs is
+ * asked about by its lock, which tells a live holder from a pid Windows has given to another process.
+ */
+function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
+  const pid = homeDaemonHolder(home);
+  if (pid === undefined || !processAlive(pid, machine.kill)) return false;
+  return machine.homeDaemonLockHeld(home) ?? true;
+}
+
+/**
  * The daemon a start or a stop acts on in `home`: the one daemon.json records, else the one that holds the home
- * (`homeDaemonLockHeld`) once it has recorded itself again. The daemon of a home writes daemon.json back within a
+ * ({@link homeDaemonRuns}) once it has recorded itself again. The daemon of a home writes daemon.json back within a
  * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
  * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
  */
@@ -733,7 +747,7 @@ async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<D
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
     const lookup = await lookupDaemon(home, machine);
-    if (lookup.status !== "absent" || machine.homeDaemonLockHeld(home) !== true) return lookup;
+    if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
     if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
     await sleep(POLL_INTERVAL_MS);
   }

@@ -43,6 +43,7 @@ import {
   stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { LOCKS_DIR } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
@@ -334,6 +335,31 @@ describe("Rerail daemon control", () => {
     await delay(100);
     expect(existsSync(stateFile)).toBe(false);
   }, 20_000);
+
+  // Asking the home's lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
+  // deleted: the uninstall stops the daemon, then removes `versions/`.
+  it("asks the home's lock only of a recorded holder that runs, so a stop where no daemon runs loads no engine", async () => {
+    const asked: string[] = [];
+    const machine = fakeMachine("win32", {
+      kill: (pid, signal) => process.kill(pid, signal),
+      homeDaemonLockHeld: asking => {
+        asked.push(asking);
+        return false;
+      },
+    });
+    // What a home keeps once a daemon of this build has run there: the lock file, and no holder once it stopped.
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    expect(await stopDaemon(home, machine)).toBe("not-running");
+    // A holder killed outright left its record, naming a pid that is gone.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: DEAD_PID }));
+    expect(await stopDaemon(home, machine)).toBe("not-running");
+    expect(asked).toEqual([]);
+    // A recorded pid that runs may be the holder, or a process Windows gave that pid to since: the lock tells.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+    expect(await stopDaemon(home, machine)).toBe("not-running");
+    expect(asked).toEqual([home]);
+  });
 
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
