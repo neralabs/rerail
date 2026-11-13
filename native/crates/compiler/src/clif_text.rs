@@ -109,6 +109,52 @@ pub fn loop_costs(lines: &[String]) -> (usize, usize) {
     (stack, mvn)
 }
 
+/// How a machine-code instruction leaves for code elsewhere, as Cranelift prints it for the host:
+/// aarch64 or x86-64.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Transfer {
+    /// A direct call (`bl`, `call` of a name).
+    NearCall,
+    /// A call through a register (`blr`, `call *`).
+    FarCall,
+    /// An indirect jump of its own (`br`, `jmp *`).
+    Jump,
+    /// A jump table's sequence, its indirect jump inside (`jt_entries`, `br_table`).
+    Table,
+}
+
+/// The transfers of a line of machine code, one per instruction (a line can hold a sequence,
+/// `;`-separated).
+pub fn transfers(line: &str) -> Vec<Transfer> {
+    if cfg!(target_arch = "aarch64") {
+        if line.contains("jt_entries") {
+            return vec![Transfer::Table];
+        }
+        line.split(';')
+            .filter_map(|i| match i.split_whitespace().next() {
+                Some("bl") => Some(Transfer::NearCall),
+                Some("blr") => Some(Transfer::FarCall),
+                Some("br") => Some(Transfer::Jump),
+                _ => None,
+            })
+            .collect()
+    } else {
+        line.split(';')
+            .filter_map(|i| match i.split_whitespace().collect::<Vec<_>>()[..] {
+                ["br_table", ..] => Some(Transfer::Table),
+                ["call", to, ..] => Some(if to.starts_with('*') { Transfer::FarCall } else { Transfer::NearCall }),
+                ["jmp", to, ..] if to.starts_with('*') => Some(Transfer::Jump),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// How many of `disassembly`'s instructions are transfers of `kind`.
+pub fn count_transfers(disassembly: &str, kind: Transfer) -> usize {
+    disassembly.lines().flat_map(transfers).filter(|&t| t == kind).count()
+}
+
 /// The Cranelift IR of the loop body: everything between the body block's label and the next
 /// block's. `block0` is the entry, `block1` a file's row, `block2` the body over its blocks.
 pub fn body_of(clif: &str) -> Vec<String> {

@@ -541,14 +541,15 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // `native_cpu_stream::outline`).
     // An indirect jump only through a jump table of its own: tier 2's shared arms
     // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
+    use crate::clif_text::{Transfer, count_transfers, transfers};
     let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
     for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
-        // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
-        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
-        let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
+        // A jump table's sequence is one line, its indirect jump inside, its entries the
+        // function's labels.
+        let out: Vec<&str> = asm.lines().filter(|l| transfers(l).iter().any(|t| matches!(t, Transfer::NearCall | Transfer::Jump))).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
-        assert_eq!(tables_asm.len(), tables, "{name}: {tier} jumps other than by its own tables");
-        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out");
+        assert_eq!(count_transfers(asm, Transfer::Table), tables, "{name}: {tier} jumps other than by its own tables");
+        assert_eq!(count_transfers(asm, Transfer::FarCall), own, "{name}: {tier} calls out");
     }
 }
 
