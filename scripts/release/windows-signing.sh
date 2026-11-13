@@ -55,25 +55,31 @@ if [ "$(az provider show --namespace Microsoft.CodeSigning --query registrationS
 fi
 az group create -n "$RG" -l "$LOCATION" --tags "purpose=$PURPOSE" -o none
 
-if ! az artifact-signing show -g "$RG" -n "$ACCOUNT" -o none 2>/dev/null; then
+# The artifact-signing commands are a preview extension, which warns on every call; --only-show-errors keeps errors.
+signing() { az artifact-signing "$@" --only-show-errors; }
+if ! signing show -g "$RG" -n "$ACCOUNT" -o none 2>/dev/null; then
   info "Creating Artifact Signing account $ACCOUNT"
-  az artifact-signing create -g "$RG" -n "$ACCOUNT" -l "$LOCATION" --sku Basic --tags "purpose=$PURPOSE" -o none
+  signing create -g "$RG" -n "$ACCOUNT" -l "$LOCATION" --sku Basic --tags "purpose=$PURPOSE" -o none
 fi
-account_id="$(az artifact-signing show -g "$RG" -n "$ACCOUNT" --query id -o tsv)"
-endpoint="$(az artifact-signing show -g "$RG" -n "$ACCOUNT" --query properties.accountUri -o tsv)"
+account_id="$(signing show -g "$RG" -n "$ACCOUNT" --query id -o tsv)"
+endpoint="$(signing show -g "$RG" -n "$ACCOUNT" --query accountUri -o tsv)"
+if [ -z "$endpoint" ]; then
+  echo "Artifact Signing account $ACCOUNT reports no endpoint" >&2
+  exit 1
+fi
 info "Artifact Signing account $ACCOUNT at $endpoint"
 
 profile_ready=0
-if az artifact-signing certificate-profile show -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" -o none 2>/dev/null; then
+if signing certificate-profile show -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" -o none 2>/dev/null; then
   profile_ready=1
 elif [ -n "$validation" ]; then
   info "Creating Public Trust certificate profile $PROFILE"
-  az artifact-signing certificate-profile create -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" \
+  signing certificate-profile create -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" \
     --profile-type PublicTrust --identity-validation-id "$validation" -o none
   profile_ready=1
 fi
 if [ "$profile_ready" = 1 ]; then
-  info "Certificate profile $PROFILE: $(az artifact-signing certificate-profile show -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" --query properties.status -o tsv)"
+  info "Certificate profile $PROFILE: $(signing certificate-profile show -g "$RG" --account-name "$ACCOUNT" -n "$PROFILE" --query 'status || properties.status' -o tsv)"
 else
   info "No certificate profile yet: complete the organization's Public identity validation in the portal, then rerun with --identity-validation-id <id>"
 fi
