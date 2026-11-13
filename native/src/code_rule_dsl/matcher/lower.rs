@@ -660,6 +660,10 @@ impl Lowering {
         if count.binding.is_some() {
             return Err(Unsupported("count as"));
         }
+        // The walk counts stored nodes only; the implied tokens are the matcher's (`Count::gap`).
+        if count.gap.is_some() {
+            return Err(Unsupported("count over implied tokens"));
+        }
         let (axis, related, stop) = match &count.relation {
             AstMatcher::Inside(related, stop) => (Axis::Inside, related, stop),
             AstMatcher::Has(related, stop) => (Axis::Has, related, stop),

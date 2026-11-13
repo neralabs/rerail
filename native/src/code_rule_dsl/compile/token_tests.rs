@@ -126,9 +126,17 @@ impl Walk<'_> {
             let here = format!("{path}/{key}");
             match key.as_str() {
                 "has" | "follows" | "precedes" | "inside" => {
-                    use crate::code_rule_dsl::compile::ast_rule::gap_test;
+                    use crate::code_rule_dsl::compile::ast_rule::{gap_split, gap_test};
                     use crate::code_rule_dsl::matcher::AstMatcher;
-                    if gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))).is_some() {
+                    if let Some(test) = gap_test(key, value, self.lang.dialect, Some(Box::new(AstMatcher::Never))) {
+                        self.lowered.insert(here.clone());
+                        // The token's own relations to the tokens beside it, which the test reads.
+                        if !test.token.is_empty() {
+                            for nested in ["follows", "precedes", "not/follows", "not/precedes"] {
+                                self.lowered.insert(format!("{here}/{nested}"));
+                            }
+                        }
+                    } else if gap_split(key, value, self.lang.dialect).is_some() {
                         self.lowered.insert(here.clone());
                     }
                     let field = value.get("field").and_then(Value::as_str).map(str::to_owned);
