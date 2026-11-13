@@ -4829,7 +4829,7 @@ instructions, 53.2 G cycles, 13.8 s CPU (last measured 163.2 G). Shares of the m
 
 | | share | earlier |
 |---|---|---|
-| `keeps::choose` (plan searches for its calibrated rows) | 12.6% | under 1.5% |
+| `keeps::choose` (plan searches for its calibrated rows) | 12.6% (5.5% after 0159) | under 1.5% |
 | `merge_to_fixpoint` (`simplify::merge_identical`) | 12.3% | new: the duplicate merge pass (0058) |
 | `hiding::hide` (O-combine-hiding-single) | 4.4% | 7.5%, 8.3% |
 | `bridge::facts` → `run_typed` (O-batch-typing-once) | 4.0%, 3.6% | 15%, 13.5% |
@@ -4844,6 +4844,29 @@ rules as a set, and `merge_and_drop_repeats` (renamed) drops repeats, merges onc
 made. Checked over the batch and O125 step 07: a further merge then finds nothing. dl1: 159.1 → 153.5 G
 instructions, 53.2 → 47.4 G cycles, the same 48 findings; O125 step 07 equals a full run.
 `a_repeated_rule_does_not_keep_a_relation_from_its_twin`.
+
+**`keeps::choose` (2026-11-13, decision 0159).** Over the batch's 100 programs, `estimate` planned 6,213 of
+8,330 rules to price 2,445 candidates, and 1,854 of the 1,897 priced came out small (stored unpriced). Planning
+was 85% of `choose`. A candidate whose inputs' counts bound it under `SMALL` rows is now stored with nothing
+planned: 3,407 rules planned for 434 candidates. dl1: 152.0 → 148.8 G instructions, the same 48 findings (load
+15-19); `choose` 10.9% → 8.7% of the main thread. Seven programs store a relation they inlined before, one the
+planner put over `SMALL` though its inputs allow fewer rows. Left: searches of long upstream bodies (7 or more
+joins, about 0.36 s of 0.55 s). Tried and dropped: greedy orders for rows, the bound as rows, plans shared
+across programs (0159). `a_relation_is_bounded_by_its_inputs_counts`,
+`a_candidate_bounded_small_is_stored_unplanned`.
+
+Then the overhead around the estimates (0159, "What the remaining estimates cost"): the EXPLAIN record made for
+calibration's step rows, 0137's guard reading statistics by name per pair of joins, reader copies made only to be
+counted, filter readiness in a hash map. dl1: 148.8 → 143.3 G instructions, the same findings; `choose` 8.4% →
+5.5% of the main thread. Left: the cost model and the search.
+
+**A closed connection's cached inputs (fixed 2026-11-13).** In the logic crate's own tests,
+`repeated_native_consumers_fold_each_demanded_bag_once` failed after
+`native_join_shares_summaries_across_rules_and_independent_slots`: its join read 4 rows of `events` for 3,000.
+The native evaluator caches a connection's path, symbols and inputs by its address, and a closed connection's
+address goes to the next opened. The close hook drops them only once `install_forget` has run, and only the
+engine's set-up called it. The native module now installs it before it keeps anything by an address.
+`a_closed_connection_leaves_nothing_by_its_address`.
 
 **Not measured:** O99 and O130 run on the 9,010-file data layer (minutes, past the run cap). O133 and O114 run
 on the 84-file Jedi recording, which is not on this machine (a 40-file subset is).

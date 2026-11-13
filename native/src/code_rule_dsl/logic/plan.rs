@@ -1474,6 +1474,11 @@ pub fn explaining(on: bool) -> bool {
 }
 
 thread_local! {
+    /// Set while a plan's record is made for its steps' rows alone (`Model::plan_rule_step_rows`).
+    static STEP_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
     /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
     static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1649,6 +1654,19 @@ impl Model {
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         self.plan_inner(prog, head, body, first, None, true)
+    }
+
+    /// `plan_rule_explained` for the rows expected after each step of the plan alone, as what a relation keeps
+    /// calibrates them (decision 0099): the record is made without its strings, its steps' bases and the joins each
+    /// step passed over, priced again for EXPLAIN.
+    pub fn plan_rule_step_rows(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<(Plan, Vec<f64>)> {
+        let (was, rows_was) = (EXPLAIN_ALWAYS.with(|e| e.replace(true)), STEP_ROWS.with(|e| e.replace(true)));
+        let got = self.plan_inner(prog, head, body, first, None, true);
+        EXPLAIN_ALWAYS.with(|e| e.set(was));
+        STEP_ROWS.with(|e| e.set(rows_was));
+        let (plan, x) = got?;
+        let rows = x.map(|x| x.steps.iter().map(|s| s.rows).collect()).unwrap_or_default();
+        Ok((plan, rows))
     }
 
     /// `plan_rule_explained`, reusing this rule's plan from an earlier chunk (decision 0038): the kept order is
@@ -2792,16 +2810,20 @@ impl Model {
         // a step sharing no variable with what is joined is not taken where it or a connected step has no size of its
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
         let jmask: Vec<u128> = joins.iter().map(|&j| body[j].vars().iter().filter_map(|v| var_ids.get(v)).fold(0u128, |m, &k| if k < 128 { m | 1u128 << k } else { m })).collect();
-        let unsized_join = |i: usize| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str()));
-        // A join of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a guest
-        // round's do). Not the delta, whose rows are its wave's.
-        let no_rows_when_priced = |i: usize| {
-            first != Some(joins[i])
-                && (unsized_join(i) || matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && self.stats.card.get(a.rel.as_str()).is_some_and(|&n| n <= 0.0)))
-        };
-        let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool {
-            prev != 0 && jmask[i] & bound == 0 && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && jmask[j] & bound != 0 && (unsized_join(i) || unsized_join(j)))
-        };
+        // The joins with no size of their own, read from the statistics once per search.
+        let no_size: u64 = (0..joins.len())
+            .filter(|&i| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str())))
+            .fold(0, |m, i| m | 1 << i);
+        // The joins of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a
+        // guest round's do). Not the delta, whose rows are its wave's. Read once per search, as `no_size` is.
+        let no_rows: u64 = (0..joins.len())
+            .filter(|&i| {
+                first != Some(joins[i])
+                    && (no_size >> i & 1 == 1 || matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && self.stats.card.get(a.rel.as_str()).is_some_and(|&n| n <= 0.0)))
+            })
+            .fold(0, |m, i| m | 1 << i);
+        let no_rows_when_priced = |i: usize| no_rows >> i & 1 == 1;
+        let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool { unfounded_cross(i, prev, bound, &jmask, no_size) };
         // The greedy order (Postgres's `geqo_threshold`): the cheapest connected step next. Long bodies take it; under
         // `RERAIL_PLAN_GREEDY_PROBE` (a measurement aid) every searched body is also ordered so, and compared.
         let greedy = |candidates: &mut u64| -> Option<Best> {
@@ -2875,12 +2897,9 @@ impl Model {
         let bits_of = |vs: BTreeSet<String>| vs.iter().fold(0u128, |m, v| m | 1u128 << var_ids[v]);
         let set_of = |b: u128| -> BTreeSet<String> { names.iter().enumerate().filter(|(k, _)| b >> k & 1 == 1).map(|(_, v)| (*v).clone()).collect() };
         let lit_bits: Vec<u128> = body.iter().map(|l| bits_of(l.vars())).collect();
-        // Whether a filter is ready reads only its own variables (`ready`).
-        let mut readiness: rustc_hash::FxHashMap<(usize, u128), bool> = Default::default();
-        let mut ready_at = |f: usize, bound: u128| -> bool {
-            let own = bound & lit_bits[f];
-            *readiness.entry((f, own)).or_insert_with(|| ready(&body[f], &set_of(own)))
-        };
+        // Whether a filter is ready reads only its own variables (`ready`, kept by them: `Readiness`).
+        let mut readiness = Readiness::new(&lit_bits);
+        let mut ready_at = |f: usize, bound: u128| -> bool { readiness.ready(f, bound, |own| ready(&body[f], &set_of(own))) };
         // A subset's bound variables and how many halving filters it has placed.
         let mut closure = |mask: u64| -> (u128, usize) {
             let mut bound = 0u128;
@@ -3162,6 +3181,29 @@ impl Model {
             let mut r = 1.0;
             let mut steps = Vec::new();
             let mut placed: BTreeSet<usize> = BTreeSet::new();
+            // Each step's rows alone (`plan_rule_step_rows`): as below, with nothing made for EXPLAIN to show.
+            if STEP_ROWS.with(std::cell::Cell::get) {
+                for s in &order {
+                    match &s.lit {
+                        Literal::Atom(a) if !a.neg => {
+                            if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                                r = out;
+                            }
+                        }
+                        Literal::Nearest { .. } => {
+                            if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                                r = out;
+                            }
+                        }
+                        Literal::Cmp { op, .. } if *op == "=" => {}
+                        Literal::Agg { .. } => {}
+                        _ => r *= 0.5,
+                    }
+                    bound.extend(s.lit.vars());
+                    steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, passed: Vec::new(), basis: String::new() });
+                }
+                return super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
+            }
             for s in &order {
                 // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
                 // delta comes first by construction, not by choice: nothing was passed over for it.
@@ -8223,6 +8265,7 @@ pub fn forget_connection(at: usize) {
 /// States that the runs on `db` have documents whose nodes are `d << 32 | index` (the corpus runner's): a range read
 /// computes a document's interval, so no table of them is written or read in the run's waves.
 pub fn docs_by_shift(db: &Connection) {
+    super::native::setfix::forgotten_on_close();
     TEMP_LEFT.lock().expect("temp_left").entry(super::native::setfix_scope(db)).or_default().by_shift = true;
 }
 
@@ -8242,6 +8285,7 @@ fn temp_in_memory(db: &Connection) -> Result<()> {
     }
     // Set when SQL first runs on the connection (`vtab::setup_now`): a run all native runs no statement.
     crate::code_rule_dsl::facts::vtab::defer_setup(db, "PRAGMA temp_store = MEMORY;");
+    super::native::setfix::forgotten_on_close();
     TEMP_LEFT.lock().expect("temp_left").entry(at).or_default().configured = true;
     Ok(())
 }
@@ -10310,5 +10354,163 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
+    }
+}
+
+/// The DP's guard against a cross product priced from a default size (decision 0137): step `i` shares no variable
+/// with what `prev` joined (`bound`), a connected step remains, and `i` or such a step has no size of its own
+/// (`no_size`, by join). `jmask`: each join's variables as bits.
+fn unfounded_cross(i: usize, prev: u64, bound: u128, jmask: &[u128], no_size: u64) -> bool {
+    if prev == 0 || jmask[i] & bound != 0 {
+        return false;
+    }
+    let mut connected = 0u64;
+    for (j, &m) in jmask.iter().enumerate() {
+        if j != i && prev >> j & 1 == 0 && m & bound != 0 {
+            connected |= 1 << j;
+        }
+    }
+    connected != 0 && (no_size >> i & 1 == 1 || connected & no_size != 0)
+}
+
+/// Whether each literal of a body is ready (`ready`), kept by which of its own variables are bound: a table of its
+/// variables' patterns, made when the literal is first asked about, or a map for one of more than `Readiness::WIDE`
+/// variables.
+struct Readiness {
+    own: Vec<u128>,
+    tables: Vec<Option<Vec<u8>>>,
+    wide: rustc_hash::FxHashMap<(usize, u128), bool>,
+}
+
+impl Readiness {
+    const WIDE: u32 = 12;
+
+    /// For literals whose variables are `own` (as bits).
+    fn new(own: &[u128]) -> Readiness {
+        Readiness { own: own.to_vec(), tables: vec![None; own.len()], wide: Default::default() }
+    }
+
+    /// Whether literal `f` is ready with `bound` bound: `test` of its own variables bound, run once per pattern.
+    fn ready(&mut self, f: usize, bound: u128, test: impl FnOnce(u128) -> bool) -> bool {
+        let own = self.own[f];
+        let pattern = bound & own;
+        if own.count_ones() > Self::WIDE {
+            return *self.wide.entry((f, pattern)).or_insert_with(|| test(pattern));
+        }
+        // The pattern's bits packed in the order of the literal's variables.
+        let (mut at, mut rest, mut k) = (0usize, own, 0);
+        while rest != 0 {
+            let low = rest & rest.wrapping_neg();
+            if pattern & low != 0 {
+                at |= 1 << k;
+            }
+            rest &= rest - 1;
+            k += 1;
+        }
+        let table = self.tables[f].get_or_insert_with(|| vec![0; 1 << own.count_ones()]);
+        if table[at] == 0 {
+            table[at] = 1 + u8::from(test(pattern));
+        }
+        table[at] == 2
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    /// The guard as decision 0137 wrote it, over the same masks: a step sharing no variable with what is joined is
+    /// refused while a connected step remains, where it or that connected step has no size of its own.
+    fn cross_by_definition(i: usize, prev: u64, bound: u128, jmask: &[u128], no_size: &[bool]) -> bool {
+        prev != 0 && jmask[i] & bound == 0 && (0..jmask.len()).any(|j| j != i && prev & (1 << j) == 0 && jmask[j] & bound != 0 && (no_size[i] || no_size[j]))
+    }
+
+    /// `unfounded_cross` (the DP's guard against a cross product priced from a default size) gives the definition's
+    /// answer for every step, subset joined and set of bound variables, from masks made once per search: it read
+    /// three statistics maps by relation name for every pair of joins at every candidate, 12% of `keeps::choose`.
+    #[test]
+    fn the_cross_product_guard_is_its_definition_over_masks() {
+        // Four joins over variables 0..5: a(0,1) b(1,2) c(3) d(2,3,4).
+        let jmask: Vec<u128> = vec![0b11, 0b110, 0b1000, 0b11100];
+        for sized in 0u64..16 {
+            let no_size: Vec<bool> = (0..4).map(|j| sized >> j & 1 == 0).collect();
+            let mask: u64 = (0..4).filter(|&j| no_size[j]).map(|j| 1u64 << j).sum();
+            for prev in 0u64..16 {
+                let bound = (0..4).filter(|&j| prev >> j & 1 == 1).fold(0u128, |b, j| b | jmask[j]);
+                for i in (0..4).filter(|&i| prev >> i & 1 == 0) {
+                    assert_eq!(unfounded_cross(i, prev, bound, &jmask, mask), cross_by_definition(i, prev, bound, &jmask, &no_size), "step {i} after {prev:04b}, unsized joins {mask:04b}");
+                }
+            }
+        }
+    }
+
+    /// Whether a filter is ready, kept per filter by which of its own variables are bound (`Readiness`): the answer
+    /// is the test's for every set bound, and the test runs once per pattern of its variables. Kept in a hash map by
+    /// (filter, variables), its lookups were two thirds of the time a search spent placing filters.
+    #[test]
+    fn a_filters_readiness_is_kept_by_its_own_variables() {
+        // Three filters over variables 0..8: {1, 3}, {0, 2, 5, 7}, none.
+        let own: Vec<u128> = vec![0b1010, 0b1010_0101, 0];
+        let test = |f: usize, b: u128| match f {
+            0 => b & 0b10 != 0,
+            1 => b & 0b1000_0001 == 0b1000_0001,
+            _ => true,
+        };
+        let mut runs = 0usize;
+        let mut kept = Readiness::new(&own);
+        for b in 0u128..256 {
+            for f in 0..own.len() {
+                let got = kept.ready(f, b, |x| {
+                    runs += 1;
+                    assert_eq!(x & !own[f], 0, "only the filter's own variables are passed");
+                    test(f, x)
+                });
+                assert_eq!(got, test(f, b & own[f]), "filter {f} with {b:08b} bound");
+            }
+        }
+        assert_eq!(runs, 4 + 16 + 1, "once per pattern of each filter's variables");
+    }
+
+    /// A model of `prog` whose inputs have the rows and distinct values by column given.
+    fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
+        let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        model.stats.nodes = 1_000_000.0;
+        for &(rel, rows, ndv) in inputs {
+            model.stats.card.insert(rel.to_owned(), rows);
+            for (c, &n) in ndv.iter().enumerate() {
+                model.ndv.insert((rel.to_owned(), c), n);
+                model.stats.fan.insert((rel.to_owned(), c), rows / n);
+            }
+        }
+        model
+    }
+
+    /// The rows after each step of a plan, as calibration reads them (`keeps::calibrated_rows_at`), are the EXPLAIN
+    /// record's, and the plan is the same: made without the record's strings, bases and passed-over joins, each of
+    /// which priced every unplaced join again (15% of `keeps::choose`).
+    #[test]
+    fn a_plans_step_rows_are_its_explain_records() {
+        let prog = crate::code_rule_dsl::logic::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(y: number, z: number)\n.decl d(z: number, w: number)\n\
+             .input a\n.input b\n.input c\n.input d\n.decl o(x: number, w: number)\n\
+             o(x, w) :- a(x), b(x, y), c(y, z), d(z, w), !a(w), z != 3.\n\
+             o(x, w) :- b(x, y), c(y, 7), d(7, w), w = x.\n\
+             o(x, w) :- d(z, w), c(y, z), b(x, y), a(x).\n.output o\n",
+        )
+        .unwrap();
+        let model = model_with(&prog, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
+        let was = explaining(true);
+        for r in &prog.rules {
+            for first in [None, Some(1)] {
+                let (plan, x) = model.plan_rule_explained(&prog, &r.head, &r.body, first).unwrap();
+                let (lean, rows) = model.plan_rule_step_rows(&prog, &r.head, &r.body, first).unwrap();
+                let recorded: Vec<f64> = x.expect("explained").steps.iter().map(|s| s.rows).collect();
+                assert_eq!((shown(&lean.0), lean.1, lean.2), (shown(&plan.0), plan.1, plan.2), "{r}");
+                assert_eq!(rows, recorded, "{r} from {first:?}");
+            }
+        }
+        explaining(was);
     }
 }

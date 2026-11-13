@@ -224,7 +224,7 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
         // The setting's tokens: comments are not in them.
         let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
         let tokens: Vec<&rerail_rr_syntax::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
-        let words: Vec<&str> = tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+        let words: Vec<&str> = tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = t { Some(*w) } else { None }).collect();
         // `report dirs` and `text` say where findings land and how files are read, not which.
         if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
             continue;
@@ -234,7 +234,7 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
             match t {
                 // `option("…")`: an entry from a policy option, kept by name until the run's options are known
                 // (`front::OPTION_GLOB`); the form before it (`dirs`, `include`, `exclude`) stays the word.
-                rerail_rr_syntax::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => {
+                rerail_rr_syntax::syntax::Tok::Id(w) if *w == "option" && matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => {
                     if let Some(rerail_rr_syntax::syntax::Tok::Str(name)) = tokens.get(k + 2) {
                         let entry = format!("{}{word}:{name}", crate::code_rule_dsl::logic::front::OPTION_GLOB);
                         match word {
@@ -246,15 +246,15 @@ pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>,
                 }
                 rerail_rr_syntax::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(rerail_rr_syntax::syntax::Tok::P("("))) => word = "",
                 rerail_rr_syntax::syntax::Tok::Id(w) => {
-                    if w == "false" && word == "tests" {
+                    if *w == "false" && word == "tests" {
                         out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
                     }
-                    word = w.as_str();
+                    word = w;
                 }
                 rerail_rr_syntax::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(rerail_rr_syntax::syntax::Tok::P("("))) => match word {
                     "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
-                    "include" => within.push(g.clone()),
-                    "exclude" => out.push(g.clone()),
+                    "include" => within.push(g.to_string()),
+                    "exclude" => out.push(g.to_string()),
                     _ => {}
                 },
                 _ => {}
@@ -273,11 +273,11 @@ fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
         let Ok(tokens) = rerail_rr_syntax::syntax::tokens(text) else { continue };
-        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
+        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Id(w) = &t.0 { Some(*w) } else { None }).collect();
         if words != form {
             continue;
         }
-        found.extend(tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
+        found.extend(tokens.iter().filter_map(|t| if let rerail_rr_syntax::syntax::Tok::Str(g) = &t.0 { Some(g.to_string()) } else { None }));
     }
     found
 }
