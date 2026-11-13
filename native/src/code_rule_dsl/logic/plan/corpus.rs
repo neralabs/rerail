@@ -1576,10 +1576,50 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     crate::content_store::observe::with(store.as_deref(), f)
 }
 
-/// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
-/// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
-fn close_beside(db: Connection) {
-    rerail_accel::exec::drop_beside(db);
+/// Closes a run's connection on `path` beside the run (a job on the pool): its close frees what the process kept for it
+/// (the bound sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no
+/// lock; it holds the file open until it is closed, so a run that deletes the file and creates it again waits for it
+/// first (`closed`).
+fn close_beside(path: &Path, db: Connection) {
+    struct Closing(std::path::PathBuf, Option<Connection>);
+    impl Drop for Closing {
+        fn drop(&mut self) {
+            drop(self.1.take());
+            let (closing, done) = &*CLOSING;
+            let mut closing = closing.lock();
+            if let Some(n) = closing.get_mut(&self.0) {
+                *n -= 1;
+                if *n == 0 {
+                    closing.remove(&self.0);
+                }
+            }
+            done.notify_all();
+        }
+    }
+    *CLOSING.0.lock().entry(path.to_path_buf()).or_default() += 1;
+    rerail_accel::exec::drop_beside(Closing(path.to_path_buf(), Some(db)));
+}
+
+/// The connections closing beside their runs (`close_beside`), counted by file, and the signal each close gives.
+static CLOSING: std::sync::LazyLock<(parking_lot::Mutex<HashMap<std::path::PathBuf, usize>>, parking_lot::Condvar)> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Waits until no connection on `path` is closing beside its run: none of them holds the file open then.
+pub fn closed(path: &Path) {
+    let (closing, done) = &*CLOSING;
+    let mut waiting = closing.lock();
+    while waiting.contains_key(path) {
+        if rayon::current_thread_index().is_some() {
+            // On a thread of the pool, the close may be queued behind this very wait: run the pool's jobs meanwhile.
+            drop(waiting);
+            if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                std::thread::yield_now();
+            }
+            waiting = closing.lock();
+        } else {
+            done.wait(&mut waiting);
+        }
+    }
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
@@ -1873,12 +1913,14 @@ fn run_observed(
     // profiling on may have turned it off meanwhile.
     // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one.
+    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run on a
+    // thread behind the run (the test stores' template, made on a thread of its own for whatever first asks for it,
+    // which may be a run or a test that holds the profile and joins that thread).
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0;
     let _under_way = UnderWay::enter();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
-    } else if phase0::active() || nested {
+    } else if phase0::active() || nested || crate::code_rule_dsl::logic::profile::is_behind() {
         crate::code_rule_dsl::logic::profile::one_run_if_free()
     } else {
         Some(crate::code_rule_dsl::logic::profile::one_run())
@@ -2118,9 +2160,13 @@ fn run_observed(
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
     };
     // A session's store is kept from run to run; the cross-file scratch never is. A failed run leaves its write-ahead
-    // log beside the store; reopening a new store over it reads stale pages.
-    let scratch = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path);
-    for p in scratch.flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
+    // log beside the store; reopening a new store over it reads stale pages. The last run's connections on a file are
+    // closed first (`close_beside`): a file held open is not deleted everywhere (Windows).
+    let scratch: Vec<&std::path::PathBuf> = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path).collect();
+    for p in &scratch {
+        closed(p);
+    }
+    for p in scratch.into_iter().flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
@@ -3376,7 +3422,8 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
     }
-    let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
+    // The profile's waves when this run holds the profile, or is nested in the run that does (`profile::waves`).
+    let mut waves = Some(crate::code_rule_dsl::logic::profile::waves(profiling || (nested && crate::code_rule_dsl::logic::profile::on())));
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
     let memo_rows: BTreeSet<String> = split.exports.iter().cloned()

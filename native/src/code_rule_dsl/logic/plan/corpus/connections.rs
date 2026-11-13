@@ -62,8 +62,8 @@ impl Connections {
         match self.run.take() {
             Some((p, db)) if self.kept && p == path => Ok(db),
             other => {
-                if let Some((_, db)) = other {
-                    super::close_beside(db);
+                if let Some((p, db)) = other {
+                    super::close_beside(&p, db);
                 }
                 let mut db = Connection::open(path)?;
                 // Its own store's atoms, guarded at commit (decision 0049); a kept connection already is.
@@ -80,7 +80,7 @@ impl Connections {
             self.run = Some((path.to_path_buf(), db));
         } else {
             drop(tapes);
-            super::close_beside(db);
+            super::close_beside(path, db);
         }
     }
 
@@ -94,11 +94,11 @@ impl Drop for Connections {
     /// Closes what it keeps beside the caller (a session's end): a close frees what the process kept for the
     /// connection (`close_beside`).
     fn drop(&mut self) {
-        if let Some((_, db)) = self.run.take() {
-            super::close_beside(db);
+        if let Some((p, db)) = self.run.take() {
+            super::close_beside(&p, db);
         }
-        if let Some((_, db)) = self.cone.lock().db.take() {
-            super::close_beside(db);
+        if let Some((p, db)) = self.cone.lock().db.take() {
+            super::close_beside(&p, db);
         }
     }
 }
@@ -110,7 +110,7 @@ impl Cone {
             if p == path {
                 return Ok(db);
             }
-            super::close_beside(db);
+            super::close_beside(&p, db);
         }
         let mut db = Connection::open(path)?;
         // The atoms guarded at commit, as the run's connection's (decision 0049).
@@ -150,7 +150,7 @@ impl Cone {
                 cone.store = store;
             }
         } else {
-            super::close_beside(db);
+            super::close_beside(path, db);
         }
     }
 }
@@ -219,8 +219,8 @@ impl Drop for Handed {
             }
             (_, _, run) => {
                 drop(tapes);
-                if let Some((_, db)) = run {
-                    super::close_beside(db);
+                if let Some((p, db)) = run {
+                    super::close_beside(&p, db);
                 }
                 // The cone's, when its run did not keep them: they close with it.
                 drop(conns);

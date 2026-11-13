@@ -725,6 +725,8 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
         #[cfg(target_os = "linux")]
         {
+            // The run's connections close beside it (`corpus::close_beside`), as the next run waits for them to.
+            super::corpus::closed(&store);
             let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
             let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
             assert!(held.is_empty(), "run {i} left its store open: {held:?}");

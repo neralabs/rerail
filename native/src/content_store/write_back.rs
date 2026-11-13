@@ -726,6 +726,10 @@ mod tests {
     fn a_store_created_again_at_its_path_has_its_own_writer() {
         let (dir, old) = store("again");
         let path = old.database_path.clone();
+        // The old store's writer holds its connection, on the old store's file, before the file goes: one it opened
+        // after would be refused (the store at the path is another).
+        old.write_back("open", 0, vec![], Box::new(|_| Ok(())));
+        old.written().unwrap();
         let (go_tx, go_rx) = mpsc::channel::<()>();
         let order = Arc::new(Mutex::new(Vec::new()));
         let o = Arc::clone(&order);

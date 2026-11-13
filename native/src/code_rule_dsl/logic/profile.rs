@@ -408,7 +408,7 @@ pub struct Open {
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
 pub struct Thread {
     name: String,
-    /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
+    /// Its Mach port (macOS) or its thread id (Linux), for its CPU read from another thread; 0 elsewhere.
     port: u32,
     counters: memory::Counters,
     opens: Vec<Open>,
@@ -511,7 +511,7 @@ pub fn process_cpu() -> f64 {
     }
 }
 
-/// The live threads' Mach ports and names (macOS; none elsewhere).
+/// The live threads' Mach ports (macOS) or thread ids (Linux), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
     {
@@ -546,7 +546,21 @@ fn live_threads() -> Vec<(u32, String)> {
         unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
         named
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+        tasks
+            .flatten()
+            .filter_map(|task| {
+                let id: u32 = task.file_name().to_str()?.parse().ok()?;
+                // A thread that ended meanwhile has no `comm`.
+                let name = std::fs::read_to_string(task.path().join("comm")).ok()?;
+                let name = name.trim_end();
+                Some((id, if name.is_empty() { "unnamed".to_owned() } else { name.to_owned() }))
+            })
+            .collect()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -595,7 +609,10 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     #[cfg(target_os = "macos")]
     // SAFETY: the calling thread's own port; no right is taken.
     let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    // SAFETY: no arguments; the calling thread's id.
+    let port = unsafe { libc::gettid() } as u32;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
         name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
@@ -780,8 +797,12 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
+/// Waves under way in this process (`waves`): what a run did not read before its first wave it does not read from
+/// SQLite, and under the strict mode SQL meanwhile ends the process.
 static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The profiled runs' waves under way (`waves`): SQL from a wave's thread meanwhile is a hazard of the profile's.
+static PROFILED_WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 thread_local! {
     /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
@@ -790,11 +811,16 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
+/// `profiled`: the run started with profiling on, so its waves are the profile's (`one_run`). Another run's (one
+/// that started before a test turned profiling on) are not: SQL meanwhile is no hazard of the profiled run's.
 pub struct Waves(bool);
 
-pub fn waves() -> Waves {
+pub fn waves(profiled: bool) -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true)
+    if profiled {
+        PROFILED_WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Waves(profiled)
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
@@ -885,8 +911,9 @@ pub fn strict_on_every_connection() {
 
 impl Drop for Waves {
     fn drop(&mut self) {
+        WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         if self.0 {
-            WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            PROFILED_WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -905,8 +932,13 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Whether this thread works behind the run (`behind_the_run`, `behind`).
+pub fn is_behind() -> bool {
+    BEHIND.with(std::cell::Cell::get)
+}
+
 fn in_waves() -> bool {
-    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+    on() && PROFILED_WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
 
 /// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last
@@ -1562,7 +1594,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux) `port`, read from another thread;
+/// `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {
@@ -1576,7 +1609,23 @@ fn thread_cpu(port: u32) -> Option<f64> {
         let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
         Some(t(info.user_time) + t(info.system_time))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        // Thread id 0 would name the calling thread's clock.
+        if port == 0 {
+            return None;
+        }
+        // The thread's CPU clock as glibc's `pthread_getcpuclockid` makes it (`CPUCLOCK_SCHED | CPUCLOCK_PERTHREAD`):
+        // any thread of the process may read it; one that has ended gives EINVAL.
+        let clock = (!(port as libc::clockid_t) << 3) | 6;
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills `t` with that clock's time.
+        if unsafe { libc::clock_gettime(clock, &mut t) } != 0 {
+            return None;
+        }
+        Some(t.tv_sec as f64 + t.tv_nsec as f64 / 1e9)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = port;
         None

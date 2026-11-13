@@ -15,6 +15,7 @@ fn burn(seconds: f64) {
 /// threads' CPU adds up to the process's, and what no span covered is named by thread.
 #[test]
 fn the_profile_accounts_for_every_threads_cpu() {
+    let _run = profile::one_run();
     profile::set(true);
     let (park, parked) = std::sync::mpsc::channel::<()>();
     let helper = std::thread::Builder::new()
@@ -51,6 +52,7 @@ fn the_profile_accounts_for_every_threads_cpu() {
 /// opened next, so CPU outside every span points at the code that runs it.
 #[test]
 fn cpu_between_spans_is_named_by_the_spans_around_it() {
+    let _run = profile::one_run();
     profile::set(true);
     let t = std::thread::Builder::new()
         .name("xgaps".into())

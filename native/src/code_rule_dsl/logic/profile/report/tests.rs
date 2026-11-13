@@ -39,7 +39,7 @@
         // writer (behind the run), none.
         sql_in_wave("run", "SELECT 1 FROM xbefore", 1_000);
         {
-            let _w = waves();
+            let _w = waves(true);
             let _s = span(|| "xwave".into());
             sql_in_wave("store", "BEGIN IMMEDIATE", 2_000_000);
             std::thread::spawn(|| {
