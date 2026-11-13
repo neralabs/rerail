@@ -9440,6 +9440,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
                 // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
                 let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
+                // so its readers read the facts and the answers both.
+                let mut rows = rows;
+                if run.native_rels.contains(rel) {
+                    if let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    }
+                }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());
             }
