@@ -62,8 +62,7 @@ slot000_enum_base(n, E, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_enum
 //   O: metavariable of the calling rule, passed in (bound by the caller)
 //   N, OX: metavariables this relation binds for the calling rule
 .decl slot000_class_ref(n: node, k: node, n_mv: loc, o: loc, ox: loc)
-// K: not bound by this rule, so empty (unset) here, as in ast-grep.
-slot000_class_ref(n, K, N, O, OX) :- slot000_demand_class_ref(n), slot000_alt_8(n, N, O, OX), unset(K).
+slot000_class_ref(n, K, N, O, OX) :- slot000_demand_class_ref(n), slot000_alt_8(n, K, N, O, OX).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl slot000_tok_has_1(n: node)
@@ -190,14 +189,14 @@ slot000_alt_6(n, K, KX, N, N1, N2, N3, N4, OX, SB) :- slot000_demand_alt_6(n),
     slot000_enum_base(c2, N3, K, KX, N, N1, N2, N3, N4, OX, SB).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
-//   O: metavariables of the calling rule, passed in (bound by the caller)
+//   K, O: metavariables of the calling rule, passed in (bound by the caller)
 //   N, OX: metavariables this relation binds for the calling rule
-.decl slot000_alt_8(n: node, n_mv: loc, o: loc, ox: loc)
+.decl slot000_alt_8(n: node, k: loc, n_mv: loc, o: loc, ox: loc)
 // N, OX: not bound by this rule, so empty (unset) here, as in ast-grep.
-slot000_alt_8(n, N, O, OX) :- node(_, K, _, _, _),slot000_demand_alt_8(n),kind(n, "identifier"),ref_site(n, b1),(st2 = b1 ; within(b1, st2)),kind(st2, "class_definition"),field(st2, "name", c3),text(c3, t_k1),text(K, t_k1),unset(N),unset(OX),@doc(c3) = @doc(K), unset(O).
-slot000_alt_8(n, N, O, OX) :- slot000_demand_alt_8(n), kind(n, "parenthesized_expression"),
+slot000_alt_8(n, K, N, O, OX) :- node(_, K, _, _, _),slot000_demand_alt_8(n),kind(n, "identifier"),ref_site(n, b1),(st2 = b1 ; within(b1, st2)),kind(st2, "class_definition"),field(st2, "name", c3),text(c3, t_k1),text(K, t_k1),unset(N),unset(OX),@doc(c3) = @doc(K), unset(O).
+slot000_alt_8(n, K, N, O, OX) :- slot000_demand_alt_8(n), kind(n, "parenthesized_expression"),
     child(n, c4, _), slot000_class_ref(c4, K, N, O, OX).
-slot000_alt_8(n, N, O, OX) :- node(_, K, _, _, _), slot000_demand_alt_8(n), kind(n, "attribute"),
+slot000_alt_8(n, K, N, O, OX) :- node(_, K, _, _, _), slot000_demand_alt_8(n), kind(n, "attribute"),
     field(n, "attribute", c5), kind(c5, "identifier"), node(_, c5, _, _, _), N = c5,
     field(n, "object", c6), slot000_class_ref(c6, O, N, O, OX), inside(n, p7, "module"),
     within(c8, p7), kind(c8, "identifier"), node(_, c8, _, _, _), OX = c8, text(OX, t9), text(O, t9),

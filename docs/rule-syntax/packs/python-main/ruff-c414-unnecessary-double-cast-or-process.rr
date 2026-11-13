@@ -80,8 +80,8 @@ C414_list_or_tuple_inside(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
 .violation C414_sorted_inside_sorted(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
     suppress noqa "C414"
 C414_sorted_inside_sorted(M, n, I, O) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
-    count : { field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS), count : { inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5), text(IA, t5), child(c4, c7, _), c414_alt_6(c7), @doc(Y) = @doc(IA) } = 0 } = 0,
-    count : { has(n, c8, "argument_list"), node(_, c8, _, _, _), Z = c8, text(Z, t9), text(IA, t9), child(c8, c11, _), c414_kw(c11, JN, JV, JS), count : { inside(c11, p12, "argument_list"), node(_, p12, _, _, _), W = p12, text(W, t13), text(OA, t13), child(p12, c15, _), c414_alt_6(c15), @doc(W) = @doc(OA) } = 0, @doc(Z) = @doc(IA) } = 0,
+    count : { field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS), count : { inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5), text(IA, t5), child(c4, c7, _), (kind(c7, "keyword_argument"), field(c7, "name", c1_3_5), node(_, c1_3_5, _, _, _), A = c1_3_5, text(A, t2_3_5), text(KN, t2_3_5), field(c7, "value", c4_3_5), node(_, c4_3_5, _, _, _), B = c4_3_5, value(B, t5_3_5), value(KV, t5_3_5), @doc(A) = @doc(KN) ; kind(c7, "dictionary_splat"), child(c7, c7_4_5, _), !c414_alt_2(c7_4_5), node(_, c7_4_5, _, _, _), C = c7_4_5, value(C, t8_4_5), value(KS, t8_4_5)), @doc(Y) = @doc(IA) } = 0 } = 0,
+    count : { has(n, c8, "argument_list"), node(_, c8, _, _, _), Z = c8, text(Z, t9), text(IA, t9), child(c8, c11, _), c414_kw(c11, JN, JV, JS), count : { inside(c11, p12, "argument_list"), node(_, p12, _, _, _), W = p12, text(W, t13), text(OA, t13), child(p12, c15, _), (kind(c15, "keyword_argument"), field(c15, "name", c1_3_6), node(_, c1_3_6, _, _, _), A = c1_3_6, text(A, t2_3_6), text(JN, t2_3_6), field(c15, "value", c4_3_6), node(_, c4_3_6, _, _, _), B = c4_3_6, value(B, t5_3_6), value(JV, t5_3_6), @doc(A) = @doc(JN) ; kind(c15, "dictionary_splat"), child(c15, c7_4_6, _), !c414_alt_2(c7_4_6), node(_, c7_4_6, _, _, _), C = c7_4_6, value(C, t8_4_6), value(JS, t8_4_6)), @doc(W) = @doc(OA) } = 0, @doc(Z) = @doc(IA) } = 0,
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted").
 
 // C414_reversed_inside_sorted(n): a finding at node n, from clause `reversed-inside-sorted`.
@@ -92,19 +92,6 @@ C414_sorted_inside_sorted(M, n, I, O) :- kind(n, "call"), c414_nested_call(n, I,
     suppress noqa "C414"
 C414_reversed_inside_sorted(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "reversed").
-
-// demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
-.decl c414_demand_alt_6(n: node)
-c414_demand_alt_6(c7) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
-    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted"),
-    field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS),
-    inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5),
-    text(IA, t5), child(c4, c7, _), @doc(Y) = @doc(IA).
-c414_demand_alt_6(c15) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
-    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted"),
-    has(n, c8, "argument_list"), node(_, c8, _, _, _), Z = c8, text(Z, t9), text(IA, t9),
-    child(c8, c11, _), c414_kw(c11, JN, JV, JS), inside(c11, p12, "argument_list"),
-    node(_, p12, _, _, _), W = p12, text(W, t13), text(OA, t13), child(p12, c15, _), @doc(Z) = @doc(IA), @doc(W) = @doc(OA).
 
 // fn_case: one row per relation folded into fn: its key, then the strings that differed.
 .decl c414_fn_case(key: symbol, s1: symbol)
@@ -121,12 +108,3 @@ c414_alt_1(n, O) :- !kind(n, "list_splat"), node(_, n, _, _, _), O = n.
 .decl c414_alt_2(n: node)
 c414_alt_2(n) :- node(_, n, _, _, _), glob("\\*\\*", n).
 c414_alt_2(n) :- kind(n, "comment").
-
-// alt_6(n): the JSON `any`: n matches if any one of these rules does
-.decl c414_alt_6(n: node)
-c414_alt_6(n) :- node(_, N, _, _, _), node(_, V, _, _, _), c414_demand_alt_6(n),
-    kind(n, "keyword_argument"), field(n, "name", c1), node(_, c1, _, _, _), A = c1,
-    text(A, t2), text(N, t2), field(n, "value", c4), node(_, c4, _, _, _), B = c4,
-    value(B, t5), value(V, t5), @doc(A) = @doc(N).
-c414_alt_6(n) :- node(_, S, _, _, _), c414_demand_alt_6(n), kind(n, "dictionary_splat"),
-    child(n, c7, _), !c414_alt_2(c7), node(_, c7, _, _, _), C = c7, value(C, t8), value(S, t8).

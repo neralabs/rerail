@@ -360,6 +360,13 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(main_terms.arguments(prog, val, v, vs))
         elif k == "resolves" and isinstance(val, dict):
             lits.extend(resolves(prog, val, v, vs))
+        elif k == "host" and isinstance(val, dict):
+            # inside a `parse`: the host node the parse holds (the string whose guest document v is in), matched
+            # by the host language's rule; a guest capture it reads is the guest node, compared by its text
+            d, h = vs.fresh("d"), vs.fresh("h")
+            lits.append(f"docof({v}, {d}), guest({d}, _, {h}, _)")
+            lits.extend(lower(prog, val, h, vs))
+            prog.host_reads = getattr(prog, "host_reads", set()) | host_reads(val)
         elif k == "formatArgs" and is_format_args(prog, val):
             lits.extend(format_args(prog, val, v, vs))
         else:
@@ -429,6 +436,31 @@ def nth_child(prog, c, v, vs):
         return [f"child({p}, {v}, _), {rel}({v})",
                 f"{k} = count : {{ child({p}, {s}, _), {order}, {rel}({s}) }}"] + at
     return [f"child({p}, {v}, _), {k} = count : {{ child({p}, {s}, _), {order} }}"] + at
+
+
+def host_reads(val):
+    """The guest captures a `host` rule reads: the metavariables it names (`$K` passed to a util, a comparison's
+    sides) that it does not capture itself (a pattern's `$KN`, `capture`). Main exports them by their text; they
+    are in the guest's document, not the host's."""
+    named, bound = set(), set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, x in o.items():
+                if k in ("left", "right") and isinstance(x, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", x):
+                    named.add(x)
+                elif k == "pattern" and isinstance(x, str):
+                    bound.update(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", x))
+                elif k == "capture" and isinstance(x, str):
+                    bound.add(x)
+                elif isinstance(x, str):
+                    named.update(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", x))
+                walk(x)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+    walk(val)
+    return named - bound
 
 
 def is_format_args(prog, val):
@@ -648,10 +680,24 @@ def drop_dead_columns(entries, helpers, decls, notes):
     def head_args(e):
         return _split_args(e["head"].split("(", 1)[1][:-1])
 
-    def binds_in(g, x):
-        # a param the util's body mentions is captured there (or by the rules it calls): an output
-        return any(x in _upper_vars(t) or re.search(r"\$\$?\$?" + x + r"\b", t)
-                   for t in (", ".join(e["lits"]) for e in heads[g]))
+    def binds_in(g, x, seen=frozenset()):
+        # a param the util's body captures (a pattern's `$X`, `X = …`, a regex group), or passes to a column of a
+        # rule it calls that captures it: an output. One it only passes on to a column that reads it (a helper's
+        # input) is read, not captured: the caller's value goes through.
+        if (g, x) in seen:
+            return False
+        seen = seen | {(g, x)}
+        for e in heads[g]:
+            t = ", ".join(e["lits"])
+            if x in _binders(t) | _binders(t, inside=True) or re.search(r"\$\$?\$?" + x + r"\b", t):
+                return True
+            for g2 in heads:
+                for a, b in _calls(t, g2):
+                    args = _split_args(t[a + len(g2) + 1:b])
+                    names = head_args(heads[g2][0])
+                    if any(arg == x and j < len(names) and binds_in(g2, names[j], seen) for j, arg in enumerate(args)):
+                        return True
+        return False
 
     def input_col(g, j):
         """A column the callee reads and does not bind: passed in, or a util param it never captures."""
@@ -2379,6 +2425,9 @@ def translate(doc):
                 helper_rules.append((e["head"], e["lits"]))
 
     out = head + ["// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.", ""]
+    if getattr(prog, "host_reads", None):
+        # engine_dialect.same_document_joins reads this line: these are compared by text across documents
+        out += [f"// Guest captures a host rule reads, by text (another document): {', '.join(sorted(prog.host_reads))}", ""]
     if prog.uses:
         out += [f'#include "{u}.rr"' for u in sorted(prog.uses)] + [""]
     declared = set()

@@ -122,9 +122,7 @@ up008_cell_name(n) :- kind(n, "identifier"), glob("{super,__class__}", n), !up00
 // chain(n, …): the JSON util `chain`, called with `matches` and arguments C
 //   CC, K, KN, PC, SEG: metavariables this relation binds for the calling rule
 .decl up008_chain(n: node, c: node, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
-// C: not bound by this rule, so empty (unset) here, as in ast-grep.
-up008_chain(n, C, CC, K, KN, PC, SEG) :- up008_demand_chain(n), up008_alt_14(n, CC, K, KN, PC, SEG),
-    unset(C).
+up008_chain(n, C, CC, K, KN, PC, SEG) :- up008_demand_chain(n), up008_alt_14(n, C, CC, K, KN, PC, SEG).
 
 // args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
 .decl up008_args_plain(l: node, a: node, i: number)
@@ -303,11 +301,13 @@ up008_alt_13(n, C, CC, K, KN, PC, SEG) :- node(_, C, _, _, _), up008_demand_alt_
     up008_chain(c9, PC, CC, K, KN, PC, SEG), @doc(CC) = @doc(C).
 
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable of the calling rule, passed in (bound by the caller)
 //   CC, K, KN, PC, SEG: metavariables this relation binds for the calling rule
-.decl up008_alt_14(n: node, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
-up008_alt_14(n, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n), kind(n, "parenthesized_expression"),
-    child(n, c1, _), !kind(c1, "comment"), up008_chain(c1, C, CC, K, KN, PC, SEG).
-up008_alt_14(n, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n), up008_alt_12(n, SEG),
+.decl up008_alt_14(n: node, c: loc, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
+up008_alt_14(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n),
+    kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
+    up008_chain(c1, C, CC, K, KN, PC, SEG).
+up008_alt_14(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n), up008_alt_12(n, SEG),
     inside(n, p3, "class_definition"), node(_, p3, _, _, _), K = p3, text(K, t4), text(C, t4),
     field(p3, "name", c6), node(_, c6, _, _, _), KN = c6, text(KN, t7), text(SEG, t7),
     up008_alt_13(n, C, CC, K, KN, PC, SEG), @doc(K) = @doc(C), @doc(KN) = @doc(SEG).
