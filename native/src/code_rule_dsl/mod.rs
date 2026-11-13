@@ -4817,6 +4817,7 @@ pub(crate) fn install_languages() {
     // `@py_repr`'s formatting (Python's), likewise.
     logic::strings::functions::install_py_repr(|s| cpython::value::str_repr(&cpython::value::PyStr::Text(s.to_owned())));
     logic::strings::functions::install_py_float_str(cpython::value::float_text);
+    logic::strings::functions::install_py_int_str(cpython::value::int_text);
     // The canonical AST stage's producer (Python's CPython `ast`).
     residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).

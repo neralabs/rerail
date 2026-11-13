@@ -380,6 +380,70 @@ pub fn float_text(f: f64) -> String {
     }
 }
 
+/// Decimal text of Python's `int` over the primitive transport: integers as decimal, booleans as true/false,
+/// floats as sixteen binary64 hex digits, strings as themselves. Failed conversions have no value. Callers that
+/// distinguish overflow from other failures retain that exception boundary. No Python process runs here.
+pub fn int_text(kind: &str, text: &str, max_digits: i64) -> Option<String> {
+    if max_digits < 0 { return None; }
+    match kind {
+        "bool" => return match text { "true" => Some("1".into()), "false" => Some("0".into()), _ => None },
+        "float" => {
+            if text.len() != 16 || !text.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
+            let f = f64::from_bits(u64::from_str_radix(text,16).ok()?);
+            if !f.is_finite() { return None; }
+            // The existing Int/float comparison uses this exact fixed-point integer representation too.
+            // A shortest float representation is insufficient: int(1e23) != 10**23.
+            let whole = Int::parse(&format!("{:.0}",f.trunc().abs()))?;
+            return Some(if f < 0.0 { whole.neg() } else { whole }.decimal_unbounded());
+        }
+        "str" | "int" => {}
+        _ => return None,
+    }
+    let text = text.trim_matches(integer_space);
+    let (negative, body) = if let Some(rest) = text.strip_prefix('-') { (true,rest) }
+        else { (false,text.strip_prefix('+').unwrap_or(text)) };
+    let mut digits = String::with_capacity(body.len());
+    let mut digit_before = false;
+    for c in body.chars() {
+        if c == '_' {
+            if !digit_before { return None; }
+            digit_before = false;
+        } else {
+            digits.push(char::from(b'0'+integer_decimal_digit(c)?));
+            digit_before = true;
+        }
+    }
+    if !digit_before || (kind == "str" && max_digits > 0 && digits.len() as u64 > max_digits as u64) { return None; }
+    let value = Int::parse(&digits)?;
+    Some(if negative { value.neg() } else { value }.decimal_unbounded())
+}
+
+fn integer_space(c: char) -> bool {
+    // ASCII's integer parser excludes U+001C..001F, although Python's str.isspace includes them.
+    matches!(u32::from(c),0x09..=0x0d|0x20|0x85|0xa0|0x1680|0x2000..=0x200a|0x2028..=0x2029|0x202f|0x205f|0x3000)
+}
+
+// Decimal-digit zeroes from CPython 3.13 / Unicode 15.1. Generated from unicodedata.decimal(c)==0.
+const DECIMAL_ZEROES: [u32; 68] = [
+    0x30, 0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6,
+    0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xde6, 0xe50, 0xed0,
+    0xf20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80,
+    0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900,
+    0xa9d0, 0xa9f0, 0xaa50, 0xabf0, 0xff10, 0x104a0, 0x10d30, 0x11066,
+    0x110f0, 0x11136, 0x111d0, 0x112f0, 0x11450, 0x114d0, 0x11650, 0x116c0,
+    0x11730, 0x118e0, 0x11950, 0x11c50, 0x11d50, 0x11da0, 0x11f50, 0x16a60,
+    0x16ac0, 0x16b50, 0x1d7ce, 0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140,
+    0x1e2f0, 0x1e4f0, 0x1e950, 0x1fbf0,
+];
+
+fn integer_decimal_digit(c: char) -> Option<u8> {
+    if c.is_ascii_digit() { return Some(c as u8-b'0'); }
+    let point = u32::from(c);
+    let at = DECIMAL_ZEROES.partition_point(|&zero| zero <= point).checked_sub(1)?;
+    let value = point-DECIMAL_ZEROES[at];
+    (value < 10).then_some(value as u8)
+}
+
 #[cfg(test)]
 mod int_cast_tests {
     use super::*;

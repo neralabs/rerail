@@ -126,6 +126,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("py_repr", &[Text], Text),
     // Python's str/repr of an IEEE-754 binary64 transported as sixteen hex digits.
     ("py_float_str", &[Text], Text),
+    ("py_int_str", &[Text, Text, Number], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
@@ -247,6 +248,14 @@ pub fn install_py_float_str(format: fn(f64) -> String) {
     let _ = PY_FLOAT_STR.set(format);
 }
 
+type IntFormatter = fn(&str, &str, i64) -> Option<String>;
+static PY_INT_STR: std::sync::OnceLock<IntFormatter> = std::sync::OnceLock::new();
+
+/// The Python language owns the fallible primitive integer conversion, as it owns repr and float formatting.
+pub fn install_py_int_str(format: IntFormatter) {
+    let _ = PY_INT_STR.set(format);
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -319,6 +328,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
             .then_some(t(0)).filter(|s| s.len() == 16)
             .and_then(|s| u64::from_str_radix(s, 16).ok())
             .and_then(|bits| PY_FLOAT_STR.get().map(|format| format(f64::from_bits(bits)))),
+        "py_int_str" => PY_INT_STR.get().and_then(|format| format(t(0),t(1),numbers[0])),
         "ed25519_ok" => return Value::Integer(i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(t(0), t(1), t(2)))),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
