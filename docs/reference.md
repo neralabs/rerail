@@ -879,7 +879,7 @@ Full-repository work is capped by a five-minute execution budget, a 100,000-file
 <details>
 <summary>Per-file failures and large files</summary>
 
-A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`.
+A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`. A repository scan reads files in path order, the order Git sorts paths in, in a Git checkout or any other folder, so the same files list the same failures on every machine.
 
 Large files have no fixed cut-off:
 
