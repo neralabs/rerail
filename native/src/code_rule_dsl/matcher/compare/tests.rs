@@ -633,7 +633,7 @@
         } }));
         let source = "f([ ], []);\nf(g(\na // c\n).p, g(a)\n.p);\nf(g(a).p, g(a.p));\n";
         let result = evaluate_file(&rule, "typescript", "a.ts", source);
-        assert_eq!(matched_texts(&result, source).iter().map(|text| text.lines().next().unwrap_or_default()).collect::<Vec<_>>(), ["f([ ], [])", "f(g("]);
+        assert_eq!(matched_texts(&result, source).iter().map(|text| text.lines().next().unwrap_or_default()).collect::<Vec<_>>(), ["f([ ], []) A=[ ] B=[]", "f(g("]);
     }
 
     /// `node` tells two captures apart by identity: the same node, not the same text.
