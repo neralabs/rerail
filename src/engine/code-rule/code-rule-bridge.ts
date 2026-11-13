@@ -22,12 +22,14 @@ import {
   gitCommitsBetween,
   gitCrlfPaths,
   gitHead,
+  gitModifiedOrUntrackedListing,
   gitModifiedOrUntrackedPaths,
   GitReads,
   gitUnmergedReader,
   headMovedOnlyByCommits,
   readGitBlobIds,
   readGitBlobs,
+  type ChangedPathsListing,
   type CrlfRule,
 } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
@@ -645,10 +647,14 @@ function newlyLate(discovery: SourceDiscovery): string[] {
   discovery.late.clear();
   return errors;
 }
-/** What a boundary says first, and after the listing asked again, of a checkout whose Git did not list its changed files in time. */
+/**
+ * What a boundary says first, and after the listing asked again, of a checkout whose Git did not list its changed files in
+ * time; and after a listing asked again that failed.
+ */
 const LATE_LISTING = "Git did not list the checkout's changed files in time";
-const LATE_AGAIN =
-  `${LATE_LISTING} again: a shell edit to a file changed there before the session is checked against Git's text of it, or whole`;
+const KEPT_NO_FIRST_SIGHT = "a shell edit to a file changed there before the session is checked against Git's text of it, or whole";
+const LATE_AGAIN = `${LATE_LISTING} again: ${KEPT_NO_FIRST_SIGHT}`;
+const FAILED_AGAIN = `Git could not list the checkout's changed files when asked again: ${KEPT_NO_FIRST_SIGHT}`;
 function lateListing(discovery: SourceDiscovery, checkout: string, message: string): string {
   return `${sessionPath(discovery.root, checkout) || "."}: ${message}`;
 }
@@ -1715,7 +1721,7 @@ export class CodeRuleBridge {
     discovery.askingAgain.set(checkout, seen);
     const done = this.#listAgain(discovery, checkout, seen)
       .catch((error: unknown) => {
-        process.stderr.write(`rerail: cannot list the changed files of ${checkout} again: ${errorMessage(error)}\n`);
+        process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
       })
       .finally(() => discovery.listingsAgain.delete(done));
     discovery.listingsAgain.add(done);
@@ -1724,18 +1730,23 @@ export class CodeRuleBridge {
   /**
    * Lists `checkout`'s changed files once more, through the session's Git reads, which its close stops, and keeps the
    * first-sight text of each of `seen` Git lists that is still as the late walk saw it and as the session last observed
-   * it (`#keepFirstSeenTexts`). A second late listing is the last: it is reported once, and the checkout's files changed
-   * before the session keep no first-sight text.
+   * it (`#keepFirstSeenTexts`). A second late listing is the last, as is one that fails or throws: it is reported once,
+   * and the checkout's files changed before the session keep no first-sight text. Either way the checkout is no longer
+   * waited for, so its next late listing is asked again.
    */
   async #listAgain(discovery: SourceDiscovery, checkout: string, seen: ReadonlyMap<string, Source>): Promise<void> {
-    const changed = await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
+    const listing = await discovery.git.run(signal => gitModifiedOrUntrackedListing(checkout, { signal }))
+      .catch((error: unknown): ChangedPathsListing => {
+        process.stderr.write(`rerail: cannot list the changed files of ${checkout} again: ${errorMessage(error)}\n`);
+        return { ended: "failed" };
+      });
     discovery.askingAgain.delete(checkout);
     if (this.#abandoned(discovery)) return;
-    if (changed === undefined) {
-      discovery.late.set(checkout, lateListing(discovery, checkout, LATE_AGAIN));
+    if (listing.ended !== "printed") {
+      discovery.late.set(checkout, lateListing(discovery, checkout, listing.ended === "failed" ? FAILED_AGAIN : LATE_AGAIN));
       return;
     }
-    const listed = changed.map(path => sessionPath(discovery.root, resolve(checkout, path))).filter(path => seen.has(path));
+    const listed = listing.paths.map(path => sessionPath(discovery.root, resolve(checkout, path))).filter(path => seen.has(path));
     const taking: FirstSightTake = { sources: seen, firstSeen: new Map() };
     await this.#takeFirstSeenTexts(discovery, listed, taking);
     await this.#enqueue(async () => {

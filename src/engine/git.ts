@@ -686,15 +686,27 @@ export async function gitCrlfPaths(
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
+ * How a listing of `gitModifiedOrUntrackedListing` ended: with the paths Git listed, failing (no Git, an error, outside a
+ * repository, past `MAX_LISTED_PATH_BYTES` of paths), or past its time limit or stopped ({@link GitRead}).
+ */
+export type ChangedPathsListing = { readonly ended: "printed"; readonly paths: string[] } | { readonly ended: "failed" | "timed-out" };
+
+/** Lists the files `gitModifiedOrUntrackedPaths` answers, and says how the listing ended. */
+export async function gitModifiedOrUntrackedListing(cwd: string, options: GitReadOptions = {}): Promise<ChangedPathsListing> {
+  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
+  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+}
+
+/**
  * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
  * but not ignored; relative to `cwd`. Empty without Git, outside a repository, or past `MAX_LISTED_PATH_BYTES` of paths.
  * Undefined when Git ran past its time limit, or `options.signal` stopped it: it did not say which files changed, and
  * none is not its answer.
  */
 export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
-  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
-  if (read.ended === "timed-out") return undefined;
-  return read.ended === "printed" ? read.stdout.split("\0").filter(path => path !== "") : [];
+  const listing = await gitModifiedOrUntrackedListing(cwd, options);
+  if (listing.ended === "timed-out") return undefined;
+  return listing.ended === "printed" ? listing.paths : [];
 }
 
 /**

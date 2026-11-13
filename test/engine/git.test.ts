@@ -12,7 +12,7 @@ vi.mock("../../src/engine/child-process.js", { spy: true });
 import { endProcessTree } from "../../src/engine/child-process.js";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
+  gitInstalled, gitModifiedOrUntrackedListing, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
   readGitBlobs, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
@@ -248,6 +248,18 @@ describe("GitReads", () => {
     for (const pid of running) process.kill(pid);
     expect(running).toEqual([]);
     await expect(answers).resolves.toEqual([undefined, new Map()]);
+  });
+});
+
+describe("gitModifiedOrUntrackedListing", () => {
+  it("says that a listing Git failed failed, where gitModifiedOrUntrackedPaths answers none", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    await writeFile(join(root, "b.py"), "untracked\n");
+    await expect(gitModifiedOrUntrackedListing(root)).resolves.toEqual({ ended: "printed", paths: ["b.py"] });
+    // Git cannot start in a folder that is not there.
+    const gone = join(root, "gone");
+    await expect(gitModifiedOrUntrackedListing(gone)).resolves.toEqual({ ended: "failed" });
+    await expect(gitModifiedOrUntrackedPaths(gone)).resolves.toEqual([]);
   });
 });
 
