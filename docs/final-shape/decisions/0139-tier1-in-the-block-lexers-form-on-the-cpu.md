@@ -91,3 +91,24 @@ every byte: blanks and comments skipped by fills, and the directive's spelling.
   665.2M to 527.5M. The figures before include the records' marks. Tier 2 rose from
   394.6M to 403.8M: the one test a token.
 
+## Step 2: a number's 19 digits, at its token
+
+The engine checks an integer of 19 digits or more itself. Tier 1 marked one by a chain
+of masks at every byte, about 16 operations a block. It is now decision 0133's local check.
+
+```
+mask int_first  = digit & int & ~prev(int)
+mask int_long   = int_first & next(digit, 18)   # tier 1: a digit 18 bytes on
+mask digits17   = next(digit) & … & next(digit, 17)
+escape "a number of 19 digits or more" when int_long & digits17   # tier 2, at the token
+```
+
+- The mask must be rare. Written as `int_first & digits18`, the mask was set at every
+  number, so every number token called the check: tier 2 through the JIT rose by 92M.
+- The check sends a number to the engine with leading zeros, or with a fraction after its
+  19 digits, where the old mask did not. The tape is the engine's either way.
+- Tier 1 ahead of time went from 487.9M to 478.4M; the whole parse ahead of time from
+  934.8M to 925.4M. Through the JIT, tier 2 rose from 477.3M to 484.2M and the whole parse
+  from 1,047.7M to 1,053.8M. The JIT's `CHECK` word costs more a token than the Rust one:
+  open.
+

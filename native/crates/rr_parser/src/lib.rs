@@ -254,8 +254,9 @@ pub mod tests {
         // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348). With
         // Parser-generators' tier 2 merged (token marks from the records, 0129; tier 1's checks at
         // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
-        // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3515, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
+        // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3563, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -1279,6 +1280,41 @@ pub mod tests {
             (format!("{head}.output /* c */\n"), false),
             (format!("{head}.input\n#include \"x.rr\"\n"), false),
         ];
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
+    /// A number of 19 digits or more goes to the engine, checked at its token (decision 0133's
+    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape. In
+    /// a block or across two, by every shape and the interpreter.
+    #[test]
+    fn long_numbers_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.values.iter().all(|v| !["sig", "sig16", "long_int"].contains(&v.name.as_str())), "no mask counts digits");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let d18 = "123456789012345678";
+        let d19 = "1234567890123456789";
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a({d18}).\n"), true));
+            cases.push((format!("{head}a({d18}.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d18}.\n"), true));
+            cases.push((format!("{head}a({d19}).\n"), false));
+            cases.push((format!("{head}a({d19}0).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d19}.\n"), false));
+        }
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
             assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");

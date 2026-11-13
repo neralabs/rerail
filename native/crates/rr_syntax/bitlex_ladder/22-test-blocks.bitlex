@@ -171,14 +171,14 @@ rounds until settled {
 mask frac       = fill(prev(f_dot), ~digit)
 mask int        = num & ~frac                   # an integer's digits
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
-# checked by it. A float's digits are its text: no limit.
-mask sig        = fill(int & nonzero, ~int)
-mask sig2       = sig & prev(sig)
-mask sig4       = sig2 & prev(sig2, 2)
-mask sig8       = sig4 & prev(sig4, 4)
-mask sig16      = sig8 & prev(sig8, 8)
-mask long_int   = fill(sig16 & prev(sig2, 16) & prev(sig, 18), ~int)
-escape "a number of 19 digits or more" when long_int & ~next(int) & ~next(f_dot)
+# checked by it. A float's digits are its text: no limit. Checked at the number's token
+# (decision 0133's local check): tier 1 marks a number's first digit with a digit 18 bytes on,
+# which few have; tier 2 checks the 17 between at those. A number of 19 digits or more goes to
+# the engine, with its leading zeros, or a fraction after it (the engine's tape either way).
+mask int_first  = digit & int & ~prev(int)
+mask int_long   = int_first & next(digit, 18)
+mask digits17   = next(digit) & next(digit, 2) & next(digit, 3) & next(digit, 4) & next(digit, 5) & next(digit, 6) & next(digit, 7) & next(digit, 8) & next(digit, 9) & next(digit, 10) & next(digit, 11) & next(digit, 12) & next(digit, 13) & next(digit, 14) & next(digit, 15) & next(digit, 16) & next(digit, 17)
+escape "a number of 19 digits or more" when int_long & digits17
 
 # Directives the engine refuses by the token after them: token marks, after the other marks.
 
