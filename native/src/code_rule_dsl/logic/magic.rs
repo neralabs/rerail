@@ -56,7 +56,7 @@ fn is_const(t: &Term) -> bool {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 fn positive(l: &Literal) -> Option<&Atom> {
@@ -71,8 +71,8 @@ fn magic_true() -> Literal {
 }
 
 fn add_magic_true(prog: &mut Program) {
-    prog.decls.insert("magic_true".to_owned().into(), vec![("k".into(), "int".into())]);
-    prog.facts.entry("magic_true".to_owned()).or_default().push(vec![Value::Int(0)]);
+    prog.decls.insert("magic_true".to_owned().into(), [("k".into(), "int".into())].into());
+    prog.facts.entry("magic_true".to_owned()).or_default().push([Value::Int(0)].into());
 }
 
 /// The variables `l` binds once it runs, or `None` if it cannot run yet (the planner's `ready`).
@@ -190,12 +190,12 @@ pub fn demand_negated_tests(prog: Program) -> (Program, Vec<String>) {
     for rel in &demand {
         let name = format!("demand_{rel}");
         let ty = prog.decls[rel.as_str()][0].1.clone();
-        prog.decls.insert(name.clone().into(), vec![("k".into(), ty)]);
+        prog.decls.insert(name.clone().into(), [("k".into(), ty)].into());
         let mut bodies = wanted.remove(rel).unwrap_or_default();
         bodies.sort_by_key(|b| format!("{b:?}"));
         bodies.dedup();
         for body in bodies {
-            prog.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body });
+            prog.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: body.into() });
         }
         for rule in prog.rules.iter_mut().filter(|r| &r.head.rel == rel) {
             let key = rule.head.args[0].clone();
@@ -297,11 +297,11 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             body.push(Literal::Atom(atom(format!("magic_{}", h.rel), vec![h.args[0].clone()])));
         }
         body.extend(rule.body.iter().cloned());
-        rules.push(Rule { head: h.clone(), body });
+        rules.push(Rule { head: h.clone(), body: body.into() });
     }
     for r in prog.demand.clone() {
         let ty = prog.decls[r.as_str()][0].1.clone();
-        prog.decls.insert(format!("magic_{r}").into(), vec![("k".into(), ty)]);
+        prog.decls.insert(format!("magic_{r}").into(), [("k".into(), ty)].into());
     }
     add_magic_true(&mut prog);
     let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
@@ -336,7 +336,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             if body.is_empty() {
                 body.push(magic_true());
             }
-            out.push(Rule { head: mh.clone(), body });
+            out.push(Rule { head: mh.clone(), body: body.into() });
         }
         out.extend(rules.iter().cloned());
         Ok(out)
@@ -679,7 +679,7 @@ impl Adorn<'_> {
                 let mut out = Vec::new();
                 out.extend(guard.map(Literal::Atom));
                 out.extend(body);
-                rules.push(Rule { head: rule.head.clone(), body: out });
+                rules.push(Rule { head: rule.head.clone(), body: out.into() });
             }
         }
         Ok((rules, magic, seen))
@@ -780,7 +780,7 @@ impl Adorn<'_> {
                     if body.is_empty() {
                         body.push(magic_true());
                     }
-                    out.push(Rule { head: mh.clone(), body });
+                    out.push(Rule { head: mh.clone(), body: body.into() });
                 }
             }
             out.extend(rules.iter().cloned());
@@ -932,7 +932,7 @@ impl Adorn<'_> {
                 nb.push(Literal::Atom(g));
                 nb.push(n);
             }
-            rules.push(Rule { head: r.head, body: nb });
+            rules.push(Rule { head: r.head, body: nb.into() });
         }
         let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
         for i in 0..gates.len() {
@@ -941,11 +941,11 @@ impl Adorn<'_> {
                 let cols = self.prog.decls[src.as_str()].clone();
                 let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
                 self.prog.decls.insert(done.clone().into(), cols);
-                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: vec![Literal::Atom(atom(src.clone(), vs))] });
+                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: [Literal::Atom(atom(src.clone(), vs))].into() });
             } else {
-                self.prog.decls.insert(done.clone().into(), vec![("k".into(), "int".into())]);
+                self.prog.decls.insert(done.clone().into(), [("k".into(), "int".into())].into());
                 let wild = vec![Term::Wild; self.prog.decls[g.rel.as_str()].len()];
-                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: vec![Literal::Atom(atom(g.rel.clone(), wild))] });
+                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: [Literal::Atom(atom(g.rel.clone(), wild))].into() });
             }
             let (mut reach, mut todo) = (BTreeSet::new(), vec![g.rel.clone()]);
             while let Some(v) = todo.pop() {

@@ -44,7 +44,7 @@ pub fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
         let args = vec![Term::Str(policy.clone().into()), Term::Str(id.to_owned().into()), Term::Var("D".into()), Term::Var("N".into())];
         let body =
             vec![Literal::Ast { document: "D".to_owned(), node: "N".to_owned(), matcher: matcher.to_string(), captures: Vec::new() }];
-        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned().into(), args, neg: false, gated: false }, body });
+        prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         clause["forbid"] = Value::String(MARK.to_owned());
     }
     prog.decls.entry(HEAD.to_owned().into()).or_insert_with(|| {

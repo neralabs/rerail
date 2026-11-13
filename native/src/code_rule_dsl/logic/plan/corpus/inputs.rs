@@ -477,7 +477,7 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n.into()), Value::Str(id.into())]));
+            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()));
             if base.is_none() {
                 return;
             }
@@ -485,7 +485,7 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
             program.inputs.retain(|n| n != "input_error");
-            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())]);
+            program.facts.entry("input_error".to_owned()).or_default().push([Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into());
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -588,7 +588,7 @@ fn populate_with(
             let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
             program.inputs.retain(|n| n != rel);
             match result {
-                Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
+                Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
                 Err(error) => {
                     let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
@@ -632,7 +632,7 @@ fn populate_with(
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
         program.inputs.retain(|name| name != rel);
         match result {
-            Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
+            Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from)),
             Err(error) if at_base => {
                 let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
@@ -645,7 +645,7 @@ fn populate_with(
     }
     if !errors.is_empty() {
         program.inputs.retain(|name| name != "input_error");
-        program.facts.entry("input_error".to_owned()).or_default().extend(errors);
+        program.facts.entry("input_error".to_owned()).or_default().extend(errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from));
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -986,8 +986,8 @@ quiet() :- ceiling(_), !over(_).
         let second = first.replace("noqa.json", "budget.json");
         let mut program = super::super::combine(&[first, &second], "").unwrap();
         populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
-        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![vec![Value::Str("noqa.json".into())]]));
-        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![vec![Value::Str("budget.json".into())]]));
+        assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![[Value::Str("noqa.json".into())].into()]));
+        assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![[Value::Str("budget.json".into())].into()]));
         assert!(!program.facts.contains_key("base_sig"));
     }
 

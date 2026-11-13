@@ -294,7 +294,7 @@ fn cmp(l: Term, op: &'static str, r: Term) -> Literal {
 }
 
 fn call(f: &str, args: Vec<Term>) -> Term {
-    Term::Call(f.to_owned().into(), args)
+    Term::Call(f.to_owned().into(), args.into())
 }
 
 fn s(x: &str) -> Term {
@@ -779,7 +779,7 @@ fn normalized(mut p: front::Program) -> front::Program {
                 rename(a);
             }
         }
-        rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
+        rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body).to_vec()).into();
     }
     // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
@@ -791,8 +791,8 @@ fn normalized(mut p: front::Program) -> front::Program {
     ] {
         if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
             p.inputs.retain(|i| i != rel);
-            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args, neg: false, gated: false };
-            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.into(), args: args.into(), neg: false, gated: false };
+            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: [Literal::Atom(atom("node", args.to_vec()))].into() });
             at += 1;
         }
     }
@@ -997,7 +997,7 @@ fn aggregates_inside_terms_lower() {
     .unwrap();
     let cc = p.rules.iter().find(|r| r.head.rel == "cc").unwrap();
     let Some(Literal::Agg { var, op: front::AggOp::Count, .. }) = cc.body.iter().find(|l| matches!(l, Literal::Agg { .. })) else { panic!("{cc}") };
-    assert_eq!(cc.head.args[1], Term::Call("add".into(), vec![Term::Int(1), Term::Var(var.clone().into())]), "{cc}");
+    assert_eq!(cc.head.args[1], Term::Call("add".into(), [Term::Int(1), Term::Var(var.clone().into())].into()), "{cc}");
     let two = p.rules.iter().find(|r| r.head.rel == "two").unwrap();
     assert_eq!(two.body.iter().filter(|l| matches!(l, Literal::Agg { .. })).count(), 2, "{two}");
 }
@@ -1125,7 +1125,7 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     .unwrap();
     let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
     let v = |s: &str| Term::Var(s.to_owned().into());
-    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".into(), args: [v("n"), v("a")].into(), neg: false, gated: false })]);
     assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
     assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);

@@ -54,7 +54,7 @@ pub fn is_core(rel: &str) -> bool {
 }
 
 fn atom(rel: &str, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false })
 }
 
 fn var(v: &str) -> Term {
@@ -73,7 +73,7 @@ fn definition(rel: &str) -> (&'static [&'static str], Vec<Literal>) {
             &["a", "b"],
             vec![
                 atom("child", vec![var("p"), var("a"), var("i")], false),
-                Literal::Cmp { l: var("j"), op: "=", r: Term::Call("add".into(), vec![var("i"), Term::Int(1)]) },
+                Literal::Cmp { l: var("j"), op: "=", r: Term::Call("add".into(), [var("i"), Term::Int(1)].into()) },
                 atom("child", vec![var("p"), var("b"), var("j")], false),
             ],
         ),
@@ -144,7 +144,7 @@ impl Lowerer {
         if !self.prog.decls.contains_key(name.as_str()) {
             let (params, body) = definition(rel);
             self.prog.decls.insert(name.clone().into(), DECLS[rel].iter().map(|(c, t)| (c.into(), t.into())).collect());
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body });
+            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
         }
         name
     }

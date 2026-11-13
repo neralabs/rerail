@@ -20,7 +20,7 @@ fn relation(k: usize, m: usize) -> String {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false })
 }
 
 /// The tree-shaped parts of a Python program's rules as `ast` atoms (decision 0106 §4): a root `r` with
@@ -130,6 +130,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
             }
         }
         let reads: Vec<BTreeSet<String>> = body.iter().map(Literal::vars).collect();
+        let mut made = Vec::with_capacity(body.len() + 1);
         for (i, l) in body.iter().enumerate() {
             match l {
                 Literal::Ast { document, node, matcher, captures } if captures.len() <= MOST_CAPTURES => {
@@ -140,15 +141,16 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
                     });
                     let mut args = vec![Term::Var(node.clone().into())];
                     args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone().into())));
-                    rule.body.push(atom(&relation(k, names.len()), args));
+                    made.push(atom(&relation(k, names.len()), args));
                     let elsewhere = head.contains(document) || reads.iter().enumerate().any(|(j, r)| j != i && r.contains(document));
                     if elsewhere {
-                        rule.body.push(atom("docof", vec![Term::Var(node.clone().into()), Term::Var(document.clone().into())]));
+                        made.push(atom("docof", vec![Term::Var(node.clone().into()), Term::Var(document.clone().into())]));
                     }
                 }
-                l => rule.body.push(l.clone()),
+                l => made.push(l.clone()),
             }
         }
+        rule.body = made.into();
     }
     let mut out = Vec::new();
     for (k, (text, names)) in texts.into_iter().enumerate() {
@@ -166,7 +168,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
     // hidden): then the rules read the view, and an input of the same name would have no statistics.
     let derived = prog.rules.iter().any(|r| r.head.rel == "docof");
     if !out.is_empty() && !derived && !prog.inputs.iter().any(|r| r == "docof") && prog.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "docof"))) {
-        prog.decls.entry("docof".to_owned().into()).or_insert_with(|| vec![("n".into(), "loc".into()), ("d".into(), "number".into())]);
+        prog.decls.entry("docof".to_owned().into()).or_insert_with(|| [("n".into(), "loc".into()), ("d".into(), "number".into())].into());
         prog.inputs.push("docof".to_owned());
     }
     out

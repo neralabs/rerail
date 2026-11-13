@@ -1212,7 +1212,7 @@ fn overlay<'a>(prog: &Program, model: &mut Model, rels: impl Iterator<Item = &'a
     let mut saved = Vec::new();
     for rel in rels {
         let Some(rows) = observed_rows(rel, nodes) else { continue };
-        let width = prog.decls.get(rel).map_or(0, Vec::len);
+        let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let cols = observed_cols(rel, nodes, rows);
         let before = (0..width).map(|c| (model.ndv.get(&(rel.to_owned(), c)).copied(), model.stats.fan.get(&(rel.to_owned(), c)).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
@@ -1288,7 +1288,7 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                 model.stats.card.insert(rel.clone(), rows.max(1.0));
                 inserted.card.push(rel.clone());
                 // A column's distinct values: at most the rows, and at most those of the body column that binds it.
-                let width = prog.decls.get(rel.as_str()).map_or(0, Vec::len);
+                let width = prog.decls.get(rel.as_str()).map_or(0, |c| c.len());
                 let seen = observed_cols(rel, nodes, rows);
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));

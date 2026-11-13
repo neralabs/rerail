@@ -69,7 +69,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
                     out.domains.entry(name.clone()).or_insert(d);
                 }
                 rules.push(made);
-                rules.push(Rule { head: rule.head.clone(), body: vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })] });
+                rules.push(Rule { head: rule.head.clone(), body: [Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })].into() });
                 through += 1;
             }
             None => {
@@ -115,7 +115,7 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
                     }
                     args.push(t);
                 }
-                body.push(Literal::Atom(Atom { args, ..a.clone() }));
+                body.push(Literal::Atom(Atom { args: args.into(), ..a.clone() }));
             }
             Literal::Atom(_) | Literal::Cmp { .. } => body.push(l.clone()),
             _ => return None,
@@ -135,5 +135,5 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
         args.push(Term::Var(v.clone().into()));
     }
     let name = format!("{h}__sup{i}");
-    Some((name.clone(), decl, Rule { head: Atom { rel: name.into(), args, neg: false, gated: false }, body }))
+    Some((name.clone(), decl.to_vec(), Rule { head: Atom { rel: name.into(), args, neg: false, gated: false }, body: body.into() }))
 }

@@ -122,17 +122,17 @@ fn named(rel: &str, suffix: &str) -> String {
 /// Not a survivor is not old, or deleted: two rules, each a lower stratum's read. A head with a call keeps the
 /// rule unguarded.
 fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gone: &str) {
-    let head = Atom { rel: named(h, "ins").into(), args: args.to_vec(), neg: false, gated: false };
+    let head = Atom { rel: named(h, "ins").into(), args: args.to_vec().into(), neg: false, gated: false };
     if !args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
-        rules.push(Rule { head, body });
+        rules.push(Rule { head, body: body.into() });
         return;
     }
     let mut new = body.clone();
     new.push(atom(named(h, "old"), args.to_vec(), true));
-    rules.push(Rule { head: head.clone(), body: new });
+    rules.push(Rule { head: head.clone(), body: new.into() });
     let mut deleted = body;
     deleted.push(atom(named(h, gone), args.to_vec(), false));
-    rules.push(Rule { head, body: deleted });
+    rules.push(Rule { head, body: deleted.into() });
 }
 
 /// Whether recursive strata are maintained by levels (decision 0090), not delete-and-rederive.
@@ -142,7 +142,7 @@ pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
 }
 
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel: rel.into(), args, neg, gated: false })
+    Literal::Atom(Atom { rel: rel.into(), args: args.into(), neg, gated: false })
 }
 
 fn row(width: usize) -> Vec<Term> {
@@ -344,7 +344,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         let old_of = |a: &Atom| if moves(a) { named(&a.rel, "old") } else { a.rel.to_string() };
         // A literal over old rows: an atom, or an aggregate's atom, that moves reads `r__old`.
         let old_lit = |l: &Literal| match l {
-            Literal::Atom(b) => atom(old_of(b), b.args.clone(), b.neg),
+            Literal::Atom(b) => atom(old_of(b), b.args.to_vec(), b.neg),
             Literal::Agg { var, op, over, atom: b } => {
                 Literal::Agg { var: var.clone(), op: op.clone(), over: over.clone(), atom: Atom { rel: old_of(b).into(), ..b.clone() } }
             }
@@ -386,12 +386,12 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
                     }
                     part.program.decls.insert(grp.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
                     for d in ["minus", "plus"] {
-                        rules.push(Rule { head: Atom { rel: grp.clone().into(), args: key.clone(), neg: false, gated: false }, body: vec![atom(named(&at.rel, d), at.args.clone(), false)] });
+                        rules.push(Rule { head: Atom { rel: grp.clone().into(), args: key.clone().into(), neg: false, gated: false }, body: [atom(named(&at.rel, d), at.args.to_vec(), false)].into() });
                     }
                     deltas.insert(at.rel.to_string());
                     let mut over_old = vec![atom(grp.clone(), key.clone(), false)];
                     over_old.extend(rule.body.iter().map(old_lit));
-                    rules.push(Rule { head: Atom { rel: named(h, "del").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old });
+                    rules.push(Rule { head: Atom { rel: named(h, "del").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old.into() });
                     let mut over_new = vec![atom(grp, key, false)];
                     over_new.extend(rule.body.iter().cloned());
                     insert(&mut rules, h, &rule.head.args, over_new, "del");
@@ -416,11 +416,11 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
                     .iter()
                     .enumerate()
                     .map(|(j, l)| match l {
-                        Literal::Atom(b) if j == k => atom(lose.clone(), b.args.clone(), false),
+                        Literal::Atom(b) if j == k => atom(lose.clone(), b.args.to_vec(), false),
                         other => old_lit(other),
                     })
                     .collect();
-                rules.push(Rule { head: Atom { rel: if lv { named(h, "cand").into() } else { lost(h).into() }, args: rule.head.args.clone(), neg: false, gated: false }, body: over });
+                rules.push(Rule { head: Atom { rel: if lv { named(h, "cand").into() } else { lost(h).into() }, args: rule.head.args.clone(), neg: false, gated: false }, body: over.into() });
                 // A negation's gain (`n__minus`) is a row gone, which makes `!n(..)` hold only when no other row
                 // matches: with a wildcard (`!found(c, a, _)`) another may. The negation is kept, over the new rows.
                 let ins: Vec<Literal> = rule
@@ -428,8 +428,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
                     .iter()
                     .enumerate()
                     .flat_map(|(j, l)| match j == k {
-                        true if at.neg => vec![atom(gain.clone(), at.args.clone(), false), l.clone()],
-                        true => vec![atom(gain.clone(), at.args.clone(), false)],
+                        true if at.neg => vec![atom(gain.clone(), at.args.to_vec(), false), l.clone()],
+                        true => vec![atom(gain.clone(), at.args.to_vec(), false)],
                         false => vec![l.clone()],
                     })
                     .collect();
@@ -437,12 +437,12 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             }
             // Levels: a candidate holds when a derivation from the kept rows below it, not gone, holds.
             if lv {
-                let mut held = vec![atom(named(h, "chk"), rule.head.args.clone(), false)];
+                let mut held = vec![atom(named(h, "chk"), rule.head.args.to_vec(), false)];
                 held.extend(rule.body.iter().map(|l| match l {
-                    Literal::Atom(b) if !b.neg && scc.contains(b.rel.as_str()) => atom(named(&b.rel, "live"), b.args.clone(), false),
+                    Literal::Atom(b) if !b.neg && scc.contains(b.rel.as_str()) => atom(named(&b.rel, "live"), b.args.to_vec(), false),
                     other => other.clone(),
                 }));
-                rules.push(Rule { head: Atom { rel: named(h, "held").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: held });
+                rules.push(Rule { head: Atom { rel: named(h, "held").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: held.into() });
             }
             for b in rule.body.iter().filter_map(|l| match l {
                 Literal::Atom(b) | Literal::Agg { atom: b, .. } if moves(b) && !scc.contains(b.rel.as_str()) => Some(b),
@@ -456,14 +456,14 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             }
             // A projection's lost row is held while a support of it is left.
             if projection {
-                let mut held = vec![atom(named(h, "lost"), rule.head.args.clone(), false)];
+                let mut held = vec![atom(named(h, "lost"), rule.head.args.to_vec(), false)];
                 held.extend(rule.body.iter().cloned());
-                rules.push(Rule { head: Atom { rel: named(h, "held").into(), ..rule.head.clone() }, body: held });
+                rules.push(Rule { head: Atom { rel: named(h, "held").into(), ..rule.head.clone() }, body: held.into() });
                 continue;
             }
-            let mut red = vec![atom(named(h, gone), rule.head.args.clone(), false)];
+            let mut red = vec![atom(named(h, gone), rule.head.args.to_vec(), false)];
             red.extend(rule.body.iter().cloned());
-            rules.push(Rule { head: Atom { rel: named(h, "redo").into(), ..rule.head.clone() }, body: red });
+            rules.push(Rule { head: Atom { rel: named(h, "redo").into(), ..rule.head.clone() }, body: red.into() });
         }
         let exact = exact || projection;
         for rel in scc {
@@ -471,30 +471,30 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             let v = row(width);
             olds.insert(rel.clone());
             if projection {
-                rules.push(Rule { head: Atom { rel: named(rel, "del").into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "lost"), v.clone(), false), atom(named(rel, "held"), v.clone(), true)] });
+                rules.push(Rule { head: Atom { rel: named(rel, "del").into(), args: v.clone().into(), neg: false, gated: false }, body: [atom(named(rel, "lost"), v.clone(), false), atom(named(rel, "held"), v.clone(), true)].into() });
                 fresh.push((rel.clone(), named(rel, "lost")));
                 fresh.push((rel.clone(), named(rel, "held")));
             }
             if exact {
                 exact_rels.insert(rel.clone());
             }
-            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, gone), v.clone(), true)] });
+            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone().into(), neg: false, gated: false }, body: [atom(named(rel, "old"), v.clone(), false), atom(named(rel, gone), v.clone(), true)].into() });
             if lv {
                 // Placed in the levels stratum only: the engine's driver writes `chk` and `gone` (`plan::levels_of`),
                 // and `live` starts as the kept rows.
-                let gated = |rel: String| Literal::Atom(Atom { rel: rel.into(), args: v.clone(), neg: true, gated: true });
-                let head = |s: &str| Atom { rel: named(rel, s).into(), args: v.clone(), neg: false, gated: false };
-                rules.push(Rule { head: head("chk"), body: vec![atom(named(rel, "cand"), v.clone(), false)] });
-                rules.push(Rule { head: head("gone"), body: vec![atom(named(rel, "chk"), v.clone(), false), gated(named(rel, "held"))] });
-                rules.push(Rule { head: head("live"), body: vec![atom(named(rel, "old"), v.clone(), false), gated(named(rel, "gone"))] });
+                let gated = |rel: String| Literal::Atom(Atom { rel: rel.into(), args: v.clone().into(), neg: true, gated: true });
+                let head = |s: &str| Atom { rel: named(rel, s).into(), args: v.clone().into(), neg: false, gated: false };
+                rules.push(Rule { head: head("chk"), body: [atom(named(rel, "cand"), v.clone(), false)].into() });
+                rules.push(Rule { head: head("gone"), body: [atom(named(rel, "chk"), v.clone(), false), gated(named(rel, "held"))].into() });
+                rules.push(Rule { head: head("live"), body: [atom(named(rel, "old"), v.clone(), false), gated(named(rel, "gone"))].into() });
                 for s in ["cand", "chk", "held", "gone", "live"] {
                     fresh.push((rel.clone(), named(rel, s)));
                 }
                 gone_of.insert(rel.clone());
             }
-            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
+            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone().into(), neg: false, gated: false }, body: [atom(named(rel, "ins"), v.clone(), false)].into() });
             if !exact {
-                rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
+                rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone().into(), neg: false, gated: false }, body: [atom(named(rel, "redo"), v, false)].into() });
             }
             if !lv {
                 fresh.push((rel.clone(), named(rel, "del")));
@@ -531,11 +531,11 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
     let over_input = |rel: &str, suffix: &str| -> Rule {
         let view = &views[rel];
         let a = view.body[0].atom().expect("a view's atom");
-        Rule { head: Atom { rel: named(rel, suffix).into(), ..view.head.clone() }, body: vec![atom(named(&a.rel, suffix), a.args.clone(), false)] }
+        Rule { head: Atom { rel: named(rel, suffix).into(), ..view.head.clone() }, body: [atom(named(&a.rel, suffix), a.args.to_vec(), false)].into() }
     };
     for rel in &deltas {
         let v = row(part.program.decls[rel.as_str()].len());
-        let head = |suffix: &str| Atom { rel: named(rel, suffix).into(), args: v.clone(), neg: false, gated: false };
+        let head = |suffix: &str| Atom { rel: named(rel, suffix).into(), args: v.clone().into(), neg: false, gated: false };
         if one.is_some_and(|o| !maint.contains(rel) && (o.has_delta)(rel)) {
             // A relation of the run already: an earlier stratum's form made it, or it was given.
             if !part.program.inputs.contains(&named(rel, "minus")) {
@@ -553,8 +553,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
                 let gone = if gone_of.contains(rel) { "gone" } else { "del" };
                 vec![atom(named(rel, gone), v.clone(), false), atom(named(rel, "redo"), v.clone(), true), atom(named(rel, "ins"), v.clone(), true)]
             };
-            rules.push(Rule { head: head("minus"), body });
-            rules.push(Rule { head: head("plus"), body: vec![atom(named(rel, "ins"), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
+            rules.push(Rule { head: head("minus"), body: body.into() });
+            rules.push(Rule { head: head("plus"), body: [atom(named(rel, "ins"), v.clone(), false), atom(named(rel, "old"), v.clone(), true)].into() });
         } else if let Some((plus, minus)) = given(rel) {
             // Its delta as given: no row of it is read but those.
             for (suffix, source) in [("plus", plus), ("minus", minus)] {
@@ -566,8 +566,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             if view_inputs.contains(rel) {
                 olds.insert(rel.clone());
             }
-            rules.push(Rule { head: head("minus"), body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
-            rules.push(Rule { head: head("plus"), body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
+            rules.push(Rule { head: head("minus"), body: [atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)].into() });
+            rules.push(Rule { head: head("plus"), body: [atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)].into() });
         }
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
@@ -598,8 +598,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         for rel in scc.iter().filter(|r| deltas.contains(*r)) {
             let v = row(part.program.decls[rel.as_str()].len());
             let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
-            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
-            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus").into(), args: v.clone().into(), neg: false, gated: false }, body: [a(named(rel, "old"), false), a(rel.clone(), true)].into() });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus").into(), args: v.clone().into(), neg: false, gated: false }, body: [a(rel.clone(), false), a(named(rel, "old"), true)].into() });
         }
         let olds = scc.iter().map(|r| named(r, "old")).collect();
         part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
@@ -773,9 +773,9 @@ fn together(prog: &mut front::Program) {
             let deps: BTreeSet<String> = quiet.iter().flat_map(|h| rules_of[h].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && negated.contains(x) && x != n).map(|(x, _)| ready(&x)).collect();
             let level = depth(n);
             prog.gates.push((ready(n), crate::code_rule_dsl::logic::magic::Gate { src: None, rel: n.clone(), level, quiet: quiet.into_iter().collect(), deps: deps.into_iter().collect() }));
-            prog.decls.insert(ready(n).into(), vec![("k".into(), "int".into())]);
+            prog.decls.insert(ready(n).into(), [("k".into(), "int".into())].into());
             let wild = vec![Term::Wild; prog.decls[n.as_str()].len()];
-            prog.rules.push(Rule { head: Atom { rel: ready(n).into(), args: vec![Term::Int(0)], neg: false, gated: false }, body: vec![atom(n.clone(), wild, false)] });
+            prog.rules.push(Rule { head: Atom { rel: ready(n).into(), args: [Term::Int(0)].into(), neg: false, gated: false }, body: [atom(n.clone(), wild, false)].into() });
             members.insert(ready(n));
         }
         // A negation (or an aggregate) of a piece of the set reads it once its gate passed.
@@ -793,14 +793,14 @@ fn together(prog: &mut front::Program) {
                         out.push(l);
                         continue;
                     };
-                    out.push(Literal::Atom(Atom { rel: ready(&n).into(), args: vec![Term::Int(0)], neg: false, gated: false }));
+                    out.push(Literal::Atom(Atom { rel: ready(&n).into(), args: [Term::Int(0)].into(), neg: false, gated: false }));
                     out.push(match l {
                         Literal::Atom(a) => Literal::Atom(Atom { gated: true, ..a }),
                         Literal::Agg { var, op, over, atom } => Literal::Agg { var, op, over, atom: Atom { gated: true, ..atom } },
                         l => l,
                     });
                 }
-                prog.rules[i].body = out;
+                prog.rules[i].body = out.into();
             }
         }
         prog.again[g].owned.extend(members.iter().cloned());

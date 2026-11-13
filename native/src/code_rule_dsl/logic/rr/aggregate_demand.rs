@@ -240,11 +240,11 @@ pub fn optimize(program: &mut Program) {
                 demands.push(Rule {
                     head: Atom {
                         rel: format!("rr_demand_agg_{name}").into(),
-                        args,
+                        args: args.into(),
                         neg: false,
                         gated: false,
                     },
-                    body,
+                    body: body.into(),
                 });
             }
             if refused {
@@ -330,7 +330,7 @@ pub fn optimize(program: &mut Program) {
             }
             let mut anti = atom.clone();
             anti.neg = true;
-            rule.body[i] = Literal::Atom(anti);
+            rule.body.make_mut()[i] = Literal::Atom(anti);
             remove.insert(j);
         }
         let mut i = 0;
@@ -398,7 +398,7 @@ pub fn retype_helpers(program: &mut Program) {
                     }
                 }
                 if let (Some(ty), false) = (found, symbol) {
-                    program.decls.get_mut(rel.as_str()).expect("a helper")[i].1 = ty.into();
+                    program.decls.get_mut(rel.as_str()).expect("a helper").make_mut()[i].1 = ty.into();
                     changed = true;
                 }
             }

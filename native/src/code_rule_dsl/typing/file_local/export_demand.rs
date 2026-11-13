@@ -390,7 +390,7 @@ fn key_rel(a: &Atom, at: usize) -> (String, Rule) {
         format!("xk_{}_{at}_{:08x}", a.rel, h.finish() as u32)
     };
     let args = a.args.iter().enumerate().map(|(j, t)| if j == at { Term::Var("v".into()) } else if matches!(t, Term::Int(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
-    let rule = Rule { head: Atom { rel: name.as_str().into(), args: vec![Term::Var("v".into())], neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: a.rel.clone(), args, neg: false, gated: false })] };
+    let rule = Rule { head: Atom { rel: name.as_str().into(), args: [Term::Var("v".into())].into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: a.rel.clone(), args, neg: false, gated: false })].into() };
     (name, rule)
 }
 
@@ -522,15 +522,15 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
         }
     }
     let mut made: Vec<Rule> = Vec::new();
-    let mut decls: BTreeMap<crate::code_rule_dsl::logic::front::Name, Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>> = BTreeMap::new();
+    let mut decls: BTreeMap<crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>> = BTreeMap::new();
     for key in &needed {
         let Some(Some(shapes)) = pass.shapes.get(key) else { continue };
         let ty = original.decls.get(key.0.as_str()).and_then(|c| c.get(key.1)).map_or_else(|| "number".to_owned(), |c| c.1.to_string());
-        decls.insert(may_name(key).into(), vec![("v".into(), ty.into())]);
+        decls.insert(may_name(key).into(), [("v".into(), ty.into())].into());
         for s in shapes {
             let mut body = s.kept.clone();
-            body.extend(s.filters.iter().filter(|(k, _)| !top.contains(k)).map(|(k, v)| Literal::Atom(Atom { rel: may_name(k).as_str().into(), args: vec![Term::Var(v.clone().into())], neg: false, gated: false })));
-            made.push(Rule { head: Atom { rel: may_name(key).as_str().into(), args: vec![Term::Var(s.head.clone().into())], neg: false, gated: false }, body });
+            body.extend(s.filters.iter().filter(|(k, _)| !top.contains(k)).map(|(k, v)| Literal::Atom(Atom { rel: may_name(k).as_str().into(), args: [Term::Var(v.clone().into())].into(), neg: false, gated: false })));
+            made.push(Rule { head: Atom { rel: may_name(key).as_str().into(), args: [Term::Var(s.head.clone().into())].into(), neg: false, gated: false }, body: body.into() });
         }
     }
     let mut lines = Vec::new();
@@ -565,23 +565,23 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
                     }
                 }
             }
-            body.insert(0, Literal::Atom(Atom { rel: e.rel.clone(), args, neg: false, gated: false }));
+            body.insert(0, Literal::Atom(Atom { rel: e.rel.clone(), args: args.into(), neg: false, gated: false }));
             for f in fs.iter().filter(|f| useful(f)) {
                 body.push(Literal::Atom(match f {
                     Filter::Atom(a, at, v) => {
                         let (key, rule) = key_rel(a, *at);
                         if !decls.contains_key(key.as_str()) {
                             let ty = original.decls.get(a.rel.as_str()).and_then(|c| c.get(*at)).map_or_else(|| "number".to_owned(), |c| c.1.to_string());
-                            decls.insert(key.clone().into(), vec![("v".into(), ty.into())]);
+                            decls.insert(key.clone().into(), [("v".into(), ty.into())].into());
                             made.push(rule);
                         }
                         keys_of.entry(key.clone()).or_default().insert(rel.clone());
-                        Atom { rel: key.as_str().into(), args: vec![Term::Var(v.clone().into())], neg: false, gated: false }
+                        Atom { rel: key.as_str().into(), args: [Term::Var(v.clone().into())].into(), neg: false, gated: false }
                     }
-                    Filter::Key(k, v) => Atom { rel: may_name(k).as_str().into(), args: vec![Term::Var(v.clone().into())], neg: false, gated: false },
+                    Filter::Key(k, v) => Atom { rel: may_name(k).as_str().into(), args: [Term::Var(v.clone().into())].into(), neg: false, gated: false },
                 }));
             }
-            let rule = Rule { head: Atom { rel: name.as_str().into(), args: head, neg: false, gated: false }, body };
+            let rule = Rule { head: Atom { rel: name.as_str().into(), args: head.into(), neg: false, gated: false }, body: body.into() };
             if seen.insert(rule.to_string()) {
                 made.push(rule);
             }
@@ -591,7 +591,7 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
     // The readers read the cut.
     for rel in &cut {
         for (ri, li, _) in &reads[rel] {
-            if let Literal::Atom(e) = &mut prog.rules[*ri].body[*li] {
+            if let Literal::Atom(e) = &mut prog.rules[*ri].body.make_mut()[*li] {
                 e.rel = format!("xd_{rel}").as_str().into();
             }
         }

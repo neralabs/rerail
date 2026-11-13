@@ -131,7 +131,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     // Per relation, where a row's document is read: (document columns, node columns, span or node columns). A node's
     // document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::locate` reads it.
     let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
-        let width = all.decls.get(rel).map_or(0, Vec::len);
+        let width = all.decls.get(rel).map_or(0, |c| c.len());
         if derived.contains(rel) {
             let cols = locations.get(rel).cloned().unwrap_or_default();
             let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(rel, c, ty)).collect::<Vec<_>>();
@@ -152,16 +152,16 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
-        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: vec![Term::Var(d.to_owned().into())], neg: true, gated: false });
+        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: [Term::Var(d.to_owned().into())].into(), neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("doc".into(), vec![Term::Var(n.to_owned().into())]) }, at(&g)]
+            vec![Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("doc".into(), [Term::Var(n.to_owned().into())].into()) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Atom(Atom { rel: "docof".into(), args: vec![Term::Var(n.to_owned().into()), Term::Var(g.clone().into())], neg: false, gated: false }), at(&g)]
+            vec![Literal::Atom(Atom { rel: "docof".into(), args: [Term::Var(n.to_owned().into()), Term::Var(g.clone().into())].into(), neg: false, gated: false }), at(&g)]
         };
         for (k, l) in rule.body.iter().enumerate() {
             match l {

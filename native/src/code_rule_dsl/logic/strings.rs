@@ -437,7 +437,7 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
                 let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
                 // A fact relation read with constants: only the rows that hold them.
                 if !prog.rules.iter().any(|r| r.head.rel == a.rel) && let Some(rows) = prog.facts.get(a.rel.as_str()) {
-                    let matches = |row: &Vec<super::front::Value>| a.args.iter().zip(row).all(|(t, v)| match (t, v) {
+                    let matches = |row: &[super::front::Value]| a.args.iter().zip(row).all(|(t, v)| match (t, v) {
                         (Term::Str(x), super::front::Value::Str(y)) => x == y,
                         (Term::Int(x), super::front::Value::Int(y)) => x == y,
                         (Term::Str(_) | Term::Int(_), _) => false,
@@ -489,7 +489,7 @@ fn implied_set_tests(prog: &mut Program) {
                 _ => None,
             });
             if let Some(values) = domain.filter(|d| !d.is_empty() && d.len() <= IMPLIED_SET_MAX) {
-                extra.push(Literal::Cmp { l: Term::Call(op.clone().into(), vec![Term::Var(s.clone().into()), Term::Call(SET.to_owned().into(), values.into_iter().map(|v| Term::Str(v.into())).collect())]), op: "=", r: Term::Int(1) });
+                extra.push(Literal::Cmp { l: Term::Call(op.clone().into(), [Term::Var(s.clone().into()), Term::Call(SET.to_owned().into(), values.into_iter().map(|v| Term::Str(v.into())).collect())].into()), op: "=", r: Term::Int(1) });
             }
         }
         added += extra.len();
@@ -531,13 +531,13 @@ pub fn node_subject_tests(prog: &mut Program) {
             if !is_test(op) {
                 continue;
             }
-            let Some(Term::Var(s)) = args.first_mut() else { continue };
+            let Some(Term::Var(s)) = args.make_mut().first_mut() else { continue };
             if !nodes.contains(s.as_str()) {
                 continue;
             }
             fresh += 1;
             let t = format!("rr_node_text{fresh}");
-            added.push(Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(s.clone().into()), Term::Var(t.clone().into())], neg: false, gated: false }));
+            added.push(Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(s.clone().into()), Term::Var(t.clone().into())].into(), neg: false, gated: false }));
             *s = t.into();
         }
         rule.body.extend(added);
@@ -601,7 +601,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                     rel
                 }
             };
-            *literal = Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var(s.to_owned().into())], neg: !holds, gated: false });
+            *literal = Literal::Atom(Atom { rel: rel.into(), args: [Term::Var(s.to_owned().into())].into(), neg: !holds, gated: false });
         }
     }
     let mut markers: Vec<String> = Vec::new();
@@ -641,12 +641,12 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
             };
             let rel = if group { format!("{GROUPS}{k}") } else { format!("{MATCHES}{k}") };
             made.insert(rel.clone(), group);
-            a.args = args;
+            a.args = args.into();
             a.rel = rel.into();
         }
     }
     for (rel, _) in &tests {
-        prog.decls.insert(rel.clone().into(), vec![("s".into(), "sym".into())]);
+        prog.decls.insert(rel.clone().into(), [("s".into(), "sym".into())].into());
         if !prog.inputs.contains(rel) {
             prog.inputs.push(rel.clone());
         }
@@ -654,7 +654,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     for (rel, group) in made {
         let node = |c: &str| (c.into(), "node".into());
         let columns = if group { vec![node("sp"), node("m"), ("g".into(), "sym".into()), node("gsp")] } else { vec![node("sp"), node("m")] };
-        prog.decls.insert(rel.clone().into(), columns);
+        prog.decls.insert(rel.clone().into(), columns.into());
         if !prog.inputs.contains(&rel) {
             prog.inputs.push(rel);
         }

@@ -301,7 +301,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         return Ok(Some(Plan { components, memo, digest }));
     }
     // Replay: an input and a copy per memoised relation; its other rules derive no row about a replayed document.
-    cross.decls.insert(DOCS.to_owned().into(), vec![("d".into(), "int".into())]);
+    cross.decls.insert(DOCS.to_owned().into(), [("d".into(), "int".into())].into());
     cross.inputs.push(DOCS.to_owned());
     for rel in memo.keys() {
         // Stored, never inlined into its readers (decision 0099): its derived rows are read from its table to be
@@ -313,8 +313,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         cross.decls.insert(input.clone().into(), cols);
         cross.inputs.push(input.clone());
         cross.rules.push(Rule {
-            head: Atom { rel: rel.clone().into(), args: vars.clone(), neg: false, gated: false },
-            body: vec![Literal::Atom(Atom { rel: input.into(), args: vars, neg: false, gated: false })],
+            head: Atom { rel: rel.clone().into(), args: vars.clone().into(), neg: false, gated: false },
+            body: [Literal::Atom(Atom { rel: input.into(), args: vars.into(), neg: false, gated: false })].into(),
         });
     }
     for rule in &mut cross.rules {
@@ -349,8 +349,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             }
             for (i, x) in guarded.into_iter().enumerate() {
                 let d = if i == 0 { "rr_xd".to_owned() } else { format!("rr_xd{i}") };
-                rule.body.push(Literal::Cmp { l: Term::Var(d.clone().into()), op: "=", r: Term::Call("doc".into(), vec![Term::Var(x.into())]) });
-                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned().into(), args: vec![Term::Var(d.into())], neg: true, gated: false }));
+                rule.body.push(Literal::Cmp { l: Term::Var(d.clone().into()), op: "=", r: Term::Call("doc".into(), [Term::Var(x.into())].into()) });
+                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned().into(), args: [Term::Var(d.into())].into(), neg: true, gated: false }));
             }
         }
     }

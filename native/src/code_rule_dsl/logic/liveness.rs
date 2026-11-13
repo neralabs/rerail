@@ -47,7 +47,7 @@ pub(in crate::code_rule_dsl) fn live(rel: &str) -> String {
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
@@ -67,7 +67,7 @@ pub fn program(prog: &Program) -> Program {
     let mut targets: BTreeSet<String> = BTreeSet::new();
     for o in prog.outputs.iter().filter(|o| declared(o)) {
         let args: Vec<Term> = (0..prog.decls[o.as_str()].len()).map(|i| Term::Var(format!("liveof_vo{i}").into())).collect();
-        out.rules.push(Rule { head: atom(live(o), args.clone()), body: vec![Literal::Atom(atom(o.clone(), args))] });
+        out.rules.push(Rule { head: atom(live(o), args.clone()), body: [Literal::Atom(atom(o.clone(), args))].into() });
         targets.insert(o.clone());
     }
     for rule in &prog.rules {
@@ -125,15 +125,15 @@ pub fn program(prog: &Program) -> Program {
             if !negated {
                 body.extend(computed.iter().cloned());
             }
-            out.rules.push(Rule { head: atom(live(&read.rel), args), body });
+            out.rules.push(Rule { head: atom(live(&read.rel), args), body: body.into() });
             targets.insert(read.rel.to_string());
         }
     }
     let count = |n: &str, rel: &str, what: &str, of: Atom| Rule {
         head: atom(COUNTS.to_owned(), vec![Term::Str(rel.to_owned().into()), Term::Str(what.to_owned().into()), Term::Var(n.to_owned().into())]),
-        body: vec![Literal::Agg { var: n.to_owned(), op: AggOp::Count, over: None, atom: of }],
+        body: [Literal::Agg { var: n.to_owned(), op: AggOp::Count, over: None, atom: of }].into(),
     };
-    out.decls.insert(COUNTS.to_owned().into(), vec![("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())]);
+    out.decls.insert(COUNTS.to_owned().into(), [("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())].into());
     let library = prog.decls.contains_key("doc") && prog.decls.contains_key("loaded");
     for t in &targets {
         let cols = &prog.decls[t.as_str()];
@@ -144,10 +144,10 @@ pub fn program(prog: &Program) -> Program {
         // Keys: the first column's values, of all rows and of the live ones.
         let key = |of: &str| format!("liveof_key{of}_{t}");
         for (name, rel) in [(key(""), t.clone()), (key("l"), live(t))] {
-            out.decls.insert(name.clone().into(), vec![cols[0].clone()]);
+            out.decls.insert(name.clone().into(), [cols[0].clone()].into());
             let mut args = vec![Term::Var("k".into())];
             args.extend((1..cols.len()).map(|_| Term::Wild));
-            out.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: vec![Literal::Atom(atom(rel, args))] });
+            out.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: [Literal::Atom(atom(rel, args))].into() });
         }
         out.rules.push(count("n", t, MEASURES[2], atom(key(""), vec![Term::Var("k".into())])));
         out.rules.push(count("n", t, MEASURES[3], atom(key("l"), vec![Term::Var("k".into())])));
@@ -162,10 +162,10 @@ pub fn program(prog: &Program) -> Program {
                     head: atom(name.clone(), args.clone()),
                     body: vec![
                         Literal::Atom(atom(rel, args.clone())),
-                        Literal::Cmp { l: d.clone(), op: "=", r: Term::Call("doc".into(), vec![args[0].clone()]) },
+                        Literal::Cmp { l: d.clone(), op: "=", r: Term::Call("doc".into(), [args[0].clone()].into()) },
                         Literal::Atom(atom("doc".into(), vec![d, p.clone(), Term::Wild])),
                         Literal::Atom(atom("loaded".into(), vec![p, Term::Wild, Term::Wild])),
-                    ],
+                    ].into(),
                 });
                 out.rules.push(count("n", t, what, atom(name, vars("c"))));
             }

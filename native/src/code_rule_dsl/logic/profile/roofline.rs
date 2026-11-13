@@ -286,7 +286,7 @@ fn roof(u: Unit) -> Option<f64> {
             let var = |i: usize| Term::Var(format!("v{}", i % 7).into());
             // 2^16 literals: a clone's cost per literal, as 2^20 measured it, without ~650 MB held three times over.
             let body: Vec<Literal> = (0..1usize << 16)
-                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97).into(), args: vec![var(i), var(i + 1), var(i + 2)], neg: false, gated: false }))
+                .map(|i| Literal::Atom(Atom { rel: format!("r{}", i % 97).into(), args: [var(i), var(i + 1), var(i + 2)].into(), neg: false, gated: false }))
                 .collect();
             Some(best(3, || {
                 let t = Instant::now();

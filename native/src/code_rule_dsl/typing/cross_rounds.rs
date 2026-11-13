@@ -105,7 +105,7 @@ fn first_node_var(prog: &Program, a: &Atom) -> Option<String> {
 }
 
 fn doc(v: &str) -> Term {
-    Term::Call("doc".into(), vec![Term::Var(v.to_owned().into())])
+    Term::Call("doc".into(), [Term::Var(v.to_owned().into())].into())
 }
 
 /// The variables of `body` that its positive atoms of `same_doc` relations join to `v` through their same-document
@@ -177,7 +177,7 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
             for (bit, (i, h, v)) in found.iter().enumerate() {
                 let across = choice & (1 << bit) != 0;
                 if across {
-                    let Literal::Atom(a) = &mut body[*i] else { unreachable!() };
+                    let Literal::Atom(a) = &mut body.make_mut()[*i] else { unreachable!() };
                     hops.insert(a.rel.to_string());
                     a.rel = format!("{}{PREV}", a.rel).into();
                 }

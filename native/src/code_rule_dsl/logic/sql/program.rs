@@ -160,7 +160,7 @@ pub fn tops(
         if rule.body.is_empty()
             && let Some(row) = row
         {
-            program.facts.entry(rule.head.rel.to_string()).or_default().push(row);
+            program.facts.entry(rule.head.rel.to_string()).or_default().push(row.into());
         } else {
             rules.push(rule);
         }

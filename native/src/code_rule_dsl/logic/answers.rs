@@ -17,7 +17,7 @@ use super::magic::Gate;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 /// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
@@ -100,7 +100,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             } else {
                 let (ask, done) = (format!("ask_{}_{ad}", a.rel), format!("done_{}_{ad}", a.rel));
                 // The keys asked about: the rule's literals before the negation.
-                rules.push(Rule { head: atom(ask.clone(), key.clone()), body: r.body[..i].to_vec() });
+                rules.push(Rule { head: atom(ask.clone(), key.clone()), body: r.body[..i].to_vec().into() });
                 if !made.iter().any(|(d, ..)| *d == done) {
                     made.push((done.clone(), Some(ask), a.rel.to_string(), cols));
                 }
@@ -108,7 +108,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             }
             body.push(Literal::Atom(Atom { neg: true, gated: true, ..a.clone() }));
         }
-        rules.push(Rule { head: r.head, body });
+        rules.push(Rule { head: r.head, body: body.into() });
     }
     // The gates: each `done` is fed from its `ask` once what its relation reads inside the component is quiet.
     let names: BTreeSet<String> = made.iter().map(|(d, ..)| d.clone()).collect();
@@ -120,11 +120,11 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             Some(ask) => {
                 prog.decls.insert(ask.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
-                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: vec![Literal::Atom(atom(ask.clone(), vs))] });
+                rules.push(Rule { head: atom(done.clone(), vs.clone()), body: [Literal::Atom(atom(ask.clone(), vs))].into() });
             }
             None => {
-                let wild = vec![Term::Wild; prog.decls.get(rel.as_str()).map_or(0, Vec::len)];
-                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: vec![Literal::Atom(atom(rel.clone(), wild))] });
+                let wild = vec![Term::Wild; prog.decls.get(rel.as_str()).map_or(0, |c| c.len())];
+                rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: [Literal::Atom(atom(rel.clone(), wild))].into() });
             }
         }
     }
@@ -257,7 +257,7 @@ pub mod tests {
         assert_eq!((done.as_str(), g.src.as_deref(), g.rel.as_str()), ("done_seen_b", Some("ask_seen_b"), "seen"));
         assert!(g.quiet.contains(&"req".to_owned()), "a request unanswered keeps the gate shut: {:?}", g.quiet);
         prog.rules.push(super::super::rr::parse(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap().rules.remove(0));
-        prog.decls.insert("shown".into(), vec![("x".into(), "sym".into())]);
+        prog.decls.insert("shown".into(), vec![("x".into(), "sym".into())].into());
         let parts = split(&prog).unwrap();
         assert!(parts.load.rules.iter().all(|r| r.head.rel != "shown") && parts.rest.rules.iter().all(|r| r.head.rel == "shown"));
         assert_eq!(parts.reads.iter().collect::<Vec<_>>(), ["fresh"]);

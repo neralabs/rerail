@@ -101,9 +101,9 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
     for rel in wanted {
         let Some(cols) = prog.decls.get(rel.as_str()).cloned() else { continue };
         let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}").into())).collect();
-        let atom = |r: String| Atom { rel: r.into(), args: args.clone(), neg: false, gated: false };
+        let atom = |r: String| Atom { rel: r.into(), args: args.clone().into(), neg: false, gated: false };
         prog.decls.insert(copy(rel).into(), cols);
-        prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
+        prog.rules.push(Rule { head: atom(copy(rel)), body: [Literal::Atom(atom(rel.clone()))].into() });
         prog.outputs.push(copy(rel));
     }
 }

@@ -67,7 +67,7 @@ fn the_python_pack_runs_as_its_logic_program() {
 #[test]
 fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     let rule = |clause: &str, body: Vec<Literal>| Rule {
-        head: Atom { rel: "violation".into(), args: vec![Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")], neg: false, gated: false },
+        head: Atom { rel: "violation".into(), args: [Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")].into(), neg: false, gated: false },
         body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
     };
     let ast = |i: usize, n: &str| atom(&format!("ast_{i}"), vec![var("D"), var(n)]);
@@ -93,7 +93,7 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
 #[test]
 fn py_families_narrow_demand_before_the_batch() {
     let rule = |clause: &str, body: Vec<Literal>| Rule {
-        head: Atom { rel: "violation".into(), args: vec![Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")], neg: false, gated: false },
+        head: Atom { rel: "violation".into(), args: [Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")].into(), neg: false, gated: false },
         body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
     };
     let calls = atom("py_call", vec![var("D"), var("C"), var("F")]);

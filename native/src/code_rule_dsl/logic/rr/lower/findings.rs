@@ -7,9 +7,9 @@ const OUTPUT: &str = "rr_diagnostic";
 
 fn v(name: &str) -> Term { Term::Var(name.to_owned().into()) }
 fn s(text: &str) -> Term { Term::Str(text.to_owned().into()) }
-fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned().into(), args) }
+fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned().into(), args.into()) }
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false })
 }
 fn concat(terms: Vec<Term>) -> Term {
     terms.into_iter().reduce(|a, b| call("concat", vec![a, b])).unwrap_or_else(|| s(""))
@@ -20,7 +20,7 @@ fn number(value: Term) -> Term { call("to_string", vec![value]) }
 impl Lowerer {
     /// Error directives use the same public diagnostic transport as ordinary violations.
     pub(super) fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: Vec<Literal>) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned().into(), vec![("json".into(), "sym".into())]);
+        self.prog.decls.insert(OUTPUT.to_owned().into(), [("json".into(), "sym".into())].into());
         if !self.prog.outputs.iter().any(|name| name == OUTPUT) { self.prog.outputs.push(OUTPUT.to_owned()); }
         let finding = Violation {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
@@ -30,7 +30,7 @@ impl Lowerer {
     }
 
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned().into(), vec![("json".into(), "sym".into())]);
+        self.prog.decls.insert(OUTPUT.to_owned().into(), [("json".into(), "sym".into())].into());
         if !self.prog.outputs.iter().any(|name| name == OUTPUT) {
             self.prog.outputs.push(OUTPUT.to_owned());
         }
@@ -140,7 +140,7 @@ impl Lowerer {
         }
         terms.push(s("}}"));
         body.push(Literal::Cmp { l: v("rr_json"), op: "=", r: concat(terms) });
-        self.prog.rules.push(Rule { head: Atom { rel: OUTPUT.to_owned().into(), args: vec![v("rr_json")], neg: false, gated: false }, body });
+        self.prog.rules.push(Rule { head: Atom { rel: OUTPUT.to_owned().into(), args: [v("rr_json")].into(), neg: false, gated: false }, body: body.into() });
         Ok(())
     }
 }

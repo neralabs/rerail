@@ -364,18 +364,18 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             args.push(Term::Int(1));
         }
         out.decls.insert(pre.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        let pre_atom = Atom { rel: pre.into(), args, neg: false, gated: false };
+        let pre_atom = Atom { rel: pre.into(), args: args.into(), neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
         let mut body = vec![Literal::Atom(pre_atom.clone())];
         for l in cut {
             let Literal::Atom(read) = l else { unreachable!("a read atom") };
             demand_rules.push(Rule {
                 head: Atom { rel: format!("demand_{}", read.rel).into(), args: read.args.clone(), neg: false, gated: false },
-                body: vec![Literal::Atom(pre_atom.clone())],
+                body: [Literal::Atom(pre_atom.clone())].into(),
             });
             body.push(l.clone());
         }
-        rules.push(Rule { head: rule.head.clone(), body });
+        rules.push(Rule { head: rule.head.clone(), body: body.into() });
     }
     if !untyped.is_empty() {
         return Err(untyped);

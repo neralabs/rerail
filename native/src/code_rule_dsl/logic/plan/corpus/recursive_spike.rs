@@ -1808,7 +1808,7 @@ pub(in crate::code_rule_dsl) fn run(
         }
         let names: Vec<String> = scc.iter().chain(&reads).cloned().collect();
         let index: BTreeMap<&str, usize> = names.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
-        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n.as_str()).map_or(0, Vec::len))).collect();
+        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n.as_str()).map_or(0, |c| c.len()))).collect();
         let mut assumed: Vec<String> = Vec::new();
         let mut as_was: Vec<String> = Vec::new();
         let mut want: Vec<std::collections::HashSet<Vec<i64>>> = vec![Default::default(); names.len()];

@@ -3,9 +3,13 @@
 //! once, with no nodes decoded, no tree indexed and no statements made between. A name is copied once, into the
 //! part that holds it; a string once, unescaped only when it holds a `\`.
 //!
+//! Each list (arguments, a body, columns, a row) is gathered in the walk's own stack and taken from the run's
+//! `Lists` (decision 0172): a list the run has already met is that list, and makes nothing.
+//!
 //! It reads what `program_text::print` writes, and refuses the rest as `read` over the statements did.
 
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Name, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AggOp, Atom, List, Lists, Literal, Name, Rule, Stacks, Term, Value};
+use std::cell::RefCell;
 use rerail_rr_syntax::tape::{ERROR, Field, Kind};
 use rerail_rr_syntax::tape_format::{CODE_ERROR, CODE_EXTRA, KIND_BITS, View};
 use std::collections::BTreeMap;
@@ -17,7 +21,7 @@ pub const VAR_WORDS: [&str; 10] = ["top", "count", "min", "max", "sum", "product
 pub const REL_WORDS: [&str; 2] = ["nearest", "ast"];
 
 /// Each relation's rows (`program_facts::Facts`).
-pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<List<Value>>>;
 
 /// `name` with its escape (`program_text::escape`) undone.
 pub fn unescape(name: &str, words: &[&str]) -> String {
@@ -55,7 +59,7 @@ fn bad(what: impl std::fmt::Display) -> String {
 /// The parts a text holds, as read: the rest of the program is made from `about` (`program_facts::program`).
 #[derive(Default)]
 pub struct Parts {
-    pub decls: BTreeMap<Name, Vec<(Name, Name)>>,
+    pub decls: BTreeMap<Name, List<(Name, Name)>>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
     pub facts: Facts,
@@ -83,7 +87,37 @@ struct Walk<'a> {
     view: View<'a>,
     /// The names met in this text, by their text: each interned once a text (`Name::new` takes the process's
     /// table's lock), then cloned by a count.
-    names: std::cell::RefCell<rustc_hash::FxHashMap<&'a str, Name>>,
+    names: RefCell<rustc_hash::FxHashMap<&'a str, Name>>,
+    /// The run's distinct lists.
+    lists: &'a Lists,
+    /// Argument lists and declarations' columns met in this text, by their text: the same text is the same list,
+    /// taken again without walking it.
+    arguments: RefCell<rustc_hash::FxHashMap<&'a str, List<Term>>>,
+    declared: RefCell<rustc_hash::FxHashMap<&'a str, List<(Name, Name)>>>,
+    /// Where each kind of list is gathered before it is taken from `lists`: one stack each, nested lists above.
+    terms: RefCell<Vec<Term>>,
+    literals: RefCell<Vec<Literal>>,
+    columns: RefCell<Vec<(Name, Name)>>,
+    values: RefCell<Vec<Value>>,
+}
+
+/// `f` of each of `items`, gathered on `stack` above what it holds and taken as one list by `take`; the stack is
+/// left as it was found.
+fn gather<T, I: Iterator<Item = usize>>(stack: &RefCell<Vec<T>>, items: I, f: impl Fn(usize) -> Result<T, String>, take: impl FnOnce(&[T]) -> List<T>) -> Result<List<T>, String> {
+    let mark = stack.borrow().len();
+    let mut made = Ok(());
+    for c in items {
+        match f(c) {
+            Ok(t) => stack.borrow_mut().push(t),
+            Err(e) => {
+                made = Err(e);
+                break;
+            }
+        }
+    }
+    let list = made.map(|()| take(&stack.borrow()[mark..]));
+    stack.borrow_mut().truncate(mark);
+    list
 }
 
 impl<'a> Walk<'a> {
@@ -113,15 +147,6 @@ impl<'a> Walk<'a> {
     #[inline(always)]
     fn all(&self, n: usize, field: Field) -> impl Iterator<Item = usize> + '_ {
         self.children(n).filter(move |&c| self.field(c) == f(field))
-    }
-
-    /// `f` of each of `n`'s children of `field`, into a vector made once at their number.
-    fn each<T>(&self, n: usize, field: Field, f: impl Fn(usize) -> Result<T, String>) -> Result<Vec<T>, String> {
-        let mut out = Vec::with_capacity(self.all(n, field).count());
-        for c in self.all(n, field) {
-            out.push(f(c)?);
-        }
-        Ok(out)
     }
 
     fn get(&self, n: usize, field: Field) -> Option<usize> {
@@ -210,7 +235,7 @@ impl<'a> Walk<'a> {
             x if x == k(Kind::FunctorCall) => {
                 let args = match self.get(n, Field::Arguments) {
                     Some(a) => self.terms(a)?,
-                    None => Vec::new(),
+                    None => List::new(),
                 };
                 Term::Call(self.intern(self.name(n, Field::Function)?), args)
             }
@@ -218,9 +243,15 @@ impl<'a> Walk<'a> {
         })
     }
 
-    /// An argument list's terms.
-    fn terms(&self, list: usize) -> Result<Vec<Term>, String> {
-        self.each(list, Field::Argument, |c| self.term(c))
+    /// An argument list's terms: this text's list of the same text, else the run's.
+    fn terms(&self, list: usize) -> Result<List<Term>, String> {
+        let text = self.text(list);
+        if let Some(found) = self.arguments.borrow().get(text) {
+            return Ok(found.clone());
+        }
+        let made = gather(&self.terms, self.all(list, Field::Argument), |c| self.term(c), |t| self.lists.terms(t))?;
+        self.arguments.borrow_mut().insert(text, made.clone());
+        Ok(made)
     }
 
     /// An atom (or a head): its relation and its arguments.
@@ -339,10 +370,14 @@ impl<'a> Walk<'a> {
         Ok(Literal::Agg { var: unescape(v, &VAR_WORDS), op, over, atom })
     }
 
-    /// A declaration's columns: each its name and type.
-    fn columns(&self, s: usize) -> Result<Vec<(Name, Name)>, String> {
+    /// A declaration's columns, each its name and type: this text's list of the same text, else the run's.
+    fn columns(&self, s: usize) -> Result<List<(Name, Name)>, String> {
         let list = self.one(s, Field::Columns)?;
-        self.each(list, Field::Column, |c| {
+        let text = self.text(list);
+        if let Some(found) = self.declared.borrow().get(text) {
+            return Ok(found.clone());
+        }
+        let made = gather(&self.columns, self.all(list, Field::Column), |c| {
                 let ty = self.one(c, Field::Type)?;
                 let name = self.name(ty, Field::Name)?;
                 let ty: Name = match self.get(ty, Field::Argument) {
@@ -351,10 +386,12 @@ impl<'a> Walk<'a> {
                     None => self.intern(name),
                 };
                 Ok((self.intern(self.name(c, Field::Name)?), ty))
-            })
+            }, |c| self.lists.columns(c))?;
+        self.declared.borrow_mut().insert(text, made.clone());
+        Ok(made)
     }
 
-    fn statement(&self, s: usize, part: &mut Part, out: &mut Parts) -> Result<(), String> {
+    fn statement(&self, s: usize, part: &mut Part, out: &mut Parts, decls: &mut Vec<(Name, List<(Name, Name)>)>) -> Result<(), String> {
         match self.kind(s) {
             x if x == k(Kind::Setting) => match self.name(s, Field::Name)? {
                 "rules" => *part = Part::Rules,
@@ -362,7 +399,7 @@ impl<'a> Walk<'a> {
                 other => return Err(bad(format!("setting .{other}"))),
             },
             x if x == k(Kind::Declaration) => {
-                out.decls.insert(self.intern(unescaped(self.name(s, Field::Name)?, &REL_WORDS)), self.columns(s)?);
+                decls.push((self.intern(unescaped(self.name(s, Field::Name)?, &REL_WORDS)), self.columns(s)?));
             }
             x if x == k(Kind::IoDirective) => {
                 let into = if self.has_token(s, ".output") { &mut out.outputs } else { &mut out.inputs };
@@ -383,17 +420,17 @@ impl<'a> Walk<'a> {
                 let head = head.ok_or_else(|| bad("a clause with no head"))?;
                 if *part == Part::Rules {
                     let lits = match body {
-                        Some(b) => self.each(self.conjunction(b)?, Field::Literal, |l| self.literal(l))?,
-                        None => Vec::new(),
+                        Some(b) => gather(&self.literals, self.all(self.conjunction(b)?, Field::Literal), |l| self.literal(l), |l| self.lists.literals(l))?,
+                        None => List::new(),
                     };
                     out.rules.push(Rule { head: self.atom(head, false)?, body: lits });
                 } else if body.is_none() {
                     let mut rel = None;
-                    let mut row = Vec::new();
+                    let mut row = List::new();
                     for c in self.children(head) {
                         match self.field(c) {
                             x if x == f(Field::Relation) => rel = Some(self.text(c)),
-                            x if x == f(Field::Arguments) => row = self.each(c, Field::Argument, |a| self.value(a))?,
+                            x if x == f(Field::Arguments) => row = gather(&self.values, self.all(c, Field::Argument), |a| self.value(a), |v| self.lists.values(v))?,
                             x if x == f(Field::Modal) => return Err(bad("a modal head")),
                             _ => {}
                         }
@@ -421,12 +458,38 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// The parts of `src`, read off its image `image` (`rerail_rr_syntax::tape(src)`).
-pub fn parts(src: &str, image: &[u8]) -> Result<Parts, String> {
-    let walk = Walk { src, view: View::new(image)?, names: Default::default() };
+/// The parts of `src`, read off its image `image` (`rerail_rr_syntax::tape(src)`), its lists taken from `lists`.
+pub fn parts(src: &str, image: &[u8], lists: &Lists) -> Result<Parts, String> {
+    let view = View::new(image)?;
+    let stacks = lists.take_stacks();
+    // Room for what a text of this many nodes meets: in the run's programs, about a distinct name every 40 nodes, an
+    // argument list every 90 and a declaration's columns every 700.
+    let nodes = view.len();
+    let walk = Walk {
+        src,
+        view,
+        names: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 40, Default::default())),
+        lists,
+        arguments: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 90, Default::default())),
+        declared: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 700, Default::default())),
+        terms: RefCell::new(stacks.terms),
+        literals: RefCell::new(stacks.literals),
+        columns: RefCell::new(stacks.columns),
+        values: RefCell::new(stacks.values),
+    };
     let mut out = Parts::default();
+    let mut decls = Vec::new();
+    let read = walk_statements(&walk, &mut out, &mut decls);
+    // Declarations gathered and the map built at once (`BTreeMap::from_iter`: full nodes, the last of a name kept).
+    out.decls = decls.into_iter().collect();
+    let Walk { terms, literals, columns, values, .. } = walk;
+    lists.give_stacks(Stacks { terms: terms.into_inner(), literals: literals.into_inner(), columns: columns.into_inner(), values: values.into_inner() });
+    read.map(|()| out)
+}
+
+fn walk_statements(walk: &Walk<'_>, out: &mut Parts, decls: &mut Vec<(Name, List<(Name, Name)>)>) -> Result<(), String> {
     if walk.view.is_empty() {
-        return Ok(out);
+        return Ok(());
     }
     let mut part = Part::Facts;
     out.rules.reserve(walk.children(0).count());
@@ -434,7 +497,7 @@ pub fn parts(src: &str, image: &[u8]) -> Result<Parts, String> {
         if walk.kind(s) == ERROR {
             return Err(bad(format!("a statement that does not parse: {:?}", walk.text(s))));
         }
-        walk.statement(s, &mut part, &mut out)?;
+        walk.statement(s, &mut part, out, decls)?;
     }
-    Ok(out)
+    Ok(())
 }

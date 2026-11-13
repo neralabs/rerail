@@ -297,7 +297,7 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Pat
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
-    let (prog, _) = combine_keyed(&programs, graphs, "", None)?;
+    let (prog, _) = combine_keyed(&programs, graphs, "", None, &front::Lists::default())?;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {
@@ -383,7 +383,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
     let mut by_doc: HashMap<i64, Vec<(usize, Vec<i64>)>> = HashMap::new();
     for (i, rel) in per_file.iter().enumerate() {
         let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
-        let width = program.decls.get(rel.as_str()).map_or(0, Vec::len);
+        let width = program.decls.get(rel.as_str()).map_or(0, |c| c.len());
         exports.visit(rel,width,|row| {
             by_doc.entry(memo::document_of(row[at])).or_default().push((i,row.to_vec()));
         });
@@ -506,7 +506,7 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
-    combine_keyed(programs, &graphs, extra, None).map(|(program, _)| program)
+    combine_keyed(programs, &graphs, extra, None, &front::Lists::default()).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -550,7 +550,7 @@ impl<'a> Texts<'a> {
 /// `combine`, the texts' include graphs' digests given (`Texts::graphs`), with the digest of its texts
 /// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, read: Option<&front::Program>) -> Result<(front::Program, [u8; 32])> {
+fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
@@ -564,7 +564,7 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
     }
     let program = match read {
         Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read))?,
-        _ => combine_stored(programs, extra, &key)?,
+        _ => combine_stored(programs, extra, &key, lists)?,
     };
     let mut kept = cache.lock().expect("the combined programs");
     if kept.len() >= KEPT {
@@ -576,7 +576,7 @@ fn combine_keyed(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str, re
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
 /// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<front::Program> {
+fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32], lists: &front::Lists) -> Result<front::Program> {
     let store = if cfg!(feature = "tape-cache") && programs.len() > 1 && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
@@ -588,7 +588,7 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<fron
     let found = {
         let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
         store.settle(&combined::queued(key));
-        combined::lookup(&store, key).map_err(|e| Error::Plan(e.to_string()))?
+        combined::lookup(&store, key, lists).map_err(|e| Error::Plan(e.to_string()))?
     };
     if let Some(program) = found {
         crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
@@ -1320,12 +1320,12 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
         rule.head.args.iter_mut().for_each(|t| lift(t, &mut bound));
         for (rel, arg, var) in bound {
             used.insert(rel);
-            rule.body.push(front::Literal::Atom(front::Atom { rel: rel.to_owned().into(), args: vec![arg, front::Term::Var(var.into())], neg: false, gated: false }));
+            rule.body.push(front::Literal::Atom(front::Atom { rel: rel.to_owned().into(), args: [arg, front::Term::Var(var.into())].into(), neg: false, gated: false }));
         }
     }
     for rel in used {
         let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
-        prog.decls.entry(rel.to_owned().into()).or_insert_with(|| vec![(cols[0].to_owned().into(), "node".into()), (cols[1].to_owned().into(), "sym".into())]);
+        prog.decls.entry(rel.to_owned().into()).or_insert_with(|| [(cols[0].to_owned().into(), "node".into()), (cols[1].to_owned().into(), "sym".into())].into());
     }
     Ok(())
 }
@@ -2071,6 +2071,9 @@ fn run_observed(
     options: &serde_json::Value,
 ) -> Result<Report> {
     let programs = given.programs;
+    // The run's distinct lists (decision 0172): every program it reads from a stored text takes its lists from here,
+    // so the lists its programs have in common are made once. It goes with the run.
+    let lists = Arc::new(front::Lists::default());
     let process_cpu = || { let u = usage(); u.0 + u.1 };
     let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
@@ -2161,7 +2164,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, "", read)?;
+    let (mut prog, mut texts) = combine_keyed(programs, &given.graphs, "", read, &lists)?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
@@ -2221,7 +2224,7 @@ fn run_observed(
     // The split takes them as constants of the run (`file_local::run_constant`).
     let add_bridged = |prog: &mut front::Program| {
         for (rel, rows) in &bridged {
-            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().map(crate::code_rule_dsl::logic::front::List::from));
         }
         for rel in phased.keys() {
             if !prog.inputs.contains(rel) {
@@ -2339,7 +2342,7 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            (prog, texts) = combine_keyed(programs, &given.graphs, &facts, None)?;
+            (prog, texts) = combine_keyed(programs, &given.graphs, &facts, None, &lists)?;
             add_bridged(&mut prog);
             (folded, constants_plans) = fold_constants(&mut prog)?;
         }
@@ -2545,7 +2548,7 @@ fn run_observed(
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources), Arc::clone(&lists)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, &late_sources);
@@ -2557,7 +2560,7 @@ fn run_observed(
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             // One this process queued is read once written (`settle`; it is kept in memory, so this is rare).
             store.settle(&prepared::queued(&prepared_key));
-            let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
+            let found = prepared::lookup(store, source, dialect, &prepared_key, &lists).map_err(|e| Error::Plan(e.to_string()))?;
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, _)) if !holds(p) => "in the store, its atoms not the store's", Some(_) => "read" });
             }
@@ -6605,7 +6608,7 @@ fn run_observed(
                             // The clean reads left stored: known by their rows' count until a stratum reads them.
                             let counts = kept.stored_rows(store, &clean_reads.iter().cloned().collect::<Vec<_>>());
                             for rel in &clean_reads {
-                                let width = part.program.decls.get(rel.as_str()).map_or(0, Vec::len);
+                                let width = part.program.decls.get(rel.as_str()).map_or(0, |c| c.len());
                                 let rows = counts.get(rel).copied().unwrap_or(1);
                                 stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
                             }
@@ -7144,7 +7147,7 @@ fn run_observed(
             native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
             // A pending round's marks hold for the rest as for the cone.
             if rounds.pending && let Some(f) = rest.facts.get_mut(cross_rounds::UNCONVERGED) {
-                f.push(vec![front::Value::Int(1)]);
+                f.push([front::Value::Int(1)].into());
             }
             crate::code_rule_dsl::logic::native::forget_inputs(&db);
             let rest_wanted: BTreeSet<String> = wanted.iter().filter(|w| rest.rules.iter().any(|r| r.head.rel == **w)).cloned().collect();
@@ -7979,7 +7982,7 @@ fn rounds_loop(db: &Connection, modules: &Modules, round: &mut lower::Lowered, h
             return Ok(got);
         }
         if r == k {
-            round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push(vec![front::Value::Int(1)]);
+            round.program.facts.get_mut(cross_rounds::UNCONVERGED).expect("declared").push([front::Value::Int(1)].into());
         }
         last = Some(digest);
         prev_rows = rows;

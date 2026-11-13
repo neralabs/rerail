@@ -121,7 +121,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
     let s = |x: &str| Value::Str(x.to_owned().into());
     let n = |x: usize| Value::Int(x as i64);
-    let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values);
+    let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values.into());
     for (rel, domains) in &prepared.lowered.domains {
         for (i, d) in domains.iter().enumerate() {
             row("prepared_domain", vec![s(rel), n(i), s(domain_name(*d))]);
@@ -367,7 +367,7 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`; `None` when none
 /// did, or when what it stored no longer reads. With it, the sources of its programs' texts.
-pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
     super::memo::off();
     let start = std::time::Instant::now();
     let set = pointer_plan(key);
@@ -385,7 +385,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let mut programs = Vec::new();
     for digest in [front, lowered] {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, document)) = program_text::load(store, digest)? else { return Ok(None) };
+        let Some((program, document)) = program_text::load(store, digest, lists)? else { return Ok(None) };
         programs.push(program);
         documents.push(document);
     }
@@ -416,7 +416,7 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let mut documents = Vec::new();
     for (name, prog) in [("front", &prepared.prog), ("lowered", &prepared.lowered.program)] {
         let Some((digest, document)) = program_text::store(store, prog)? else { return Ok(None) };
-        facts.entry(PROGRAM.to_owned()).or_default().push(vec![Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())]);
+        facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());
         documents.push(document);
     }
     let entry = program_facts::encode(&facts);

@@ -83,11 +83,11 @@ impl RoundProgram {
             program.decls.insert(input.clone().into(), load.decls[answer].clone());
             let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}").into())).collect();
             program.rules.push(Rule {
-                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
+                head: Atom { rel: (answer).to_owned().into(), args: vars.clone().into(), neg: false, gated: false },
                 body: vec![
-                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
-                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
-                ],
+                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: [vars[0].clone()].into(), neg: false, gated: false }),
+                    Literal::Atom(Atom { rel: input.clone().into(), args: vars.into(), neg: false, gated: false }),
+                ].into(),
             });
             // Read back by the rest of the cross part: kept, not inlined.
             program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());

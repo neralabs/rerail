@@ -225,11 +225,11 @@ fn rewrite_reach(prog: &mut Program, rel: &str, at: usize, edge: &str) {
         r.head.rel = seed.clone().into();
     }
     let v = |n: &str| Term::Var(n.to_owned().into());
-    let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args, neg: false, gated: false });
+    let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg: false, gated: false });
     // Its one rule only orders it after the seeds and the edges: the evaluator makes its rows.
     prog.rules[at] = Rule {
-        head: Atom { rel: rel.to_owned().into(), args: vec![v("x"), v("z")], neg: false, gated: false },
-        body: vec![atom(&seed, vec![v("x"), v("y")]), atom(edge, vec![v("y"), v("z")])],
+        head: Atom { rel: rel.to_owned().into(), args: [v("x"), v("z")].into(), neg: false, gated: false },
+        body: [atom(&seed, vec![v("x"), v("y")]), atom(edge, vec![v("y"), v("z")])].into(),
     };
     let cols = prog.decls[rel].clone();
     prog.decls.insert(seed.clone().into(), cols);

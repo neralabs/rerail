@@ -77,8 +77,8 @@ impl Logic {
         let mut prog = Program::default();
         for (i, clause) in clauses.iter().enumerate() {
             let (policy, id) = &clause.key;
-            let head = Atom { rel: "violation".into(), args: vec![Term::Str(policy.clone().into()), Term::Str(id.clone().into()), var("D"), var("N")], neg: false, gated: false };
-            prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
+            let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(id.clone().into()), var("D"), var("N")].into(), neg: false, gated: false };
+            prog.rules.push(Rule { head, body: [matched(i, "D", "N")].into() });
         }
         declare_violation(&mut prog);
         Self { rules: wave_text(&merged(prog)).expect("a clause's forbid rule prints as .rr"), demand: None, bound: Vec::new() }
@@ -121,7 +121,7 @@ fn var(name: &str) -> Term {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false })
 }
 
 /// `matched(i, d, n)`: clause `i`'s matches.
@@ -187,7 +187,7 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
         }
     }
     let mut constants = Vec::new();
-    let abstracted = |args: &mut Vec<Term>, rename: &mut dyn FnMut(&mut String), constants: &mut Vec<Value>| {
+    let abstracted = |args: &mut [Term], rename: &mut dyn FnMut(&mut String), constants: &mut Vec<Value>| {
         for arg in args {
             let value = match arg {
                 Term::Int(i) => Value::Int(*i),
@@ -202,10 +202,10 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
         }
     };
     let mut out = rule.clone();
-    abstracted(&mut out.head.args, &mut rename, &mut constants);
+    abstracted(out.head.args.make_mut(), &mut rename, &mut constants);
     for literal in &mut out.body {
         match literal {
-            Literal::Atom(a) if !a.neg && !a.gated => abstracted(&mut a.args, &mut rename, &mut constants),
+            Literal::Atom(a) if !a.neg && !a.gated => abstracted(a.args.make_mut(), &mut rename, &mut constants),
             Literal::Atom(a) => a.args.iter_mut().for_each(|t| term(t, &mut rename)),
             Literal::Cmp { l, r, .. } => {
                 term(l, &mut rename);
@@ -263,7 +263,7 @@ fn merged(mut prog: Program) -> Program {
         let columns = rows[0].iter().enumerate().map(|(j, v)| (format!("k{j}"), kind(v).to_owned())).map(|(c, t)| (c.into(), t.into())).collect();
         prog.decls.insert(rel.clone().into(), columns);
         let args = (0..rows[0].len()).map(|j| var(&format!("K{j}"))).collect();
-        prog.facts.insert(rel.clone(), rows);
+        prog.facts.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         let body = std::iter::once(atom(&rel, args)).chain(shaped.body).collect();
         prog.rules.push(Rule { head: shaped.head, body });
     }
@@ -723,7 +723,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         if !covered {
             continue;
         }
-        wave.rules.push(Rule { head: rule.head.clone(), body: lowered_body });
+        wave.rules.push(Rule { head: rule.head.clone(), body: lowered_body.into() });
         // The chunk's documents seed each atom's demand.
         seeds.sort();
         seeds.dedup();
@@ -769,10 +769,10 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     }
     let int = |name: &str| (name.into(), "int".into());
     prog.decls = wave.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".into() } else { t.clone() })).collect())).collect();
-    prog.decls.insert(WAVE.to_owned().into(), vec![int("d")]);
+    prog.decls.insert(WAVE.to_owned().into(), [int("d")].into());
     prog.inputs.push(WAVE.to_owned());
     for i in 0..atoms {
-        prog.decls.insert(format!("ast_{i}").into(), vec![int("d"), int("n")]);
+        prog.decls.insert(format!("ast_{i}").into(), [int("d"), int("n")].into());
         prog.inputs.push(format!("ast_{i}"));
         prog.demand.push(format!("ast_{i}"));
     }
@@ -801,7 +801,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
     for rule in magic.rules.iter().filter(|rule| rule.head.rel.starts_with("magic_ast_")) {
         let body = widened(&rule.head, &rule.body, &unavailable);
         needed.extend(body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
-        rules.push(Rule { head: rule.head.clone(), body });
+        rules.push(Rule { head: rule.head.clone(), body: body.into() });
     }
     let mut seen = BTreeSet::new();
     while let Some(rel) = needed.iter().find(|rel| !seen.contains(*rel)).cloned() {
@@ -812,15 +812,15 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         }
     }
     for i in 0..atoms {
-        let head = Atom { rel: DEMANDED.to_owned().into(), args: vec![Term::Int(i as i64), var("D")], neg: false, gated: false };
-        rules.push(Rule { head, body: vec![atom(&format!("magic_ast_{i}"), vec![var("D")])] });
+        let head = Atom { rel: DEMANDED.to_owned().into(), args: [Term::Int(i as i64), var("D")].into(), neg: false, gated: false };
+        rules.push(Rule { head, body: [atom(&format!("magic_ast_{i}"), vec![var("D")])].into() });
     }
     let referenced: BTreeSet<String> = rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))).collect();
-    let mut decls: BTreeMap<crate::code_rule_dsl::logic::front::Name, Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>> = magic.decls.iter().filter(|(rel, _)| referenced.contains(rel.as_str())).map(|(r, c)| (r.clone(), c.clone())).collect();
-    decls.insert(DEMANDED.into(), vec![int("c"), int("d")]);
-    decls.insert(WAVE.into(), vec![int("d")]);
+    let mut decls: BTreeMap<crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>> = magic.decls.iter().filter(|(rel, _)| referenced.contains(rel.as_str())).map(|(r, c)| (r.clone(), c.clone())).collect();
+    decls.insert(DEMANDED.into(), [int("c"), int("d")].into());
+    decls.insert(WAVE.into(), [int("d")].into());
     for i in 0..atoms {
-        decls.entry(format!("magic_ast_{i}").into()).or_insert_with(|| vec![int("d")]);
+        decls.entry(format!("magic_ast_{i}").into()).or_insert_with(|| [int("d")].into());
     }
     let facts = magic.facts.iter().filter(|(rel, _)| referenced.contains(*rel)).map(|(r, f)| (r.clone(), f.clone())).collect();
     // The chunk's documents and the `py.*` families the magic rules read are its inputs.
@@ -852,7 +852,7 @@ fn widened(head: &Atom, body: &[Literal], unavailable: &BTreeSet<String>) -> Vec
     let bound: BTreeSet<String> = kept.iter().filter_map(|l| l.atom().filter(|a| !a.neg)).flat_map(|a| a.vars()).collect();
     if !head.vars().is_subset(&bound) {
         // The seed binds every atom's document: a key the widening unbound is demanded everywhere.
-        return vec![atom(WAVE, head.args.clone())];
+        return vec![atom(WAVE, head.args.to_vec())];
     }
     kept
 }

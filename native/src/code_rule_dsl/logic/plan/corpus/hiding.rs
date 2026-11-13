@@ -131,7 +131,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         carried = carry(prog, &base_locations, &seeds, &view, &reaches);
         let snapshot = prog.rules.clone();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
-        let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
+        let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         for (i, rule) in prog.rules.iter_mut().enumerate() {
@@ -249,7 +249,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 continue;
             }
             for &c in cols {
-                match a.args.get_mut(c) {
+                match a.args.make_mut().get_mut(c) {
                     Some(Term::Var(v)) => {
                         bounded.entry(v.to_string()).or_insert(Some(c) == doc_col);
                     }
@@ -315,7 +315,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
     for (head, vars, body) in helpers {
         prog.decls.insert(head.rel.clone(), vars.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body });
+        prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body: body.into() });
     }
 }
 
@@ -374,7 +374,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
             "node" => Some(2),
             _ => None,
         };
-        if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+        if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
             && let Some(name) = s.strip_prefix(plain.as_str())
         {
             *s = name.to_owned().into();
@@ -456,7 +456,7 @@ fn reaching(prog: &Program, seeds: &[BTreeMap<String, Fact>]) -> Vec<bool> {
 /// What each derived relation's columns carry, to a fixpoint over the rules.
 fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool, reaches: &[bool]) -> HashMap<String, Vec<Fact>> {
     let mut carried: HashMap<String, Vec<Fact>> =
-        prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(r.as_str()).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
+        prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(r.as_str()).map_or(0, |c| c.len()); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
     // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
     let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
@@ -608,7 +608,7 @@ fn qualify(a: &mut Atom, label: &str) {
         "field" => Some(1),
         _ => None,
     };
-    if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+    if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
         && qualified(s).is_none()
     {
         *s = format!("{label}:{s}").into();

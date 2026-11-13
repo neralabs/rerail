@@ -237,7 +237,7 @@ fn probes() -> Vec<Probe> {
         ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
-    let a = Atom { rel: "n".into(), args: Vec::new(), neg: false, gated: false };
+    let a = Atom { rel: "n".into(), args: Vec::new().into(), neg: false, gated: false };
     let t = Term::Wild;
     for l in [
         Literal::Atom(a.clone()),

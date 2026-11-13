@@ -250,16 +250,16 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
                         Term::Var(format!("rr_long_text{fresh}_{bit}").into())
                     }
                 };
-                twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v.clone()]) };
+                twin.body.make_mut()[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), [v.clone()].into()) };
                 // Expose the sparse domain to the join planner before evaluating the text functor.
-                twin.body.push(Literal::Atom(Atom { rel: "rr_long_text_node".into(), args: vec![v], neg: false, gated: false }));
+                twin.body.push(Literal::Atom(Atom { rel: "rr_long_text_node".into(), args: [v].into(), neg: false, gated: false }));
             }
             twins.entry(r).or_default().push(twin);
         }
     }
     let made = twins.values().map(Vec::len).sum();
     if made > 0 {
-        program.decls.insert("rr_long_text_node".into(), vec![("n".into(), "node".into())]);
+        program.decls.insert("rr_long_text_node".into(), [("n".into(), "node".into())].into());
         if !program.inputs.iter().any(|r| r == "rr_long_text_node") {
             program.inputs.push("rr_long_text_node".into());
         }

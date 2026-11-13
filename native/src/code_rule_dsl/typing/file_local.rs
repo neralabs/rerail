@@ -544,7 +544,7 @@ fn split_in(
     // Location columns to a fixpoint (a column is one if every rule's head fills it from a location variable).
     for rel in derived {
         let kept = was(rel).and_then(|p| p.locations.get(*rel).cloned());
-        let width = prog.decls.get(*rel).map_or(0, Vec::len);
+        let width = prog.decls.get(*rel).map_or(0, |c| c.len());
         locations.insert((*rel).to_owned(), kept.unwrap_or_else(|| (0..width).collect()));
     }
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
@@ -1016,21 +1016,21 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                         break;
                     };
                     let name = format!("fz{}_{rel}", next.decls.len());
-                    next.decls.insert(name.clone().into(), cols.clone());
+                    next.decls.insert(name.clone().into(), cols.clone().into());
                     let kname = format!("fzk{}_{rel}", next.decls.len());
-                    next.decls.insert(kname.clone().into(), vec![cols.last().cloned().expect("the key")]);
+                    next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
                     atoms.push(Atom { rel: name.into(), args: iface.iter().map(|v| Term::Var(v.clone().into())).collect(), neg: false, gated: false });
-                    keys.push(Atom { rel: kname.into(), args: vec![Term::Var(key.clone().into())], neg: false, gated: false });
+                    keys.push(Atom { rel: kname.into(), args: [Term::Var(key.clone().into())].into(), neg: false, gated: false });
                     bodies.push(part.clone());
                 }
                 if !ok {
                     break;
                 }
                 for (i, (atom, body)) in atoms.iter().zip(&bodies).enumerate() {
-                    next.rules.push(Rule { head: keys[i].clone(), body: body.clone() });
+                    next.rules.push(Rule { head: keys[i].clone(), body: body.clone().into() });
                     let mut reduced = body.clone();
                     reduced.extend(keys.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| Literal::Atom(k.clone())));
-                    next.rules.push(Rule { head: atom.clone(), body: reduced });
+                    next.rules.push(Rule { head: atom.clone(), body: reduced.into() });
                     made.entry(rel.to_string()).or_default().extend([atom.rel.to_string(), keys[i].rel.to_string()]);
                 }
                 shown.push(format!(
@@ -1555,14 +1555,14 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 continue;
             }
             let mut out = Vec::new();
-            for (j, l) in body.drain(..).enumerate() {
+            for (j, l) in std::mem::take(&mut body).into_iter().enumerate() {
                 if let Some((_, r)) = replaced.iter().find(|(at, _)| *at == j) {
                     out.push(r.clone());
                 } else if !taken.contains(&j) {
                     out.push(l);
                 }
             }
-            next.rules[i].body = out;
+            next.rules[i].body = out.into();
         }
         if made.is_empty() {
             return (Vec::new(), local);
@@ -1647,8 +1647,8 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
                 (Some(d), _) => d,
                 (None, Some((i, c))) => {
                     let d = "__located_d".to_owned();
-                    if let Literal::Atom(a) = &mut body[i] {
-                        a.args[c] = Term::Var(d.clone().into());
+                    if let Literal::Atom(a) = &mut body.make_mut()[i] {
+                        a.args.make_mut()[c] = Term::Var(d.clone().into());
                     }
                     d.into()
                 }
@@ -1663,9 +1663,9 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
                     };
                     let d = "__located_d".to_owned();
                     body.push(Literal::Atom(if docof {
-                        Atom { rel: "docof".into(), args: vec![Term::Var(node), Term::Var(d.clone().into())], neg: false, gated: false }
+                        Atom { rel: "docof".into(), args: [Term::Var(node), Term::Var(d.clone().into())].into(), neg: false, gated: false }
                     } else {
-                        Atom { rel: "node".into(), args: vec![Term::Var(d.clone().into()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false }
+                        Atom { rel: "node".into(), args: [Term::Var(d.clone().into()), Term::Var(node), Term::Wild, Term::Wild, Term::Wild].into(), neg: false, gated: false }
                     }));
                     d.into()
                 }
@@ -1681,7 +1681,7 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
         }
         let mut at_cols = vec![("d".into(), doc_type.clone())];
         at_cols.extend(cols.iter().cloned());
-        prog.decls.insert(at.clone().into(), at_cols);
+        prog.decls.insert(at.clone().into(), at_cols.into());
         let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("__c{i}").into())).collect();
         let mut args = vec![Term::Wild];
         args.extend(vars.iter().cloned());
@@ -1699,7 +1699,7 @@ pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<
             }
         }
         rules.extend(made);
-        let read_at = Rule { head: Atom { rel: rel.clone().into(), args: vars, neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: at.into(), args, neg: false, gated: false })] };
+        let read_at = Rule { head: Atom { rel: rel.clone().into(), args: vars.into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: at.into(), args: args.into(), neg: false, gated: false })].into() };
         for a in reads(&read_at) {
             *readers.entry(a).or_default() += 1;
         }

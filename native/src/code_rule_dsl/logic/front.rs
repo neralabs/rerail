@@ -21,7 +21,7 @@ use std::fmt;
 
 pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-pub use name::Name;
+pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
 pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
@@ -274,7 +274,7 @@ impl Parser<'_> {
                 self.i += 1;
                 let items = if self.is_p("}") { Vec::new() } else { self.list(Self::term)? };
                 self.p("}")?;
-                return Ok(Term::Call(crate::code_rule_dsl::logic::strings::SET.to_owned().into(), items));
+                return Ok(Term::Call(crate::code_rule_dsl::logic::strings::SET.to_owned().into(), items.into()));
             }
             Tok::P("@") => {
                 self.i += 1;
@@ -282,7 +282,7 @@ impl Parser<'_> {
                 self.p("(")?;
                 let args = self.list(Self::term)?;
                 self.p(")")?;
-                return Ok(Term::Call(f.into(), args));
+                return Ok(Term::Call(f.into(), args.into()));
             }
             _ => return self.fail("a term"),
         };
@@ -304,11 +304,11 @@ impl Parser<'_> {
             let set = self.id()?;
             self.p(")")?;
             let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
-            return Ok(Atom { rel: format!("{axis}{set}").into(), args, neg, gated: false });
+            return Ok(Atom { rel: format!("{axis}{set}").into(), args: args.into(), neg, gated: false });
         }
         let args = self.list(Self::term)?;
         self.p(")")?;
-        Ok(Atom { rel: rel.into(), args, neg, gated: false })
+        Ok(Atom { rel: rel.into(), args: args.into(), neg, gated: false })
     }
 
     /// The source text of a balanced `{ … }`, braces included.
@@ -377,7 +377,7 @@ impl Parser<'_> {
         if self.is_id("in") {
             self.i += 1;
             let set = self.term()?;
-            return Ok(Literal::Cmp { l: Term::Call("equals".into(), vec![l, set]), op: "=", r: Term::Int(1) });
+            return Ok(Literal::Cmp { l: Term::Call("equals".into(), [l, set].into()), op: "=", r: Term::Int(1) });
         }
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,
@@ -535,7 +535,7 @@ pub fn parse(src: &str) -> Result<Program, Error> {
         p.p(":-")?;
         let body = p.list(Parser::literal)?;
         p.p(".")?;
-        prog.rules.push(Rule { head, body });
+        prog.rules.push(Rule { head, body: body.into() });
     }
     finish(prog)
 }
@@ -572,7 +572,7 @@ fn order_nodes(prog: &mut Program) {
     }
     let decls = prog.decls.clone();
     let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
-        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], Vec::as_slice)) {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], |c| c.as_slice())) {
             if let Term::Var(v) = t
                 && ty == "node"
             {
@@ -580,7 +580,7 @@ fn order_nodes(prog: &mut Program) {
             }
         }
     };
-    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: vec![Term::Var(n.to_owned().into()), Term::Var(k.to_owned().into())], neg: false, gated: false });
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: [Term::Var(n.to_owned().into()), Term::Var(k.to_owned().into())].into(), neg: false, gated: false });
     let mut used = false;
     let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
     let mut fresh = 0usize;
@@ -649,22 +649,22 @@ fn order_nodes(prog: &mut Program) {
                     head_args.push(Term::Var(k.clone().into()));
                     agg_args.push(Term::Var(k.clone().into()));
                     head_cols.push(("k".to_owned(), "int".to_owned()));
-                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
-                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args, neg: false, gated: false } });
+                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args.into(), neg: false, gated: false }, body: [Literal::Atom(atom), order(&o, &k)].into() }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args.into(), neg: false, gated: false } });
                     body.push(order(&var, &kv));
                     used = true;
                 }
                 other => body.push(other),
             }
         }
-        r.body = body;
+        r.body = body.into();
     }
     for (rule, cols) in helpers {
         prog.decls.insert(rule.head.rel.clone(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         prog.rules.push(rule);
     }
     if used {
-        prog.decls.entry(NODE_ORDER.to_owned().into()).or_insert_with(|| vec![("n".into(), "node".into()), ("k".into(), "int".into())]);
+        prog.decls.entry(NODE_ORDER.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("k".into(), "int".into())].into());
         if !prog.inputs.iter().any(|i| i == NODE_ORDER) {
             prog.inputs.push(NODE_ORDER.to_owned());
         }
@@ -695,7 +695,7 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
     for rel in axes {
         if !prog.decls.contains_key(rel.as_str()) {
-            prog.decls.insert(rel.clone().into(), vec![("n".into(), "node".into()), ("a".into(), "node".into())]);
+            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
             prog.inputs.push(rel);
         }
     }
@@ -930,9 +930,9 @@ pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> 
 
 /// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
 pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
-    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
+    let mut body_of: BTreeMap<&str, Vec<&[Literal]>> = BTreeMap::new();
     for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(&r.body);
+        body_of.entry(&r.head.rel).or_default().push(r.body.as_slice());
     }
     let (mut need, mut todo) = (BTreeSet::new(), roots);
     while let Some(r) = todo.pop() {
@@ -951,9 +951,9 @@ pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
 
 /// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.
 pub fn prune(mut prog: Program) -> Program {
-    let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
+    let mut body_of: BTreeMap<&str, Vec<&[Literal]>> = BTreeMap::new();
     for r in &prog.rules {
-        body_of.entry(&r.head.rel).or_default().push(&r.body);
+        body_of.entry(&r.head.rel).or_default().push(r.body.as_slice());
     }
     let (mut need, mut todo) = (BTreeSet::new(), prog.outputs.clone());
     while let Some(r) = todo.pop() {

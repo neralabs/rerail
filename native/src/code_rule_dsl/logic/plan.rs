@@ -755,7 +755,7 @@ impl Model {
     pub fn fork<'r>(&mut self, prog: &Program, rels: &BTreeSet<String>, rules: &[u64], resolve: impl IntoIterator<Item = &'r str>) -> Result<Model> {
         // What its strata would resolve first (`read_by`): the others' lazy statistics go with it, made if asked.
         self.resolve(prog, resolve)?;
-        Ok(self.fork_with(&|r: &str| prog.decls.get(r).map_or(0, Vec::len), rels, rules))
+        Ok(self.fork_with(&|r: &str| prog.decls.get(r).map_or(0, |c| c.len()), rels, rules))
     }
 
     /// `fork`, its strata's statistics resolved, with `width` a relation's columns (several programs' relations: a
@@ -805,7 +805,7 @@ impl Model {
     /// Takes back what a component's model (`fork`) learnt of its own relations `own` and its rules `rules` (their
     /// observed fanouts), as the component retires: the same statistics a serial run would have left.
     pub fn absorb(&mut self, prog: &Program, mut fork: Model, own: &BTreeSet<String>, rules: &[u64]) {
-        self.absorb_with(&|r: &str| prog.decls.get(r).map_or(0, Vec::len), &mut fork, own, rules);
+        self.absorb_with(&|r: &str| prog.decls.get(r).map_or(0, |c| c.len()), &mut fork, own, rules);
     }
 
     /// `absorb`, with `width` a relation's columns, taking from `fork` what is taken (a component of several forms
@@ -3357,7 +3357,7 @@ fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAn
 
 /// An input's cardinality, distinct counts and fanouts, from its measured columns.
 fn input_stats(stats: &mut Stats, ndv: &mut HashMap<(String, usize), f64>, prog: &Program, rel: &str) -> Result<()> {
-    let width = prog.decls.get(rel).map(Vec::len).ok_or_else(|| Error::Statistics(format!("the input {rel} is not declared")))?;
+    let width = prog.decls.get(rel).map(|c| c.len()).ok_or_else(|| Error::Statistics(format!("the input {rel} is not declared")))?;
     for col in 0..width {
         let name = sql_col(rel, col);
         let Some(&[rows, n, sq, _]) = stats.col.get(&(rel.to_owned(), name.clone())) else {
@@ -3385,7 +3385,7 @@ pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<
         // batch source is scanned.
         Arc::make_mut(&mut stats.indexes).insert(rel.clone(), vtab_indexes(rel));
         let names = super::sql::select::input_columns(rel);
-        for col in 0..prog.decls.get(rel.as_str()).map_or(0, Vec::len) {
+        for col in 0..prog.decls.get(rel.as_str()).map_or(0, |c| c.len()) {
             // A base relation's distinct values by column: a chunk's documents, kinds, child indexes, fields
             // and parents are far fewer than its rows. Other columns are taken as keys.
             let distinct = match names.and_then(|names| names.get(col)).copied() {
@@ -4495,7 +4495,7 @@ impl Run<'_, '_> {
         let key = if self.keyless.contains(rel) {
             0
         } else {
-            self.prog.lattice.get(rel).map_or_else(|| self.prog.decls.get(rel).map_or(0, Vec::len), |l| l.keys)
+            self.prog.lattice.get(rel).map_or_else(|| self.prog.decls.get(rel).map_or(0, |c| c.len()), |l| l.keys)
         };
         if want.len() <= key && want.iter().all(|&c| c < want.len()) {
             return Ok(());
@@ -5352,7 +5352,7 @@ fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r
 }
 
 fn atom_of(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 /// A native spec's token for a constant.
@@ -5592,7 +5592,7 @@ impl<'a> Run<'a, '_> {
             self.model.resolve(form, resolve.iter().copied())?;
         }
         let progs: Vec<&Program> = forms.iter().map(|f| f.0).collect();
-        let model = self.model.fork_with(&|r: &str| progs.iter().find_map(|p| p.decls.get(r)).map_or(0, Vec::len), reads, rules);
+        let model = self.model.fork_with(&|r: &str| progs.iter().find_map(|p| p.decls.get(r)).map_or(0, |c| c.len()), reads, rules);
         Ok(Strand(Run {
             prog: forms[0].0,
             db: self.db.detached(),
@@ -5623,7 +5623,7 @@ impl<'a> Run<'a, '_> {
         let Strand(mut run, _, waves) = s;
         super::lanes::wave::credit(waves);
         for (form, own, rules) in forms {
-            self.model.absorb_with(&|r: &str| form.decls.get(r).map_or(0, Vec::len), &mut run.model, own, rules);
+            self.model.absorb_with(&|r: &str| form.decls.get(r).map_or(0, |c| c.len()), &mut run.model, own, rules);
         }
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| forms.iter().any(|f| f.1.contains(r))));
     }
@@ -5831,7 +5831,7 @@ impl<'a> Run<'a, '_> {
                         None => d.u64(u64::MAX),
                     }
                 }
-                let decl = prog.decls.get(rel).map_or(&[][..], Vec::as_slice);
+                let decl = prog.decls.get(rel).map_or(&[][..], |c| c.as_slice());
                 d.u64(decl.len() as u64);
                 for (_, t) in decl {
                     d.str(t);
@@ -6204,7 +6204,7 @@ impl<'a> Run<'a, '_> {
                     let mut a = a.clone();
                     for v in &local {
                         let c = column(v)?;
-                        a.args[c] = Term::Wild;
+                        a.args.make_mut()[c] = Term::Wild;
                     }
                     let (src, args) = atom(&a, None, &mut slots)?;
                     let sep = const_tok(&Term::Str(sep.clone().into()))?;
@@ -6621,7 +6621,7 @@ impl<'a> Run<'a, '_> {
         // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
         // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
         let first_missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> Option<usize> {
-            let bare = Atom { rel: h.rel.clone(), args: Vec::new(), neg: false, gated: false };
+            let bare = Atom { rel: h.rel.clone(), args: Vec::new().into(), neg: false, gated: false };
             (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
         };
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
@@ -7148,7 +7148,7 @@ impl<'a> Run<'a, '_> {
                 .iter()
                 .filter_map(|r| {
                     let rows = *self.model.stats.card.get(*r)?;
-                    let width = prog.decls.get(r.as_str()).map_or(0, Vec::len);
+                    let width = prog.decls.get(r.as_str()).map_or(0, |c| c.len());
                     let cols = (0..width).map(|c| (self.model.ndv.get(&((*r).clone(), c)).copied(), self.model.stats.fan.get(&((*r).clone(), c)).copied())).collect();
                     Some(keeps::Seen { rel: r.as_str(), rows, cols })
                 })
@@ -7307,7 +7307,7 @@ impl<'a> Run<'a, '_> {
                 b.extend(body.iter().enumerate().filter(|(i, _)| *i != kinds[0]).map(|(_, l)| l.clone()));
                 parts.push(("kseed", atom_of(format!("lfx_{rel}_kseed"), vec![k, val.clone()]), b));
             } else if rec.is_empty() {
-                parts.push(("seed", atom_of(format!("lfx_{rel}_seed"), vec![key.clone(), val.clone()]), body.clone()));
+                parts.push(("seed", atom_of(format!("lfx_{rel}_seed"), vec![key.clone(), val.clone()]), body.to_vec()));
             } else if rec.len() == 1 && matches!((val, &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x) {
                 parts.push(("copy", atom_of(format!("lfx_{rel}_copy"), vec![key.clone(), rec[0].args[0].clone()]), rest));
             } else if let Term::Call(f, a) = val
@@ -8247,8 +8247,8 @@ fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
         prog.decls.insert(apart.clone().into(), cols);
         prog.facts.insert(apart.clone(), facts);
         prog.rules.push(Rule {
-            head: Atom { rel: rel.clone().into(), args: args.clone(), neg: false, gated: false },
-            body: vec![Literal::Atom(Atom { rel: apart.clone().into(), args, neg: false, gated: false })],
+            head: Atom { rel: rel.clone().into(), args: args.clone().into(), neg: false, gated: false },
+            body: [Literal::Atom(Atom { rel: apart.clone().into(), args: args.into(), neg: false, gated: false })].into(),
         });
         out.push((rel, apart));
     }

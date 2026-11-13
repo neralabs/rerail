@@ -107,7 +107,7 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
                 _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
             }
         }
-        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body }));
+        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body: body.into() }));
     }
     Ok(Some(out))
 }
@@ -480,7 +480,7 @@ impl Lowered {
                     used.insert(kindset.clone());
                     *literal = Literal::Atom(Atom {
                         rel: format!("{}{kindset}", crate::code_rule_dsl::logic::front::NEAREST).into(),
-                        args: vec![Term::Var(n.clone().into()), Term::Var(a.clone().into())],
+                        args: [Term::Var(n.clone().into()), Term::Var(a.clone().into())].into(),
                         neg: false,
                         gated: false,
                     });
@@ -498,7 +498,7 @@ impl Lowered {
         }
         for set in used {
             let rel = format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST);
-            prog.decls.insert(rel.clone().into(), vec![("n".into(), "node".into()), ("a".into(), "node".into())]);
+            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
             if !prog.inputs.contains(&rel) {
                 prog.inputs.push(rel.clone());
             }
