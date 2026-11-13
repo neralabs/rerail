@@ -4307,7 +4307,9 @@ name = "rerail-simdjson"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "libc",
  "memchr",
+ "sha2 0.11.1",
 ]
 
 [[package]]
