@@ -143,10 +143,10 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     const start = await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)
       .catch((error: unknown) => error);
     // Neither start records the session. Elsewhere the recorded pid is alive and its URL never answers, so the start
-    // fails; on Windows no engine on the recorded pipe proves itself, so no daemon runs, and the start says that
-    // nothing is recorded, as it does for any start RERAIL_AUTOSTART keeps without a daemon.
+    // fails for that daemon; on Windows no engine on the recorded pipe proves itself, so no daemon runs, and the start
+    // says that nothing is recorded, as it does for any start RERAIL_AUTOSTART keeps without a daemon.
     if (process.platform === "win32") expect(start).toEqual({ systemMessage: expect.stringContaining("so nothing is recorded") });
-    else expect(start).toBeInstanceOf(Error);
+    else expect(start).toMatchObject({ name: "DaemonUnreachableError", cause: { name: "LiveDaemonError" } });
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
     // On Windows the hook asks the engine there to prove it holds the capability, which sends only a challenge.
     expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
