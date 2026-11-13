@@ -1,6 +1,6 @@
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
-import { MAX_HOOK_STATUS, runHookCommand, type HookAnswer, type HookPayload } from "../../../src/runtime/merge-assist/hook-command.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_HOOK_STATUS, runHookCommand, stopCommand, type HookAnswer, type HookPayload } from "../../../src/runtime/merge-assist/hook-command.js";
 import { sampleConflict } from "../../support/merge-assist/status.js";
 
 const payload: HookPayload = {
@@ -25,5 +25,48 @@ describe("the conflict hook command's answer", () => {
     const answer = await answering({ status });
     expect([...answer.status!]).toHaveLength(MAX_HOOK_STATUS);
     expect(answer.status).toBe(`${"a".repeat(MAX_HOOK_STATUS - 2)}🔥…`);
+  });
+});
+
+describe("stopping the conflict hook command", () => {
+  /** A command as pid 4242, running unless `exitCode` says it exited, recording the signals it gets itself. */
+  const command = (exitCode: number | null = null) => {
+    const signals: string[] = [];
+    const kill = (signal?: NodeJS.Signals | number): boolean => {
+      signals.push(String(signal));
+      return true;
+    };
+    return { signals, child: { pid: 4242, exitCode, signalCode: null, kill } };
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("on Windows ends the command's process tree at once, both asking and forcing, and leaves an exited one alone", () => {
+    const killTree = vi.fn();
+    const { child, signals } = command();
+    stopCommand(child, "SIGTERM", { platform: "win32", killTree });
+    stopCommand(child, "SIGKILL", { platform: "win32", killTree });
+    expect(killTree.mock.calls.map(([pid]) => pid)).toEqual([4242, 4242]);
+    expect(signals).toEqual([]);
+    const exited = command(0);
+    stopCommand(exited.child, "SIGKILL", { platform: "win32", killTree });
+    expect(killTree).toHaveBeenCalledTimes(2);
+  });
+
+  it("on macOS and Linux signals the command's process group, and the command alone when it has none", () => {
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    const { child, signals } = command();
+    stopCommand(child, "SIGTERM", { platform: "linux" });
+    stopCommand(child, "SIGKILL", { platform: "linux" });
+    expect(kill.mock.calls).toEqual([[-4242, "SIGTERM"], [-4242, "SIGKILL"]]);
+    expect(signals).toEqual([]);
+    kill.mockImplementation(() => {
+      throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+    });
+    stopCommand(child, "SIGTERM", { platform: "linux" });
+    stopCommand(child, "SIGKILL", { platform: "linux" });
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 });

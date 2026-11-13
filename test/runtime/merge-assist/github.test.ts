@@ -17,6 +17,9 @@ const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", na
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
 const ACCEPT = "Accept: application/vnd.github+json";
 const PR_FIELDS = "number,title,url,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,baseRefName,author,isDraft,updatedAt";
+const WINDOWS = process.platform === "win32";
+/** The file name of a program called `name` on this platform: Windows runs only a file with an extension in PATHEXT. */
+const program = (name: string): string => (WINDOWS ? `${name}.exe` : name);
 
 /** What the fake `gh` does for one invocation. */
 interface Reply {
@@ -82,10 +85,14 @@ let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "rerail-github-"));
-  const gh = join(home, "gh");
+  // The gh PATH finds. The one test that starts it for real rewrites it as a POSIX shell script.
+  const gh = join(home, program("gh"));
   writeFileSync(gh, "#!/bin/sh\nexit 0\n");
   chmodSync(gh, 0o755);
-  env = { PATH: home, HOME: home, GH_FORCE_TTY: "1", GH_TOKEN_SAMPLE: "kept", GH_ENTERPRISE_TOKEN: "ghe-secret", GITHUB_ENTERPRISE_TOKEN: "ghe-secret-2" };
+  env = {
+    PATH: home, ...(WINDOWS ? { PATHEXT: ".exe" } : {}), HOME: home,
+    GH_FORCE_TTY: "1", GH_TOKEN_SAMPLE: "kept", GH_ENTERPRISE_TOKEN: "ghe-secret", GITHUB_ENTERPRISE_TOKEN: "ghe-secret-2",
+  };
 });
 
 afterEach(() => {
@@ -98,7 +105,7 @@ describe("gh invocation", () => {
     await createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY);
     expect(gh.calls).toHaveLength(1);
     const [call] = gh.calls;
-    expect(call?.command).toBe(join(home, "gh"));
+    expect(call?.command).toBe(join(home, program("gh")));
     expect(call?.args).toEqual([
       "pr", "list", "--repo=github.com/neralabs/rerail", "--state", "open", "--limit", "200", "--json", PR_FIELDS,
     ]);
@@ -159,7 +166,8 @@ describe("gh invocation", () => {
     expect(gh.calls[0]?.kills).toEqual(["SIGTERM"]);
   });
 
-  it("answers at its timeout even when a process gh started still holds its output open", async () => {
+  // gh stands in as a shell script, which Windows does not start without a shell; settling on gh's exit is the same code there.
+  it.skipIf(WINDOWS)("answers at its timeout even when a process gh started still holds its output open", async () => {
     // A gh wrapper that does not exec: the shell is stopped, the process it started keeps stdout open for 5 s.
     writeFileSync(join(home, "gh"), "#!/bin/sh\n/bin/sleep 5 &\nwait\n");
     const started = Date.now();

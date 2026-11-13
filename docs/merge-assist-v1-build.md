@@ -132,9 +132,10 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
   to the agent's note after `The user's conflict hook adds:`; `status` (one line, at most 90 characters) replaces the
   conflict's summary on the status line and Codex's person's line. The agent's note waits at most one second for a
   `detected` answer; a later note follows at the session's next boundary as a note of its own.
-- It runs in its own process group: past its timeout the group gets SIGTERM, then SIGKILL 2 seconds later, and its
-  pipes are closed. When the daemon stops, every running command's group gets SIGTERM, then SIGKILL within half a
-  second.
+- On macOS and Linux it runs in its own process group: past its timeout the group gets SIGTERM, then SIGKILL 2 seconds
+  later, and its pipes are closed. When the daemon stops, every running command's group gets SIGTERM, then SIGKILL
+  within half a second. Windows has no signal that asks a process to stop, so there the command and everything it
+  started end at once (`taskkill /T /F`), at the timeout or the stop.
 - A command that cannot start, exits non-zero, times out, writes more than 4 KiB or prints anything else is recorded on
   the conflict as `hook: { ok: false, error }` and shown on the dashboard and in the CLI. It never changes delivery.
 

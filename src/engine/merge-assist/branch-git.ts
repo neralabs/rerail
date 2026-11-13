@@ -16,7 +16,7 @@ const LIST_OPTIONS: RunGitOptions = { maxBuffer: LIST_OUTPUT_BYTES };
 export interface LocalBranch {
   readonly name: string;
   readonly commit: string;
-  /** The checkout that has the branch checked out, or null. */
+  /** The checkout that has the branch checked out, in this platform's form (Git prints `D:/a/b` on Windows), or null. */
   readonly worktree: string | null;
   /**
    * The remote the branch tracks, as `branch.<name>.remote` holds it: a remote's name such as `origin`, `.` for a local
@@ -103,7 +103,8 @@ export function localBranches(root: string): LocalBranch[] {
     const [refname, commit, worktree] = line.split("\0");
     if (refname === undefined || commit === undefined || !refname.startsWith("refs/heads/") || commit === "") return [];
     const name = refname.slice("refs/heads/".length);
-    return [{ name, commit, worktree: worktree === undefined || worktree === "" ? null : worktree, upstream: remotes.get(name) ?? null }];
+    // In this platform's form: Git prints `D:/a/b` on Windows.
+    return [{ name, commit, worktree: worktree ? resolve(worktree) : null, upstream: remotes.get(name) ?? null }];
   });
 }
 

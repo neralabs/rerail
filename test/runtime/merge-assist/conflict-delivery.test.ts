@@ -62,8 +62,8 @@ interface HookScript {
   readonly calls: () => HookCall[];
   /** What it did, in order: `call <event>` on starting, `answer <event>` as it answered. */
   readonly steps: () => string[];
-  /** The process an `orphan` command left behind. */
-  readonly orphan: () => number;
+  /** The process the command started: a `hang` command's, which hangs with it, or the one an `orphan` command left behind. */
+  readonly started: () => number | undefined;
   /** Lets a `held` command answer, and the process an `orphan` command left behind exit. */
   readonly release: () => void;
 }
@@ -74,8 +74,9 @@ type HookMode = "answer" | "fail" | "hang" | "garbage" | "held" | "orphan";
 /**
  * A conflict hook command (`node <script> <log>`): it appends what it got (argv, the two variables, its folder, its
  * stdin and its pid) to the log, then answers as `mode` says: a note and a status (at once, or, `held`, once the test
- * releases it), a failure, a hang, output that is not JSON, or nothing while a process it left behind holds its
- * output until the test releases it. The release is a file next to the log, which both processes poll for.
+ * releases it), a failure, a hang (with a process it started, which hangs too), output that is not JSON, or nothing
+ * while a process it left behind holds its output until the test releases it. The release is a file next to the log,
+ * which both processes poll for.
  */
 function hookScript(ws: Workspace, mode: HookMode = "answer"): HookScript {
   const script = join(ws.folder, `hook-${mode}.cjs`);
@@ -93,11 +94,11 @@ function hookScript(ws: Workspace, mode: HookMode = "answer"): HookScript {
     "  record({ kind: 'call', argv: process.argv.slice(2), event, id: process.env.RERAIL_CONFLICT_ID, cwd: process.cwd(), pid: process.pid, stdin: JSON.parse(input) });",
     `  const mode = ${JSON.stringify(mode)};`,
     "  if (mode === 'fail') { process.stderr.write('no channel'); process.exit(3); }",
-    "  if (mode === 'hang') { setTimeout(() => undefined, 60000); return; }",
+    "  if (mode === 'hang') { const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => undefined, 60000)'], { stdio: 'ignore' }); record({ kind: 'started', event, pid: child.pid }); setTimeout(() => undefined, 60000); return; }",
     "  if (mode === 'garbage') { process.stdout.write('not json'); return; }",
     // A process it leaves behind in a group of its own, holding its stdout until released (at most a minute, should the
     // test stop first): the command's answer must not wait for it.
-    `  if (mode === 'orphan') { const orphan = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`${released("process.exit(0)")} setTimeout(() => process.exit(0), 60000);`)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); record({ kind: 'orphan', event, pid: orphan.pid }); orphan.unref(); return; }`,
+    `  if (mode === 'orphan') { const orphan = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`${released("process.exit(0)")} setTimeout(() => process.exit(0), 60000);`)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); record({ kind: 'started', event, pid: orphan.pid }); orphan.unref(); return; }`,
     "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Jeremy in #storefront before you go on.', status: 'Jeremy reshapes retry(): ask him first' })); };",
     `  if (mode === 'held') { ${released("answer()")} } else answer();`,
     "});",
@@ -107,8 +108,8 @@ function hookScript(ws: Workspace, mode: HookMode = "answer"): HookScript {
   return {
     command: [process.execPath, script, log],
     calls: () => entries().filter(entry => entry.kind === "call") as never,
-    steps: () => entries().filter(entry => entry.kind !== "orphan").map(entry => `${entry.kind} ${entry.event}`),
-    orphan: () => entries().find(entry => entry.kind === "orphan")!.pid,
+    steps: () => entries().filter(entry => entry.kind !== "started").map(entry => `${entry.kind} ${entry.event}`),
+    started: () => entries().find(entry => entry.kind === "started")?.pid,
     release: () => writeFileSync(release, ""),
   };
 }
@@ -315,14 +316,17 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       }
     });
 
-    it("stops a command still running when Merge Assist stops: its process group gets SIGTERM, then SIGKILL", async () => {
+    it("stops a command still running when Merge Assist stops, with the process it started", async () => {
+      // On macOS and Linux its process group, which holds the process it started; on Windows its process tree.
       const { ws, hook, service } = await hooked("hang", { timeoutSeconds: 60 });
       await service.scan(ws.repo);
-      await vi.waitFor(() => expect(hook.calls()).toHaveLength(1), { timeout: 20_000 });
-      const { pid } = hook.calls()[0]!;
-      expect(() => process.kill(-pid, 0)).not.toThrow();
+      await vi.waitFor(() => expect(hook.started()).toBeDefined(), { timeout: 20_000 });
+      const pids = [hook.calls()[0]!.pid, hook.started()!];
+      for (const pid of pids) expect(() => process.kill(pid, 0)).not.toThrow();
       await service.stop(2_000);
-      expect(() => process.kill(-pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      await vi.waitFor(() => {
+        for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+      }, { timeout: 5_000 });
     });
 
     it("gives a Codex person's line the hook's status as it is when the note is handed over", async () => {
@@ -347,7 +351,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       const { ws, hook, service } = await hooked("orphan", { timeoutSeconds: 1 });
       await service.scan(ws.repo);
       await service.settled();
-      const orphan = hook.orphan();
+      const orphan = hook.started()!;
       try {
         expect(open((await service.status(ws.repo)).conflicts)[0]!.hook).toMatchObject({ ok: false, error: "timed out after 1 s" });
         // The process it left behind exits only once released: the answer came while it still held the output.

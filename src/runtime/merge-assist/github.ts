@@ -6,7 +6,7 @@
  * cap. Everything it prints is untrusted: each response is validated, and every value placed in an API path is checked
  * for shape first. See docs/merge-assist-v1-build.md.
  */
-import { spawn } from "../../engine/child-process.js";
+import { endProcessTree, spawn } from "../../engine/child-process.js";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
@@ -263,9 +263,11 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
         abandon();
         return;
       }
-      child.kill("SIGTERM");
+      // Windows has no signal that asks: the tree from gh ends at once, as killing gh alone leaves what it started.
+      if (process.platform === "win32") endProcessTree(child);
+      else child.kill("SIGTERM");
       killer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
       }, KILL_GRACE_MS);
       killer.unref();
     };

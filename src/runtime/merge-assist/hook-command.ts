@@ -8,7 +8,7 @@
  * nothing else: delivery goes on without it.
  */
 import type { ChildProcess } from "node:child_process";
-import { spawn } from "../../engine/child-process.js";
+import { endProcessTree, spawn, type ProcessTreeOptions } from "../../engine/child-process.js";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
 import type { StoredConflict } from "./conflict-store.js";
@@ -19,7 +19,7 @@ export const MAX_HOOK_OUTPUT_BYTES = 4 * 1024;
 /** The longest note and status line kept from its answer. */
 export const MAX_HOOK_NOTE = 600;
 export const MAX_HOOK_STATUS = 90;
-/** Grace a timed-out command's process group gets after SIGTERM before SIGKILL. */
+/** Grace a timed-out command's process group gets after SIGTERM before SIGKILL (macOS and Linux). */
 const KILL_GRACE_MS = 2_000;
 /** How much of the command's stderr or rejected output a failure reports. */
 const DETAIL_TAIL_CHARS = 300;
@@ -93,8 +93,17 @@ function exitProblem(code: number | null, signal: NodeJS.Signals | null, stderr:
   return `${code === null ? `stopped by ${signal ?? "a signal"}` : `exited with code ${code}`}${tail}`;
 }
 
-/** Signal the command's process group (its own, `detached`), or the command alone where there is none (Windows). */
-function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+/**
+ * Ends the command and what it started: `SIGTERM` asks, `SIGKILL` forces. On macOS and Linux the command runs
+ * `detached`, leading a process group of its own, which gets the signal whole (the command alone where no such group
+ * can be signalled). Windows has no signal that asks, so either one ends the tree from the command at once with
+ * `taskkill /T /F` while it still runs ({@link endProcessTree}). `tree` is for tests.
+ */
+export function stopCommand(child: Pick<ChildProcess, "pid" | "kill" | "exitCode" | "signalCode">, signal: "SIGTERM" | "SIGKILL", tree: Omit<ProcessTreeOptions, "group"> = {}): void {
+  if (signal === "SIGKILL" || (tree.platform ?? process.platform) === "win32") {
+    endProcessTree(child, { ...tree, group: true });
+    return;
+  }
   try {
     if (child.pid !== undefined) process.kill(-child.pid, signal);
   } catch {
@@ -117,11 +126,11 @@ export class RunningCommands {
     void closed.then(() => this.#children.delete(child));
   }
 
-  /** SIGTERM to every running command's process group, then SIGKILL after `graceMs` to each still running. */
+  /** Ends every running command ({@link stopCommand}): SIGTERM, then SIGKILL after `graceMs` to each still running. */
   async stop(graceMs: number): Promise<void> {
     const running = [...this.#children];
     if (running.length === 0) return;
-    for (const [child] of running) signalGroup(child, "SIGTERM");
+    for (const [child] of running) stopCommand(child, "SIGTERM");
     const grace = Promise.withResolvers<void>();
     const timer = setTimeout(grace.resolve, graceMs);
     try {
@@ -129,15 +138,16 @@ export class RunningCommands {
     } finally {
       clearTimeout(timer);
     }
-    for (const [child] of running) if (this.#children.has(child)) signalGroup(child, "SIGKILL");
+    for (const [child] of running) if (this.#children.has(child)) stopCommand(child, "SIGKILL");
   }
 }
 
 /**
- * Run the command once with `payload` on stdin; never throws. It runs in a process group of its own: at its timeout
- * the group gets SIGTERM, and SIGKILL after a 2-second grace, when its pipes are closed too, so a process it left
- * behind holding them (one it detached) cannot keep the answer waiting. The answer comes at most its timeout plus the
- * grace after it started.
+ * Run the command once with `payload` on stdin; never throws. At its timeout it is stopped with what it started
+ * ({@link stopCommand}): on macOS and Linux its process group (its own, `detached`) gets SIGTERM, and SIGKILL after a
+ * 2-second grace; on Windows its process tree ends at once. After the grace its pipes are closed too, so a process it
+ * left behind holding them (one it detached) cannot keep the answer waiting. The answer comes at most its timeout plus
+ * the grace after it started.
  */
 export function runHookCommand(command: ConflictHookCommand, payload: HookPayload, options: { cwd: string; env: NodeJS.ProcessEnv; running?: RunningCommands }): Promise<HookAnswer> {
   const [program, ...args] = command.command;
@@ -148,7 +158,8 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
     env: { ...options.env, RERAIL_CONFLICT_EVENT: payload.event, RERAIL_CONFLICT_ID: payload.conflict.id },
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
-    detached: true,
+    // On Windows `detached` would leave it without a console, so each console program it starts would open a window.
+    detached: process.platform !== "win32",
     windowsHide: true,
   });
   options.running?.add(child);
@@ -160,9 +171,9 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
   let kill: NodeJS.Timeout | undefined;
   const timer = setTimeout(() => {
     timedOut = true;
-    signalGroup(child, "SIGTERM");
+    stopCommand(child, "SIGTERM");
     kill = setTimeout(() => {
-      signalGroup(child, "SIGKILL");
+      stopCommand(child, "SIGKILL");
       child.stdin.destroy();
       child.stdout.destroy();
       child.stderr.destroy();
