@@ -30,8 +30,9 @@ function commandBlock(command) {
 function placesToStart(suggestions) {
   if (suggestions.length === 0) return null;
   return h("section.psec.places", null, h("h3", null, "Places to start"),
+    h("p.pintro", null, "Rule packs are Rerail’s standard rules, the same for every repo. Rerail suggests the ones made for what this repo is built with; it has not checked your code against them."),
     suggestions.map(s => h("div.place", null,
-      h("p.pintro", null, `The ${s.name} rule pack ${s.reason}. It is not added here yet.`),
+      h("p.pintro", null, `The ${s.name} rule pack, suggested because it ${s.reason}. Not added here yet.`),
       h("div.acts", null,
         h("button.btn.sm", { "data-act": "addpack", "data-i": s.packId }, icon("plus"), `Add ${s.name}`),
         h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": `pack/${s.packId}` }, "See its rules")))));

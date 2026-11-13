@@ -347,6 +347,11 @@ export interface SessionsInput {
    * never says nothing is sent when something is; null when the remote configuration could not be read.
    */
   readonly remoteHosts?: readonly string[] | null;
+  /**
+   * Set-up is run by a coding agent (the agent and json lanes), so the person reads the question inside a session:
+   * it names that session, rather than ask as if sessions were somewhere else.
+   */
+  readonly inSession?: boolean;
 }
 
 /** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
@@ -365,17 +370,20 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
   return {
     id: "sessions",
     lead: [],
-    prompt: "Can Rerail see your coding agent sessions?",
+    prompt: input.inSession === true
+      ? "OK for Rerail to read this session and the ones after it?"
+      : "OK for Rerail to read your coding agent sessions?",
     trail: [
-      "Rerail sees what you ask your agent, what it does, and the files it edits,",
-      "so it can check the work against your rules.",
+      "Rerail checks your coding agent’s work, not you. It reads what you ask",
+      "the agent, what the agent does, and the files it edits.",
       "",
       ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
+      "  ✓ Stop it anytime: run rerail stop in the repo’s folder.",
     ],
     choices: [
-      { answer: "allow", label: "Yes, allow", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
-      { answer: "decline", label: "No, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
+      { answer: "allow", label: "Sounds good, continue", args: [SETUP_FLAGS.answer, "allow", ...input.carriedArgs] },
+      { answer: "decline", label: "Not now, cancel set-up", hint: "nothing is connected or started", args: [SETUP_FLAGS.answer, "decline"] },
     ],
     ...(input.setupCommand === undefined ? {} : { setupCommand: input.setupCommand }),
   };
@@ -414,10 +422,19 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are ready-made sets of rules your coding agent must follow.",
-      "Rerail can scan this repo’s files and suggest packs that fit.",
+      "Rule packs are Rerail’s standard rules, mostly the same ones linters use",
+      "(ESLint, Ruff, Clippy…), one pack per language or framework.",
       "",
-      "  ✓ Scanning only reads files. Your code stays on this computer.",
+      "How they differ from your linter: your linter checks code after it’s",
+      "written. Rerail checks while your coding agent writes it, so the agent",
+      "fixes problems in the same turn, before review or CI.",
+      "",
+      "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
+      "  ✓ It reads the ESLint, oxlint or Ruff config at the repo’s root. Rules",
+      "    it turns off for the repo or a folder start off here too; the next",
+      "    screen lists them.",
+      "  ✓ It picks packs from file types and dependencies, not from how your",
+      "    code is written. Your code stays on this computer.",
       "  ✓ Nothing is installed or turned on until you say yes.",
     ],
     choices: [
@@ -511,7 +528,7 @@ function packRowName(pack: RecommendedPack): string {
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
   const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
-  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
+  const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why suggested`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
@@ -686,7 +703,7 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
   const count = input.packs.length;
   const scanned = count === 0
     ? `Scanned ${repo}. None of Rerail’s rule packs fit it.`
-    : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
+    : `Scanned ${repo}. ${count === 1 ? "1 standard rule pack matches" : `${count} standard rule packs match`} what it’s built with:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
     : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];

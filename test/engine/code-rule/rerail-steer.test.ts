@@ -207,7 +207,7 @@ describe("Rerail steer text", () => {
   });
 
   it("names where a rule comes from: its pack, the pack's id when the pack is not loaded, or the library", () => {
-    expect(steerOrigin("complexity-cyclomatic-python")).toBe("From the Cyclomatic complexity rule pack.");
+    expect(steerOrigin("complexity-cyclomatic-python")).toBe("From the Function complexity rule pack.");
     expect(steerOrigin("typescript-eslint-no-explicit-any", { kind: "pack", packId: "typescript" })).toBe("From the typescript rule pack.");
     expect(steerOrigin("mine", { kind: "library_rule", packId: null })).toBe("From your rule library.");
     expect(steerOrigin("local:unknown")).toBeUndefined();
@@ -235,7 +235,7 @@ describe("Rerail steer text", () => {
   it("keeps each rule once, first-seen, with its state and source, out of the agent's text", () => {
     const findings = [finding({ ruleId: "complexity-cyclomatic-python" }), finding({ ruleId: "x", mode: "log" }), finding({ ruleId: "complexity-cyclomatic-python" })];
     expect(steerRules(findings, steerOrigin)).toEqual([
-      { id: "complexity-cyclomatic-python", state: "steered", origin: "From the Cyclomatic complexity rule pack." },
+      { id: "complexity-cyclomatic-python", state: "steered", origin: "From the Function complexity rule pack." },
       { id: "x", state: "logged" },
     ]);
     expect(steerBlock({ kind: "edit" }, findings)).not.toContain("rule pack");

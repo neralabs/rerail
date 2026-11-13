@@ -119,7 +119,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
       "Change rule packs… — here or in the dashboard",
       "Not now — nothing is turned on",
     ]);
-    expect(ui.notices[1]!.message).toContain("Scanned acme-api. 1 rule pack fits:");
+    expect(ui.notices[1]!.message).toContain("Scanned acme-api. 1 standard rule pack matches what it’s built with:");
     expect(last).toMatchObject({ step: "done", question: null });
     expect(ui.notices.at(-1)).toEqual({ message: last!.screen, level: "info" });
     expect(last!.screen).toContain("● Rerail is on in acme-api · 1 rule pack,");

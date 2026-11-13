@@ -46,7 +46,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { answer: "yes", repo: setup.repo }))).toEqual({ status: "waiting" });
-    expect(recommended.text()).toContain("Scanned acme-api. 1 rule pack fits:");
+    expect(recommended.text()).toContain("Scanned acme-api. 1 standard rule pack matches what it’s built with:");
     expect(recommended.text()).toContain("Will connect to: Claude Code, Cursor");
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);

@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-vue",
   "revision": 1,
   "mode": "steer",
-  "description": "Keep the functions of a Vue component's scripts at cyclomatic complexity 6 or below, counting each if, loop, catch, switch, ternary and && or ||; branch-heavy functions are hard to follow and test.",
+  "description": "Keep the functions of a Vue component's scripts to 6 or fewer paths (cyclomatic complexity), counting each if, loop, catch, switch, ternary and && or ||, so they stay easy to read and test.",
   "scope": {
     "include": [
       "**/*.vue"
@@ -190,7 +190,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": "`$NAME` has $CCN paths through it; this pack's limit is 6. Split it into smaller functions."
       }
     },
     {
@@ -216,7 +216,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": "This function has $CCN paths through it; this pack's limit is 6. Split it into smaller functions."
       }
     }
   ]

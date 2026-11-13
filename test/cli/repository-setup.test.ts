@@ -422,7 +422,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
     const [complexity] = repositoryPackVersions("complexity");
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
-    expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity`);
+    expect(asked.text()).toContain(`complexity@${complexity!.version}  Function complexity`);
     expect(asked.text()).not.toContain("(limit 6)");
     expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(readsRepository).not.toHaveBeenCalled();
