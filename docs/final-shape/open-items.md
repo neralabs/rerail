@@ -4052,6 +4052,15 @@ reached one does there). 52–58% of the packs' and data layer's clauses are dro
 257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
 now: no item.
 
+## O-prepared-decode. A warm batch decodes each policy's prepared program from the store
+
+**Seen (2026-11-12)**, after O-store-single-program and O-read-unreached-library: in a warm dl1 batch over a store,
+`prepared::lookup` is 12.7% of the main thread (552 of 4,347 samples): `prepared_of` (rebuilding the program from
+its stored facts) and `document_facts`. The evaluation the batch exists for is 1.6% (70 samples). Each policy's
+prepared program is decoded once a process, so a batch of 44 decodes 44. **Closure:** a prepared program read
+by its rows as needed (the parts a run reads), or kept decoded across a session's runs; the warm batch's share
+measured under 5%.
+
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
 **Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
@@ -4074,6 +4083,14 @@ written holds. What is left is O91 (the same run across batches and edits) and t
 A combined run of the batch (all policies of a language as one, decision 0051) was tried: 202.4 G against
 212.3 G instructions on dl1. It gave 48 findings to the per-policy runs' 49; the 49th was false
 (O-pha000-kept-part, closed).
+
+**Measured again (2026-11-12, after O-store-single-program and O-read-unreached-library).** The typing run is
+one a batch and 20% of a warm dl1 batch's main thread (860 of 4,347 samples), 22% without a store. Warm, its
+evaluation is 92 samples: its answers are kept across batches already. The rest is its setup, once a process:
+combining the typing program (182, of which guest hiding 127; a single program, so not kept in the store, and
+keeping it there was measured to gain nothing, O-store-single-program), decoding its prepared program from the
+store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
+many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
 
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
@@ -4133,6 +4150,12 @@ and not kept:
   (O-pha000-kept-part), so it is open again as the way to share the library's analysis.
 The closure is a hiding analysis kept per library module (its relations' carried columns depend only on its
 rules and what they read), or a combined run that is exact.
+
+**Measured again (2026-11-12, after O-read-unreached-library).** Hiding is 5% of a warm dl1 batch (216 of 4,347
+samples) and 3.3% without a store; of the warm 216, 127 are the typing program's (once a batch) and about 89 the
+44 policies' together: dropping the libraries' unreached clauses before lowering cut what each policy hides. A
+hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
+not built. Open at that size.
 
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 
