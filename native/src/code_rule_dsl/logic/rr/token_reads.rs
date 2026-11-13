@@ -79,6 +79,11 @@ struct Clause<'a> {
 }
 
 impl Clause<'_> {
+    /// Whether the clause reads a token (`READS`), where the refusal looks.
+    fn reads_tokens(&self) -> bool {
+        self.atoms.iter().any(|(rel, ..)| READS.iter().any(|(r, ..)| r == rel))
+    }
+
     /// The regexes the clause gives variable `v`'s text: `match("re", v)`, `text(v, "lit")`, `v = "lit"`.
     fn texts(&self, v: &str) -> Vec<String> {
         let mut out = Vec::new();
@@ -127,10 +132,26 @@ impl Columns {
         facts.retain(|rel, _| !derived.contains(rel.as_str()));
         // The kinds of each derived relation's columns, to a fixpoint: a column is known where every rule for its
         // relation gives the variable there known kinds.
+        // Only those a token's read is checked by: the relations of the clauses that read a token (`READS`), and what
+        // they derive from. A program's libraries' other relations were brought to the fixpoint too, every round.
+        let mut wanted: BTreeSet<&str> = clauses.iter().filter(|c| c.reads_tokens()).flat_map(|c| c.atoms.iter().map(|(r, ..)| *r)).collect();
+        loop {
+            let more: BTreeSet<&str> = clauses
+                .iter()
+                .filter(|c| c.heads.iter().any(|h| wanted.contains(h.rel.as_str())))
+                .flat_map(|c| c.atoms.iter().map(|(r, ..)| *r))
+                .filter(|r| !wanted.contains(r))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            wanted.extend(more);
+        }
+        let deriving: Vec<&Clause<'_>> = clauses.iter().filter(|c| !c.atoms.is_empty() && c.heads.iter().any(|h| wanted.contains(h.rel.as_str()))).collect();
         let mut kinds: BTreeMap<(String, usize), Option<BTreeSet<String>>> = BTreeMap::new();
         for _ in 0..16 {
             let mut next: BTreeMap<(String, usize), Option<BTreeSet<String>>> = BTreeMap::new();
-            for clause in clauses.iter().filter(|c| !c.atoms.is_empty()) {
+            for clause in deriving.iter().copied() {
                 let given = Self::clause_kinds(clause, &facts, &kinds);
                 for head in clause.heads {
                     for (at, arg) in head.args.iter().enumerate() {
@@ -154,7 +175,8 @@ impl Columns {
             }
             kinds = next;
         }
-        kinds.retain(|_, set| set.as_ref().is_some_and(|set| !set.is_empty()));
+        // A clause's other heads have its rules' kinds alone, not their relation's: none is kept.
+        kinds.retain(|(rel, _), set| wanted.contains(rel.as_str()) && set.as_ref().is_some_and(|set| !set.is_empty()));
         // The texts a relation's column is tested against where it is read.
         let mut texts: BTreeMap<(String, usize), Vec<String>> = BTreeMap::new();
         for clause in clauses {
@@ -316,7 +338,7 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
     }
     let columns = Columns::new(&clauses);
     let mut refused = BTreeSet::new();
-    for clause in clauses.iter().filter(|c| !c.heads.iter().any(|h| stored.contains(&h.rel))) {
+    for clause in clauses.iter().filter(|c| c.reads_tokens() && !c.heads.iter().any(|h| stored.contains(&h.rel))) {
         let mut scoped = Vec::new();
         Columns::scoped_reads(clause.body, &BTreeMap::new(), clause, &columns.facts, &columns.kinds, &mut scoped);
         for (rel, args, given) in &scoped {
@@ -376,4 +398,23 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
         "a clause reads a token the tape leaves out; ask about the named structure instead:\n{}",
         refused.into_iter().collect::<Vec<_>>().join("\n")
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The parent kind of a token read may come through the program's rules (`ifs(n)`): the refusal names it, as it
+    /// does for `kind(n, "if_statement")` in the clause itself. Kinds are brought to their fixpoint only for the
+    /// relations a token's read is checked by; another relation's rules are not.
+    #[test]
+    fn a_parent_kind_derived_through_rules_is_named() {
+        let refused = |src: &str| {
+            let statements = super::super::from_tape::statements(src, &super::super::tape(src)).unwrap();
+            super::refuse(&[(std::path::PathBuf::from("t.rr"), statements)]).unwrap_err().to_string()
+        };
+        let direct = refused(".language python\nr(n) :- kind(n, \"if_statement\"), op(n, \":\").\n");
+        let derived = refused(".language python\nifs(n) :- kind(n, \"if_statement\").\nother(n) :- kind(n, \"call\").\nr(n) :- ifs(n), op(n, \":\").\n");
+        for err in [&direct, &derived] {
+            assert!(err.contains("in if_statement") && !err.contains("names no parent kind"), "{err}");
+        }
+    }
 }

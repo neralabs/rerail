@@ -79,7 +79,7 @@ export function contentStoreOverride(): string | undefined {
 /**
  * The content store `build` (default: this process's) opens: the machine-wide one for main, `<checkout>/.rerail/`
  * for dev, so no two checkouts and no checkout and the managed installation share a store. The file name is the
- * native binary's (`content-v3.sqlite` at store floor 3), so a floor raise renames every store at once.
+ * native binary's (`content-v4.sqlite` at store floor 4), so a floor raise renames every store at once.
  * `RERAIL_CONTENT_STORE_PATH` overrides both (tests give each run its own file), and then no build is resolved.
  */
 export function contentStorePath(build?: RerailBuild): string {

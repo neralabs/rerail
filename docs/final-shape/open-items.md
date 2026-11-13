@@ -4028,11 +4028,74 @@ demand there, so it was right; the session tests' oracle (both off) had the faul
 and asserts they agree, with no `PHA000` (it fails without the fix). The 44 policies give 48 findings over dl1 and
 over dl10, with a store and without; the 49th of the earlier measurements was this false one.
 
-## O-store-single-program. A single program's combined form cannot be kept in the store yet
+## O-store-single-program (closed 2026-11-12). Batches over one store lost memo entries and kept inputs
 
 **Seen (2026-11-12)** while trying O-combine-hiding-single: with `combine_stored` keeping one program too, the third
 batch of the 44 policies over one store failed: `leg-083-typed.rr: _internal/__init__.py: its memo entry is gone`.
-Not kept. **Closure:** three batches over one store, findings equal each time.
+Single program storing was not the cause: three store faults were, and the batch over a store cost more than one
+without (206 G against 187 G instructions on dl1).
+
+**Causes, and fixes.**
+1. *The kept route was refused at the waves' end.* A file counted unchanged is looked up for its outputs alone, before
+   the first wave, and its rows come from the kept inputs after. When those could not be taken
+   (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
+   no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
+   looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
+   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
+   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
+   (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
+   their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
+   manifest now names the batch's earlier plans (`phases::batch_plans`), and the batch collects at its first run
+   alone, when the last batch's final manifest names all its plans.
+3. *Each policy a run of the root's spaces.* The kept-strata space is the root's, shared by the policies, and counts
+   a run per run token: 44 a batch, so a policy's kept inputs, used once a batch, were collected after `frames::RUNS`
+   (4) others. The batch is one run now (`phases::Batch` holds the run token).
+4. Also: an outputs frame found marks its entry frame used with it (`MEMO_RUNS` aged the entry alone), and
+   `Found::whole` reads the store, not the snapshot.
+
+**Measured** (dl1, 44 policies, strict, CPU): five batches over one store give the 48 findings of a run without a
+store each time; a warm batch is 112 G instructions, 36 G cycles (no store: 188 G; before: 206 G). dl10: 141 G
+warm against 280 G. Keeping a single program's combined form in the store adds nothing on top (113.5 G warm, and a
+cold batch 291 G against 265 G): not kept. Policies run one process each: O-policies-one-process-each.
+`a_policy_refused_its_kept_inputs_runs_again_over_its_store` runs the one policy three times
+over a store (in one process, so it passed before the fix too).
+
+## O-policies-one-process-each (closed 2026-11-12)
+
+The 44 data-layer policies run one process each over one root and one store (not a batch), round after round. Two
+things aged by the root, not by the program, so a policy run once a round lost what it kept to the 43 run between:
+
+1. *Frames.* The kept-strata space is the root's, shared by its programs (decision 0103), and a relation was kept
+   while the space's last `frames::RUNS` (4) runs used it: 17 policies found no kept inputs in every round. A run's
+   use is now kept by program (`frames::Used`'s third part, the prepared or `retain` key; table
+   `frame_program_used`, the old `frame_used` no longer read): a relation is kept while one of its programs' last
+   `RUNS` runs used it, and a program not run for `frames::ABANDON` (256) runs of the space counts no more.
+2. *Manifests.* Collection protected a root's last `protected_runs` (2) manifests, and their plans alone were live:
+   the other 42 policies' memo spaces were collected, and their files missed the memo in every round (dl10: 64 a
+   round). A manifest now has a lane (`record_corpus_run_lane`, table `corpus_manifest_lanes`): the digest of the
+   run's program texts, which does not name the build. A root's last `protected_runs` manifests *of each lane* are
+   protected, for its newest `protected_lanes` (64) lanes; a replaced build's plan is its lane's, and dies as before.
+   A manifest without a lane (an older binary's, the store's own tests) is the root's one lane, as before.
+
+**Measured** (strict, CPU, 44 processes a round; instructions summed; 48 findings in every round):
+
+| | before | frames by program | and lanes |
+|---|---|---|---|
+| dl1, round 2 | 320.8 G; 17 without kept inputs; 11 misses | 335.8 G; 0; 11 | 273.8 G; 0; 0 |
+| dl1, round 3 | 293.0 G; 17; 9 | 324.6 G; 0; 9 | 258.9 G; 0; 0 |
+| dl10, round 2 | 438.5 G; 17; 64 | 448.8 G; 0; 64 | 300.5 G; 0; 1 |
+
+Kept inputs alone cost a little (the kept route maintains what the missed memo then recomputed); with the memo kept
+too, round 2 is 15% (dl1) and 31% (dl10) cheaper. Tests: `each_program_keeps_what_it_used_however_many_run_between`
+(frames), `each_lane_keeps_its_last_runs_plans` (manifests). The one dl10 miss left: O-inner-run-memo-miss.
+
+## O-inner-run-memo-miss. One one-file run inside `matching-architecture.rr` misses the memo every round
+
+Over dl10, policies one process each, round 3: `matching-architecture.rr`'s process makes a second run of one file
+(`statkeep before the first wave: 1 files, 1 known by stat, 0 found`; 21 relations, 11,936 rows written; 0.78 s for
+the process). It misses in every round, so its entry is not stored, or is stored under a plan no manifest names.
+Small; not yet traced.
 
 ## O-dl10-demand-computed-head (closed 2026-11-12, 6ec67d811)
 
@@ -4040,6 +4103,55 @@ The 44 policies over dl10 stopped under `RERAIL_SQL_STRICT` (on the hub too):
 `demand_bch_allowed($d, @add($l, 1)) has no native step`. Demand copied a demanded rule's computed head column
 into its demand atom. It now reads a fresh variable, checked equal to the term once the body binds it. dl10 gives
 the 48 findings a run without demand gives; the `demand` tests pass.
+
+## O-read-unreached-library (closed 2026-11-12). A policy lowered its libraries whole
+
+**Seen (2026-11-12)**, after O-store-single-program: reading a policy (`rr::read_file` → `lower_files`) was 16% of
+the dl1 batch's main thread, with a store and without, the largest per-policy setup cost with the typing run.
+Of the 21,102 rules the 44 policies lowered, 5,261 were reached; the rest were their libraries' rules, checked
+(`token_reads::refuse`, a fixpoint over every clause), lowered and then pruned (`front::prune`).
+
+**Fixed** (`rr::unreached_dropped`): an included file's clauses no root reaches are dropped before the checks
+and the lowering. Roots: every identifier of the policy's own file and of `core.rr` and the engine's files, and
+another file's outputs, violations and settings (its declarations, inputs, `.stored`, functors and types read
+nothing); a kept clause's names, terms' included (a relation may be an argument: `nearest(n, p, block_node)`).
+Every clause for a reached relation is kept. Seven tests (`dropping_unreached_clauses_prunes_to_the_same_program*`,
+989 programs of the data layer and the packs) lower each program both ways and compare the pruned programs: the
+same rules (a lowering helper's numbered as met, compared by count), natives, outputs, inputs read and
+declarations. Two differences are the dropped form's gain, not a change: an unreached clause's input stays
+declared and unread after `prune`; and a violation's `@place` variant is made when any rule makes a place (no
+reached one does there). 52–58% of the packs' and data layer's clauses are dropped.
+
+**Measured** (44 policies, strict, CPU, 48 findings each): dl1 188.1 → 163.2 G instructions; dl10 280.4 →
+257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
+now: no item.
+
+**What remained, cut (2026-11-12).** Reading was still 15.5% of a warm batch's main thread (850 of 5,500 samples):
+
+1. *A store a file.* Each rule file read off its tape (`stored_statements`) opened the tape cache and closed it,
+   and the close of its last handle closed every thread's connection to it (`ContentStore`'s drop,
+   `release_all`): 514 samples. A batch, and a program's reading, now hold one handle (`phases::Reading`,
+   `reading_store`). `read_file` also copies only the statements kept (`reached_statements`), not every library.
+2. *The token check's fixpoint.* `token_reads::refuse` brought the column kinds of every relation of the program to
+   a fixpoint, 16 rounds at most, though only a clause that reads a token (`READS`) consults them: now only the
+   relations of those clauses and what they derive from (141 → 9 samples).
+   `a_parent_kind_derived_through_rules_is_named` checks a kind derived through a rule is still named.
+3. *The cycle check's summaries.* `front::cycles::check` summarized every component, though only a recursive
+   component with a value cycle not keyed by constants reads them: now none past the last such component (166 →
+   60 samples).
+
+Warm dl1 batch, same tree and store: 94.8 → 91.3 G instructions and 32.2 → 28.8 G cycles for (1) (load 16–20);
+88.2 G and 27.1 G with (2) and (3) (load 4); 48 findings. Reading is 367 of 3,206 samples (11.4%): `lower::lower`
+269 (`clause` and `span_patterns`, the lowering itself), `front::finish` 70.
+
+## O-prepared-decode. A warm batch decodes each policy's prepared program from the store
+
+**Seen (2026-11-12)**, after O-store-single-program and O-read-unreached-library: in a warm dl1 batch over a store,
+`prepared::lookup` is 12.7% of the main thread (552 of 4,347 samples): `prepared_of` (rebuilding the program from
+its stored facts) and `document_facts`. The evaluation the batch exists for is 1.6% (70 samples). Each policy's
+prepared program is decoded once a process, so a batch of 44 decodes 44. **Closure:** a prepared program read
+by its rows as needed (the parts a run reads), or kept decoded across a session's runs; the warm batch's share
+measured under 5%.
 
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
@@ -4063,6 +4175,14 @@ written holds. What is left is O91 (the same run across batches and edits) and t
 A combined run of the batch (all policies of a language as one, decision 0051) was tried: 202.4 G against
 212.3 G instructions on dl1. It gave 48 findings to the per-policy runs' 49; the 49th was false
 (O-pha000-kept-part, closed).
+
+**Measured again (2026-11-12, after O-store-single-program and O-read-unreached-library).** The typing run is
+one a batch and 20% of a warm dl1 batch's main thread (860 of 4,347 samples), 22% without a store. Warm, its
+evaluation is 92 samples: its answers are kept across batches already. The rest is its setup, once a process:
+combining the typing program (182, of which guest hiding 127; a single program, so not kept in the store, and
+keeping it there was measured to gain nothing, O-store-single-program), decoding its prepared program from the
+store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
+many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
 
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
@@ -4122,6 +4242,12 @@ and not kept:
   (O-pha000-kept-part), so it is open again as the way to share the library's analysis.
 The closure is a hiding analysis kept per library module (its relations' carried columns depend only on its
 rules and what they read), or a combined run that is exact.
+
+**Measured again (2026-11-12, after O-read-unreached-library).** Hiding is 5% of a warm dl1 batch (216 of 4,347
+samples) and 3.3% without a store; of the warm 216, 127 are the typing program's (once a batch) and about 89 the
+44 policies' together: dropping the libraries' unreached clauses before lowering cut what each policy hides. A
+hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
+not built. Open at that size.
 
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 

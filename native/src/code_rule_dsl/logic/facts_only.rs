@@ -53,6 +53,7 @@ const FACT_STORE: &[&str] = &[
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
     "frame_part_used",
+    "frame_program_used",
     "frame_used",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
@@ -315,12 +316,14 @@ const STATE: &[(&str, &str)] = &[
     // may read them).
     ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
-    // A run's record under way: the plans of the runs nested in it, for its manifest.
-    ("code_rule_dsl/logic/plan/corpus.rs", "INNER_PLANS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
+    // With them, the memo plans of the batch's runs so far, by root (O-store-single-program): dropped with the batch.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH_PLANS"),
+    // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "READING"),
     ("content_store/observe.rs", "OBSERVERS"),
     // The journal's open streams, one a root (decision 0105): open things.
     ("content_store/journal.rs", "LIVE"),

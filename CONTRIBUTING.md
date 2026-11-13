@@ -223,8 +223,8 @@ Generated files are listed, with the command that rewrites each, in
 ### Development builds
 
 Everything run from a checkout (tests, benchmarks, `node dist/cli/cli.js`) is a development build: its policy content
-store is `<checkout>/.rerail/content-v3.sqlite`, private to that checkout or worktree. Only the managed installation
-under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v3.sqlite`, so a checkout on a newer store
+store is `<checkout>/.rerail/content-v4.sqlite`, private to that checkout or worktree. Only the managed installation
+under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v4.sqlite`, so a checkout on a newer store
 schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives
 every test file its own store that way. See [The content store](docs/how-setup-works.md#the-content-store).
 

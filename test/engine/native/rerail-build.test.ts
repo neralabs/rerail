@@ -13,7 +13,7 @@ import {
 } from "../../../src/engine/native/rerail-build.js";
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
-const STORE_FILE = "content-v3.sqlite";
+const STORE_FILE = "content-v4.sqlite";
 const MAIN_STORE = join(homedir(), ".cache", "rerail", STORE_FILE);
 
 let root: string;

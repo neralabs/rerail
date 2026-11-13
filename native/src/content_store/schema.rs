@@ -21,13 +21,14 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 3;
+pub(super) const SCHEMA_VERSION: i64 = 4;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
-/// (decision 0049); 2 was the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 3;
+pub const STORE_FILE_NAME: &str = "content-v4.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 4: a corpus manifest's lane is a column of it
+/// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
+/// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 4;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -359,6 +360,9 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
     sources BLOB NOT NULL,
+    -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
+    -- lane.
+    lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
@@ -711,6 +715,13 @@ CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT
 -- used its relation.
 CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
     PRIMARY KEY (space, run)) WITHOUT ROWID;
+-- Each run's use of a space by program (decision 0117 step 5, O-store-single-program): the relations it used, as
+-- sorted keys, one row a program a run, each program's last `frames::RUNS`. Programs over one root share its space;
+-- counted by the space's runs alone, one policy's frames went unused while the others ran, and were collected. A
+-- frame is collected once the run that put it is that old and none of these rows names its relation. `frame_used`
+-- (one row a run, of every program) is read no more: it stays for an older binary.
+CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
+    rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 "#;
 
 impl ContentStore {

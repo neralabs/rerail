@@ -331,6 +331,31 @@ fn a_reader_that_only_negates_a_demanded_relation_reads_it_whole() {
     assert!(!kept.iter().any(|c| c == "PHA000"), "the allowlist's status is valid: {kept:?}");
 }
 
+/// O-store-single-program: a policy whose kept inputs cannot be taken (`public-api-triples.rr`: an export's rows kept
+/// by another column than the memo attributes them by) is refused the kept route before its first wave, and every
+/// run over one store gives the first one's findings. In one process this held before too: the fault was a later
+/// process's, whose snapshot holds no memo entry of a path looked up before the first wave, so a hit read for its
+/// outputs alone and decoded whole at the waves' end was "gone" (or, strict, a read inside the waves). The CLI's
+/// batches over one store, strict, show that one; this test keeps the route's refusal from changing the findings.
+#[test]
+fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("kept-route-refused");
+    std::fs::create_dir_all(root.join("_internal")).unwrap();
+    std::fs::write(root.join("_internal/__init__.py"), "\"\"\"Internal helpers.\"\"\"\n\ndef get(o, name):\n    return getattr(o, name)\n").unwrap();
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/public-api-triples.rr");
+    let run = |out: &str| -> Vec<String> {
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("run {out}: {e}"));
+        let mut codes: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| d.to_string()).collect();
+        codes.sort();
+        codes
+    };
+    let first = run("1");
+    let (second, third) = (run("2"), run("3"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(second, first, "the second run over the store");
+    assert_eq!(third, first, "the third run over the store");
+}
+
 /// Decision 0062: the statements lowering reads come off the tape. For every `.rr` file in the repository they are
 /// the parser's own, statement for statement, and a file that does not parse gives the parser's error.
 #[test]
