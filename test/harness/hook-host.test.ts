@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import { encodeRerailEventResult, type EngineEndpoint } from "../../src/runtime/index.js";
 import {
@@ -28,6 +29,8 @@ import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 // The lookup of a named engine socket works as it does; a test stands in for one call of it at a time.
 const lookups = vi.hoisted(() => ({ engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>() }));
@@ -449,5 +452,131 @@ describe("hook host durable state", () => {
 
     expect(order).toEqual(["hook-start", "hook-end", "scrub"]);
     await expect(withPendingFileLock(join(root, "cursor-pending", "notes.json"), async () => undefined)).rejects.toThrow("Not a pending steer file");
+  });
+});
+
+/**
+ * A daemon recorded in the Rerail home `home` that answers as a live one does and counts every request it gets. On
+ * Windows a recorded daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`), so it holds one.
+ */
+async function countingDaemon(home: string, repositoryState = "stopped"): Promise<{ requests: string[]; close: () => Promise<void> }> {
+  const requests: string[] = [];
+  const answers: Record<string, unknown> = {
+    "/healthz": { status: "ok", pid: process.pid, database: { path: join(home, "rerail.sqlite"), exists: true }, native: { ok: true } },
+    "/api/presentation": { presence: "compact", repositoryState },
+  };
+  const server = createServer((request, response) => {
+    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    requests.push(path);
+    response.writeHead(Object.hasOwn(answers, path) ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify(answers[path] ?? { error: "not-found" }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  const kernelSocketPath = testEngineEndpoint(home);
+  const releaseEndpoint = await holdEngineEndpoint(kernelSocketPath);
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, "daemon.json"), JSON.stringify({
+    pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
+    databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home,
+  }));
+  return {
+    requests,
+    close: async () => {
+      await releaseEndpoint();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+// Each host's session start, the one hook that may start a daemon, and a tool call, the hook every tool call runs.
+const hooksWhereRerailIsOff: Array<{ host: string; event: string; run: (cwd: string) => Promise<HookOutput> }> = [
+  { host: "claude-code", event: "SessionStart", run: cwd => runClaudeHook({ cwd, session_id: "session-1", hook_event_name: "SessionStart", source: "startup" }) },
+  {
+    host: "claude-code", event: "PreToolUse",
+    run: cwd => runClaudeHook({ cwd, session_id: "session-1", hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: { file_path: "README.md" } }),
+  },
+  { host: "codex", event: "SessionStart", run: cwd => runCodexHook({ cwd, session_id: "session-1", hook_event_name: "SessionStart", source: "startup" }) },
+  {
+    host: "codex", event: "PreToolUse",
+    run: cwd => runCodexHook({ cwd, session_id: "session-1", hook_event_name: "PreToolUse", tool_name: "shell", tool_use_id: "tool-1", tool_input: { command: "ls" } }),
+  },
+  { host: "cursor", event: "sessionStart", run: cwd => runCursorHook({ workspace_roots: [cwd], conversation_id: "session-1", hook_event_name: "sessionStart" }) },
+  {
+    host: "cursor", event: "beforeShellExecution",
+    run: cwd => runCursorHook({ workspace_roots: [cwd], conversation_id: "session-1", hook_event_name: "beforeShellExecution", command: "ls", cwd }),
+  },
+];
+
+describe("hooks where Rerail does not run", () => {
+  beforeEach(() => {
+    // The hook takes CLAUDE_PROJECT_DIR over the event's folder; a test run from inside a Claude Code session has one.
+    vi.stubEnv("CLAUDE_PROJECT_DIR", undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a stopped checkout without a request to the daemon", async ({ run }) => {
+    const root = await temporaryDirectory({ started: false });
+    startTestRepository(root);
+    stopTestRepository(root);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!);
+    try {
+      expect(await run(root)).toEqual({});
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder Rerail was never started in without a request to the daemon", async ({ run }) => {
+    const root = await temporaryDirectory({ started: false });
+    // Rerail runs in another repository on the machine, so the database is there.
+    const elsewhere = join(root, "elsewhere");
+    const never = join(root, "never");
+    await mkdir(elsewhere);
+    await mkdir(never);
+    startTestRepository(elsewhere);
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!);
+    try {
+      expect(await run(never)).toEqual({});
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("starts no daemon from a stopped checkout when none runs", async () => {
+    const root = await temporaryDirectory({ started: false });
+    startTestRepository(root);
+    stopTestRepository(root);
+    for (const { run } of hooksWhereRerailIsOff) expect(await run(root)).toEqual({});
+    await expect(readFile(join(process.env.RERAIL_HOME!, "daemon.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("the hook start check without Git", () => {
+  it("asks a live daemon where this process finds no Git to resolve the checkout with", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const elsewhere = join(root, "elsewhere");
+    await mkdir(elsewhere);
+    startTestRepository(elsewhere);
+    // The daemon, with a Git of its own, reads the checkout as started; this process would read it as unknown.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    vi.resetModules();
+    vi.doMock("../../src/engine/git.js", async () => {
+      const git = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
+      return { ...git, gitExecutable: () => { throw new git.GitUnavailableError([]); } };
+    });
+    try {
+      const { hookRerailStarted } = await import("../../src/harness/hook-host.js");
+      expect(await hookRerailStarted("claude-code", root)).toBe(true);
+      expect(daemon.requests).toEqual(["/api/presentation"]);
+    } finally {
+      vi.doUnmock("../../src/engine/git.js");
+      vi.resetModules();
+      await daemon.close();
+    }
   });
 });

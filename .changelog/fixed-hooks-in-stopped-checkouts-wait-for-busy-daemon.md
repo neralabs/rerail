@@ -1,0 +1,1 @@
+Claude Code, Codex and Cursor hooks in a checkout where Rerail is stopped, or was never started, no longer wait for a daemon busy with other checkouts: each hook reads the checkout's state from the database itself and answers at once, so tool calls there no longer take seconds.

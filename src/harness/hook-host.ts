@@ -1,7 +1,7 @@
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
-import { isRerailStarted } from "../runtime/repository-start.js";
+import { isRerailStarted, readOnlyStartState } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
@@ -25,8 +25,9 @@ import {
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
-import { rerailRunsIn } from "../engine/catalog/repository-model.js";
+import { rerailRunsIn, type RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { gitExecutable } from "../engine/git.js";
 
 export * from "./hook-adapter.js";
 
@@ -57,16 +58,32 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 }
 
 /**
- * The check one-shot hooks make. A running daemon answers first, from its own environment and open
- * database; without one, the hook reads the database itself, which never starts a daemon. An
+ * The start state of the checkout `workspace` is in, as this process reads it from the database; undefined where it
+ * cannot: no Git here to find the checkout with (the daemon may have one), a SQLite binding this Node does not load, a
+ * database it cannot open or read, or one whose creator has not committed the schema yet.
+ */
+function localStartState(workspace: string): RepositoryStartState | undefined {
+  try {
+    gitExecutable();
+    return readOnlyStartState(workspace);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The check one-shot hooks make before anything else. The hook reads the start state from the database itself, so in
+ * a checkout where Rerail is stopped or was never started it answers without a request to the daemon, however busy the
+ * daemon is, and never starts one. Only where this process cannot read the state does a live daemon answer, from its
+ * own environment and open database; without one, the database is read again and its failure is the hook's. An
  * explicit database path (tests, embedded hosts) is always read directly.
  */
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
-  if (databasePath === undefined) {
-    const answered = await readRepositoryState(workspace, host);
-    if (answered !== null) return rerailRunsIn(answered);
-  }
-  return isRerailStarted(workspace, databasePath);
+  if (databasePath !== undefined) return isRerailStarted(workspace, databasePath);
+  const local = localStartState(workspace);
+  if (local !== undefined) return rerailRunsIn(local);
+  const answered = await readRepositoryState(workspace, host);
+  return answered === null ? isRerailStarted(workspace) : rerailRunsIn(answered);
 }
 
 export interface HookOptions {

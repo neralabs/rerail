@@ -804,7 +804,7 @@ Rerail is off in every repository until started. Rules belong to the repository;
 <details>
 <summary>What stopping does, inheritance and the footer</summary>
 
-A stopped checkout records nothing, runs no rules, delivers no guidance, and its hooks never autostart or contact the daemon.
+A stopped checkout records nothing, runs no rules, delivers no guidance, and its hooks never autostart or contact the daemon. A hook reads the checkout's state from the database itself, so a daemon busy with other checkouts does not slow hooks where Rerail is stopped or was never started.
 
 A checkout without its own value inherits from the nearest containing checkout of the same repository with one, else the repository. Starting or stopping a checkout reaches the checkouts inside it, which follow it again.
 

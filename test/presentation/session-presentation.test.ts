@@ -428,14 +428,20 @@ describe("rules page", () => {
     expect(await readRepositoryState(cwd, "omp")).toBeNull();
   });
 
-  it("lets a live daemon's answer decide the hook start check, and reads the database only once none answers", async () => {
+  it("reads the hook start check from the database, and asks a live daemon only where the database cannot be read", async () => {
     startTestRepository(cwd, database);
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    // The daemon says stopped; this process's database, which says started, is not read.
-    expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
-    await record(join(home, "daemon.json"), { pid: 999_999 });
+    // The database says started; the daemon, which would say stopped, is not asked.
     expect(await hookRerailStarted("claude-code", cwd)).toBe(true);
+    expect(served).toEqual([]);
+    // A database this process cannot read: the live daemon answers.
+    await writeFile(database, "not a database");
+    expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
+    expect(served).toEqual(["/api/presentation"]);
+    // Neither answers: the database is read again, and its failure is the hook's.
+    await record(join(home, "daemon.json"), { pid: 999_999 });
+    await expect(hookRerailStarted("claude-code", cwd)).rejects.toThrow();
   });
 
   it("refuses a recorded daemon whose pid is gone or whose port is vacant", async () => {
