@@ -58,7 +58,7 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also lists a rule `"on": false` when its steer would do harm where no matcher change can tell the cases apart; the pack's README says why for each (Python's B009 and B010). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)).
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
 
 </details>

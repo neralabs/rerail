@@ -75,6 +75,11 @@ const packRuleFields = {
   mode: z.enum(RULE_MODES).optional(),
   /** Whether the rule is on when its pack is added; default on. */
   on: z.boolean().optional(),
+  /**
+   * Why a reviewer holds the rule off: its steer would do harm though upstream turns it on. Needs `on: false`; set-up
+   * never turns a held-off rule on from a repository's lint config.
+   */
+  heldOff: nonEmpty.optional(),
   /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
   examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
 };
@@ -102,7 +107,10 @@ export const rulePackFileSchema = z
     match: matchSchema,
     /** Whether the pack's rules honour their linters' suppression comments (`# noqa`, `eslint-disable`); default yes. */
     honourSuppressionComments: z.boolean().optional(),
-    rules: z.array(z.object({ ...packRuleFields, document: documentPathSchema }).strict()),
+    rules: z.array(
+      z.object({ ...packRuleFields, document: documentPathSchema }).strict()
+        .refine(rule => rule.heldOff === undefined || rule.on === false, { message: "needs \"on\": false", path: ["heldOff"] }),
+    ),
   })
   .strict();
 export type RulePackFile = z.infer<typeof rulePackFileSchema>;
@@ -190,6 +198,8 @@ export interface RulePackRule {
   readonly mode: RuleMode;
   /** Whether the rule is on when its pack is added. */
   readonly on: boolean;
+  /** Why a reviewer holds the rule off (`on` is false); set-up never turns it on from a repository's lint config. */
+  readonly heldOff?: string;
   /** One example the rule catches and one it lets pass, where the pack has them; tests prove both. */
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
 }
@@ -286,7 +296,24 @@ function checkedMatch(id: string, match: RulePackMatch): RulePackMatch {
   return match;
 }
 
-/** One listed rule read and checked: its document is named for its id, exists and carries that id. */
+/** Rule `ruleId`'s examples in pack `id`, checked for its kind: a code rule's both have a path, a conversation rule's none. */
+function checkExamples(id: string, ruleId: string, kind: RuleDocument["kind"], examples: RulePackRule["examples"]): void {
+  if (examples === undefined) return;
+  const withPath = [examples.caught, examples.passes].filter(example => example.path !== undefined).length;
+  if (kind === "code" && withPath < 2) throw new Error(`Code rule ${ruleId} in rule pack ${id} needs a path on both examples`);
+  if (kind === "conversation" && withPath > 0) throw new Error(`Conversation rule ${ruleId} in rule pack ${id} takes no example path`);
+}
+
+/** Listed rule `rule` with its document, as the catalog holds it. The mode and on state take effect only once packs are attached. */
+function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument): RulePackRule {
+  return {
+    id: rule.id, kind: document.kind, title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true,
+    ...(rule.heldOff === undefined ? {} : { heldOff: rule.heldOff }),
+    ...(rule.examples === undefined ? {} : { examples: rule.examples }),
+  };
+}
+
+/** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
 function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number]): { rule: RulePackRule; document: RuleDocument; source: unknown } {
   const documentPath = join(directory, rule.document);
   if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
@@ -294,16 +321,8 @@ function readPackRule(directory: string, id: string, rule: RulePackFile["rules"]
   const source = readJsonDocument(documentPath);
   const document = parseRuleDocument(source, documentPath);
   if (document.rule.id !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
-  const examples = rule.examples;
-  if (examples !== undefined && document.kind === "code" && (examples.caught.path === undefined || examples.passes.path === undefined)) {
-    throw new Error(`Code rule ${rule.id} in rule pack ${id} needs a path on both examples`);
-  }
-  if (examples !== undefined && document.kind === "conversation" && (examples.caught.path !== undefined || examples.passes.path !== undefined)) {
-    throw new Error(`Conversation rule ${rule.id} in rule pack ${id} takes no example path`);
-  }
-  // The mode and on state a pack gives its rules take effect only once packs are attached.
-  const packRule: RulePackRule = { id: rule.id, kind: document.kind, title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true, ...(examples === undefined ? {} : { examples }) };
-  return { rule: packRule, document, source };
+  checkExamples(id, rule.id, document.kind, rule.examples);
+  return { rule: packRuleOf(rule, document), document, source };
 }
 
 /**

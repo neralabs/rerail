@@ -10,7 +10,8 @@ fixtures and Rerail's probes, and B406 on a Django sample, where Bandit is wrong
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`);
 PGH004, which reports `noqa` comments, is the one exception, as in Ruff (`suppressionExemptions` in
 `conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`),
-and so do B009 and B010, which that selection keeps on (their sections say why).
+and so do B009 and B010, which that selection keeps on: a reviewer holds them off (`heldOff`; their sections say why),
+so set-up never turns them on from a repository's Ruff config.
 The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The
 rename variants that test the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for
 Python yet, so the real-code samples are the pack's only such evidence.
