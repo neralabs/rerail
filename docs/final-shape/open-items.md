@@ -4030,6 +4030,28 @@ The 44 policies over dl10 stopped under `RERAIL_SQL_STRICT` (on the hub too):
 into its demand atom. It now reads a fresh variable, checked equal to the term once the body binds it. dl10 gives
 the 48 findings a run without demand gives; the `demand` tests pass.
 
+## O-read-unreached-library (closed 2026-11-12). A policy lowered its libraries whole
+
+**Seen (2026-11-12)**, after O-store-single-program: reading a policy (`rr::read_file` → `lower_files`) was 16% of
+the dl1 batch's main thread, with a store and without, the largest per-policy setup cost with the typing run.
+Of the 21,102 rules the 44 policies lowered, 5,261 were reached; the rest were their libraries' rules, checked
+(`token_reads::refuse`, a fixpoint over every clause), lowered and then pruned (`front::prune`).
+
+**Fixed** (`rr::unreached_dropped`): an included file's clauses no root reaches are dropped before the checks
+and the lowering. Roots: every identifier of the policy's own file and of `core.rr` and the engine's files, and
+another file's outputs, violations and settings (its declarations, inputs, `.stored`, functors and types read
+nothing); a kept clause's names, terms' included (a relation may be an argument: `nearest(n, p, block_node)`).
+Every clause for a reached relation is kept. Seven tests (`dropping_unreached_clauses_prunes_to_the_same_program*`,
+989 programs of the data layer and the packs) lower each program both ways and compare the pruned programs: the
+same rules (a lowering helper's numbered as met, compared by count), natives, outputs, inputs read and
+declarations. Two differences are the dropped form's gain, not a change: an unreached clause's input stays
+declared and unread after `prune`; and a violation's `@place` variant is made when any rule makes a place (no
+reached one does there). 52–58% of the packs' and data layer's clauses are dropped.
+
+**Measured** (44 policies, strict, CPU, 48 findings each): dl1 188.1 → 163.2 G instructions; dl10 280.4 →
+257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
+now: no item.
+
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
 **Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing

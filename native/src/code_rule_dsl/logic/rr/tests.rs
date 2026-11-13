@@ -3235,3 +3235,129 @@ fn lowering_is_idempotent_javascript_typescript() {
 fn lowering_is_idempotent_other_packs() {
     lowers_back(&["packs/react", "packs/node", "packs/rust", "packs/vue", "packs/sql", "packs/next", "packs/php", "packs/blade", "packs/complexity", "packs/rr"], 0, 1);
 }
+
+/// `unreached_dropped`: an included file's clauses that nothing reaches are dropped before they are checked and
+/// lowered. For every `.rr` program under `dirs` that reads (the data layer's policies, and the packs', a test for
+/// each group within the time a test may take), `front::prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
+/// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
+fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut pending: Vec<PathBuf> = dirs.iter().map(|d| manifest.join(d)).collect();
+    let mut paths = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if !skip.iter().any(|s| path == manifest.join(s)) {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|e| e == "rr") {
+                paths.push(path);
+            }
+        }
+    }
+    // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
+    paths.sort();
+    let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
+        let path = path.as_path();
+        let Ok((statements, _)) = program(&path) else { return None };
+        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
+        let own = path.canonicalize().unwrap();
+        let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
+        let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
+        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
+        // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
+        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        let shape = |p: Program| {
+            let p = front::prune(p);
+            let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut renumber = |s: &str| -> String {
+                helper.replace_all(s, |c: &regex::Captures| {
+                    let n = names.len();
+                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
+                }).into_owned()
+            };
+            // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
+            // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
+            // rule makes the value it reads.
+            let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
+            // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
+            // numbers change) are compared by their number for each helper; every other rule exactly.
+            let numbered = |rel: &str| helper.is_match(rel);
+            let mut rules: Vec<String> = p.rules.iter().filter(|r| !place_variant(r)).map(|r| {
+                let text = renumber(&format!("{r:?}"));
+                if numbered(r.head.rel.as_str()) { format!("helper {}", renumber(r.head.rel.as_str())) } else { text }
+            }).collect();
+            rules.sort();
+            let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(*r)).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            decls.sort();
+            let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
+            // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
+            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
+            let text = format!("{:?}{:?}", p.rules, p.natives);
+            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            inputs.sort();
+            let mut outputs = p.outputs.clone();
+            outputs.sort();
+            (rules, decls, natives, outputs, inputs)
+        };
+        let (a, b) = (shape(less), shape(whole));
+        if a != b {
+            let only = |x: &Vec<String>, y: &Vec<String>| x.iter().filter(|r| !y.contains(r)).take(3).cloned().collect::<Vec<_>>();
+            panic!(
+                "{}: its pruned program changed with its unreached clauses dropped\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
+                path.display(), only(&a.0, &b.0), only(&b.0, &a.0), only(&a.1, &b.1), only(&b.1, &a.1), a.2, b.2, a.3, b.3,
+                (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4))
+            );
+        }
+        Some((n, n - kept))
+    }).collect();
+    let (compared, all, dropped) = (counts.len(), counts.iter().map(|c| c.0).sum::<usize>(), counts.iter().map(|c| c.1).sum::<usize>());
+    eprintln!("{compared} programs; {dropped} of {all} clauses dropped");
+    compared
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program() {
+    let n = dropping_unreached_clauses_in(&["data-layer"], &[], (0, 1));
+    assert!(n > 40, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_0() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (0, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_1() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (1, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_2() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (2, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_3() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (3, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_script_packs() {
+    let n = dropping_unreached_clauses_in(&["packs/javascript", "packs/typescript", "packs/react", "packs/next", "packs/node", "packs/vue"], &[], (0, 1));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
+    let n = dropping_unreached_clauses_in(&["packs/php", "packs/blade", "packs/rust", "packs/sql", "packs/rr", "packs/complexity"], &[], (0, 1));
+    assert!(n > 20, "{n} programs compared");
+}
+
