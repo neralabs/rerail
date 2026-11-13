@@ -380,6 +380,46 @@ pub fn float_text(f: f64) -> String {
     }
 }
 
+#[cfg(test)]
+mod int_cast_tests {
+    use super::*;
+
+    #[test]
+    fn integer_cast_preserves_decimal_grammar_and_typed_values() {
+        for (kind, raw, expected) in [
+            ("int", "-123456789012345678901234567890", Some("-123456789012345678901234567890")),
+            ("bool", "true", Some("1")), ("bool", "false", Some("0")),
+            ("str", "  +002_003\n", Some("2003")), ("str", "٠_۳", Some("3")),
+            ("str", "１２", Some("12")), ("str", "\u{2003}3\u{a0}", Some("3")),
+            ("str", "\u{1c}3", None), ("str", "0x10", None), ("str", "²", None),
+            ("str", "＋3", None), ("str", "−3", None), ("str", "1٬234", None),
+            ("str", "1__2", None), ("str", "1_", None), ("str", "_1", None),
+            ("str", "+", None), ("str", "", None), ("NoneType", "", None),
+        ] {
+            assert_eq!(int_text(kind, raw, 4300).as_deref(), expected, "{kind} {raw:?}");
+        }
+        for (value, expected) in [(3.8f64,"3"),(-3.8,"-3"),(-0.0,"0"),(1e20,"100000000000000000000"),
+            (1e23,"99999999999999991611392"),(f64::from_bits(1),"0")] {
+            assert_eq!(int_text("float", &format!("{:016x}",value.to_bits()),4300).as_deref(),Some(expected));
+        }
+        for value in [f64::INFINITY,f64::NEG_INFINITY,f64::NAN] {
+            assert_eq!(int_text("float", &format!("{:016x}",value.to_bits()),4300),None);
+        }
+        assert_eq!(int_text("float","garbage",4300),None);
+    }
+
+    #[test]
+    fn integer_cast_enforces_string_digit_limits_without_limiting_integer_identity() {
+        let at = "1".repeat(4300);
+        assert_eq!(int_text("str",&at,4300),Some(at));
+        let over = "1".repeat(4301);
+        assert_eq!(int_text("str",&over,4300),None);
+        assert_eq!(int_text("int",&over,4300),Some(over));
+        assert_eq!(int_text("str",&"0".repeat(5001),4300),None);
+        assert_eq!(int_text("str",&"0".repeat(5001),0).as_deref(),Some("0"));
+    }
+}
+
 /// Whether CPython 3.13's `str.isprintable` holds of the character `p` (not Cc, Cf, Cs, Co, Cn, Zl, Zp, or Zs but
 /// the space).
 pub(crate) fn printable(p: u32) -> bool {
