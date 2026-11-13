@@ -150,28 +150,30 @@ function fillPages(path: string, bytes: number): void {
 const OLDER_STEPS = RERAIL_MIGRATIONS.filter(step => step.id !== RULE_PROVENANCE_STEP);
 
 /**
- * Every audit an older Rerail sharing the file lists, newest first: `main`'s audit store, on the file opened with the
- * older build's steps. Its `get` reads each the same.
+ * The audits `auditIds` name as an older Rerail sharing the file reads them: `main`'s audit store (its read path, in
+ * `main-audit-store.ts`), on the file opened with the older build's steps.
  */
-function readAsOlder(path: string): AuditRecord[] {
+function readAsOlder(path: string, auditIds: readonly string[]): (AuditRecord | undefined)[] {
   const older = new MainAuditStore(path, openRerailDatabase(path, { migrations: OLDER_STEPS }));
   try {
-    const { audits } = older.list({ limit: 200 });
-    for (const audit of audits) expect(older.get(audit.auditId)).toEqual(audit);
-    return audits;
+    return auditIds.map(auditId => older.get(auditId));
   } finally {
     older.close();
   }
 }
 
-/** Each audit's rule provenance as JSON text, by audit id. */
-function provenanceTexts(audits: readonly AuditRecord[]): Map<string, string> {
-  return new Map(audits.map(audit => [audit.auditId, JSON.stringify(audit.ruleProvenance)]));
+/** Each audit's rule provenance as JSON text; undefined for an audit not found. */
+function provenanceTexts(audits: readonly (AuditRecord | undefined)[]): (string | undefined)[] {
+  return audits.map(audit => audit && JSON.stringify(audit.ruleProvenance));
 }
 
-/** An audit record without its rule provenance. */
-function withoutProvenance({ ruleProvenance: _provenance, ...rest }: AuditRecord): Omit<AuditRecord, "ruleProvenance"> {
-  return rest;
+/** Each audit record without its rule provenance; undefined for an audit not found. */
+function withoutProvenance(audits: readonly (AuditRecord | undefined)[]): (Omit<AuditRecord, "ruleProvenance"> | undefined)[] {
+  return audits.map(audit => {
+    if (audit === undefined) return undefined;
+    const { ruleProvenance: _provenance, ...rest } = audit;
+    return rest;
+  });
 }
 
 /** What this thread wrote to stderr while `run` ran, and what `run` resolved to. */
@@ -403,29 +405,32 @@ describe("audit rule provenance", () => {
     const app = provenanceOf("/home/dev/app", 200);
     // Audits sharing one provenance, one recorded before repository-owned rules, and one with none.
     const written = writeInlineAudits(path, [app, app, app, LEGACY, []]);
+    const olderIds = written.map(({ auditId }) => auditId);
     // This build's open runs the step and moves nothing: the older build still reads each provenance in its row.
     openRerailDatabase(path).$client.close();
-    const before = readAsOlder(path);
-    expect(provenanceTexts(before)).toEqual(new Map(written.map(({ auditId, text }) => [auditId, text])));
+    const before = readAsOlder(path, olderIds);
+    expect(provenanceTexts(before)).toEqual(written.map(({ text }) => text));
 
     expect(await move(path)).toBe(4);
     const store = new SqliteAuditStore(path);
-    let later: string;
-    let current: AuditRecord[];
+    let ids: string[];
+    let current: (AuditRecord | undefined)[];
     try {
-      later = store.start(auditInput("/home/dev/app", app));
+      const later = store.start(auditInput("/home/dev/app", app));
       store.finish(later, { status: "completed" });
-      current = store.list({ limit: 200 }).audits;
+      ids = [...olderIds, later];
+      current = ids.map(auditId => store.get(auditId));
     } finally {
       store.close();
     }
 
     // The older build reads `[]` as the provenance of each audit this build moved or wrote, and every other field as it
     // read it before the move and as this build reads it.
-    const after = readAsOlder(path);
-    expect(provenanceTexts(after)).toEqual(new Map<string, string>([...written.map(({ auditId }) => auditId), later].map(auditId => [auditId, "[]"])));
-    expect(after.filter(audit => audit.auditId !== later).map(withoutProvenance)).toEqual(before.map(withoutProvenance));
-    expect(after.map(withoutProvenance)).toEqual(current.map(withoutProvenance));
+    const after = readAsOlder(path, ids);
+    expect(provenanceTexts(after)).toEqual(ids.map(() => "[]"));
+    expect(withoutProvenance(after.slice(0, olderIds.length))).toEqual(withoutProvenance(before));
+    expect(withoutProvenance(after)).toEqual(withoutProvenance(current));
+    expect(provenanceTexts(current)).toEqual([...written.map(({ text }) => text), JSON.stringify(app)]);
   });
 
   it("leaves each audit's provenance inline on the open that upgrades, and moves it a batch per write transaction", async () => {
