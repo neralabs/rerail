@@ -109,7 +109,21 @@ export interface SessionWalkResume {
   readonly since: number;
   /** Each source whose text the evaluator held as the session's (`HELD_BY_EVALUATOR`), as last observed; undefined when gone. */
   readonly held: ReadonlyMap<string, ObservedSource | undefined>;
+  /**
+   * What the walks last saw of Git (`SourceDiscovery.heads`, `unmerged` and `passedCheckouts`): one `HEAD` and the
+   * unmerged entries per checkout, so the first walk's Git verdicts compare with what was there before the suspension,
+   * as the open session's next walk would.
+   */
+  readonly gitSeen: WalkedGit;
 }
+/** A walk's snapshot of Git, by checkout root (`SessionWalkResume.gitSeen`). */
+export interface WalkedGit {
+  readonly heads: ReadonlyMap<string, string>;
+  readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  readonly passedCheckouts: ReadonlySet<string>;
+}
+/** What a session opened fresh has seen of Git: nothing yet. */
+const NO_GIT_SEEN: WalkedGit = { heads: new Map(), unmerged: new Map(), passedCheckouts: new Set() };
 /**
  * A file the auditor may read: `unlisted` when no language lists it, so it is read as `UNLISTED_TEXT_LANGUAGE` and,
  * being binary (a NUL byte in its first bytes, `binaryPrefix`, tested before it is read whole) or no regular file, is
@@ -963,7 +977,7 @@ export class CodeRuleBridge {
       await previous?.git.stop();
       const root = await realpath(this.#cwd);
       // Before the evaluator opens, which takes seconds: a shell write the agent makes meanwhile finds the text it left.
-      const since = await this.#takeResume(root, startedAt);
+      const from = await this.#takeResume(root, startedAt);
       await this.#auditor.openWorkspace(sessionId);
       const git = new GitReads();
       // After the auditor opens, so it can name the checkouts whose ignore rules apply.
@@ -972,9 +986,10 @@ export class CodeRuleBridge {
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
-        startedAt: since, walkedFrom: since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
+        startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -984,19 +999,19 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Where the session's walks start: `now`, or for a session its runtime suspended, where they stood then, with each
-   * source the evaluator held kept as last observed, so the first walk compares it as the open session's next walk would
-   * have, and finds it changed or gone. The text of each such source still as observed is read back (`#restoreHeldTexts`),
-   * and `heldTextsRead` settles once it is.
+   * Where the session's walks start: `now` with no Git seen, or for a session its runtime suspended, where they stood
+   * then and what they saw of Git, with each source the evaluator held kept as last observed, so the first walk compares
+   * it as the open session's next walk would have, and finds it changed or gone. The text of each such source still as
+   * observed is read back (`#restoreHeldTexts`), and `heldTextsRead` settles once it is.
    */
-  async #takeResume(root: string, now: number): Promise<number> {
+  async #takeResume(root: string, now: number): Promise<Pick<SessionWalkResume, "since" | "gitSeen">> {
     const resume = this.#resume;
     this.#resume = undefined;
     try {
-      if (resume === undefined) return now;
+      if (resume === undefined) return { since: now, gitSeen: NO_GIT_SEEN };
       this.#holdResumed(resume.held);
       await this.#restoreHeldTexts(root, resume.held);
-      return Math.min(now, resume.since);
+      return { since: Math.min(now, resume.since), gitSeen: resume.gitSeen };
     } finally {
       this.#heldTexts.resolve();
     }
@@ -1065,7 +1080,12 @@ export class CodeRuleBridge {
     if (discovery === undefined || discovery.cancelled) return undefined;
     const held = new Map<string, ObservedSource | undefined>();
     for (const path of this.#heldPaths()) held.set(path, this.#observed.get(path));
-    return { since: Math.min(discovery.walkedFrom, discovery.worktrees.walkedFrom ?? discovery.walkedFrom), held };
+    const { heads, unmerged, passedCheckouts } = discovery;
+    return {
+      since: Math.min(discovery.walkedFrom, discovery.worktrees.walkedFrom ?? discovery.walkedFrom),
+      held,
+      gitSeen: { heads: new Map(heads), unmerged: new Map(unmerged), passedCheckouts: new Set(passedCheckouts) },
+    };
   }
 
   /** The sources whose text the evaluator holds as the session's (`#heldByEvaluator`). */

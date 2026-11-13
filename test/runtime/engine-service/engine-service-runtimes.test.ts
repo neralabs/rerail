@@ -626,6 +626,39 @@ describe("the engine service's idle close", () => {
     expect(editsOf(batches, "app.py")).toContainEqual({ generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined });
   }, 20_000);
 
+  // The reopened session's first walk had no `HEAD` from before the quiet, so it took `HEAD`'s last move as made since:
+  // after a checkout, the agent's removal of a file it made and never committed read as Git's, recorded in Log only.
+  it("takes the agent's removal of a file it made, in its first command after the quiet, as its own, as the open session did", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true });
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Rerail Test", "-c", "user.email=test@example.invalid", ...args], { cwd: first });
+    git("commit", "--quiet", "--allow-empty", "-m", "start");
+    // `HEAD`'s last move is a checkout, which writes files, not a commit.
+    git("checkout", "--quiet", "-b", "work");
+    const [other, made] = [join(first, "other.py"), join(first, "made.py")];
+    await writeFile(other, "z = 1\n");
+    await start("a");
+    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await writes("a", "t1", "Write", made, "x = 1\n");
+    await turnEnd("a", "turn1");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const tool = { sessionId: "a", session: session("a"), toolCallId: "t2", toolName: "Bash" } as const;
+    await send({ kind: "call", eventId: "a:t2:call", ...tool, input: { command: "rm made.py" } });
+    await reopened;
+    await rm(made);
+    await send({ kind: "result", eventId: "a:t2:result", ...tool, output: "" });
+    // The rules have compiled once the reopened session's first walk looks at the files, which finds the removal.
+    looked.clear();
+    reopening.resolve();
+    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await turnEnd("a", "turn2");
+    // Checked as the session's own edit, in the session's mode, not recorded in Log as another writer's.
+    const removals = batches.filter(batch => batch.edits.some(edit => edit.path === "made.py" && edit.deleted === true));
+    expect(removals.map(batch => batch.mode ?? "session")).toEqual(["session"]);
+  }, 20_000);
+
   it("keeps a quiet session in memory while it waits on a tool call, and suspends it once the call is done", async () => {
     const { clock, service, session, send, start, ended } = await idleService();
     const tool = { sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash" } as const;
