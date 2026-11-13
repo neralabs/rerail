@@ -6,16 +6,19 @@ import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import type { AuditInput, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance } from "../../../src/engine/audit/audit.js";
+import type {
+  AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
+} from "../../../src/engine/audit/audit.js";
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RULE_PROVENANCE_STEP } from "../../../src/engine/storage/migrations.js";
+import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, RULE_PROVENANCE_STEP } from "../../../src/engine/storage/migrations.js";
 import {
   moveRuleProvenances, moveRuleProvenancesInWorker, type RuleProvenanceMoveOptions,
 } from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
 import { type ThreadWatch, vacuumGivingWay } from "../../../src/engine/storage/vacuum-giving-way.js";
 import { slowVacuumNext, untilExists } from "../../support/slow-vacuum.js";
+import { SqliteAuditStore as MainAuditStore } from "../support/main-audit-store.js";
 
 // Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
 vi.mock("node:fs", { spy: true });
@@ -141,6 +144,34 @@ function fillPages(path: string, bytes: number): void {
   } finally {
     database.close();
   }
+}
+
+/** The steps an older Rerail runs when it opens the file: this build's, without the one this change adds. */
+const OLDER_STEPS = RERAIL_MIGRATIONS.filter(step => step.id !== RULE_PROVENANCE_STEP);
+
+/**
+ * Every audit an older Rerail sharing the file lists, newest first: `main`'s audit store, on the file opened with the
+ * older build's steps. Its `get` reads each the same.
+ */
+function readAsOlder(path: string): AuditRecord[] {
+  const older = new MainAuditStore(path, openRerailDatabase(path, { migrations: OLDER_STEPS }));
+  try {
+    const { audits } = older.list({ limit: 200 });
+    for (const audit of audits) expect(older.get(audit.auditId)).toEqual(audit);
+    return audits;
+  } finally {
+    older.close();
+  }
+}
+
+/** Each audit's rule provenance as JSON text, by audit id. */
+function provenanceTexts(audits: readonly AuditRecord[]): Map<string, string> {
+  return new Map(audits.map(audit => [audit.auditId, JSON.stringify(audit.ruleProvenance)]));
+}
+
+/** An audit record without its rule provenance. */
+function withoutProvenance({ ruleProvenance: _provenance, ...rest }: AuditRecord): Omit<AuditRecord, "ruleProvenance"> {
+  return rest;
 }
 
 /** What this thread wrote to stderr while `run` ran, and what `run` resolved to. */
@@ -365,6 +396,36 @@ describe("audit rule provenance", () => {
     } finally {
       store.close();
     }
+  });
+
+  it("lets an older Rerail open the file and read every field of each audit, with [] as the provenance of those this build moved or wrote", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    // Audits sharing one provenance, one recorded before repository-owned rules, and one with none.
+    const written = writeInlineAudits(path, [app, app, app, LEGACY, []]);
+    // This build's open runs the step and moves nothing: the older build still reads each provenance in its row.
+    openRerailDatabase(path).$client.close();
+    const before = readAsOlder(path);
+    expect(provenanceTexts(before)).toEqual(new Map(written.map(({ auditId, text }) => [auditId, text])));
+
+    expect(await move(path)).toBe(4);
+    const store = new SqliteAuditStore(path);
+    let later: string;
+    let current: AuditRecord[];
+    try {
+      later = store.start(auditInput("/home/dev/app", app));
+      store.finish(later, { status: "completed" });
+      current = store.list({ limit: 200 }).audits;
+    } finally {
+      store.close();
+    }
+
+    // The older build reads `[]` as the provenance of each audit this build moved or wrote, and every other field as it
+    // read it before the move and as this build reads it.
+    const after = readAsOlder(path);
+    expect(provenanceTexts(after)).toEqual(new Map<string, string>([...written.map(({ auditId }) => auditId), later].map(auditId => [auditId, "[]"])));
+    expect(after.filter(audit => audit.auditId !== later).map(withoutProvenance)).toEqual(before.map(withoutProvenance));
+    expect(after.map(withoutProvenance)).toEqual(current.map(withoutProvenance));
   });
 
   it("leaves each audit's provenance inline on the open that upgrades, and moves it a batch per write transaction", async () => {
