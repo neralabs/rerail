@@ -98,6 +98,15 @@ impl Stat {
 /// A directory's entries: (name, is a directory), sorted by name.
 pub type Listing = Arc<Vec<(String, bool)>>;
 
+/// Fixed-width classification columns aligned with the names in a directory listing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntryType {
+    pub is_file: bool,
+    pub is_symlink: bool,
+    pub errno: i32,
+}
+pub type EntryTypes = Arc<Vec<EntryType>>;
+
 /// What the observer knows of a path: its stat when observed, and the answer computed then.
 #[derive(Clone, Debug)]
 struct Entry {
@@ -748,6 +757,11 @@ impl Observer {
         Some(listing)
     }
 
+    /// The same names as `listing`, with file, symlink and target-error columns.
+    pub fn listing_types(&mut self, _dir: &Path) -> Option<(Listing, EntryTypes)> {
+        None
+    }
+
     /// The digest of `dir`'s listing, as `listing` gives it.
     pub fn listing_digest(&mut self, dir: &Path) -> Option<[u8; 32]> {
         self.listing(dir).map(|l| listing_digest(&l))
@@ -1306,6 +1320,80 @@ mod tests {
         fresh.git(&clone).unwrap();
         assert_ne!(fresh.digest(&clone.join("a.py")), Some(d));
         assert_eq!(fresh.counts.hashed, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_metadata_classifies_files_directories_and_links() {
+        use std::os::unix::fs::symlink;
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("pkg");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("é\nfile.py"), "").unwrap();
+        std::fs::create_dir(root.join("inner")).unwrap();
+        symlink("é\nfile.py", root.join("file-link.py")).unwrap();
+        symlink("inner", root.join("dir-link")).unwrap();
+        symlink("absent", root.join("broken.py")).unwrap();
+        symlink("loop.py", root.join("loop.py")).unwrap();
+        let mut o = Observer::open(None);
+        let (names, types) = o.listing_types(&root).expect("typed directory rows");
+        let rows: Vec<_> = names.iter().zip(types.iter()).map(|((n,d), t)| (n.as_str(), *d, t.is_file, t.is_symlink, t.errno)).collect();
+        assert_eq!(rows, vec![("broken.py", false, false, true, libc::ENOENT),
+            ("dir-link", true, false, true, 0), ("file-link.py", false, true, true, 0),
+            ("inner", true, false, false, 0), ("loop.py", false, false, true, libc::ELOOP),
+            ("é\nfile.py", false, true, false, 0)]);
+    }
+
+    #[test]
+    fn directory_metadata_shares_names_and_reuses_persisted_rows() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("pkg");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.py"), "").unwrap();
+        std::fs::create_dir(root.join("inner")).unwrap();
+        let store = base.path().join("store.files");
+        let mut o = Observer::open(Some(&store));
+        let names = o.listing(&root).unwrap();
+        o.entries.get_mut(&root).unwrap().recorded_ns += 10 * RACY_NS;
+        let (same_names, types) = o.listing_types(&root).expect("typed directory rows");
+        assert!(Arc::ptr_eq(&names, &same_names), "both interfaces share their name column");
+        assert_eq!(o.counts.listed, 1, "no second directory scan");
+        o.flush(); o.written(); drop(o);
+        let mut reopened = Observer::open(Some(&store));
+        let (kept_names, kept_types) = reopened.listing_types(&root).unwrap();
+        assert_eq!((kept_names, kept_types), (names, types));
+        assert_eq!(reopened.counts.listed, 0, "the store retains typed rows");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_metadata_refreshes_link_targets_without_rescanning_names() {
+        use std::os::unix::fs::symlink;
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("pkg");
+        std::fs::create_dir(&root).unwrap();
+        let target = base.path().join("target");
+        std::fs::write(&target, "").unwrap();
+        symlink(&target, root.join("alias")).unwrap();
+        let mut o = Observer::open(None);
+        o.begin();
+        let (names, types) = o.listing_types(&root).unwrap();
+        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: true, is_symlink: true, errno: 0 }));
+        o.entries.get_mut(&root).unwrap().recorded_ns += 10 * RACY_NS;
+        o.flush();
+        // Changing the target's type leaves the listing directory's stat unchanged.
+        std::fs::remove_file(&target).unwrap(); std::fs::create_dir(&target).unwrap();
+        o.begin();
+        let (names, types) = o.listing_types(&root).unwrap();
+        assert_eq!((names[0].1, types[0]), (true, EntryType { is_file: false, is_symlink: true, errno: 0 }));
+        assert_eq!(o.counts.listed, 1);
+        o.flush();
+        std::fs::remove_dir(&target).unwrap();
+        o.begin();
+        let (names, types) = o.listing_types(&root).unwrap();
+        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT }));
+        assert_eq!(o.counts.listed, 1);
+        o.flush();
     }
 
     #[test]
