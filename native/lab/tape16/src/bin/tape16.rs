@@ -18,7 +18,7 @@ use rerail_tape_lab::{capture, edits, events, layout, report, text};
 use std::collections::{BTreeMap, HashMap};
 
 fn base() -> Solution {
-    Solution { layout: Layout::BytePlanes, codec: Codec::LpLz, cut: Cut::Whole, dict: 64 * 1024, k: 64, extras: Extras::default() }
+    Solution { layout: Layout::BytePlanes, codec: Codec::LpLz, cut: Cut::Whole, dict: 64 * 1024, k: 64, extras: Extras::default(), entropy: false }
 }
 
 /// One axis at a time from the base (`axis`: layout, cut, dict, k, extras, or all), or (`full`) every
@@ -80,6 +80,16 @@ fn grid(full: bool, axis: &str) -> Vec<Solution> {
             for codec in [Codec::LpLz, Codec::LpReplay] {
                 push(Solution { k, codec, ..b }, &mut v);
             }
+        }
+    }
+    if axis == "huff" {
+        for cut in [Cut::Whole, Cut::Target(1024)] {
+            for codec in [Codec::LzOutput, Codec::LpLz, Codec::LpReplay, Codec::LpSpan { depth: 4, cross: false }, Codec::LpSpan { depth: 4, cross: true }] {
+                for entropy in [false, true] {
+                    push(Solution { codec, cut, entropy, ..b }, &mut v);
+                }
+            }
+            push(Solution { codec: Codec::Zstd, cut, ..b }, &mut v);
         }
     }
     if on("extras") {

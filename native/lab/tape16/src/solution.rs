@@ -7,7 +7,7 @@ use crate::events::{self, Candidates, Events};
 use crate::layout::{self, Extras, Layout};
 use crate::measure::{Cost, cost};
 use crate::tree::{NONE, Tree};
-use crate::v15;
+use crate::{huff, v15};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A captured file, read and encoded once: what every solution starts from. Only the events and the source
@@ -93,7 +93,7 @@ pub fn prepare(files: Vec<File>) -> Result<Corpus, String> {
     Ok(Corpus { files: out, candidates, v15_trained })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Solution {
     pub layout: Layout,
     pub codec: Codec,
@@ -101,6 +101,8 @@ pub struct Solution {
     pub dict: usize,
     pub k: usize,
     pub extras: Extras,
+    /// The entropy stage (`huff`) over an LZ codec's sequences and literals.
+    pub entropy: bool,
 }
 
 impl Solution {
@@ -115,7 +117,15 @@ impl Solution {
         if self.extras.size {
             s += "/+size";
         }
+        if self.entropy {
+            s += "/+huff";
+        }
         s
+    }
+
+    /// Whether the entropy stage applies (only LZ codecs have sequences and literals to code).
+    pub fn huff(&self) -> bool {
+        self.entropy && self.codec.has_k()
     }
 }
 
@@ -143,14 +153,10 @@ fn lay_blocks(p: &Prepared, tree: Option<&Tree>, s: &Solution) -> (Vec<Block>, V
 }
 
 /// The dictionaries a solution needs, by language, trained on the training half's laid-out blocks.
+#[derive(Default)]
 pub struct Dicts {
     cache: HashMap<(u8, Layout, Cut, usize, bool, bool), std::sync::Arc<Dictionary>>,
-}
-
-impl Default for Dicts {
-    fn default() -> Self {
-        Dicts { cache: HashMap::new() }
-    }
+    tables: HashMap<(u8, Solution), std::sync::Arc<(huff::Table, huff::Table)>>,
 }
 
 impl Dicts {
@@ -175,6 +181,31 @@ impl Dicts {
         let d = std::sync::Arc::new(Dictionary::train(&samples, s.dict));
         self.cache.insert(key, d.clone());
         d
+    }
+
+    /// The language's Huffman tables for the solution's sequences and literals, from the training half's
+    /// compressed blocks (at most 8 MiB of them).
+    pub fn tables(&mut self, corpus: &Corpus, tag: u8, s: &Solution) -> std::sync::Arc<(huff::Table, huff::Table)> {
+        let key = (tag, Solution { entropy: false, ..*s });
+        if let Some(t) = self.tables.get(&key) {
+            return t.clone();
+        }
+        let dict = self.get(corpus, tag, s);
+        let (mut seq, mut lit) = ([0u64; 256], [0u64; 256]);
+        let mut total = 0usize;
+        for p in corpus.files.iter().filter(|p| !p.test && p.tag == tag) {
+            let tree = (s.extras.parent || s.extras.size).then(|| p.tree(corpus));
+            let laid = lay_blocks(p, tree.as_ref(), s).2;
+            let c = codec::compress_file(s.codec, &laid, &dict, s.k);
+            total += c.iter().map(Vec::len).sum::<usize>();
+            huff::count(&c, &mut seq, &mut lit);
+            if total > 8 << 20 {
+                break;
+            }
+        }
+        let t = std::sync::Arc::new((huff::Table::train(&seq), huff::Table::train(&lit)));
+        self.tables.insert(key, t.clone());
+        t
     }
 }
 
@@ -264,20 +295,24 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         // With too few training files to train on (zstd needs 8), the store's dictionary stands in.
         lang.v15_trained += if lang.trained { p.v15_trained } else { p.v15_stored } as u64;
         // Encode (E6, the writer from a tree): events, blocks, laid out, compressed.
-        let ((bs, places, compressed, laid), c) = cost(|| {
+        let tables = s.huff().then(|| dicts.tables(corpus, p.tag, s));
+        let ((bs, places, compressed, laid, coded), c) = cost(|| {
             std::hint::black_box(events::encode(&tree, p.tag, &corpus.candidates));
             let (bs, places, laid) = lay_blocks(p, Some(&tree), s);
             let compressed = codec::compress_file(s.codec, &laid, &dict, s.k);
-            (bs, places, compressed, laid)
+            let coded: Option<Vec<Vec<u8>>> = tables.as_ref().map(|t| compressed.iter().map(|c| huff::encode(c, &t.0, &t.1)).collect());
+            (bs, places, compressed, laid, coded)
         });
         row.encode += c;
         lang.blocks += bs.len() as u64;
         lang.laid += laid.iter().map(|b| b.len() as u64).sum::<u64>();
-        lang.stored += compressed.iter().map(|b| b.len() as u64).sum::<u64>();
+        lang.stored += coded.as_ref().unwrap_or(&compressed).iter().map(|b| b.len() as u64).sum::<u64>();
         if bs.len() > 1 {
             lang.placement += (places.len() * blocks::PLACEMENT_BYTES) as u64;
         }
-        if s.codec.has_k() {
+        if s.huff() {
+            lang.entropy += coded.as_ref().unwrap().iter().map(|b| b.len() as f64).sum::<f64>();
+        } else if s.codec.has_k() {
             lang.entropy += compressed.iter().map(|b| crate::lp::entropy_bytes(b)).sum::<f64>();
         } else {
             lang.entropy += compressed.iter().map(|b| b.len() as f64).sum::<f64>();
@@ -290,6 +325,15 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         }
         // Decode: every block decompressed, read back, joined, and the tree derived.
         let (back, c) = cost(|| {
+            // With the entropy stage, every block's streams are decoded first (the GPU's first pass).
+            let plain: Vec<Vec<u8>>;
+            let compressed = match (&coded, &tables) {
+                (Some(cd), Some(t)) => {
+                    plain = cd.iter().map(|c| huff::decode_block(c, &t.0, &t.1)).collect();
+                    &plain
+                }
+                _ => &compressed,
+            };
             let back: Vec<Block> = (0..compressed.len())
                 .map(|b| layout::unlay(&codec::decompress_in(s.codec, &compressed, b, &dict, laid[b].len()), s.layout, s.extras))
                 .collect();
@@ -319,12 +363,23 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
                 }
                 let i = ((rng >> 20) % n as u64) as usize;
                 let reads = kind_reads(s.layout, n, i, s.extras);
+                // With the entropy stage, the blocks the read may touch are decoded first: block k, and for
+                // cross-block spans every block before it (an upper bound: a segment could decode alone).
+                let plain: Vec<Vec<u8>>;
+                let (compressed, kb) = match (&coded, &tables) {
+                    (Some(cd), Some(t)) => {
+                        let first = if matches!(s.codec, Codec::LpSpan { cross: true, .. }) { 0 } else { k };
+                        plain = cd[first..=k].iter().map(|c| huff::decode_block(c, &t.0, &t.1)).collect();
+                        (&plain, k - first)
+                    }
+                    _ => (&compressed, k),
+                };
                 if reads.is_empty() {
-                    let all = codec::decompress_in(s.codec, &compressed, k, &dict, laid[k].len());
+                    let all = codec::decompress_in(s.codec, compressed, kb, &dict, laid[k].len());
                     std::hint::black_box(layout::unlay(&all, s.layout, s.extras).opens[i].kind);
                 } else {
                     for (off, len) in reads {
-                        codec::read_at_in(s.codec, &compressed, k, &dict, laid[k].len(), off, len, &mut out);
+                        codec::read_at_in(s.codec, compressed, kb, &dict, laid[k].len(), off, len, &mut out);
                         std::hint::black_box(&out);
                     }
                 }

@@ -25,7 +25,7 @@ impl Layout {
 }
 
 /// Fields stored beyond format 16's own (T5): a parent delta, a subtree size.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
 pub struct Extras {
     pub parent: bool,
     pub size: bool,

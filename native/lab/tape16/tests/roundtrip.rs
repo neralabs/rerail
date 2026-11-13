@@ -216,3 +216,30 @@ fn span_codecs_roundtrip_files_of_blocks() {
         assert!(cross < alone, "cross {cross} not under alone {alone}");
     }
 }
+
+#[test]
+fn the_entropy_stage_gives_back_the_lz_block() {
+    use rerail_tape_lab::huff;
+    let mut rng = Rng(5);
+    let dict = Dictionary::none();
+    let train: Vec<Vec<u8>> = (0..20).map(|_| codec::compress(Codec::LpLz, &data(&mut rng, 3000), &dict, 16)).collect();
+    let (mut sc, mut lc) = ([0u64; 256], [0u64; 256]);
+    huff::count(&train, &mut sc, &mut lc);
+    let (st, lt) = (huff::Table::train(&sc), huff::Table::train(&lc));
+    // A skewed table still codes every byte (unseen bytes get the longest codes).
+    let mut skew = [0u64; 256];
+    skew[0] = 1 << 40;
+    let sk = huff::Table::train(&skew);
+    for &n in &[1usize, 100, 5000, 40_000] {
+        let d = data(&mut rng, n);
+        for codec in [Codec::LpLz, Codec::LpReplay, Codec::LzOutput, Codec::LpSpan { depth: 4, cross: false }] {
+            for k in [1, 16, 64] {
+                let c = codec::compress(codec, &d, &dict, k);
+                for (s, l) in [(&st, &lt), (&sk, &sk)] {
+                    let e = huff::encode(&c, s, l);
+                    assert_eq!(huff::decode_block(&e, s, l), c, "{} k{k} n{n}", codec.name());
+                }
+            }
+        }
+    }
+}

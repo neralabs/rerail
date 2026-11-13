@@ -3,7 +3,7 @@
 use crate::lp::{self, Dict, Refs};
 use crate::span;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Codec {
     Raw,
     /// zstd at level 3, the store's.

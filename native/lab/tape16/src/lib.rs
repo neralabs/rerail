@@ -18,6 +18,7 @@ pub mod blocks;
 pub mod capture;
 pub mod codec;
 pub mod edits;
+pub mod huff;
 pub mod events;
 pub mod layout;
 pub mod lp;
@@ -30,3 +31,4 @@ pub mod tree;
 pub mod v15;
 #[cfg(target_os = "macos")]
 pub mod gpu;
+
