@@ -10,6 +10,66 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Integration hub and filesystem API parity
+
+The branch includes integration hub `9bfdb4cd5`, through merge `3fd200bf6`.
+It retains the hub's lattice execution, memory budgets, shared tape format, parser projections, and profiling lock repair.
+The committed merge audits have zero findings.
+The working-tree audit for the matcher-fixture merge also sees three pending scanner edits.
+Its merge message identifies those edits; `d659df1c4` commits their source-driven error-order repair.
+
+The frozen CLI is `69fd43262751e202…`, built from `3fd200bf6`.
+Its registered receipt binds the executable and all six engine source trees.
+The source pin and the 100-rule scope do not change.
+
+Both native interfaces pass all 39 recorded filesystem cases, all 35 scanner cases, and all seven unchanged upstream tests.
+The filesystem cases cover explicit scopes, ignored supplied syntax, directory enumeration order, links, decode errors, duplicates, and positives.
+The 64-file positive witness returns every complete finding in one native invocation per interface.
+The [retained receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-files-current.json.gz) contains complete observations, consumed program bytes, build records, and earlier failures.
+It explicitly sets `fullMigrationAcceptance` to false.
+
+Three rule-shape corrections precede this result:
+
+- Recursive order-key concatenation fails the engine's finite-value check.
+  The replacement derives finite directory-ancestor rows, then joins their ordered tokens once.
+- Filesystem request cones cannot read post-load option tables.
+  They now read caller arguments as run constants.
+- A metadata lookup needs a directory anchor independent of its returned filename.
+  One relation supplies the distinct parent-directory demand before the filename join.
+
+The observer retains enumeration positions beside its shared, sorted name column.
+All directory views reuse one preparation. The `dir_order` reader has a separate cache dependency.
+The persisted listing format is `DLM2`; older rows are cache misses and do not invent positions.
+Selected file symlinks can read their targets. Directory links and `..` cannot expand the configured scope.
+No Python process implements these rule decisions.
+
+The first complete replay passes 36 of 39 cases.
+The failures expose two external-file omissions and the wrong first decode error.
+The source sorts errors by `Path` components and findings by complete path strings.
+The rule now supplies distinct ordering keys for these two behaviors.
+
+The external-file omissions reveal a scheduler defect.
+The recursive execution path resumes deferred requests, but the complete-request path publishes the protocol rows without resuming them.
+A new regression first returns zero of 1,000 expected positives.
+The repair resumes deferred keys by request family before dependent consumers run.
+Both wholly deferred and mixed batches now retain all 1,000 exact values and use two whole-batch callbacks.
+The four filesystem capability tests and twelve targeted store tests also pass.
+Store checks cover persisted ordering, listing encoding, bounded atom segments, collision handling, and frame publication.
+
+All **789 tooling tests pass in 76.980 seconds**, including eight new receipt checks.
+Those checks reject missing cases, changed iteration order, dropped link positives, changed error bytes, split batches, and missing program bytes.
+The inventory's source and file hashes pass verification.
+The strict whole-migration gate still rejects missing full assertion evidence, first at `no_source_inspection`.
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+
+The final root build costs 108.54 seconds wall, 459.36 seconds user CPU, and 27.23 seconds system CPU.
+The earlier hub-293 build loses four bounded attempts before its completed build; its receipt retains every attempt.
+Compilation is separate from rule execution. No full-repository or whole-batch cold benchmark runs.
+Cleanup removes 12.07 GiB of obsolete compiler caches after every local compiler exits.
+Current build caches, sources, executables, and parity evidence remain available.
+
+Remaining work includes relative-root API checks, conversion helpers, CLI, production reports, history, updates, removal controls, and strict admission.
+
 ## 2026-11-13 — Native plugin reports and selective capture
 
 The side-effects plugin metadata and supplied-fact reporter now execute through native policies.
