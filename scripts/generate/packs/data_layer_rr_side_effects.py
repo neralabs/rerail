@@ -75,7 +75,7 @@ def main():
   if item['check']=='plan_scope_side_effects':item['ruleSha256']=sha(text.encode())
  for item in manifest['files']:
   if item['destination']==str(path):item.update(sha256=sha(text.encode()),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
- for target in [config,repository,events,plugin,select,Path('docs/rule-syntax/lib/data-layer/side-effects-select.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-plugin.rr'),Path('docs/rule-syntax/lib/python/values.rr'),Path('docs/rule-syntax/lib/python/paths.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
+ for target in [config,repository,events,plugin,select,Path('docs/rule-syntax/lib/data-layer/side-effects-files.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-select.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-plugin.rr'),Path('docs/rule-syntax/lib/python/values.rr'),Path('docs/rule-syntax/lib/python/paths.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
   content=(ROOT/target).read_bytes();row=dict(destination=str(target),sha256=sha(content),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
   old=next((r for r in manifest['files']if r['destination']==str(target)),None)
   if old is None:manifest['files'].append(row)

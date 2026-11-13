@@ -292,6 +292,9 @@
 // directory entry itself. errno is zero on successful classification, otherwise the target's OS error.
 // A link target is refreshed each run, even if the listing directory itself did not change.
 .decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, errno: number)
+// Original enumeration position, sharing the same sorted name storage and directory scan.
+// Only consumers of this relation depend on enumeration order in persistent reuse.
+.decl dir_order(dir: symbol, name: symbol, ordinal: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 // The same demanded byte snapshot as file_line. InvalidUtf8 retains the raw bytes
 // and Python-compatible decode positions; OsError retains errno and strerror.

@@ -518,7 +518,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "fde17e9613ee3642c4b99b18a432efd87c692096ae2a31824f6bc76a5035e04a",
+      "sha256": "b915d48d72ae4f2c0b55bac5bd79f365edbff3dcc7ee4b38083f2229a3efcbf2",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -702,6 +702,11 @@
           "before": "337b937cd81ed6ea40d27d48083bdea6bf3c6f8472f1ea9f4e50783944240a12",
           "after": "fde17e9613ee3642c4b99b18a432efd87c692096ae2a31824f6bc76a5035e04a",
           "reason": "Integration hub 916adb316 renumbers decision citations without changing rule behavior"
+        },
+        {
+          "before": "fde17e9613ee3642c4b99b18a432efd87c692096ae2a31824f6bc76a5035e04a",
+          "after": "b915d48d72ae4f2c0b55bac5bd79f365edbff3dcc7ee4b38083f2229a3efcbf2",
+          "reason": "Adopt hub 85 shared libraries and translate the source-recorded filesystem APIs with shared directory order"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -3451,10 +3456,17 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/side-effects-files.rr",
-      "sha256": "752bc67715d1c3589dc15a17696cc725f2d8f7a3d8a3d4fe682c2fe3b802444d",
+      "sha256": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py",
+      "repairs": [
+        {
+          "before": "752bc67715d1c3589dc15a17696cc725f2d8f7a3d8a3d4fe682c2fe3b802444d",
+          "after": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
+          "reason": "Adopt hub 85 shared libraries and translate the source-recorded filesystem APIs with shared directory order"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/side-effects-events.rr",
@@ -6534,21 +6546,26 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
+    "upstreamCommit": "85d682828192024139c5c07909eb3460f97e254d",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Integration hub with generic filesystem metadata, typed read errors, stated requests and load aliases",
+    "status": "Integration hub 85 with generic shared directory metadata, enumeration positions, selected file links, typed errors and value primitives",
     "nativeExtensions": [
+      {
+        "path": "native/src/code_rule_dsl/cpython/value.rs",
+        "sha256": "8bb5b1e37a14937bf419f79a2761a6647c690235aff4e3da7df8b541e3c915a6",
+        "reason": "Expose the existing native Python float formatter across the integrated crate boundary"
+      },
       {
         "path": "native/src/code_rule_dsl/logic/answers.rs",
         "sha256": "f51b8b2de4f019ea55b24c6d9788a1e55bc72c2ab084e51e0bf97ea6d47042f1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "5ac03256fa476ef6d7af87cad5c8838227ab046bf3be03fcac0dde5319750349"
+        "sha256": "aa1b854ce92eddf26ffdc06cb7d324b3559ae0604d6394ab3ccc4a8d9bafe290"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "4343bbeeeda70ac0ec5ed4cc951f158841952e3dc1f0c718d72133ca50856d76"
+        "sha256": "95a9039ae26c1cd8edf4a12aa00d0b163cee9bd3bf1d741c4ed4e7e333ad8d3f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
@@ -6568,15 +6585,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "253bf95ff22223c6ad102304dd3b0e1b013ed7774d891d95eb37f407eb0788a2"
+        "sha256": "49fde4ff9b269ab9e8e19ae898c2ff828497352945daf5ef1312931b605dc7a1"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "0b4a95748eff7183ed9a48cfd63832564c89fef049c9d5fd91926a8848d98b07"
+        "sha256": "ae2dff1c83d3e7706c964e65953840dacde510cb7ef1bfd6e34a185dc84d70b4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/simplify.rs",
-        "sha256": "9226a6b238517064e5b9905e6ef95dd8aebc711ea244a9bba2aa4b32537c1cf6"
+        "sha256": "4c53f8ea7a415d54e3b0c7b0a9a99431def4a241b94444ca391162874a8a7457"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
@@ -6585,20 +6602,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/mod.rs",
-        "sha256": "e8d592e9aad6b32bcf4ddc018b3a78f187b0896691e61b200c9cfd0c66b3e1df",
+        "sha256": "cf28469715c177cdec46c9fa6c95ff1ecb3b2b99751474f05af11f9fba30975f",
         "reason": "Generic native primitive float formatting for typed caller value graphs"
       },
       {
         "path": "native/src/content_store/observe.rs",
-        "sha256": "223ebd05f0778bd329d56871093d4bd440c8bdaa37bbd7a336f6715a95c7ab7c"
-      },
-      {
-        "path": "native/src/code_rule_dsl/cpython/value.rs",
-        "sha256": "8bb5b1e37a14937bf419f79a2761a6647c690235aff4e3da7df8b541e3c915a6",
-        "reason": "Expose the existing native Python float formatter across the integrated crate boundary"
+        "sha256": "f7e4a35a0da4ffa525f811b0fcdcf687220e30076d6072df10ffc4a37a1c0322"
       }
     ],
-    "previousUpstreamCommit": "64db9edc871058e5ba525213bcb2ed95751ff3e9",
+    "previousUpstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "artifactHistory": [
       {
@@ -6929,58 +6941,45 @@
         "wallSeconds": 68.44,
         "userCpuSeconds": 446.32,
         "systemCpuSeconds": 24.07
-      }
-    ],
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
-      "engineCommit": "35c046058d2a50116c0352e9950eec166bb2926c",
-      "sourceTrees": {
-        "native": "068ab70addece667ed1e6fc098503e7eaa053f9b",
-        "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
-      }
-    },
-    "cliArtifact": {
-      "format": "rerail.root-engine-build/v1",
-      "engineCommit": "35c046058d2a50116c0352e9950eec166bb2926c",
-      "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
-      "sourceTrees": {
-        "native": "068ab70addece667ed1e6fc098503e7eaa053f9b",
-        "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
       },
-      "path": ".rerail/modern-engine-alignment/cli-85f4fc1383defc39",
-      "sha256": "85f4fc1383defc39074770ea2255aa446b06dae435f8f80d1de7049cbf7ce572",
-      "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
-      "buildAttempts": [
-        {
-          "log": "build.log",
-          "status": "compile-error",
-          "engineCommit": "3867f267f7239eb0495c5efa6e3a1e328de58504",
-          "wallSeconds": 9.0,
-          "userCpuSeconds": 37.07,
-          "systemCpuSeconds": 13.05
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "35c046058d2a50116c0352e9950eec166bb2926c",
+        "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
+        "sourceTrees": {
+          "native": "068ab70addece667ed1e6fc098503e7eaa053f9b",
+          "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
+          "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
         },
-        {
-          "log": "build-2.log",
-          "status": "passed",
-          "engineCommit": "35c046058d2a50116c0352e9950eec166bb2926c",
-          "wallSeconds": 8.43,
-          "userCpuSeconds": 55.88,
-          "systemCpuSeconds": 2.82
-        }
-      ],
-      "wallSeconds": 17.43,
-      "userCpuSeconds": 92.95,
-      "systemCpuSeconds": 15.87
-    }
+        "path": ".rerail/modern-engine-alignment/cli-85f4fc1383defc39",
+        "sha256": "85f4fc1383defc39074770ea2255aa446b06dae435f8f80d1de7049cbf7ce572",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "log": "build.log",
+            "status": "compile-error",
+            "engineCommit": "3867f267f7239eb0495c5efa6e3a1e328de58504",
+            "wallSeconds": 9.0,
+            "userCpuSeconds": 37.07,
+            "systemCpuSeconds": 13.05
+          },
+          {
+            "log": "build-2.log",
+            "status": "passed",
+            "engineCommit": "35c046058d2a50116c0352e9950eec166bb2926c",
+            "wallSeconds": 8.43,
+            "userCpuSeconds": 55.88,
+            "systemCpuSeconds": 2.82
+          }
+        ],
+        "wallSeconds": 17.43,
+        "userCpuSeconds": 92.95,
+        "systemCpuSeconds": 15.87
+      }
+    ]
   },
   "engineSourceSnapshots": [
     {

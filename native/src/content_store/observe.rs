@@ -104,6 +104,8 @@ pub struct EntryType {
     pub is_file: bool,
     pub is_symlink: bool,
     pub errno: i32,
+    /// Original directory enumeration position; names remain sorted and shared.
+    pub ordinal: u64,
 }
 pub type EntryTypes = Arc<Vec<EntryType>>;
 
@@ -272,19 +274,20 @@ fn listing_digest(entries: &[(String, bool)]) -> [u8; 32] {
 // A fixed-width type column accompanies each name. Legacy boolean-only rows are cache misses.
 fn encode_listing(entries: &[(String, bool)], types: &[EntryType]) -> Option<Vec<u8>> {
     if entries.len() != types.len() { return None; }
-    let mut out = b"\0DLM1".to_vec();
+    let mut out = b"\0DLM2".to_vec();
     for ((name, is_dir), ty) in entries.iter().zip(types) {
         let size = u32::try_from(name.len()).ok()?;
         out.extend_from_slice(&size.to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.push(u8::from(*is_dir) | u8::from(ty.is_file) << 1 | u8::from(ty.is_symlink) << 2);
         out.extend_from_slice(&ty.errno.to_le_bytes());
+        out.extend_from_slice(&ty.ordinal.to_le_bytes());
     }
     Some(out)
 }
 
 fn decode_listing(bytes: &[u8]) -> Option<(Vec<(String, bool)>, Vec<EntryType>)> {
-    let mut rest = bytes.strip_prefix(b"\0DLM1")?;
+    let mut rest = bytes.strip_prefix(b"\0DLM2")?;
     let (mut entries, mut types) = (Vec::new(), Vec::new());
     while !rest.is_empty() {
         let size = u32::from_le_bytes(rest.get(..4)?.try_into().ok()?) as usize;
@@ -295,8 +298,9 @@ fn decode_listing(bytes: &[u8]) -> Option<(Vec<(String, bool)>, Vec<EntryType>)>
         if flags & !7 != 0 { return None; }
         let errno = i32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
         entries.push((name, flags & 1 != 0));
-        types.push(EntryType { is_file: flags & 2 != 0, is_symlink: flags & 4 != 0, errno });
-        rest = rest.get(5..)?;
+        let ordinal = u64::from_le_bytes(rest.get(5..13)?.try_into().ok()?);
+        types.push(EntryType { is_file: flags & 2 != 0, is_symlink: flags & 4 != 0, errno, ordinal });
+        rest = rest.get(13..)?;
     }
     Some((entries, types))
 }
@@ -773,12 +777,13 @@ impl Observer {
             return self.refresh_directory(&dir, entry);
         }
         self.counts.listed += 1;
-        let mut rows: Vec<_> = std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).map(|e| {
-            let (is_dir, ty) = match e.file_type() {
+        let mut rows: Vec<_> = std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).enumerate().map(|(ordinal, e)| {
+            let (is_dir, mut ty) = match e.file_type() {
                 Ok(t) if t.is_symlink() => self.link_type(&e.path()),
-                Ok(t) => (t.is_dir(), EntryType { is_file: t.is_file(), is_symlink: false, errno: 0 }),
-                Err(e) => (false, EntryType { is_file: false, is_symlink: false, errno: e.raw_os_error().unwrap_or(-1) }),
+                Ok(t) => (t.is_dir(), EntryType { is_file: t.is_file(), is_symlink: false, errno: 0, ordinal: 0 }),
+                Err(e) => (false, EntryType { is_file: false, is_symlink: false, errno: e.raw_os_error().unwrap_or(-1), ordinal: 0 }),
             };
+            ty.ordinal = ordinal as u64;
             (e.file_name().to_string_lossy().into_owned(), is_dir, ty)
         }).collect();
         rows.sort_by(|a,b| a.0.cmp(&b.0));
@@ -793,8 +798,8 @@ impl Observer {
     fn link_type(&mut self, path: &Path) -> (bool, EntryType) {
         self.counts.stats += 1;
         match std::fs::metadata(path) {
-            Ok(m) => (m.is_dir(), EntryType { is_file: m.is_file(), is_symlink: true, errno: 0 }),
-            Err(e) => (false, EntryType { is_file: false, is_symlink: true, errno: e.raw_os_error().unwrap_or(-1) }),
+            Ok(m) => (m.is_dir(), EntryType { is_file: m.is_file(), is_symlink: true, errno: 0, ordinal: 0 }),
+            Err(e) => (false, EntryType { is_file: false, is_symlink: true, errno: e.raw_os_error().unwrap_or(-1), ordinal: 0 }),
         }
     }
 
@@ -805,7 +810,8 @@ impl Observer {
         if self.open == 0 || self.directory_epochs.get(dir) != Some(&self.flushes) {
             for i in 0..types.len() {
                 if !types[i].is_symlink { continue; }
-                let (is_dir, ty) = self.link_type(&dir.join(&names[i].0));
+                let (is_dir, mut ty) = self.link_type(&dir.join(&names[i].0));
+                ty.ordinal = types[i].ordinal;
                 if names[i].1 != is_dir { Arc::make_mut(&mut names)[i].1 = is_dir; changed = true; }
                 if types[i] != ty { Arc::make_mut(&mut types)[i] = ty; changed = true; }
             }
@@ -1434,20 +1440,20 @@ mod tests {
         let mut o = Observer::open(None);
         o.begin();
         let (names, types) = o.listing_types(&root).unwrap();
-        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: true, is_symlink: true, errno: 0 }));
+        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: true, is_symlink: true, errno: 0, ordinal: 0 }));
         o.entries.get_mut(&root).unwrap().recorded_ns += 10 * RACY_NS;
         o.flush();
         // Changing the target's type leaves the listing directory's stat unchanged.
         std::fs::remove_file(&target).unwrap(); std::fs::create_dir(&target).unwrap();
         o.begin();
         let (names, types) = o.listing_types(&root).unwrap();
-        assert_eq!((names[0].1, types[0]), (true, EntryType { is_file: false, is_symlink: true, errno: 0 }));
+        assert_eq!((names[0].1, types[0]), (true, EntryType { is_file: false, is_symlink: true, errno: 0, ordinal: 0 }));
         assert_eq!(o.counts.listed, 1);
         o.flush();
         std::fs::remove_dir(&target).unwrap();
         o.begin();
         let (names, types) = o.listing_types(&root).unwrap();
-        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT }));
+        assert_eq!((names[0].1, types[0]), (false, EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT, ordinal: 0 }));
         assert_eq!(o.counts.listed, 1);
         o.flush();
     }
@@ -1455,14 +1461,35 @@ mod tests {
     #[test]
     fn listings_round_trip_through_the_store_encoding() {
         let l = vec![("a".to_owned(), true), ("b.py".to_owned(), false)];
-        let types = vec![EntryType { is_file: false, is_symlink: false, errno: 0 }, EntryType { is_file: true, is_symlink: false, errno: 0 }];
+        let types = vec![EntryType { is_file: false, is_symlink: false, errno: 0, ordinal: 0 }, EntryType { is_file: true, is_symlink: false, errno: 0, ordinal: 0 }];
         assert_eq!(decode_listing(&encode_listing(&l, &types).unwrap()).unwrap(), (l, types));
         assert_eq!(decode_listing(&encode_listing(&[], &[]).unwrap()).unwrap(), (Vec::new(), Vec::new()));
         let l = vec![("é\nfile".to_owned(), false)];
-        let types = vec![EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT }];
+        let types = vec![EntryType { is_file: false, is_symlink: true, errno: libc::ENOENT, ordinal: 0 }];
         assert_eq!(decode_listing(&encode_listing(&l, &types).unwrap()).unwrap(), (l, types));
+        assert!(decode_listing(b"\0DLM1").is_none(), "old metadata rows cannot invent order");
         assert!(decode_listing(b"ffile.py").is_none(), "old rows cannot invent metadata");
         assert!(decode_listing(b"\0DLM1\xff").is_none(), "malformed lengths fail closed");
+    }
+
+    #[test]
+    fn directory_order_survives_sorted_names_and_persistent_reuse() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root"); std::fs::create_dir(&root).unwrap();
+        for name in ["z.py", "a.py", ".py", "sub"] { std::fs::write(root.join(name), "").unwrap(); }
+        let actual: Vec<String> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        let store = base.path().join("observed.files");
+        let mut observer = Observer::open(Some(&store));
+        let (names, types) = observer.listing_types(&root).unwrap();
+        let mut ordered: Vec<_> = names.iter().zip(types.iter()).map(|((n,_),t)| (t.ordinal,n.clone())).collect();
+        ordered.sort_by_key(|(i,_)| *i);
+        assert_eq!(ordered.into_iter().map(|(_,n)| n).collect::<Vec<_>>(), actual);
+        observer.entries.get_mut(&root).unwrap().recorded_ns += 10 * RACY_NS;
+        observer.flush(); drop(observer);
+        let mut observer = Observer::open(Some(&store));
+        let (kept_names, kept_types) = observer.listing_types(&root).unwrap();
+        assert_eq!(kept_names, names); assert_eq!(kept_types, types);
+        assert_eq!(observer.counts.listed, 0, "order and types persist with one name column");
     }
 }
 

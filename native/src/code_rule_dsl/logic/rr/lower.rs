@@ -3484,7 +3484,7 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, a file's lines, `file_line(path, i, text)` (from 1), and a file's content
 /// digest, `file_digest(path, c)` (a cache key's, decision 0103: a library's tape is kept by it).
-pub const WORLD: [(&str, &str); 5] = [("dir_entry", "rr_dir_req"), ("dir_metadata", "rr_dir_meta_req"), ("file_line", "rr_file_req"),
+pub const WORLD: [(&str, &str); 6] = [("dir_entry", "rr_dir_req"), ("dir_metadata", "rr_dir_meta_req"), ("dir_order", "rr_dir_order_req"), ("file_line", "rr_file_req"),
     ("file_error", "rr_file_error_req"), ("file_digest", "rr_digest_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {

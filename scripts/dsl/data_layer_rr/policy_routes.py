@@ -10,7 +10,7 @@ def policy_filename(check, entry):
         return 'plan-scope-directory-discovery.rr'
     if check=='plan_scope_side_effects' and entry=='_pse_events':
         return 'plan-scope-side-effects-events.rr'
-    if check=='plan_scope_side_effects' and entry in {'_pse_repository','blocking_violations'}:
+    if check=='plan_scope_side_effects' and entry in {'_pse_repository','_pse_files','_pse_iter','blocking_violations'}:
         return 'plan-scope-side-effects-repository.rr'
     if check=='plan_scope_side_effects' and entry=='_directory_discovery':
         return 'plan-scope-directory-discovery.rr'

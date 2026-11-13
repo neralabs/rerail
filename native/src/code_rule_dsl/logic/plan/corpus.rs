@@ -5114,7 +5114,7 @@ fn run_observed(
                 move |req: &str, key: &[i64]| -> bool {
                     let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
                     let path = std::path::Path::new(&text);
-                    req != "rr_dir_meta_req" && roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+                    !matches!(req, "rr_dir_meta_req" | "rr_dir_order_req") && roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
                 }
             });
             let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
@@ -5240,10 +5240,10 @@ fn run_observed(
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
                 // Intern one complete demand batch, rather than one batch per requested directory/file.
-                if matches!(*produced, "dir_entry" | "dir_metadata") {
+                if matches!(*produced, "dir_entry" | "dir_metadata" | "dir_order") {
                     let directories: Vec<_> = rows.iter().map(|row| {
                         let asked = text(row[0])?;
-                        Ok((row[0], if *produced == "dir_metadata" { world.dir_types(&asked) } else {
+                        Ok((row[0], if *produced == "dir_order" { world.dir_orders(&asked) } else if *produced == "dir_metadata" { world.dir_types(&asked) } else {
                             let names = world.dir(&asked); (names, Default::default())
                         }))
                     }).collect::<Result<_>>()?;
@@ -5252,7 +5252,9 @@ fn run_observed(
                     for (key, (names, types)) in &directories {
                         for (i, (_, is_dir)) in names.iter().enumerate() {
                             let name = encoded.next().expect("one atom per directory name");
-                            if *produced == "dir_metadata" {
+                            if *produced == "dir_order" {
+                                out.push(vec![*key, name, types[i].ordinal as i64]);
+                            } else if *produced == "dir_metadata" {
                                 let t = types[i];out.push(vec![*key, name, i64::from(t.is_file), i64::from(t.is_symlink), i64::from(t.errno)]);
                             } else { out.push(vec![*key, name, i64::from(*is_dir)]); }
                         }

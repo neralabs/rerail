@@ -1,21 +1,48 @@
 // scan_repo uses Path.rglob, then an explicit FileScopeSpec with tests included.
 // Root and source arguments come from the caller; native demand chooses the files.
+#include "python/paths.rr"
 .decl pse_walk(path:symbol)
 pse_walk(".") :- env("pse.api","repository").
 pse_walk(cat(p,"/",name)) :- pse_walk(p),dir_entry(p,name,1),dir_metadata(p,name,_,0,_),!pse_constant("SKIP_DIRS",name).
 .decl pse_disk_file(path:symbol)
 pse_disk_file(@replace_all(cat(p,"/",name),"\\A\\./","")) :- pse_walk(p),dir_entry(p,name,0),dir_metadata(p,name,1,_,_),suffix(".py",name),name!=".py".
+// Explicit scopes bypass repository skip directories, as FileScopeSpec does.
+pyp_join(2*i,root,p) :- option("entryPoint","_pse_files"),option("psePhysicalRoot",root),option_item("pseFiles",i,p).
+pyp_join(2*i+1,root,p) :- option("entryPoint","_pse_files"),option("pseOwnerRoot",root),option_item("pseFiles",i,p).
+.decl pse_explicit(physical:symbol,logical:symbol)
+pse_explicit(p,l) :- option("entryPoint","_pse_files"),option_item("pseFiles",i,_),pyp_path(2*i,p),pyp_path(2*i+1,l).
+pse_disk_file(p) :- pse_explicit(p,_),dir_metadata(@dir(p),name,1,_,_),name=@replace_all(p,"(?s).*/",""),suffix(".py",name),name!=".py".
+.decl pse_relative(path:symbol,relative:symbol)
+pse_relative(p,".") :- pse_explicit(_,p),option("pseOwnerRoot",p).
+pse_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- pse_explicit(_,p),option("pseOwnerRoot",r),r!="/",r!="//",r!=".",prefix(cat(r,"/"),p).
+pse_relative(p,@slice(p,1,strlen(p))) :- pse_explicit(_,p),option("pseOwnerRoot","/"),p!="/",prefix("/",p),!prefix("//",p).
+pse_relative(p,@slice(p,2,strlen(p))) :- pse_explicit(_,p),option("pseOwnerRoot","//"),p!="//",prefix("//",p).
+pse_relative(p,p) :- pse_explicit(_,p),option("pseOwnerRoot","."),!prefix("/",p).
+.decl pse_output(path:symbol,output:symbol)
+pse_output(p,p) :- pse_disk_file(p),option("entryPoint","_pse_repository").
+pse_output(p,r) :- pse_disk_file(p),pse_explicit(p,l),pse_relative(l,r).
+pse_output(p,l) :- pse_disk_file(p),pse_explicit(p,l),!pse_relative(l,_).
 .decl pse_demand(path:symbol)
 pse_demand(p) :- pse_disk_file(p),!pse_read_failure(_),file_line(p,_,line_text),pse_constant("PLAN_OPENERS",trigger),contains(trigger,line_text).
 load(p,cat("pse:",p),"python") :- pse_demand(p).
 .decl pse_disk_doc(d:number,path:symbol)
 pse_disk_doc(d,p) :- pse_demand(p),loaded(c,cat("pse:",p),"python"),doc(d,c,_).
 .violation SideEffectsDiskFact(at:span,ordinal:number,source_code:symbol,file_path:symbol,line_number:number,source_message:symbol,severity:symbol) code "PSE_FACT" "{source_message}"
-SideEffectsDiskFact(@place("",0),i,c,p,l,m,s) :- option("entryPoint","_pse_repository"),pse_disk_doc(d,p),!syntax_error(d,_,_),pse_finding(n,c,m,s),docof(n,d),pse_order(n,i),pse_line(n,l).
+SideEffectsDiskFact(@place("",0),i,c,output,l,m,s) :- pse_disk_doc(d,p),pse_output(p,output),!syntax_error(d,_,_),pse_finding(n,c,m,s),docof(n,d),pse_order(n,i),pse_line(n,l).
 .violation SideEffectsBlocking(at:span,ordinal:number) code "PSE_BLOCKING" "Blocking violation index"
 SideEffectsBlocking(@place("",0),i) :- option("entryPoint","blocking_violations"),option_item("pseSeverities",i,"error").
 
 .decl pse_read_failure(path:symbol)
 pse_read_failure(p) :- pse_disk_file(p),file_error(p,_,_,_,_,_,_,_).
 .violation SideEffectsReadError(at:span,file_path:symbol,io_kind:symbol,errno:number,detail:symbol,bytes_hex:symbol,start:number,end:number,reason:symbol) code "PSE_READ_ERROR" "Native source read error"
-SideEffectsReadError(@place("",0),p,k,n,d,b,s,e,r) :- pse_disk_file(p),file_error(p,k,n,d,b,s,e,r).
+SideEffectsReadError(@place("",0),output,k,n,d,b,s,e,r) :- pse_disk_file(p),pse_output(p,output),file_error(p,k,n,d,b,s,e,r).
+
+// pathlib.rglob emits a directory's matches before walking its real child directories.
+// Enumeration positions are independent of the shared, sorted name column.
+.decl pse_iter_walk(path:symbol,order_key:symbol)
+pse_iter_walk(".","") :- option("entryPoint","_pse_iter").
+.decl pse_entry_order(path:symbol,name:symbol,padded:symbol)
+pse_entry_order(p,n,@slice(s,strlen(s)-20,strlen(s))) :- pse_iter_walk(p,_),dir_order(p,n,i),s=cat("00000000000000000000",to_string(i)).
+pse_iter_walk(cat(p,"/",n),cat(k,"1",i,"/")) :- pse_iter_walk(p,k),dir_entry(p,n,1),dir_metadata(p,n,_,0,_),pse_entry_order(p,n,i),!pse_constant("SKIP_DIRS",n).
+.violation SideEffectsIter(at:span,path:symbol,order_key:symbol) code "PSE_ITER" "Selected Python path"
+SideEffectsIter(@place("",0),@replace_all(cat(p,"/",n),"\\A\\./",""),cat(k,"0",i)) :- pse_iter_walk(p,k),dir_entry(p,n,_),pse_entry_order(p,n,i),suffix(".py",n),!pse_constant("SKIP_DIRS",n).

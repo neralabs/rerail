@@ -19,7 +19,8 @@
 //! module is the part that touches the file system: what may be read, reading it, and naming a loaded document.
 //!
 //! Only paths under the corpus root, or under a directory a setting names (`env(k, v)` with v a directory, relative
-//! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
+//! to the root or absolute), are read. A selected file symlink in those directories may read its target;
+//! directory symlinks do not expand those roots. A path elsewhere, or missing, has no entries or lines.
 
 use super::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
@@ -76,6 +77,7 @@ pub(super) struct World {
     root: PathBuf,
     dirs: BTreeMap<String, Directory>,
     metadata_reads: BTreeSet<String>,
+    order_reads: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
     digests: BTreeMap<String, String>,
     file_errors: BTreeMap<String, FileError>,
@@ -120,8 +122,16 @@ impl World {
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
     /// Resolved by phase 0's observer: where the journal says nothing changed, with no `realpath` (decision 0105).
     fn allowed(&self, asked: &str) -> Option<PathBuf> {
-        let path = super::observe(|o| o.canonical(&self.root.join(asked)))?;
-        self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
+        let logical = self.root.join(asked);
+        let path = super::observe(|o| o.canonical(&logical))?;
+        if self.roots.iter().any(|r| path.starts_with(r)) { return Some(path); }
+        // A final file link is a selected resource, not a directory scope. Its parent must itself
+        // resolve inside the configured roots. This excludes ../ and directory-link escapes.
+        let parent = super::observe(|o| o.canonical(logical.parent()?))?;
+        (self.roots.iter().any(|r| parent.starts_with(r))
+            && std::fs::symlink_metadata(&logical).is_ok_and(|m| m.is_symlink())
+            && super::observe(|o| o.kind(&path)) == crate::content_store::observe::Kind::File)
+            .then_some(path)
     }
 
     /// Both directory interfaces share one observer preparation for each request key.
@@ -141,6 +151,12 @@ impl World {
     /// File/symlink/error columns align with the same name column as dir_entry.
     pub(super) fn dir_types(&mut self, asked: &str) -> Directory {
         self.metadata_reads.insert(asked.to_owned());
+        self.directory(asked)
+    }
+
+    /// Enumeration positions share the same sorted names and observer preparation.
+    pub(super) fn dir_orders(&mut self, asked: &str) -> Directory {
+        self.order_reads.insert(asked.to_owned());
         self.directory(asked)
     }
 
@@ -330,6 +346,7 @@ impl World {
         for (asked, (entries, types)) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
             if self.metadata_reads.contains(asked) { out.push(("dir-metadata".to_owned(), asked.clone(), metadata_digest(entries, types))); }
+            if self.order_reads.contains(asked) { out.push(("dir-order".to_owned(), asked.clone(), order_digest(entries, types))); }
         }
         for asked in self.files.keys() {
             out.push(("file".to_owned(), asked.clone(), self.file_digests.get(asked).cloned().unwrap_or_else(|| self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default())));
@@ -353,6 +370,7 @@ impl World {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
                 "dir-metadata" => { let (names, types) = self.dir_types(path); metadata_digest(&names, &types) },
+                "dir-order" => { let (names, types) = self.dir_orders(path); order_digest(&names, &types) },
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
@@ -417,6 +435,15 @@ fn metadata_digest(entries: &[(String, bool)], types: &[crate::content_store::ob
     hex(&h.finalize())
 }
 
+fn order_digest(entries: &[(String, bool)], types: &[crate::content_store::observe::EntryType]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for ((name, _), ty) in entries.iter().zip(types) {
+        h.update((name.len() as u64).to_le_bytes()); h.update(name.as_bytes()); h.update(ty.ordinal.to_le_bytes());
+    }
+    hex(&h.finalize())
+}
+
 /// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
 pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
@@ -425,6 +452,21 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String
 #[cfg(test)]
 mod directory_metadata_tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn selected_file_links_can_read_targets_but_do_not_expand_directory_scope() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root"); std::fs::create_dir(&root).unwrap();
+        let outside = base.path().join("outside.py"); std::fs::write(&outside,"selected\n").unwrap();
+        std::os::unix::fs::symlink(&outside,root.join("alias.py")).unwrap();
+        std::os::unix::fs::symlink(base.path(),root.join("directory-link")).unwrap();
+        let mut world=World::new(&root,&front::Program::default());
+        assert_eq!(world.file("alias.py"),vec!["selected".to_owned()]);
+        assert!(world.file("../outside.py").is_empty(),"an outside spelling still needs an explicitly configured root");
+        assert!(world.file("directory-link/outside.py").is_empty(),"a directory link cannot widen lookup scope");
+        assert!(world.dir("directory-link").is_empty());
+    }
     #[test]
     fn directory_metadata_world_shares_preparation_between_views() {
         let base = tempfile::tempdir().unwrap();
@@ -440,6 +482,20 @@ mod directory_metadata_tests {
         assert!(types[0].is_file);assert!(!types[1].is_file);
         assert!(std::sync::Arc::ptr_eq(&names, &world.dir_types(".").0));
         assert_eq!(super::super::observe(|o| o.counts.listed) - before, 1);
+        let (ordered_names, _) = world.dir_orders(".");
+        assert!(std::sync::Arc::ptr_eq(&basic, &ordered_names));
+        assert_eq!(super::super::observe(|o| o.counts.listed) - before, 1);
+        assert!(world.consulted().iter().any(|(what,_,_)| what == "dir-order"));
+    }
+
+    #[test]
+    fn directory_order_has_its_own_cache_dependency() {
+        use crate::content_store::observe::EntryType;
+        let names = vec![("a.py".to_owned(), false), ("b.py".to_owned(), false)];
+        let a = EntryType { is_file: true, is_symlink: false, errno: 0, ordinal: 0 };
+        let b = EntryType { ordinal: 1, ..a };
+        assert_eq!(metadata_digest(&names, &[a,b]), metadata_digest(&names, &[b,a]));
+        assert_ne!(order_digest(&names, &[a,b]), order_digest(&names, &[b,a]));
     }
 
     #[cfg(unix)]
