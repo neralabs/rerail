@@ -1,13 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
-import { openRerailDatabase, SqliteAuditStore } from "../../src/engine/index.js";
-import { ingestEngineEvent } from "../../src/runtime/index.js";
+import { codeRuleSchema, openRerailDatabase } from "../../src/engine/index.js";
+import { ingestEngineEvent, RerailRuntime } from "../../src/runtime/index.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 import { slowVacuumNext, untilExists } from "../support/slow-vacuum.js";
-import { startTestRepository } from "../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -151,13 +151,17 @@ describe("the daemon's move of audit rule provenance", () => {
     expect(longest).toBeLessThan(2_000);
   }, TEST_MS);
 
-  it("answers on its thread and records a session start sent to it, then an audit on that thread, each while the move's VACUUM holds the database", async () => {
+  it("answers on its thread and records an edit's audit, then a session start, sent to it while the move's VACUUM holds the database", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
-    startTestRepository(home, databasePath);
-    // The store class the daemon's runtime records an edit's audit through, open before the move as the daemon's stores
-    // are, on this thread, which is the daemon's: it waits for the write lock here, up to its 5 s busy timeout.
-    const audits = new SqliteAuditStore(databasePath);
-    cleanups.push(() => audits.close());
+    // The checkout sessions edit, apart from the database: one rule on its Python files, started as set-up leaves it.
+    const checkout = join(home, "app");
+    mkdirSync(checkout);
+    setUpTestRepository(checkout, { library: [{ kind: "code", rule: NO_NEEDLE }] }, databasePath);
+    // Until the edit's call is in, this thread commits to the file every 250 ms, so the move's VACUUM, which starts once
+    // no other connection has committed for 2 s, cannot start before it.
+    const busy = keptBusy(databasePath);
+    cleanups.push(busy.stop);
+    const runtimes = runtimesOfEngine();
     // The first two VACUUMs each hold the write lock 12 s, past the 5 s any Rerail writer waits for it: the VACUUM after
     // 4,000 audits held it 8.9 s on a loaded Windows machine.
     const held = join(home, "vacuum-held");
@@ -165,41 +169,106 @@ describe("the daemon's move of audit rule provenance", () => {
     let daemon: RerailDaemon;
     try {
       daemon = await RerailDaemon.start({
-        version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false, nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+        version: "test", databasePath, workspaceRoot: checkout, port: 0, remoteSink: false, nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
       });
     } finally {
       restore();
     }
     cleanups.push(() => daemon.close());
+    const engine = { socketPath: daemon.kernelSocketPath, accessToken: daemon.state().accessToken! };
+
+    // A coding agent's session writes a file, as Claude Code's Write tool does: the session starts, its rules open (a
+    // call made before that goes on unchecked), the call comes, and the file is written.
+    const edited = join(checkout, "edited.py");
+    await ingestEngineEvent(engine, { kind: "session-start", eventId: "start-edits", session: { host: "claude-code", sessionId: "edits", cwd: checkout } });
+    await runtimes.only().codeRulesOpened("edits");
+    await ingestEngineEvent(engine, {
+      kind: "call", eventId: "write-call", sessionId: "edits", toolCallId: "write", toolName: "Write", input: { file_path: edited, content: "value = 1\n" },
+    });
+    writeFileSync(edited, "value = 1\n");
+    busy.stop();
+    expect(existsSync(held), "the move's VACUUM began while this thread still committed").toBe(false);
 
     // Each write below succeeds, and the thread answers within the 2 s a hook's health probe waits. Waiting out the lock,
     // each failed once SQLite's 5 s busy timeout ran out.
     const answered = { failure: undefined, heldTwoSeconds: false };
 
-    // A session start sent to the daemon's engine socket, as a hook sends it: the daemon records the session through its
-    // own store, on its thread, while the first VACUUM holds the lock.
+    // The call's result, sent to the daemon's engine socket as a hook sends it, while the first VACUUM holds the lock:
+    // the daemon records the result and audits the edit through its own stores, on its thread.
     await untilExists(held, SLOW_MOVE_MS);
-    const start = await writtenWhileHeld(() => ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: daemon.state().accessToken! }, {
-      kind: "session-start", eventId: "start-during-vacuum", session: { host: "claude-code", sessionId: "during-vacuum", cwd: home },
+    const audit = await writtenWhileHeld(async () => {
+      await ingestEngineEvent(engine, { kind: "result", eventId: "write-result", sessionId: "edits", toolCallId: "write", toolName: "Write", output: "written" });
+      await until(() => auditStatuses(databasePath, "edits").join() === "completed");
+    });
+    expect(audit, `longest gap ${audit.longest} ms`).toMatchObject(answered);
+    expect(rowsWith(databasePath, "audits", "session_id", "edits")).toBe(1);
+
+    // That VACUUM gave way. The next one starts once no one has written for 4 s, and holds the lock too: a session start
+    // sent to the daemon meets it, and the daemon records the session through its own store, on its thread.
+    await untilExists(`${held}.2`, SLOW_MOVE_MS);
+    const start = await writtenWhileHeld(() => ingestEngineEvent(engine, {
+      kind: "session-start", eventId: "start-during-vacuum", session: { host: "claude-code", sessionId: "during-vacuum", cwd: checkout },
     }));
     expect(start, `longest gap ${start.longest} ms`).toMatchObject(answered);
     expect(rowsWith(databasePath, "sessions", "session_id", "during-vacuum")).toBe(1);
-
-    // That VACUUM gave way. The next one starts once no one has written for 4 s, and holds the lock too: an audit
-    // recorded on the daemon's thread meets it.
-    await untilExists(`${held}.2`, SLOW_MOVE_MS);
-    const audit = await writtenWhileHeld(async () => {
-      audits.finish(audits.start({
-        sessionId: "during-vacuum", workspaceRoot: home, scope: "touched-files", mode: "steer", revision: 1,
-        catalogRevision: "catalog", ruleRevisions: [], paths: ["src/a.ts"], ruleProvenance: [],
-      }), { status: "completed" });
-    });
-    expect(audit, `longest gap ${audit.longest} ms`).toMatchObject(answered);
-    expect(rowsWith(databasePath, "audits", "session_id", "during-vacuum")).toBe(1);
     // The third VACUUM runs once no one writes, and gives the space back.
     await until(() => moved(databasePath), SLOW_MOVE_MS);
   }, 4 * SLOW_MOVE_MS);
 });
+
+/** A rule on every Python file of the checkout: it steers away from a line holding `NEEDLE`. */
+const NO_NEEDLE = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:no-needle", revision: 1, mode: "steer",
+  scope: { include: ["**/*.py"], exclude: [] },
+  clauses: [{
+    id: "no-needle",
+    violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" },
+    forbid: { regex: { pattern: "NEEDLE", source: "file.content" } },
+  }],
+});
+
+/** A connection on this thread that commits to the database every 250 ms until stopped. */
+function keptBusy(databasePath: string): { stop: () => void } {
+  const database = new Database(databasePath, { timeout: 5_000 });
+  database.exec("CREATE TABLE IF NOT EXISTS test_commits (at)");
+  const commits = setInterval(() => database.prepare("INSERT INTO test_commits VALUES (?)").run(Date.now()), 250);
+  return {
+    stop: () => {
+      clearInterval(commits);
+      if (database.open) database.close();
+    },
+  };
+}
+
+/**
+ * The runtimes the daemon's engine socket hands events to, as each first ingests one; `only` is the one there is. A spy
+ * that calls through, so a test can await a session's rules on it, as a native host's `await-code-rules` request does.
+ */
+function runtimesOfEngine(): { only: () => RerailRuntime } {
+  const seen = new Set<RerailRuntime>();
+  const ingest = RerailRuntime.prototype.ingest;
+  const spy = vi.spyOn(RerailRuntime.prototype, "ingest").mockImplementation(function (this: RerailRuntime, event) {
+    seen.add(this);
+    return ingest.call(this, event);
+  });
+  cleanups.push(() => spy.mockRestore());
+  return {
+    only: () => {
+      expect(seen.size).toBe(1);
+      return [...seen][0]!;
+    },
+  };
+}
+
+/** The status of each audit of `sessionId`, in the order they started. */
+function auditStatuses(databasePath: string, sessionId: string): string[] {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare("SELECT status FROM audits WHERE session_id = ? ORDER BY started_at").pluck().all(sessionId) as string[];
+  } finally {
+    database.close();
+  }
+}
 
 /**
  * What `write` met, run on this thread (the daemon's) while a VACUUM holds the write lock: what it threw, if anything,
