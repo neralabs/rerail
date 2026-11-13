@@ -2314,8 +2314,14 @@ impl<'a> RowRef<'a> {
 /// `cols[lead]`, whose candidates the step checks against every key.
 /// Over a view of a source answering several columns at once (`Source::composite`, the reach index), a probe is the
 /// source's `lookup_all` (`composite`).
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool }
+/// Over a derived relation (no view) with no kept chain answering the key, the index is a sorted order of its own on
+/// the key columns (`order`, decision 0112: 4 bytes a row, not a hash table's 18 and its build's 46).
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize, composite: bool, order: Option<Index> }
 impl Csr {
+    /// The sorted order a probe walks: the relation's kept chain (`chain`) or this index's own order.
+    fn runs<'a>(&'a self, rel: &'a InRel) -> Option<&'a Index> {
+        self.order.as_ref().or_else(|| self.chain.map(|i| &rel.chains[i]))
+    }
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         // Each row's key read once (a view's values go through its source), then hashed once.
         let (k, n) = (cols.len(), rel.len());
@@ -2377,7 +2383,7 @@ impl Csr {
                 e.2 = (w - s) as u32;
             }
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0, composite: false, order: None }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
@@ -3080,7 +3086,7 @@ impl InRel {
     pub fn index_detail(&self) -> (usize, usize, Vec<(Vec<usize>, usize, usize)>, Vec<(Vec<usize>, usize)>) {
         let set = self.sketches.iter().map(Sketch::bytes).sum::<usize>() + self.dead.capacity() * 8;
         let chains = self.chains.iter().map(|ix| (ix.cols.clone(), ix.runs(), ix.bytes())).collect();
-        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1))).collect()).unwrap_or_default();
+        let csr = self.idx.lock().map(|m| m.values().map(|c| (c.cols.clone(), c.ids.capacity() * 4 + c.table.capacity() * (12 + 1) + c.order.as_ref().map_or(0, Index::bytes))).collect()).unwrap_or_default();
         (self.k, set, chains, csr)
     }
     pub fn held_bytes(&self) -> (usize, usize, usize) {
@@ -3529,7 +3535,7 @@ impl InRel {
             let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0, composite: false, order: None };
             let m = if cols.is_empty() {
                 empty(false, false)
             } else if let Some(i) = self.chains.iter().position(|ix| ix.answers(cols)) {
@@ -3553,7 +3559,15 @@ impl InRel {
                 Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 charge(Unit::IndexEntry, self.len() as u64);
-                Csr::build(self, cols)
+                if self.view.is_none() {
+                    // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
+                    // it, as in a kept chain; readers skip them).
+                    let mut order = Index::new(cols.to_vec());
+                    order.add_run(&self.rows, self.k, 0, self.n, 0);
+                    Csr { order: Some(order), ..empty(false, false) }
+                } else {
+                    Csr::build(self, cols)
+                }
             };
             if env_set!("RERAIL_SPIKE_INDEX") {
                 eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={} of {:?}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some(), self.view.as_ref().map(|v| (v.src.columns(), v.cols.clone())));
@@ -4314,7 +4328,7 @@ fn join_rule(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner) -> Result<
 /// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
 fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source: false, sorted: false, chain: None, lead: 0, composite: false, order: None });
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();
@@ -4646,7 +4660,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let (index, m, k) = match src {
             Src::Delta(r) | Src::Full(r) => { let rel = &store.rels[*r]; let (ix, m) = best_order(&rel.idx, &cols)?; (ix, m, rel.k) }
             Src::FullMulti(r, mc) => { let rel = &store.rels[*r]; let (ix, m) = best_order(&rel.idx, mc)?; (ix, m, rel.k) }
-            Src::In(rel, ix) => { let index = &rel.chains[ix.chain?]; let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count(); (index, m, rel.k) }
+            Src::In(rel, ix) => { let index = ix.runs(rel)?; let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count(); (index, m, rel.k) }
         };
         if m == 0 {
             return None;
@@ -4708,8 +4722,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 Src::In(rel, ix) => {
                     if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
-                    else if let Some(i) = ix.chain {
-                        let index = &rel.chains[i];
+                    else if let Some(index) = ix.runs(rel) {
                         // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                         // is checked): the key's values in the order's column order.
                         let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
