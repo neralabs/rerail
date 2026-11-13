@@ -8,8 +8,8 @@
 //
 //   child-process   node:child_process, anywhere in src/. On Windows Node starts a child with a visible window unless
 //                   told otherwise, and a console program (git, node, npm, PowerShell) started by a process with no
-//                   console, such as the daemon, opens a console window that Windows Terminal brings to the front. One
-//                   missed option opened a window every few seconds while the daemon ran Git.
+//                   console, as Rerail 0.1.3's daemon was, opens a console window that Windows Terminal brings to the
+//                   front. One missed option opened a window every few seconds while that daemon ran Git.
 //   program-path    With child-process: a call to one of its starters that names the program by a literal that is not
 //                   an absolute path. Windows looks for such a program in the current folder first, and Rerail runs
 //                   inside repositories it does not trust.
