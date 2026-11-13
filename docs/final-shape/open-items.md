@@ -4466,3 +4466,33 @@ long rules' orders and searches short ones it could keep.
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
+
+## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
+
+Found at O125 step 07 (2026-11-12). `pv__ins`, driven by `pv`'s delta, crossed `pv` with `retparam` (no shared
+variable: 1,553 -> 159,959 rows) and read its 15-row input delta `posarg__plus` last, about 1.08 M rows of work
+for none. The cause was missing statistics, not a misjudgement: in a driven session the run's model is made from
+the base program, which reads no input delta, so every `r__plus` and `r__minus` was priced at the default's 1,000
+rows (fixed in 6b04cb8d2; `plan::unsized_deltas`, asserted zero by
+`a_session_maintains_a_recursive_cross_file_stratum`). Join work went 6.85 -> 3.54 M.
+
+The next case like it should be fixable from the `.rr` alone. Today the only planner overrides are the relation
+qualifiers of decision 0099 (`inline`, `magic`, `reach` and their negations); nothing fixes a join's order or
+shape. What is wanted:
+
+1. **A directive on the rule as written, carried into every form made from it.** One written rule is planned many
+   times: once per delta that can drive it, in its maintenance forms (`__ins`, `__del`, `__redo`) and in guest
+   hiding's copies. The bad plan above was `pv__ins`'s, a rule no one writes. So the directive constrains the
+   written body: "join `posarg` straight after `pv`", or "`retparam` only once `$f` is bound". The planner maps it
+   onto each derived form (there `posarg__plus` is `posarg`'s delta). A whole fixed order is not the shape: it is
+   wrong for most of the forms.
+2. **Explained and checked.** EXPLAIN marks a plan a directive shaped; the profile flags a directive whose plan is
+   no cheaper than the planner's own, so stale ones are removed.
+3. **Each use opens the item that fixes its cause.** A directive here would have hidden the missing statistics, and
+   the next delta reader would have hit them unseen.
+4. **Beside it, a planner guard:** a step that shares no variable with what is bound is a cross product, taken only
+   on a size that was measured, never on a default.
+
+**Closure:** a `.rr` directive on a written rule shapes its plan and every derived form's (a test where it changes
+a maintained form's order, and EXPLAIN shows it); the profile reports a directive that saves nothing; the planner
+takes no cross product priced from a default size (a guard test).
