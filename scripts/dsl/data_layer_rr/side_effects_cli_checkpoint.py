@@ -55,7 +55,7 @@ def pack(work):
     value=dict(format='rerail.side-effects-cli-progress/v1',sourcePin=PIN,fullMigrationAcceptance=False,
         source=read_json(work/'source.json'),tdd=read_json(work/'red.json'),
         native={mode:[read_json(path)for path in sorted(work.glob(f'final-{mode}-[0-9]*.json'))]for mode in MODES},
-        build=read_json(ROOT/'.rerail/side-effects-conversion/root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
+        build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
         remaining=['Production facts and reports','Historical inputs','Updates and removal controls','Strict admission'])
     snapshots={}
     for report in reports(value):
