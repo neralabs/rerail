@@ -3717,7 +3717,7 @@ compiled only there.
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
-## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+## O-phase0-store-state (closed 2026-11-12). Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
 library's facts (decision 0118). In such a store, two runs of phase 0 on the
@@ -3748,6 +3748,14 @@ then, four runs of that set in one process have passed. Four threads deriving th
 a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
 cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
 graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
+**Closed (2026-11-12): the cause was the batch, not the store.** The template's fill (`test_store::fill`) runs phase
+0 once over every library module as a file seed, and keeps each seed's graph. `bootstrap.rr` names `core.rr` at
+-1 for every `p0_file`, so that run held `python/env.rr -> core.rr`, and `Graph::of` carried the edge into every
+other seed's graph that reaches `env.rr` (`python/conditions.rr`'s, and the text kept from it). A run of that seed
+alone has no such edge, so the kept graph's digest depended on the run's other seeds; the test failed in any
+process that made the template, which is why it was intermittent. `Graph::of` now keeps an edge at -1 only for the
+seed's own start and the engine's.
 
 ## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
 

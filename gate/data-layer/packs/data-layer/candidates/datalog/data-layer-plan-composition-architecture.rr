@@ -173,8 +173,7 @@ plan_not_name(n) :- node(_, dn, "dotted_name", _, _), child(cp, dn, _), node(_, 
 plan_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, _), node(_, n, "identifier", _, _).
 plan_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, _), node(_, n, "identifier", _, _).
 plan_not_name(n) :- node(_, ap, "as_pattern", _, _), child(cp, ap, _), node(_, cp, "case_pattern", _, _), child(ap, n, _), node(_, n, "identifier", _, _).
-plan_fragment_has(f, x) :- plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t), x = @nfkc(t), x = "RefRemap", !plan_not_name(n).
-plan_fragment_has(f, x) :- plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t), x = @nfkc(t), x = "rewrite_exact_plan_refs_payload", !plan_not_name(n).
+plan_fragment_has(f, x) :- plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t), x = @nfkc(t), (x = "RefRemap" ; x = "rewrite_exact_plan_refs_payload"), !plan_not_name(n).
 violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "RefRemap"), doc(d, p, _), line(f, l).
 violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "rewrite_exact_plan_refs_payload"), doc(d, p, _), line(f, l).
 observations_on(e) :- option_value("entryPoint", e), observations_entry(e).
