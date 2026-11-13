@@ -1,0 +1,1 @@
+`rerail update` and set-up's install name each step as it starts, from the download to switching versions, and show a step is still running: a counter on a terminal, a line every 30 seconds elsewhere. A step that runs long warns that npm may be stuck and what to check, and a hung npm is stopped.

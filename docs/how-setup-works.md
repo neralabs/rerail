@@ -445,6 +445,11 @@ Rerail updates only when you ask; nothing polls the registry or installs a versi
 The only paths are `rerail update` and re-running `npx @neralabs/rerail setup`. `rerail update --channel <tag>` picks
 the npm dist-tag (`latest`, `beta`, or `next`).
 
+`rerail update` names each step on stderr as it starts (checking npm, downloading, checking signatures, checking the
+new version starts, switching to it) and says when one runs long enough that npm may be stuck
+([reference](reference.md#update)). Rule packs update separately: it ends by listing each installed pack with a newer
+version on its channel and the `rerail packs add` command that installs them ([rule packs](rule-packs.md#rerail-packs)).
+
 <details>
 <summary>Registry and credentials</summary>
 

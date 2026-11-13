@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import type { UpdateResult } from "../setup/updater.js";
+import { NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
@@ -18,7 +19,7 @@ export function preUpdateSnapshotPath(databasePath: string): string {
 
 /** What `rerail update` asks of the managed updater. */
 export interface SnapshotUpdater {
-  update(channel?: string): Promise<UpdateResult>;
+  update(channel?: string, progress?: Progress): Promise<UpdateResult>;
 }
 
 /**
@@ -76,11 +77,16 @@ function discardSnapshot(databasePath: string): void {
  * place. A version change without a copy (the copy, or keeping it, failed) removes the last one: it is not the
  * database as it was before the change that is now active.
  */
-export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath: string, channel: string | undefined): Promise<UpdateResult> {
+export async function updateWithSnapshot(
+  updater: SnapshotUpdater,
+  databasePath: string,
+  channel: string | undefined,
+  progress: Progress = NO_PROGRESS,
+): Promise<UpdateResult> {
   const staged = stageSnapshot(databasePath);
   let result: UpdateResult;
   try {
-    result = await updater.update(channel);
+    result = await updater.update(channel, progress);
   } catch (error) {
     if (staged !== undefined) removeQuietly(staged);
     throw error;
@@ -89,9 +95,18 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
     if (staged !== undefined) removeQuietly(staged);
     return result;
   }
+  keepSnapshot(staged, databasePath);
+  return result;
+}
+
+/**
+ * After a version change, the copy `staged` before it becomes `rerail.sqlite.pre-update`. With no copy, or one that
+ * cannot be kept, the last one is removed: it is not the database as it was before this change.
+ */
+function keepSnapshot(staged: string | undefined, databasePath: string): void {
   if (staged === undefined) {
     discardSnapshot(databasePath);
-    return result;
+    return;
   }
   const target = preUpdateSnapshotPath(databasePath);
   try {
@@ -100,10 +115,9 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
     removeQuietly(staged);
     process.stderr.write(`rerail: could not keep the copy of ${databasePath} taken before the update: ${(error as Error).message}\n`);
     discardSnapshot(databasePath);
-    return result;
+    return;
   }
   process.stdout.write(`Copied ${databasePath} to ${target}\n`);
-  return result;
 }
 
 /**

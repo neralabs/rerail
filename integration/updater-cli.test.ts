@@ -112,6 +112,16 @@ async function createPackageFixture(source: string, root: string, version: strin
   return packageRoot;
 }
 
+/** Installs pack packages (a `package.json` each) into `home`'s packs as npm records them from the registry. */
+async function installRegistryPacks(home: string, packs: Record<string, string>): Promise<void> {
+  const prefix = join(home, "packs");
+  for (const [packageName, version] of Object.entries(packs)) {
+    await mkdir(join(prefix, "node_modules", ...packageName.split("/")), { recursive: true });
+    await writeFile(join(prefix, "node_modules", ...packageName.split("/"), "package.json"), JSON.stringify({ name: packageName, version }));
+  }
+  await writeFile(join(prefix, "package.json"), JSON.stringify({ dependencies: packs }));
+}
+
 async function createLocalRegistry(root: string): Promise<string> {
   const bin = join(root, "bin");
   await mkdir(bin, { recursive: true });
@@ -123,6 +133,11 @@ import { join } from "node:path";
 const argv = process.argv.slice(2);
 const command = argv.findIndex(argument => !argument.startsWith("-"));
 const args = command === -1 ? [] : argv.slice(command);
+if (args[0] === "view" && args[1].includes("/rerail-pack-")) {
+  // Every rule pack has a newer version for any core.
+  process.stdout.write(JSON.stringify({ version: "0.9.0", peerDependencies: { "@neralabs/rerail": ">=0.0.0-0" } }) + "\\n");
+  process.exit(0);
+}
 if (args[0] === "view") {
   process.stdout.write(JSON.stringify(args[1].endsWith("@rejected") ? process.env.RERAIL_REJECTED_VERSION : process.env.RERAIL_ACCEPTED_VERSION) + "\\n");
   process.exit(0);
@@ -221,23 +236,47 @@ describe("Rerail managed launcher", () => {
     // A command this version adds that the connected Claude Code lacks, as after updating from one without it.
     await rm(showMe);
 
+    /** What an update with nothing newer says on stderr, with a rule pack installed: its steps, and no problem. */
+    const nothingNewerSteps = [
+      "Checking npm for the newest Rerail on latest…",
+      `Checking that Rerail ${acceptedVersion} starts…`,
+      "Checking your rule packs for newer versions…",
+    ];
     const update = await run(["node", entrypoint, "update"], environment);
-    // Installing a version says what it downloads, on stderr; this local registry publishes no signing keys, so npm
-    // checks no signature and the update says so there too, and goes on.
+    // Each step says so as it starts, on stderr, a whole line each off a terminal; this local registry publishes no
+    // signing keys, so npm checks no signature and the update says so there too, and goes on.
     expect(update.exitCode).toBe(0);
     expect(update.stderr.split("\n").filter(line => line !== "")).toEqual([
+      "Checking npm for the newest Rerail on latest…",
       `Downloading ${manifest.name}@${acceptedVersion} from npm…`,
+      `Checking the registry signatures of ${manifest.name}@${acceptedVersion}…`,
       expect.stringContaining("publishes no signing keys"),
+      `Checking that Rerail ${acceptedVersion} starts…`,
+      `Switching to Rerail ${acceptedVersion}…`,
     ]);
-    expect(update.stdout).toContain(`${acceptedVersion}; new harness sessions will use it.`);
+    expect(update.stdout).toContain(`Updated Rerail ${manifest.version} → ${acceptedVersion} in `);
+    expect(update.stdout).toContain(" s; new harness sessions will use it.");
     expect(update.stdout).toContain(`Refreshed Rerail in Claude Code:`);
     expect(await readFile(showMe, "utf8")).toContain(join(home, "current", "dist", "cli", "cli.js"));
     expect(await readdir(join(userHome, ".cursor"))).toEqual([]);
 
-    // With nothing newer, update still refreshes the connected coding agents.
+    // With nothing newer, update still refreshes the connected coding agents, and still suggests the newer version of
+    // an installed rule pack: packs are released without core.
     await rm(showMe);
+    await installRegistryPacks(home, { "@acme/rerail-pack-sql": "0.2.0", "@neralabs/rerail-pack-typescript": "0.1.0" });
     const current = await run(["node", entrypoint, "update"], environment);
-    expect(current).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(current.exitCode).toBe(0);
+    expect(current.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
+    // A third party's pack goes by its package name, and its new version waits for approval again.
+    expect(current.stdout).toContain([
+      "Newer versions of 2 rule packs you installed are on latest:",
+      "  @acme/rerail-pack-sql 0.2.0 → 0.9.0 (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve @acme/rerail-pack-sql)",
+      "  typescript 0.1.0 → 0.9.0",
+      "A pack's new version changes the rules of every repository that adds it. To update them:",
+      "  rerail packs add @acme/rerail-pack-sql@0.9.0 typescript@0.9.0",
+      "",
+    ].join("\n"));
+    expect(current.stdout.trimEnd().endsWith("rerail packs add @acme/rerail-pack-sql@0.9.0 typescript@0.9.0")).toBe(true);
     expect(await readdir(commands)).toContain("rerail-show-me.md");
     const acceptedState = JSON.parse(await readFile(join(home, "update-state.json"), "utf8")) as Record<string, unknown>;
     expect(acceptedState).toMatchObject({
@@ -269,7 +308,8 @@ describe("Rerail managed launcher", () => {
     // A coding agent never connected whose configuration cannot be read is named and left alone: the update succeeds.
     await writeFile(join(userHome, ".cursor", "hooks.json"), "{ not json");
     const unconnected = await run(["node", entrypoint, "update", "--channel", "latest"], environment);
-    expect(unconnected).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(unconnected.exitCode).toBe(0);
+    expect(unconnected.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
     expect(unconnected.stdout).toContain("left Cursor alone");
     expect(await readFile(join(userHome, ".cursor", "hooks.json"), "utf8")).toBe("{ not json");
 
