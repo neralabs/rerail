@@ -1109,6 +1109,74 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
   });
 });
 
+// Several Claude Code Edits of one file whose tools all ran before a busy daemon took any of their calls up, the
+// common case under load.
+describe("CodeRuleBridge and a burst of late calls on one file", () => {
+  const numbered = (index: number) => `line${String(index).padStart(2, "0")}`;
+  /** Twenty numbered lines with `ending`, those in `change` replaced. */
+  const text = (ending: string, change: Record<number, string> = {}) =>
+    Array.from({ length: 20 }, (_, index) => `${change[index + 1] ?? numbered(index + 1)}${ending}`).join("");
+  /** Claude Code's Edit result: its line diff, one hunk from `newStart`, and `originalFile`. */
+  const editResult = (newStart: number, lines: readonly string[], originalFile: string | null) => (path: string) => ({
+    filePath: path, oldString: "x", newString: "y", originalFile, userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: newStart, oldLines: 0, newStart, newLines: 0, lines }],
+  });
+  /** Each tool writes its text in turn; only then are the calls begun and finished in order. The edits of each call. */
+  async function burst(before: string, edits: ReadonlyArray<{ after: string; output: (path: string) => unknown }>) {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, before);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    for (const edit of edits) await writeFile(path, edit.after);
+    const perCall: unknown[][] = [];
+    for (const [index, edit] of edits.entries()) {
+      const seen = auditGeneratedEdits.mock.calls.length;
+      await bridge.begin(`edit-${index}`, "Edit", { file_path: path });
+      await bridge.finish(`edit-${index}`, false, { reported: claudeCodeReportedPreimage(edit.output(path)) });
+      perCall.push(auditGeneratedEdits.mock.calls.slice(seen).flatMap(([, batch]) => batch.edits));
+    }
+    return perCall;
+  }
+  const edit = (previousText: string, generatedText: string) => ({ path: "src/a.py", language: "python", previousText, generatedText });
+
+  it.each([{ ending: "\n" }, { ending: "\r\n" }])("reads each of two late edits far apart against its own lines ($ending)", async ({ ending }) => {
+    const before = text(ending);
+    const afterFirst = text(ending, { 3: "LINE03" });
+    const after = text(ending, { 3: "LINE03", 17: "LINE17" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], null);
+    const second = editResult(14, [" line14", " line15", " line16", "-line17", "+LINE17", " line18", " line19", " line20"], null);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [edit(text(ending, { 17: "LINE17" }), after)],
+      [edit(afterFirst, after)],
+    ]);
+  });
+
+  it("reads the first of two late edits of one line against originalFile, holding the second's line too", async () => {
+    const before = text("\n");
+    const afterFirst = text("\n", { 3: "LINE03" });
+    const after = text("\n", { 3: "LINE03B" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], before);
+    const second = editResult(1, [" line01", " line02", "-LINE03", "+LINE03B", " line04", " line05", " line06"], afterFirst);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [edit(before, after)],
+      [edit(afterFirst, after)],
+    ]);
+  });
+
+  it("leaves the first of two late edits of one line unchecked where its result gives no originalFile", async () => {
+    const before = text("\n");
+    const afterFirst = text("\n", { 3: "LINE03" });
+    const after = text("\n", { 3: "LINE03B" });
+    const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], null);
+    const second = editResult(1, [" line01", " line02", "-LINE03", "+LINE03B", " line04", " line05", " line06"], null);
+    expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
+      [],
+      [edit(afterFirst, after)],
+    ]);
+  });
+});
+
 describe("ledgerPreimage", () => {
   it("keeps the text of a source that only names a token, and withholds one that assigns one", () => {
     const source = "import { getAuthTokenFromHeader } from './auth';\n\nconst token = getAuthTokenFromHeader;\nexport default token;\n";
