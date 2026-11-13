@@ -1,16 +1,18 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { biomeReader } from "../../../../src/engine/catalog/lint-config/biome-config.js";
 import { portsOf, settleVerdicts, type LinterNote, type Port, type PortVerdict } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -23,7 +25,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../../packs/${id}`, import.meta.url).pathname);
+const packDirectory = (id: string): string => fileURLToPath(new URL(`../../../../packs/${id}`, import.meta.url));
 
 let ruleCatalog: RuleCatalog;
 let ports: ReadonlyMap<string, Port>;

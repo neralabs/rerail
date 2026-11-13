@@ -3,8 +3,8 @@
  * how one linter's decisions for a port's several names combine, how verdicts across linters settle into settings, and
  * how a config file at the root is read. Ports, decisions and verdicts are built by hand.
  */
-import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,9 @@ import {
 } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { combineDecisions } from "../../../../src/engine/catalog/lint-config/linter-decisions.js";
 import type { RuleCatalog, RuleConfig } from "../../../../src/engine/catalog/repository-model.js";
+import { POSIX_MODES } from "../../../support/platform/file-mode.js";
+import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const NO_NAMES: Port["suppress"] = {
   eslint: [], noqa: [], nosec: [], oxlint: [], biome: [], phpstan: [], psalm: [], phpcs: [], clippy: [], sqlfluff: [],
@@ -201,12 +204,11 @@ describe("readRootFile", () => {
     writeFileSync(join(root, "largest.json"), "x".repeat(MAX_CONFIG_BYTES));
     writeFileSync(join(root, "too-large.json"), "x".repeat(MAX_CONFIG_BYTES + 1));
     writeFileSync(join(root, "unreadable.json"), "{}");
-    chmodSync(join(root, "unreadable.json"), 0o000);
-    symlinkSync(join(root, "config.json"), join(root, "linked.json"));
-    symlinkSync(join(root, "nested"), join(root, "linked-folder"));
+    if (POSIX_MODES) chmodSync(join(root, "unreadable.json"), 0o000);
+    linkFolder(join(root, "nested"), join(root, "linked-folder"));
   });
   afterAll(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   it.each<[string, string, unknown]>([
@@ -217,14 +219,18 @@ describe("readRootFile", () => {
     ["nothing in a folder that is not there", "absent/config.json", { present: false }],
     ["a folder", "nested", { present: true, text: undefined }],
     ["a file over the largest size", "too-large.json", { present: true, text: undefined }],
-    ["a symlink to a file", "linked.json", { present: true, text: undefined }],
-    ["a file through a symlinked folder", "linked-folder/deeper/config.toml", { present: true, text: undefined }],
+    ["a file through a linked folder", "linked-folder/deeper/config.toml", { present: true, text: undefined }],
   ])("reads %s", (_, name, expected) => {
     expect(readRootFile(root, name)).toEqual(expected);
   });
 
-  // A file mode denies nothing to root, nor on Windows; there no file of the repository can be unreadable this way.
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("reads a file it may not read as present, without text", () => {
+  it("reads a symlink to a file as present, without text", context => {
+    symlinkOrSkip(context, join(root, "config.json"), join(root, "linked.json"));
+    expect(readRootFile(root, "linked.json")).toEqual({ present: true, text: undefined });
+  });
+
+  // A file mode denies root nothing, and Windows keeps no mode bits: there no file of the repository is unreadable this way.
+  it.skipIf(!POSIX_MODES || process.getuid?.() === 0)("reads a file it may not read as present, without text", () => {
     expect(readRootFile(root, "unreadable.json")).toEqual({ present: true, text: undefined });
   });
 });

@@ -1,6 +1,6 @@
 /** `rerail packs calibrate`: a set-up repository's settings from its lint config, read again; a person's stay. */
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,12 +20,13 @@ import { calibrationText, runPacksCalibrateCommand, type Calibration, type Calib
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
 import { agentIo, fixture, removeFixtures, request, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   removeInstalledPacks();
   await removeFixtures();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** Start on in the TypeScript pack. */

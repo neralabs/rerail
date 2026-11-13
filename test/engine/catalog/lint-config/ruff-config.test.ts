@@ -1,5 +1,5 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -7,10 +7,11 @@ import { NOT_A_FILE, type LinterNote, type Port, type PortVerdict } from "../../
 import { readRuffSelection, ruffReader, ruffSelects } from "../../../../src/engine/catalog/lint-config/ruff-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** A repository holding `files`; a name ending in `/` is a folder. */

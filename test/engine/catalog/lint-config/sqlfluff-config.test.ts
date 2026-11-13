@@ -1,12 +1,14 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NOT_A_FILE, portsOf, type LinterNote, type Port, type PortDecision } from "../../../../src/engine/catalog/lint-config/linter-config.js";
 import { sqlfluffReader } from "../../../../src/engine/catalog/lint-config/sqlfluff-config.js";
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 const IS_NULL = "sqlfluff-cv05-convention-is-null";
 const COALESCE = "sqlfluff-cv02-convention-coalesce";
@@ -18,7 +20,7 @@ const FOREIGN_KEY = "sqlfluff-pg02-postgres-not-valid-foreign-key";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -34,7 +36,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
 let ruleCatalog: RuleCatalog;
 let ports: Map<string, Port>;
 beforeAll(() => {
-  ruleCatalog = readRuleCatalog([decodeURIComponent(new URL("../../../../packs/sql", import.meta.url).pathname)]);
+  ruleCatalog = readRuleCatalog([fileURLToPath(new URL("../../../../packs/sql", import.meta.url))]);
   ports = new Map(portsOf(ruleCatalog, ["sql"]).map(port => [port.ruleId, port]));
 });
 

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
 import { readEslintRules } from "../../../../src/engine/catalog/lint-config/eslint-rules.js";
@@ -9,6 +10,8 @@ import { portsOf, type LinterNote, type RepositoryLintConfig } from "../../../..
 import type { RuleCatalog } from "../../../../src/engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../../../../src/engine/catalog/lint-config/repository-lint-config.js";
 import { readRuffSelection } from "../../../../src/engine/catalog/lint-config/ruff-config.js";
+import { symlinkOrSkip } from "../../../support/platform/links.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 /** The fixture packs' ports start on, so that a config turning one off shows as a setting. */
 const on = (ruleId: string): string => `on-${ruleId}`;
@@ -24,7 +27,7 @@ const E7 = ["ruff-e711-none-comparison", "ruff-e721-type-comparison", "ruff-e722
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function repository(files: Readonly<Record<string, string>>): Promise<string> {
@@ -37,7 +40,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../../packs/${id}`, import.meta.url).pathname);
+const packDirectory = (id: string): string => fileURLToPath(new URL(`../../../../packs/${id}`, import.meta.url));
 
 const HOOKS_RULE = "react-hooks-rules-of-hooks";
 
@@ -115,7 +118,7 @@ beforeAll(async () => {
   );
   ruleCatalog = readRuleCatalog([...["typescript", "javascript", "python"].map(packDirectory), ...fixtureDirectories]);
   return async () => {
-    await Promise.all(fixtureDirectories.map(directory => rm(join(directory, ".."), { recursive: true, force: true })));
+    await Promise.all(fixtureDirectories.map(directory => removeFolder(join(directory, ".."))));
   };
 });
 
@@ -159,7 +162,7 @@ describe("reading the config files", () => {
     expect(eslintAt(data).eslint).toEqual(eslintRules({ file: "eslint.config.ts", rules: { "no-console": "off" }, severities: "eslint" }));
   });
 
-  it("reports a flat config it cannot parse or that exports nothing it can find as not read", async () => {
+  it("reports a flat config it cannot parse or that exports nothing it can find as not read", async context => {
     const broken = await repository({ "eslint.config.js": "export default [\n" });
     expect(eslintAt(broken).notes).toEqual([
       expect.stringMatching(/^eslint\.config\.js is not statically readable: it does not parse: .+\. Rerail never runs your config\. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off\.$/u),
@@ -171,7 +174,7 @@ describe("reading the config files", () => {
     ]);
     // A flat config Rerail cannot load (a link, or one over 1 MiB) is not statically readable either.
     const linked = await repository({ "real.mjs": "export default [];\n" });
-    symlinkSync(join(linked, "real.mjs"), join(linked, "eslint.config.mjs"));
+    symlinkOrSkip(context, join(linked, "real.mjs"), join(linked, "eslint.config.mjs"));
     expect(eslintAt(linked)).toMatchObject({
       eslint: { file: "eslint.config.mjs", unreadable: "it is not a regular file of at most 1 MiB in the repository" },
       notes: ["eslint.config.mjs is not statically readable: it is not a regular file of at most 1 MiB in the repository. Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off."],
@@ -260,9 +263,9 @@ describe("reading the config files", () => {
     expect(eslintAt(root)).toEqual({ eslint: undefined, notes });
   });
 
-  it("does not follow a symlinked config", async () => {
+  it("does not follow a symlinked config", async context => {
     const root = await repository({ "elsewhere.json": "{ \"rules\": {} }" });
-    symlinkSync(join(root, "elsewhere.json"), join(root, ".oxlintrc.json"));
+    symlinkOrSkip(context, join(root, "elsewhere.json"), join(root, ".oxlintrc.json"));
     // No oxlint config is read, so the port keeps its pack's value.
     expect(readRepositoryLintConfig(root, ruleCatalog, JS)).toEqual({
       settings: [],
