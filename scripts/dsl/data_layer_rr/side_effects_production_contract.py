@@ -27,6 +27,8 @@ def cases(_module):
         duplicate=[file('impl/a.py',BAD+BAD)],mixed=[file('impl/a.py',BAD+AUDIT)],
         order=[file('impl/'+path)for path in ['z.py','a/z.py','a-.py','a.py']],
         unicode=[file('impl/é\nname.py')],empty_file=[file('impl/a.py','')],
+        same_line=[file('impl/a.py','with open_write_plan(): lazy.resolve(); lazy.resolve()\n')],
+        batch=[file(f'impl/file{i:03}.py')for i in range(64)],
     )
     return [dict(kind='production',id=name,files=files)for name,files in groups.items()]
 
