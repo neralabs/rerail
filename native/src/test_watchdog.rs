@@ -67,6 +67,10 @@ extern "C" fn start() {
 }
 
 fn watch() {
+    // The one pool first, its threads named `rerail-cpu <i>`. Made by a test's first parallel loop instead, rayon's
+    // default threads would carry that test's name (Linux: a new thread inherits its creator's), and live on as a
+    // test past every limit: the process was killed 600 s after its start.
+    crate::threads::configure(false);
     let env = configured().flatten();
     let mut seen: HashMap<(u64, String), Instant> = HashMap::new();
     // After `main` has started: Rust installs its own handlers there, which ours then hand on to.
