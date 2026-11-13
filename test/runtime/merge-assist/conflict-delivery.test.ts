@@ -1,14 +1,19 @@
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
-import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
+import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 import { body, changed, open, sessionRuntime } from "./support/conflict-sessions.js";
+
+// Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+beforeEach(() => {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
+});
 
 const workspace = mergeAssistWorkspaces();
 
@@ -187,6 +192,37 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(conflict).toMatchObject({ quiet: true, status: "open" });
       expect(service.pendingNotes("session", ws.repo, new Set(), "claude-code")).toEqual([]);
       expect(footer(ws, "footer")).toBeUndefined();
+    });
+
+    it("nothing at all while the experiment is off, though a person turned it on and a conflict is stored: no scan, gh, hook command, note, line or status line", async () => {
+      const { ws } = await overlap(FILE);
+      const github = new FakeGithub();
+      const hook = hookScript(ws);
+      const service = ws.service({ github });
+      await service.setEnabled(ws.repo, true);
+      await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
+      await service.scan(ws.repo);
+      await service.settled();
+      const before = { hookCalls: hook.calls().length, readinessReads: github.readinessReads, lastScan: (await service.status(ws.repo)).lastScan };
+
+      vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "0");
+      const runtime = sessionRuntime(ws, service);
+      const sessionId = "experiment-off-session";
+      try {
+        const deliveries = [...await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: ws.repo } })];
+        const file = join(ws.repo, FILE);
+        deliveries.push(...await runtime.ingest({ kind: "call", eventId: "edit", sessionId, toolCallId: "1", toolName: "Write", input: { file_path: file, content: body("retry", { 23: "  const retry23 = \"mine\";" }) } }));
+        writeFiles(ws.repo, { [FILE]: body("retry", { 23: "  const retry23 = \"mine\";" }) });
+        deliveries.push(...await runtime.ingest({ kind: "result", eventId: "edited", sessionId, toolCallId: "1", toolName: "Write", output: "ok" }));
+        deliveries.push(...await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." }));
+        await service.settled();
+
+        expect(deliveries.filter(delivery => delivery.conflict !== undefined || delivery.content.includes("overlaps"))).toEqual([]);
+        expect(footer(ws, sessionId)).toBeUndefined();
+        expect({ hookCalls: hook.calls().length, readinessReads: github.readinessReads, lastScan: (await service.status(ws.repo)).lastScan }).toEqual(before);
+      } finally {
+        await runtime.dispose();
+      }
     });
   });
 

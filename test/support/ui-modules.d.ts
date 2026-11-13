@@ -154,6 +154,8 @@ declare module "*/ui/state.js" {
     /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
     mergeAssist: import("../../src/engine/index.js").MergeAssistStatus | null;
     mergeAssistError: string | null;
+    /** Whether the daemon runs Merge Assist's experiment: `null` until a read answers, `false` after `404 experimental-off`. */
+    mergeAssistExperiment: boolean | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: {

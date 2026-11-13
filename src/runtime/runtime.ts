@@ -2094,7 +2094,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Merge Assist for the session's checkout, or undefined while a person has not turned it on there. The first time,
+   * Merge Assist for the session's checkout, or undefined while a person has not turned it on there or the experiment
+   * is off (`mergeAssistEnabled` answers off for every repository then). The first time,
    * this runtime starts listening for conflict changes, so a hook handler's late answer reaches its sessions' next
    * boundary.
    */

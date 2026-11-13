@@ -7,6 +7,7 @@
 import { z } from "zod";
 import type { ConflictNotice } from "../../engine/adapter-contract.js";
 import { cappedLine, conflictNote, hookFollowUpNote, hookNote, sideName, STEER_LINE_CHARS } from "../../engine/code-rule/rerail-steer.js";
+import { mergeAssistExperimentEnabled } from "../../engine/experimental-features.js";
 import type { Conflict } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { statusText } from "./conflict-delivery.js";
@@ -118,9 +119,11 @@ export interface ConflictFooter {
 
 /**
  * The footer's Merge Assist segment for a session that started in `checkoutPath` (its checkout's physical root): from
- * that checkout's conflicts alone; undefined when none is open but quiet ones. Reads only.
+ * that checkout's conflicts alone; undefined when none is open but quiet ones, and while the experiment is off
+ * ({@link mergeAssistExperimentEnabled}), whatever conflicts an earlier run stored. Reads only.
  */
 export function conflictFooter(db: StateQueries, checkoutPath: string): ConflictFooter | undefined {
+  if (!mergeAssistExperimentEnabled()) return undefined;
   const open = surfacedConflicts(db, checkoutPath);
   const newest = open.toSorted((left, right) => right.conflict.detectedAt.localeCompare(left.conflict.detectedAt))[0];
   if (newest === undefined) return undefined;

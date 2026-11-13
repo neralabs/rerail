@@ -84,6 +84,12 @@ export const data = {
   mergeAssist: null,
   /** Why the last Merge Assist read failed; `null` once one succeeds. */
   mergeAssistError: null,
+  /**
+   * Whether the daemon runs Merge Assist's experiment: `null` until a Merge Assist read answers, `false` once one
+   * answered `404 experimental-off` (the sidebar then shows no Merge Assist and nothing reads it again), else `true`.
+   * The daemon's, so a scope change keeps it.
+   */
+  mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
   /** Freshness: last successful poll, and whether the last attempt failed. */

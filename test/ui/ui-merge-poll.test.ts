@@ -57,7 +57,7 @@ beforeEach(() => {
   });
   setScope({ repository: "A", checkout: "/work/a" });
   data.repository = { setUp: true, repositoryKey: "A" };
-  Object.assign(data, { mergeAssist: null, mergeAssistError: null });
+  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null });
   ui.view = "merge";
   ui.panel = null;
   setNeeds(currentNeeds);
@@ -126,6 +126,28 @@ describe("Merge Assist reads and writes", () => {
 
     expect(data.mergeAssistError).toMatch(/answered 500$/u);
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
+  });
+
+  it("stops reading Merge Assist once the daemon answers that its experiment is off, on its page and for the sidebar", async () => {
+    mergeRead = () => json({ error: "experimental-off", message: "Merge Assist is experimental and off." }, 404);
+
+    await refresh();
+    expect(data).toMatchObject({ mergeAssistExperiment: false, mergeAssist: null, mergeAssistError: null });
+    expect(data.disconnected).toBe(false);
+    await refresh();
+    ui.view = "settings";
+    await refresh();
+
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
+  });
+
+  it("takes another 404 as a failed read, with Merge Assist still there", async () => {
+    mergeRead = () => json({ error: "checkout-not-found", message: "no such checkout" }, 404);
+
+    await refresh();
+
+    expect(data.mergeAssistExperiment).toBe(true);
+    expect(data.mergeAssistError).toMatch(/answered 404$/u);
   });
 });
 

@@ -4,13 +4,14 @@
  * dismissing a conflict are allowed here as they are on the dashboard's Merge Assist page. A coding agent with a shell
  * can run it too, as it can any Rerail command: the people-only guarantee covers the MCP and HTTP API. See
  * docs/merge-assist-v1-build.md.
- * Internal testing: the whole command.
+ * Internal testing: the whole command. Experimental: refused unless RERAIL_EXPERIMENTAL_MERGE_ASSIST=1.
  */
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { sideName } from "../engine/code-rule/rerail-steer.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import {
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
@@ -414,11 +415,23 @@ function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null
   return resultText(outcome.step, outcome.status, name, dashboardUrl);
 }
 
+/** What the command answers while the experiment is off, under `experimental-off`. */
+const EXPERIMENTAL_OFF = "Merge Assist is experimental and off: set RERAIL_EXPERIMENTAL_MERGE_ASSIST=1 (or RERAIL_EXPERIMENTAL=1 for every experimental feature) to use it.";
+
+/** A refusal: `{ error, message }` on stdout under `--json`, else `● <message>` on stderr; the command exits 1. */
+function refuse(io: MergeAssistCommandIo, json: boolean, code: string, message: string): number {
+  if (json) (io.stdout ?? process.stdout).write(`${JSON.stringify({ error: code, message })}\n`);
+  else (io.stderr ?? process.stderr).write(`● ${message}\n`);
+  return 1;
+}
+
 /**
  * `rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>|settings
  * [--hook-command '<json argv>'|--no-hook] [--hook-timeout <s>]] [--repo <dir>] [--json]`.
+ * Refused before anything is read or opened while the experiment is off ({@link mergeAssistExperimentEnabled}).
  */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {
+  if (!mergeAssistExperimentEnabled()) return refuse(io, args.includes("--json"), "experimental-off", EXPERIMENTAL_OFF);
   const stdout = io.stdout ?? process.stdout;
   const { step, root, name, json } = invocation(args, usage);
   const session = (io.openService ?? openDefaultService)();
@@ -427,9 +440,7 @@ export async function runMergeAssistCommand(args: readonly string[], usage: () =
     outcome = await outcomeOf(session, step, root);
   } catch (error) {
     if (!(error instanceof MergeAssistError)) throw error;
-    if (json) stdout.write(`${JSON.stringify({ error: error.code, message: error.message })}\n`);
-    else (io.stderr ?? process.stderr).write(`● ${error.message}\n`);
-    return 1;
+    return refuse(io, json, error.code, error.message);
   } finally {
     await session.close();
   }

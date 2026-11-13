@@ -10,6 +10,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
+import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
@@ -364,8 +365,12 @@ export function followsGitignore(db: Reader, checkout: Pick<CheckoutContext, "re
     .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get()?.followGitignore ?? true;
 }
 
-/** Whether Merge Assist is on for `repositoryKey`'s repository: its setting, off for a repository not recorded. */
+/**
+ * Whether Merge Assist is on for `repositoryKey`'s repository: its setting, off for a repository not recorded, and off
+ * for every repository while the experiment is ({@link mergeAssistExperimentEnabled}), whatever a person saved.
+ */
 export function mergeAssistEnabled(db: Reader, repositoryKey: RepositoryKey): boolean {
+  if (!mergeAssistExperimentEnabled()) return false;
   return db.select({ mergeAssist: repositories.mergeAssist }).from(repositories)
     .where(eq(repositories.repositoryKey, repositoryKey)).get()?.mergeAssist ?? false;
 }

@@ -1,0 +1,1 @@
+Experimental and off by default: with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` set and Merge Assist turned on for a repository, `rerail merge-assist` warns you and your coding agent when your work overlaps an open pull request or a branch in another worktree before either merges, and can run a command of yours on each conflict.

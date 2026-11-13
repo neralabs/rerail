@@ -21,7 +21,7 @@ start with `[Internal testing]`, via `internalTesting()` in `src/engine/internal
 | [Steer strategies](#steer-strategies) `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
 | Automatic first repository audit, experimental: off unless `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` | One full-repository audit in `log` mode at the first session in a checkout |
 | [Missed-steer digest](#missed-steer-digest), experimental: off unless `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST=1` | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up |
-| Merge Assist, in-flight conflict detection, off for every repository until a person turns it on ([build](merge-assist-v1-build.md), [reference](reference.md#merge-assist)) | `rerail merge-assist`; the `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`, `merge_assist_settings_set` and `merge_assist_conflict_dismiss` operations; the dashboard's Merge Assist page; its in-session notes ([In-session surfaces](in-session-surfaces.md#merge-assist-notes)) |
+| [Merge Assist](#merge-assist), in-flight conflict detection, experimental: off unless `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`, then off for every repository until a person turns it on ([build](merge-assist-v1-build.md), [reference](reference.md#merge-assist)) | `rerail merge-assist`; the `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`, `merge_assist_settings_set` and `merge_assist_conflict_dismiss` operations; the dashboard's Merge Assist page; its in-session notes ([In-session surfaces](in-session-surfaces.md#merge-assist-notes)) |
 
 - `rerail settings` and the `audit_settings_*` operations are not tagged yet; their scope is undecided.
 - The daemon's HTTP API, OpenAPI document and MCP endpoint are in the [reference](reference.md#run); the dashboard uses
@@ -29,9 +29,20 @@ start with `[Internal testing]`, via `internalTesting()` in `src/engine/internal
 - Found something in this list? Feedback is welcome in an issue labelled as internal testing.
 - [Governance](GOVERNANCE.md#internal-testing-features) says who decides when a feature graduates or is removed.
 
+## Turning experimental features on
+
+Every experimental feature in the table is off by default. Each has its own variable, `RERAIL_EXPERIMENTAL_<FEATURE>`,
+and `RERAIL_EXPERIMENTAL=1` turns on every one of them. A feature's own variable wins: `1` turns it on, `0` keeps it
+off even with `RERAIL_EXPERIMENTAL=1`; unset (or any other value), the feature follows `RERAIL_EXPERIMENTAL`. For
+example, `RERAIL_EXPERIMENTAL=1 RERAIL_EXPERIMENTAL_STEER_STRATEGIES=0` runs every experimental feature but steer
+strategies (`src/engine/experimental-features.ts`).
+
+Set them for the process that runs the feature, as each section below says. Their behaviour may change or go away.
+
 ## Experimental steer features
 
-Each is off unless its variable is `1` for the process running Rerail's runtime.
+Each is off unless it is turned on ([above](#turning-experimental-features-on)) for the process running Rerail's
+runtime.
 
 That is the daemon for OMP, Claude Code, Codex and Cursor. For a Pi session, which runs Rerail in process, it is the
 coding agent itself.
@@ -83,3 +94,15 @@ picks how a code-rule steer reaches the agent; off, every steer is `message`.
 </details>
 
 `benchmark/steer-strategy.ts` measures the three strategies on real coding agents.
+
+## Merge Assist
+
+Merge Assist is experimental and off by default. Set `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` (or `RERAIL_EXPERIMENTAL=1`,
+[above](#turning-experimental-features-on)) for the Rerail daemon (it
+runs the sessions' detection, the API and the dashboard) and for the shell that runs `rerail merge-assist`; then a
+person still turns it on per repository (`rerail merge-assist on`, or the dashboard's Merge Assist page).
+
+Without the variable nothing of it runs, even in a repository where it was turned on before: no detection, no `gh`, no
+hook command, no notes to the agent and no footer segment. The `merge_assist_*` operations answer
+`404 experimental-off`, `rerail merge-assist` exits 1 naming the variable, and the dashboard shows no Merge Assist item
+in its sidebar.

@@ -2,7 +2,7 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRerailApi } from "../../src/api/http.js";
@@ -13,6 +13,11 @@ import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../.
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
 import { git } from "../support/merge-assist/git.js";
 import { RecordingMergeAssistService } from "../support/merge-assist/status.js";
+
+// Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+beforeEach(() => {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
+});
 
 const CONFLICT = "conflict:overlap:0123456789abcdef01234567:89abcdef";
 
@@ -112,6 +117,21 @@ describe("the Merge Assist operations", () => {
       { method: "setEnabled", checkout, enabled: false },
       { method: "dismissConflict", checkout: worktree, conflictId: CONFLICT },
     ]);
+  });
+
+  it("answers every operation 404 experimental-off while the experiment is off, over HTTP and MCP, before the service runs", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "");
+    for (const [method, path, body] of [
+      ["GET", `/api/merge-assist?${new URLSearchParams({ checkout })}`],
+      ["POST", "/api/merge-assist/scan", { checkout }],
+      ["GET", `/api/merge-assist/settings?${new URLSearchParams({ checkout })}`],
+      ["PUT", "/api/merge-assist/settings", { checkout, enabled: true }],
+      ["POST", "/api/merge-assist/conflicts/dismiss", { checkout, conflictId: CONFLICT }],
+    ] as const) {
+      expect(await request(method, path, body), `${method} ${path}`).toMatchObject({ status: 404, body: { error: "experimental-off" } });
+    }
+    expect(await call("merge_assist_get", {}, checkout)).toMatch(/^experimental-off: /u);
+    expect(service.calls).toEqual([]);
   });
 
   it("refuses a target it cannot resolve and a body it does not take, before the service runs", async () => {

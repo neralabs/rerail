@@ -31,7 +31,8 @@ import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, type RerailDatabase } from "../engine/storage/database.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
@@ -408,6 +409,14 @@ async function closeAfterFailedStart({ engineService, nativeServer, server }: St
   }
 }
 
+/**
+ * The Merge Assist a daemon shares between its API and sessions, over the database `database` opens; none while the
+ * experiment is off ({@link mergeAssistExperimentEnabled}), so nothing of it runs in this daemon.
+ */
+function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: MergeAssistRuntime } {
+  return mergeAssistExperimentEnabled() ? { mergeAssist: createMergeAssistService({ database }) } : {};
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -427,8 +436,8 @@ export class RerailDaemon {
   readonly #accessToken: string;
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
-  /** The Merge Assist the API and every session share: stopped before the database closes. */
-  readonly #mergeAssist: MergeAssistRuntime;
+  /** The Merge Assist the API and every session share, while the experiment is on: stopped before the database closes. */
+  readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
 
   private constructor({
@@ -447,7 +456,7 @@ export class RerailDaemon {
     nativeServer: NativeSessionServer;
     nativeToken: string;
     accessToken: string;
-    mergeAssist: MergeAssistRuntime;
+    mergeAssist?: MergeAssistRuntime;
     tlsFingerprint256: string | undefined;
   }) {
     const address = server.address() as AddressInfo;
@@ -491,14 +500,14 @@ export class RerailDaemon {
     let daemon: RerailDaemon | undefined;
     // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
     // readiness is read once; its database opens with the stores', on first use.
-    const mergeAssist = createMergeAssistService({ database: () => stores.database() });
+    const sharedMergeAssist = daemonMergeAssist(() => stores.database());
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
-      mergeAssist,
+      ...sharedMergeAssist,
     });
     const started: StartedServices = {};
     try {
@@ -509,7 +518,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
-        mergeAssist,
+        ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
@@ -517,7 +526,7 @@ export class RerailDaemon {
       });
       started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
-      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, mergeAssist });
+      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, ...sharedMergeAssist });
       started.nativeServer = sessions;
       const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
       const server = createDaemonServer(options, app);
@@ -526,7 +535,7 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, mergeAssist,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
       return daemon;
@@ -596,7 +605,7 @@ export class RerailDaemon {
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
-        await this.#mergeAssist.stop();
+        await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });
       }

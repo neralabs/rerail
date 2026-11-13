@@ -4,7 +4,8 @@ Rerail runs on your machine. Each claim below names the file in this repository 
 
 ## What Rerail never does
 
-Rerail sends nothing about you or your work unless you add a remote or turn Merge Assist on, and calls no hosted model.
+Rerail sends nothing about you or your work unless you add a remote or turn the experimental Merge Assist on, and calls
+no hosted model.
 
 - **No telemetry**, analytics, crash reporting or usage metrics.
 - **No sending your work** except to a [remote](remote-sink.md) you add.
@@ -65,9 +66,11 @@ Two internal-testing features also send to endpoints **you** supply.
 
 </details>
 
-Merge Assist, which is in internal testing and off for every repository until you turn it on, adds read-only requests
-to GitHub through **`gh`**, with your own `gh` sign-in (`src/runtime/merge-assist/github.ts`). While it is off for a
-repository, Rerail runs no `gh` for it:
+Merge Assist, which is experimental and in internal testing, runs only with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` set
+for the Rerail daemon ([Internal testing](internal-testing.md#merge-assist)), and then only in a repository you turned
+it on for. It adds read-only requests to GitHub through **`gh`**, with your own `gh` sign-in
+(`src/runtime/merge-assist/github.ts`). Without the variable, or while it is off for a repository, Rerail runs no `gh`
+for it:
 
 | When | What `gh` reads |
 | --- | --- |

@@ -4,10 +4,12 @@
  * operation's does. Changing the settings (on or off, the hook command) and dismissing a conflict are
  * people's; a coding agent may read and scan, in its own checkout only. The people-only guarantee holds for this
  * surface; `rerail merge-assist` runs as the person, so an agent with a shell can run it as it can any Rerail command.
- * Internal testing: every operation here.
+ * Internal testing: every operation here. Experimental: each answers `404 experimental-off` unless the daemon runs
+ * with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1 ({@link mergeAssistExperimentEnabled}).
  */
 import type { z } from "zod";
 import { internalTesting } from "../engine/internal-testing.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { DEFAULT_HOOK_TIMEOUT_SECONDS, type MergeAssistStatus } from "../engine/merge-assist/model.js";
 import { MergeAssistError, type MergeAssistErrorCode, type MergeAssistService, type MergeAssistSettingsChange } from "../runtime/merge-assist/service.js";
@@ -20,6 +22,25 @@ import {
 } from "./merge-assist-contracts.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { checkoutOnDisk, resolveTarget, within } from "./repository-operations.js";
+
+/** What every operation here answers while the experiment is off, under `404 experimental-off`. */
+const EXPERIMENTAL_OFF = "Merge Assist is experimental and off: start the Rerail daemon with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1 (or RERAIL_EXPERIMENTAL=1 for every experimental feature) to use it.";
+
+/** An operation's description after the internal-testing tag: what it answers while the experiment is off, then `description`. */
+function experimental(description: string): string {
+  return `Experimental: answers 404 experimental-off unless the daemon runs with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1. ${description}`;
+}
+
+/** `operation`, refused with `404 experimental-off` before anything else while the experiment is off. */
+function gated(operation: Operation): Operation {
+  return {
+    ...operation,
+    handler: (stores, input, caller) => {
+      if (!mergeAssistExperimentEnabled()) throw new ApiError(404, "experimental-off", EXPERIMENTAL_OFF);
+      return operation.handler(stores, input, caller);
+    },
+  };
+}
 
 const ERROR_STATUS: Record<MergeAssistErrorCode, number> = {
   "not-a-checkout": 404,
@@ -76,7 +97,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_get",
     method: "GET",
     path: "/api/merge-assist",
-    summary: internalTesting("Show Merge Assist for one checkout: whether it is on, the gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its summary, and whether it is quiet). Reads only. Without a target an MCP call uses the calling agent's checkout."),
+    summary: internalTesting(experimental("Show Merge Assist for one checkout: whether it is on, the gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its summary, and whether it is quiet). Reads only. Without a target an MCP call uses the calling agent's checkout.")),
     query: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -88,7 +109,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_scan",
     method: "POST",
     path: "/api/merge-assist/scan",
-    summary: internalTesting("Find the checkout's in-flight conflicts now: overlapping changes with open pull requests and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout."),
+    summary: internalTesting(experimental("Find the checkout's in-flight conflicts now: overlapping changes with open pull requests and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout.")),
     body: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -100,7 +121,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_settings_get",
     method: "GET",
     path: "/api/merge-assist/settings",
-    summary: internalTesting("Show the person's Merge Assist settings for the checkout's repository: the conflict hook command (null for none). Reads only."),
+    summary: internalTesting(experimental("Show the person's Merge Assist settings for the checkout's repository: the conflict hook command (null for none). Reads only.")),
     query: mergeAssistTargetSchema,
     output: mergeAssistSettingsSchema,
     handler: async (stores, input, caller) => {
@@ -112,7 +133,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_settings_set",
     method: "PUT",
     path: "/api/merge-assist/settings",
-    summary: internalTesting("Change the person's Merge Assist settings for the checkout's repository: turn it on or off (enabled; off clears the conflicts it found) and the conflict hook command (hook: an argv run without a shell on each conflict event, timeoutSeconds 1-60, default 10; null removes it). Name at least one. People only: it runs the person's gh, and the hook command as them."),
+    summary: internalTesting(experimental("Change the person's Merge Assist settings for the checkout's repository: turn it on or off (enabled; off clears the conflicts it found) and the conflict hook command (hook: an argv run without a shell on each conflict event, timeoutSeconds 1-60, default 10; null removes it). Name at least one. People only: it runs the person's gh, and the hook command as them.")),
     body: mergeAssistSettingsBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -125,7 +146,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_conflict_dismiss",
     method: "POST",
     path: "/api/merge-assist/conflicts/dismiss",
-    summary: internalTesting("Dismiss an in-flight conflict with another branch as not a conflict: it stays dismissed for its question and that branch, and the conflict hook hears closed. People only: a coding agent reads conflicts with merge_assist_get and is refused here (agent-not-permitted)."),
+    summary: internalTesting(experimental("Dismiss an in-flight conflict with another branch as not a conflict: it stays dismissed for its question and that branch, and the conflict hook hears closed. People only: a coding agent reads conflicts with merge_assist_get and is refused here (agent-not-permitted).")),
     body: mergeAssistDismissBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -134,4 +155,4 @@ export const mergeAssistOperations: readonly Operation[] = [
       return await answer(() => stores.mergeAssist().dismissConflict(checkout, input.conflictId));
     },
   }),
-];
+].map(gated);

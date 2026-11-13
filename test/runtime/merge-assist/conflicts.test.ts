@@ -1,10 +1,15 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeAssistStatusSchema, type Conflict } from "../../../src/engine/index.js";
 import type { PullRequestSummary } from "../../../src/runtime/index.js";
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
+
+// Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+beforeEach(() => {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
+});
 
 const workspace = mergeAssistWorkspaces();
 

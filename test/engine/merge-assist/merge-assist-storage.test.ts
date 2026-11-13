@@ -3,12 +3,17 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistEnabled, pruneCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { mergeAssistState, repositories, sessions } from "../../../src/engine/storage/schema.js";
 import { git } from "../../support/merge-assist/git.js";
+
+// Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+beforeEach(() => {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
+});
 
 const roots: string[] = [];
 const databases: RerailDatabase[] = [];
@@ -34,13 +39,15 @@ const keys = (db: RerailDatabase): string[] => db.select({ key: mergeAssistState
 const REPOSITORY = "remote:github.com/acme/web";
 
 describe("Merge Assist storage", () => {
-  it("is off for a repository until it is turned on, and off for a repository Rerail does not know", async () => {
+  it("is off for a repository until it is turned on, off for a repository Rerail does not know, and off everywhere while the experiment is", async () => {
     const db = await database();
     db.insert(repositories).values({ repositoryKey: REPOSITORY, displayName: "web", createdAt: 1, updatedAt: 1 }).run();
     expect(mergeAssistEnabled(db, REPOSITORY)).toBe(false);
     db.update(repositories).set({ mergeAssist: true }).where(eq(repositories.repositoryKey, REPOSITORY)).run();
     expect(mergeAssistEnabled(db, REPOSITORY)).toBe(true);
     expect(mergeAssistEnabled(db, "remote:github.com/acme/unknown")).toBe(false);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "0");
+    expect(mergeAssistEnabled(db, REPOSITORY)).toBe(false);
   });
 
   it("forgets what Merge Assist kept for a checkout Rerail forgets", async () => {

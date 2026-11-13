@@ -38,9 +38,10 @@ function signedOutGh(root: string): string {
 /**
  * The environment of every scenario process: the machine's `RERAIL_*` and GitHub settings dropped, the scenario's home
  * and `HOME` in their place, a signed-out `gh` (`signedOutGh`), no autostart, no keychain, no shell profile edits, and
- * UTC so "today" is the seed day's.
+ * UTC so "today" is the seed day's. Only `merge-assist` runs with Merge Assist's experiment on; every other scenario
+ * has it off, as a daemon does by default.
  */
-export function scenarioEnvironment(root: string): NodeJS.ProcessEnv {
+export function scenarioEnvironment(root: string, scenario: ScenarioName): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_") && !Object.hasOwn(GITHUB_ENVIRONMENT, name)));
   return {
     ...inherited,
@@ -51,6 +52,7 @@ export function scenarioEnvironment(root: string): NodeJS.ProcessEnv {
     RERAIL_DEVICE_SECRET_STORE: "file",
     RERAIL_MODIFY_PATH: "0",
     RERAIL_CONTENT_STORE_PATH: join(root, "content.sqlite"),
+    ...(scenario === "merge-assist" ? { RERAIL_EXPERIMENTAL_MERGE_ASSIST: "1" } : {}),
     GIT_CONFIG_NOSYSTEM: "1",
     TZ: "UTC",
   };
@@ -79,7 +81,7 @@ export async function seedScenarioFolder(scenario: ScenarioName, folder: string,
   const args = ["--import", REGISTER_TSX, join(SUPPORT, "seed-scenario.ts"), scenario, root, String(now)];
   const child = spawn(process.execPath, args, {
     cwd: REPOSITORY_ROOT,
-    env: scenarioEnvironment(root),
+    env: scenarioEnvironment(root, scenario),
     stdio: ["ignore", "ignore", "pipe"],
   });
   const { code, signal, stderr } = await finished(child);
@@ -156,7 +158,7 @@ export async function startScenarioDaemon(manifest: ScenarioManifest, options: D
   const args = ["--import", REGISTER_TSX, DAEMON_ENTRY, "--dev", "--port", String(options.port ?? 0), "--state-file", stateFile];
   const child = spawn(process.execPath, args, {
     cwd: manifest.primary.checkoutPath,
-    env: scenarioEnvironment(manifest.root),
+    env: scenarioEnvironment(manifest.root, manifest.scenario),
     stdio: options.inheritOutput === true ? ["ignore", "inherit", "inherit"] : ["ignore", "pipe", "pipe"],
   });
   if (options.inheritOutput !== true) {

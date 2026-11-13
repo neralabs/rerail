@@ -10,6 +10,18 @@ const sidebarCount = (page: Page) => page.locator('#sidenav [data-act="nav"][dat
 const isWrite = (path: string, method: string) => (request: Request) => request.url().endsWith(path) && request.method() === method;
 
 test.describe("Merge Assist", () => {
+  test("with the experiment off, the page says so and the sidebar has no Merge Assist", async ({ page, rerail }) => {
+    // Only the merge-assist scenario's daemon runs with RERAIL_EXPERIMENTAL_MERGE_ASSIST=1.
+    const offRead = page.waitForResponse(response => new URL(response.url()).pathname === "/api/merge-assist");
+    await page.goto(await rerail.dashboard("mature", { hash: "merge" }));
+    const answer = await offRead;
+    expect([answer.status(), (await answer.json() as { error: string }).error]).toEqual([404, "experimental-off"]);
+    await expect(page.locator("#content")).toContainText("RERAIL_EXPERIMENTAL_MERGE_ASSIST=1");
+    await expect(page.locator('#content [data-act="maon"]')).toHaveCount(0);
+    await expect(page.locator("#sidenav")).toContainText("By session");
+    await expect(page.locator('#sidenav [data-i="merge"]')).toHaveCount(0);
+  });
+
   test("a person turns it on from the page, and off again", async ({ page, rerail }) => {
     const { manifest } = await rerail.scenario("merge-assist");
     const billing = manifest.repositories.find(repository => repository.repositoryKey !== manifest.primary.repositoryKey)!;

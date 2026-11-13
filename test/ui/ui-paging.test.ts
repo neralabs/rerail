@@ -28,7 +28,7 @@ beforeEach(() => {
   setScope({ repository: "A" });
   data.repository = { setUp: true, repositoryKey: "A" };
   data.rules = new Map([["r", { rule: { id: "r" } }]]);
-  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList(), mergeAssist: null, mergeAssistError: null, loaded: false });
+  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList(), mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, loaded: false });
   data.sessionDetail.clear();
   ui.panel = null;
   ui.selectedSession = null;

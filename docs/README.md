@@ -60,8 +60,8 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
-- [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (internal testing), which detects in-flight
-  conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person and their
-  coding agent before they merge
+- [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (experimental, off by default), which detects
+  in-flight conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person
+  and their coding agent before they merge
 - [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
   holds it

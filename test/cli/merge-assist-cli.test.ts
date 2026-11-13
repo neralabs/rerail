@@ -3,12 +3,17 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
 import { MergeAssistError } from "../../src/runtime/index.js";
 import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../support/merge-assist/status.js";
+
+// Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
+beforeEach(() => {
+  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
+});
 
 const usage = (): string => "Usage: rerail merge-assist";
 const PAGE = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#merge";
@@ -71,6 +76,16 @@ describe("rerail merge-assist", () => {
     expect(closed).toBe(7);
     // --json is the status the service answered, one line per command.
     for (const line of stdout.trim().split("\n")) expect(mergeAssistStatusSchema.parse(JSON.parse(line)).checkout).toBe(checkout);
+  });
+
+  it("refuses every command while the experiment is off and exits 1, in words or as JSON, before opening anything", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "");
+    expect(await run(["status", "--repo", checkout])).toBe(1);
+    expect(stderr).toMatch(/^● .*RERAIL_EXPERIMENTAL_MERGE_ASSIST=1/u);
+    expect(await run(["on", "--repo", checkout, "--json"])).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({ error: "experimental-off" });
+    expect(closed).toBe(0);
+    expect(service.calls).toEqual([]);
   });
 
   it("shows the status: what it uses, the last scan, open conflicts in short and dismissed ones in a line", async () => {

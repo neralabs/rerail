@@ -533,11 +533,21 @@ function showConflict(conflict) {
   node.focus({ preventScroll: true });
 }
 
+/** The daemon runs without Merge Assist's experiment: the page says so and what turns it on, and offers nothing else. */
+function renderExperimentOff() {
+  setContent(page.notice, "experimental-off", () => h("div.list", null, h("div.empty", null,
+    h("h3", null, "Merge Assist is experimental and off"),
+    h("p", null, "Start the Rerail daemon with ", h("code", null, "RERAIL_EXPERIMENTAL_MERGE_ASSIST=1"), " to use it, or with ",
+      h("code", null, "RERAIL_EXPERIMENTAL=1"), " for every experimental feature."))));
+  for (const draw of [renderOff, renderStrip, renderSettings, renderConflicts]) draw(null);
+}
+
 export function render(root) {
   if (page === null || page.root.parentNode !== root) {
     build();
     root.replaceChildren(page.root);
   }
+  if (data.mergeAssistExperiment === false) return renderExperimentOff();
   // After a failed read the page says why and offers nothing to act on: the last status may no longer hold.
   const status = data.mergeAssistError === null ? data.mergeAssist : null;
   const linked = revealTarget(status);

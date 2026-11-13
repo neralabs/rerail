@@ -281,39 +281,64 @@ let mergeAssistRead = { at: 0, loading: null, generation: -1 };
  */
 const mergeAssistWrites = { sent: 0, answered: 0 };
 
+/** A Merge Assist read answered: `body`, or nothing new on `undefined` (304). Whether anything shown changed. */
+function takeMergeAssist(body) {
+  mergeAssistRead.at = Date.now();
+  const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
+  Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
+  if (body === undefined) return changed;
+  data.mergeAssist = body;
+  return true;
+}
+
+/** A Merge Assist read failed with `error`, kept for the page and the sidebar. Whether anything shown changed. */
+function takeMergeAssistFailure(error) {
+  mergeAssistRead.at = Date.now();
+  const changed = data.mergeAssistError !== error.message || data.mergeAssistExperiment !== true;
+  Object.assign(data, { mergeAssistError: error.message, mergeAssistExperiment: true });
+  return changed;
+}
+
+/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again. */
+function experimentOff(error) {
+  if (error.status !== 404 || error.code !== "experimental-off") return false;
+  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: false });
+  return true;
+}
+
+/** Whether a Merge Assist read is skipped: the daemon runs without it, or the last answer is younger than `maxAge`. */
+function skipMergeAssist(maxAge) {
+  if (data.mergeAssistExperiment === false) return true;
+  const held = data.mergeAssist !== null || data.mergeAssistError !== null;
+  return maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge;
+}
+
+/** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
+async function readMergeAssist(current) {
+  try {
+    const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
+    return current() && takeMergeAssist(body);
+  } catch (error) {
+    if (error.name === "AccessRequired") throw error;
+    return experimentOff(error) || (current() && takeMergeAssistFailure(error));
+  }
+}
+
 /**
  * Merge Assist for the scoped checkout (`data.mergeAssist`), at most once at a time; `maxAge` skips the read while the
  * last answer is younger. A failure is kept in `data.mergeAssistError` for the page and the sidebar, never failing
- * the poll: the rest of the dashboard does not depend on Merge Assist.
+ * the poll: the rest of the dashboard does not depend on Merge Assist. A `404 experimental-off` is no failure: the
+ * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again.
  */
 function loadMergeAssist(maxAge = 0) {
   if (mergeAssistRead.loading !== null && mergeAssistRead.generation === generation) return mergeAssistRead.loading;
-  const held = data.mergeAssist !== null || data.mergeAssistError !== null;
-  if (maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge) return false;
+  if (skipMergeAssist(maxAge)) return false;
   const started = generation;
   const { sent, answered } = mergeAssistWrites;
   const current = () => started === generation && sent === mergeAssistWrites.sent && answered === mergeAssistWrites.answered;
-  const loading = (async () => {
-    try {
-      const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
-      if (!current()) return false;
-      mergeAssistRead.at = Date.now();
-      const hadError = data.mergeAssistError !== null;
-      data.mergeAssistError = null;
-      if (body === undefined) return hadError;
-      data.mergeAssist = body;
-      return true;
-    } catch (error) {
-      if (error.name === "AccessRequired") throw error;
-      if (!current()) return false;
-      mergeAssistRead.at = Date.now();
-      const changed = data.mergeAssistError !== error.message;
-      data.mergeAssistError = error.message;
-      return changed;
-    } finally {
-      if (mergeAssistRead.loading === loading) mergeAssistRead.loading = null;
-    }
-  })();
+  const loading = readMergeAssist(current).finally(() => {
+    if (mergeAssistRead.loading === loading) mergeAssistRead.loading = null;
+  });
   mergeAssistRead = { at: mergeAssistRead.at, loading, generation: started };
   return loading;
 }

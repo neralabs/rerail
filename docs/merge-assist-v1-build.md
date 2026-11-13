@@ -2,7 +2,9 @@
 
 **Document type:** Design note for Merge Assist, as built. Code comments cite this document.
 
-**Delivery status:** Experimental and internal testing; off unless a person turns it on for a repository.
+**Delivery status:** Experimental, in internal testing, and off by default: nothing of it runs unless
+`RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` is set for the Rerail daemon and the shell running `rerail merge-assist`
+([Internal testing](internal-testing.md#merge-assist)), and then only in a repository where a person turned it on.
 
 The operations, routes and CLI are in the [reference](reference.md#merge-assist); the agent's notes and the footer
 segment in [In-session surfaces](in-session-surfaces.md#merge-assist-notes).
