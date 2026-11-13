@@ -14,7 +14,9 @@ pyp_join(2*i,root,p) :- env("pse.api","files"),env("pse.physicalRoot",root),pse_
 pyp_join(2*i+1,root,p) :- env("pse.api","files"),env("pse.ownerRoot",root),pse_requested(i,p).
 .decl pse_explicit(physical:symbol,logical:symbol)
 pse_explicit(p,l) :- env("pse.api","files"),pse_requested(i,_),pyp_path(2*i,p),pyp_path(2*i+1,l).
-pse_disk_file(p) :- pse_explicit(p,_),dir_metadata(@dir(p),name,1,_,_),name=@replace_all(p,"(?s).*/",""),suffix(".py",name),name!=".py".
+.decl pse_explicit_parent(path:symbol,parent:symbol,name:symbol)
+pse_explicit_parent(p,@dir(p),@replace_all(p,"(?s).*/","")) :- pse_explicit(p,_).
+pse_disk_file(p) :- pse_explicit_parent(p,parent,name),dir_metadata(parent,name,1,_,_),suffix(".py",name),name!=".py".
 .decl pse_relative(path:symbol,relative:symbol)
 pse_relative(p,".") :- pse_explicit(_,p),env("pse.ownerRoot",p).
 pse_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- pse_explicit(_,p),env("pse.ownerRoot",r),r!="/",r!="//",r!=".",prefix(cat(r,"/"),p).
