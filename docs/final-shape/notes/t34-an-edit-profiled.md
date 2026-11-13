@@ -269,3 +269,23 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     `WITHOUT ROWID` record with its rows in it): 2.9 s of a cold run's writer, now a row of `frame_part_used`. The
     WAL's checkpoints ran in the writer's commits (3.0 s): now beside it, `PASSIVE`, on a thread of its own. A cold
     run after a rebuild passed under the default cap with the queue never full (load 13). (see git log)
+
+## Findings against main (2026-11-13, full shape, cold)
+
+Datalog 615 findings, main 459. Keyed by (rule, path, line), main's 459 are 454 keys: five of its findings are a
+second column on a line Datalog reports once (the findings contract is by line). Every main key is in Datalog's.
+Datalog has 161 more:
+
+- **B002, 157 (Datalog wrong).** 156 are strings starting with `--` (`parser.add_argument("--host")`). With RUF041 in
+  the program, `typing.rr`'s `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r)` asks for
+  annotation guests. The demand's context keeps input relations only (`lower.rs`, `context`: "may hold more rows
+  than the rule"), so it is `str_node(s)`: every string is parsed as an annotation (17,997 requests on the full
+  shape). `"--host"` parses as `--host`. Decision 0058 makes every guest in the run's language visible to every
+  rule, so B002 fires inside it and the finding maps to the string's line. The repro is one line,
+  `p.add("--host")`, with B002 and RUF041 alone. Either fix stops it: an annotation guest is visible only through
+  `parsed`, or the demand keeps the rule's derived context. The first also matches Ruff, which runs no code
+  rules inside string annotations. The second also saves the parse of every string.
+- **B110, 2 (main's quirk).** The `pass` has a trailing comment. Main's rule wants the block to have exactly one
+  child, and tree-sitter counts the comment. Bandit reports both.
+- **PYI046, 2 (Datalog wrong).** The protocol is used only in a string (`cast("_TransactionWithConnection", t)`).
+  Ruff counts a string forward reference as a use; the `.rr` rule does not.
