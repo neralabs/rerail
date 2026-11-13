@@ -1,7 +1,8 @@
 # 0123: Statistics are requested, made in one batch, then planned with
 
 Status: decided and built (2026-11-12): §2 (`plan.rs`: `Model::wants`, `wants_strata`, `make_statistics`, `late`;
-`plan/issue.rs`), §3 (`plan/corpus.rs`, the kept relations' lazy statistics). It takes up 0122 §4. §5 is open.
+`plan/issue.rs`), §3 (`plan/corpus.rs`, the kept relations' lazy statistics). It takes up 0122 §4. §5's two items
+are closed (2026-11-13): §6 (`plan/issue.rs`, `lanes::wave`) and §7 (`plan.rs`, `mispriced`, greedy first).
 
 ## Intro
 
@@ -106,7 +107,9 @@ batch and the plans.
   requests all come from lines with no kept plan (692 lines): the session's first run plans its maintenance rules
   for the first time. Two ways out: carry the cold run's plans into the session (it plans the
   rules that are derived again), or price a first-sight line from rows alone when its rows bound its work under a
-  search.
+  search. **Closed (2026-11-13), in two parts.** The statistics went with the merge of the hub: the engine keeps a
+  relation's statistics as its rows come (`InRel::kept_stats`, 7bfd96d03), so a round finds them made. Step 06 now
+  makes 22 relations in 9 batches, 0.00 s (711 relations, 3.62 s before). The searches stayed: §7.
 - **A flaky test found on the way, not caused by this.** `closures_of_one_level_launch_in_one_wave` fails about one
   run in ten at the last commit too (4 of 32). With the scoreboard on (0113), the level's three closures sometimes
   run as one component's job on an executor thread. **Closed (2026-11-12):** the job still flushed them as one wave
@@ -114,3 +117,69 @@ batch and the plans.
   read the run's. A job now moves its waves to the thread that takes it back (`wave::since`, `wave::credit`, carried
   in its `Strand`): 30 of 30 with strands on. So it was not a gap between 0113 and 0095 §5. Strata of one level in
   different components (`RERAIL_STRATA_MERGE=off`) still flush a wave each.
+
+## 6. The components issued together share one device wave
+
+**The gap.** 0113 issues a level's strata as components, each run as a job. A component's members share a wave
+(`run_members`), but each component flushed its own. So a level split across components went out as one wave per
+component. `closures_of_a_level_wider_than_a_component_launch_in_one_wave` (20 closures, more than one component
+holds) flushed 3 waves for 20 launches.
+
+**Now.** A component's job runs its members to their launches and returns. The members still waiting are parked,
+with the launches queued on the job's thread (`wave::take_queued`). The run's thread takes each job of the same
+`issue` back (`Component::group`) and requeues its launches (`wave::requeue`). The group then goes out as one wave
+(`flush_group`). Each parked component is resumed with its launches' outputs (`wave::take_outputs`, `put_outputs`):
+one that ran as a job is resumed as a job, one that ran on the run's thread is resumed there. Members that wait
+again go out with the next wave. The test flushes 1 wave of 20 launches.
+
+- **Tickets are the process's** (`wave::NEXT`, an atomic). A job's launches are flushed on another thread, so a
+  thread's own count would give two launches one ticket.
+- **A job hands over only what it queued** (`wave::mark`). A thread waiting on a job runs others meanwhile
+  (`Stream::wait` helps the pool), so what is queued on it is not all one job's. Taking all of it lost a parked
+  component's launches (`launch 0 has not run`, on the O125 replay).
+- **Device joins stay on their thread.** A device stratum encodes its joins into its thread's open command buffer
+  (`setfix::device::submit`, a deferred submission), which cannot move. A job that opened one flushes its members'
+  wave itself (`wave::deferred_since`), as before.
+- **Resumed members reserve their atoms** as `run_members` does (`Strand::reserving`, 0114 §4).
+- `RERAIL_LEVEL_WAVE=off` flushes a wave per component, as before (a measurement aid).
+
+**Measured.** On the O125 replay a step has one waiting stratum (1 wave of 1 launch, in both modes), so the wave
+count does not move there. The cross part's retired instructions are at parity (41.5 / 58.7 / 67.3 G for steps
+06–08 with the switch off, 41.6 / 57.2 / 65.9 G on), same as full: true. The run thread's profile moves more,
+because resumed members now run on it where the jobs ran before; the profile records the run's thread only.
+
+## 7. Greedy first, held to what it did
+
+**What remained at the first edit.** With the statistics gone (§5), step 06 still searched 4,710 orders. Of its
+4,297 lines, 4,073 did fewer than 250 rows of work (1,509 none), so most of the searches could not
+pay.
+
+**Now.** An order is taken greedily, with no search, where its priced work is under what a search costs
+(`search_rows`). This is 0132 §3's greedy first, now on by default. 0132 kept it off because its actual regret was
+six times its estimate, and it named a bound on actual regret as what would make it safe. Measured work gives that
+bound from one run on: a kept order priced under a search's cost whose line did a search's work or more when it
+last ran is searched at its next plan (`mispriced`, counted as `searched: ran over its price`). The search then
+costs less than the line ran, by 0122's rule. The guard holds whether the order came from greedy or from a search.
+Until the line runs again, the new plan is not held to the old work.
+
+`RERAIL_PLAN_GREEDY_FIRST=off` searches as before. `RERAIL_PLAN_CACHE_COUNTS` prints the orders searched and those
+taken greedily.
+
+**Measured.** O125 replay steps 06–08, the cross part's retired instructions, same as full: true:
+
+| | cold (05) | step 06 | step 07 | step 08 |
+|---|---|---|---|---|
+| search always, run 1 | | 40.90 G | 56.36 G | 63.83 G |
+| greedy first, held to what it did, run 1 | | 40.13 G | 54.66 G | 63.13 G |
+| search always, run 2 | 76.00 G | 41.03 G | 56.69 G | 64.15 G |
+| greedy first, held to what it did, run 2 | 76.26 G | 40.95 G | 54.96 G | 63.09 G |
+| orders searched, search always (run 2) | 1,948 | 4,710 | 3,197 | 1,949 |
+| orders searched + taken greedily (run 2) | 1,523 + 425 | 2,723 + 1,991 | 1,836 + 1,434 | 1,529 + 421 |
+
+So the session's steps save 0.2–3.1%, and the cold run is at parity (+0.3%). The orders are counted over the
+process (`RERAIL_PLAN_CACHE_COUNTS`); the run thread's spans are not, as a job's planning is not in them.
+
+**Not bounded: an order's first run.** Before a line has run, nothing measured holds it; only its price does. In a
+cold run every line is in its first run, so the cold run's regret is 0132's: +1.3% join work against a search a
+third cheaper.
+

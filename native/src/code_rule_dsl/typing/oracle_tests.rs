@@ -2036,7 +2036,7 @@ fn spike_o125_replay() {
     let cold = run();
     derivations(a - 1, "cold");
     keep(a - 1, "cold");
-    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(Vec::len).collect::<Vec<_>>());
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
     let full_only = std::env::var_os("O125_FULL_ONLY").is_some();
     for step in a..=b {
@@ -2052,8 +2052,8 @@ fn spike_o125_replay() {
         keep(step, "session");
         let got = outputs();
         let mut line = format!(
-            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s, local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
-            cpu(&r), phase(&r, "cross"), phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
+            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s ({:.2} G instructions), local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
+            cpu(&r), phase(&r, "cross"), r.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
         );
         // `O125_SAVE`: each step's outputs, `<dir>/NN.txt`, to compare two modes' runs without a full run each.
         if let Some(dir) = std::env::var_os("O125_SAVE").map(PathBuf::from) {

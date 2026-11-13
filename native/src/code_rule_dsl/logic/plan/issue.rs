@@ -18,14 +18,55 @@
 
 use super::*;
 use rerail_accel::stream::{Handle, Stream};
+use std::time::Instant;
 
 /// What a component's job gives back: its strand, how many members ran natively, and what stopped the next.
-pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved);
-use std::time::Instant;
+pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved, Parked<'a>);
+
+/// Whether the components issued together share one device wave (decision 0123 §6). `RERAIL_LEVEL_WAVE=off` flushes
+/// one a component, as before (a measurement aid).
+fn level_wave() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVEL_WAVE").map_or(true, |v| v != "off"));
+    *ON
+}
+
+/// A component's members.
+type Members<'a> = Vec<(BTreeSet<String>, Vec<&'a Rule>)>;
+
+/// What a component's job leaves waiting on the run's wave (decision 0123 §6): its members still waiting on their
+/// device wave, the launches they queued on the job's thread, and its members' rules (to resume them).
+pub(super) struct Parked<'a> {
+    waiting: Vec<(usize, Box<Driving<'a>>)>,
+    queued: super::super::lanes::wave::Queued,
+    data: Members<'a>,
+}
+
+// SAFETY: as its strand (`Strand`): the drivers are the strand's state, made on the job's thread and resumed on one
+// thread at a time, only after the job that made them ended; the kernels hold shared, immutable buffers.
+unsafe impl Send for Parked<'_> {}
+
+/// A component whose members wait on the run's wave: its job ended, it is not absorbed yet.
+struct Waiting<'a> {
+    /// Its waiting members' launches (their outputs go to the job that resumes them).
+    tickets: Vec<u64>,
+    strand: Strand<'a>,
+    n: usize,
+    stop: Option<Result<(Option<String>, Option<String>)>>,
+    times: Vec<(Instant, Instant)>,
+    reserved: crate::content_store::atoms::Reserved,
+    inline: bool,
+    waiting: Vec<(usize, Box<Driving<'a>>)>,
+    data: Members<'a>,
+}
+
+// SAFETY: as `Parked`'s: a waiting component is resumed by one job at a time, after the one that parked it ended.
+unsafe impl Send for Waiting<'_> {}
 
 enum State<'a> {
     Job(Handle<Out<'a>>),
-    Inline(Strand<'a>, Vec<(BTreeSet<String>, Vec<&'a Rule>)>),
+    Inline(Strand<'a>, Members<'a>),
+    /// Waiting on the run's wave (`flush_group`).
+    Parked(Box<Waiting<'a>>),
     Done(usize, Option<Result<(Option<String>, Option<String>)>>),
 }
 
@@ -35,6 +76,8 @@ struct Component<'a> {
     digests: Vec<u64>,
     estimate: f64,
     state: State<'a>,
+    /// The `issue` that made it: the components issued together share one device wave (decision 0123 §6).
+    group: usize,
 }
 
 /// What a stratum the loop reaches gets from its component.
@@ -76,6 +119,8 @@ pub(super) struct Board<'a> {
     fixed: f64,
     pub parallel: bool,
     pub counts: Counts,
+    /// How many `issue`s made components (`Component::group`).
+    groups: usize,
     /// Each stratum's producers (`deps`), for the trace.
     from: Vec<Vec<usize>>,
     /// `RERAIL_STRATA_TRACE`: the run's start, the stratum the loop is at (since when, and whether its component
@@ -133,6 +178,7 @@ impl<'a> Board<'a> {
             fixed: env_f("RERAIL_STRATA_FIXED", 136e-6),
             parallel: !matches!(std::env::var("RERAIL_STRATA_PARALLEL").as_deref(), Ok("off")),
             counts: Counts::default(),
+            groups: 0,
             from: producers,
             trace: std::env::var_os("RERAIL_STRATA_TRACE").map(|_| Trace { t0: Instant::now(), at: None, by_component: false, rows: vec![None; sccs.len()], why: std::cell::RefCell::new(vec![""; sccs.len()]) }),
         }
@@ -281,11 +327,12 @@ impl<'a> Board<'a> {
             self.counts.largest = self.counts.largest.max(members.len());
             let data: Vec<(BTreeSet<String>, Vec<&'a Rule>)> = members.iter().map(|&m| sccs[m].clone()).zip(rules).collect();
             issued.push(c);
-            self.comps.push(Component { members, own: held, digests, estimate: est, state: State::Inline(strand, data) });
+            self.comps.push(Component { members, own: held, digests, estimate: est, state: State::Inline(strand, data), group: self.groups });
         }
         if issued.is_empty() {
             return Ok(());
         }
+        self.groups += 1;
         // Decision 0123: the statistics the issued components' plans will read, requested by each line that will be
         // priced (its seeds; its probes), made in one batch. The strands bind the same lazy statistics, so each
         // takes them as made; what a stratum's own rounds find still to make is made there.
@@ -330,9 +377,18 @@ impl<'a> Board<'a> {
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
                 let before = super::super::lanes::wave::flushed_now();
-                let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                let mark = super::super::lanes::wave::mark();
+                let mut waiting = Vec::new();
+                let (mut n, mut stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
+                // A device joins' submission opened here is this thread's: its members' wave is flushed here.
+                if !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) && let Err(e) = strand.flush_parked(&data, &mut waiting, &mut times) {
+                    waiting.clear();
+                    (n, stop) = (0, Some(Err(e)));
+                }
                 strand.2 = super::super::lanes::wave::since(before);
-                (strand, n, stop, times, reserved)
+                // Its members waiting on their wave go back with their launches, for the level's wave.
+                let queued = super::super::lanes::wave::take_queued(mark);
+                (strand, n, stop, times, reserved, Parked { waiting, queued, data })
             }));
         }
         Ok(())
@@ -382,17 +438,36 @@ impl<'a> Board<'a> {
         let comp = &mut self.comps[c];
         let (strand, n, stop, times, reserved, inline) = match std::mem::replace(&mut comp.state, State::Done(0, None)) {
             State::Job(h) => {
-                let (s, n, stop, times, reserved) = stream.wait(h).map_err(Error::Plan)?;
+                let (s, n, stop, times, reserved, parked) = stream.wait(h).map_err(Error::Plan)?;
+                if !parked.waiting.is_empty() {
+                    let tickets = parked.queued.tickets();
+                    super::super::lanes::wave::requeue(parked.queued);
+                    comp.state = State::Parked(Box::new(Waiting { tickets, strand: s, n, stop, times, reserved, inline: false, waiting: parked.waiting, data: parked.data }));
+                    return Ok(());
+                }
                 (s, n, stop, times, reserved, false)
             }
             State::Inline(mut strand, data) => {
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
-                let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                let mut waiting = Vec::new();
+                let (n, stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
+                if !waiting.is_empty() {
+                    comp.state = State::Parked(Box::new(Waiting { tickets: Vec::new(), strand, n, stop, times, reserved, inline: true, waiting, data }));
+                    return Ok(());
+                }
                 (strand, n, stop, times, reserved, true)
             }
-            State::Done(..) => return Ok(()),
+            State::Parked(..) | State::Done(..) => return Ok(()),
         };
+        self.taken(c, run, strand, n, stop, times, reserved, inline);
+        Ok(())
+    }
+
+    /// Absorbs component `c`'s strand once its members ran (`finish`, `flush_group`); those that ran retire.
+    #[allow(clippy::too_many_arguments)]
+    fn taken(&mut self, c: usize, run: &mut Run<'a, '_>, strand: Strand<'a>, n: usize, stop: Option<Result<(Option<String>, Option<String>)>>, times: Vec<(Instant, Instant)>, reserved: crate::content_store::atoms::Reserved, inline: bool) {
+        let comp = &mut self.comps[c];
         // Its strand's relations are those its members that ran made: the others' are not held.
         run.absorb(strand, &comp.own, &comp.digests);
         // Its relations are published: so are its atoms (decision 0114 §4).
@@ -409,22 +484,115 @@ impl<'a> Board<'a> {
         comp.state = State::Done(n, stop);
         let ran: Vec<usize> = self.comps[c].members[..n].to_vec();
         ran.into_iter().for_each(|m| self.retire(m));
+    }
+
+    /// The device wave of the components issued with `c` (decision 0123 §6): each of them is waited for, so the
+    /// launches its members left waiting are queued on this thread, and they go out as one wave. A component that ran
+    /// as a job is resumed as a job, with its launches' outputs; one that ran here is resumed here. As often as some
+    /// wait again, their launches go out as the next wave. Each then retires as `finish` would retire it.
+    fn flush_group<'s>(&mut self, c: usize, run: &mut Run<'a, '_>, stream: &Stream<'s, '_>, ambient: &'s Ambient) -> Result<()>
+    where
+        'a: 's,
+    {
+        let group = self.comps[c].group;
+        let mates: Vec<usize> = (0..self.comps.len()).filter(|&x| self.comps[x].group == group).collect();
+        for &x in &mates {
+            if matches!(self.comps[x].state, State::Job(_) | State::Inline(..)) {
+                self.flying.retain(|&y| y != x);
+                self.finish(x, run, stream)?;
+            }
+        }
+        let mut parked: Vec<(usize, Box<Waiting<'a>>)> = Vec::new();
+        for &x in &mates {
+            if matches!(self.comps[x].state, State::Parked(_)) {
+                let State::Parked(w) = std::mem::replace(&mut self.comps[x].state, State::Done(0, None)) else { unreachable!() };
+                parked.push((x, w));
+            }
+        }
+        // As `run_members` leaves a component whose wave failed: none of its members ran natively.
+        let failed = |w: &mut Waiting<'a>, e: Error| {
+            w.waiting.clear();
+            w.n = 0;
+            w.stop = Some(Err(e));
+        };
+        while !parked.is_empty() {
+            let strata = parked.iter().map(|(_, w)| w.waiting.len()).sum();
+            super::super::lanes::wave::flush(strata).map_err(Error::Plan)?;
+            let mut back = Vec::new();
+            let mut jobs = Vec::new();
+            for (x, mut w) in parked {
+                if w.inline || !self.parallel {
+                    let Waiting { strand, waiting, data, times, reserved, .. } = &mut *w;
+                    if let Err(e) = strand.reserving(reserved, |s| s.resume_parked(data, waiting, times)) {
+                        failed(&mut w, e);
+                    }
+                    back.push((x, w));
+                    continue;
+                }
+                let outs = super::super::lanes::wave::take_outputs(&std::mem::take(&mut w.tickets));
+                jobs.push((x, stream.submit(self.comps[x].estimate, move || {
+                    let _in = ambient.enter();
+                    let mut w = w;
+                    super::super::lanes::wave::put_outputs(outs);
+                    let before = super::super::lanes::wave::flushed_now();
+                    let mark = super::super::lanes::wave::mark();
+                    let Waiting { strand, waiting, data, times, reserved, .. } = &mut *w;
+                    let mut r = strand.reserving(reserved, |s| s.resume_parked(data, waiting, times));
+                    // A device joins' submission opened here is this thread's: its members' wave is flushed here.
+                    if r.is_ok() && !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) {
+                        r = strand.reserving(reserved, |s| s.flush_parked(data, waiting, times));
+                    }
+                    let waves = super::super::lanes::wave::since(before);
+                    strand.2 = (strand.2.0 + waves.0, strand.2.1 + waves.1);
+                    if let Err(e) = r {
+                        failed(&mut w, e);
+                    }
+                    let queued = super::super::lanes::wave::take_queued(mark);
+                    w.tickets = queued.tickets();
+                    (w, queued)
+                })));
+            }
+            for (x, h) in jobs {
+                let (w, queued) = stream.wait(h).map_err(Error::Plan)?;
+                super::super::lanes::wave::requeue(queued);
+                back.push((x, w));
+            }
+            parked = Vec::new();
+            for (x, w) in back {
+                if w.waiting.is_empty() {
+                    let Waiting { strand, n, stop, times, reserved, inline, .. } = *w;
+                    self.taken(x, run, strand, n, stop, times, reserved, inline);
+                } else {
+                    parked.push((x, w));
+                }
+            }
+        }
         Ok(())
     }
 
     /// The stratum at `at`, as its component left it: waited for (or run here) when it is the component's first.
     /// While it waits, the components that end are collected and what they make ready is issued (`more`).
-    pub(super) fn retire_at<'s, 'r>(&mut self, at: usize, run: &mut Run<'a, 'r>, stream: &Stream<'s, '_>, more: &mut dyn FnMut(&mut Self, &mut Run<'a, 'r>) -> Result<()>) -> Result<Got> {
+    pub(super) fn retire_at<'s, 'r>(&mut self, at: usize, run: &mut Run<'a, 'r>, stream: &Stream<'s, '_>, ambient: &'s Ambient, more: &mut dyn FnMut(&mut Self, &mut Run<'a, 'r>) -> Result<()>) -> Result<Got>
+    where
+        'a: 's,
+    {
         let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
         let mut nap = 20e-6f64;
         loop {
             let seen = stream.ended();
             match &self.comps[c].state {
                 State::Done(..) => break,
+                State::Parked(_) => {
+                    self.flush_group(c, run, stream, ambient)?;
+                    break;
+                }
                 State::Job(h) if !stream.done(h) && !stream.queued(h) => {}
                 _ => {
                     self.flying.retain(|&x| x != c);
                     self.finish(c, run, stream)?;
+                    if matches!(self.comps[c].state, State::Parked(_)) {
+                        self.flush_group(c, run, stream, ambient)?;
+                    }
                     break;
                 }
             }

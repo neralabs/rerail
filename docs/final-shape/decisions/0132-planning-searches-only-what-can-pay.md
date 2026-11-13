@@ -119,6 +119,10 @@ So 87% of the search's candidates are in searches that cannot pay.
 The regret is six times the estimate, because a plan's estimated work is not its actual work. At 0.8 µs a row the
 net saving is about 0.3 s of a cold run, so it stays off.
 
+**On by default since 0123 §7 (2026-11-13).** An order taken so is held to what it did: once its line has done a
+search's work, it is searched at its next plan. That bounds the regret from an order's second run on. The first
+run's regret is as measured here. `RERAIL_PLAN_GREEDY_FIRST=off` searches as before.
+
 What would make it safe is a bound on actual regret, not estimated: §4.
 
 ## 4. Classifiers and approximations

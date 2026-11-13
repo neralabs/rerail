@@ -874,8 +874,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
-const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 10] = [const { std::sync::atomic::AtomicU64::new(0) }; 10];
+const PLAN_CACHE_NAMES: [&str; 10] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price"];
 /// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
 /// ran, ran over a search's work, or its inputs grew past what that allows.
 static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
@@ -896,6 +896,10 @@ thread_local! {
 fn plan_site(site: &'static str) {
     PLAN_SITE.with(|c| c.set(site));
 }
+/// Orders made, by how (`RERAIL_PLAN_CACHE_COUNTS`): searched, and taken greedily under a search's cost (decision 0123
+/// §7).
+static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -1029,7 +1033,14 @@ const REPLAN_ROWS: f64 = 10_000.0;
 /// 0.8 µs a unit of work. The candidates follow from the joins `j`: with the delta first, `(j-1)·2^(j-2)+1` (`fgp`'s
 /// 12 joins 11,265, `lcbind`'s 9 1,025, `lgpar`'s 6 81, as counted); without, `j·2^(j-1)`; past `GREEDY`, `j²`.
 const SEARCH_FIXED_ROWS: f64 = 400.0;
-fn search_rows(body: &[Literal], first: Option<usize>) -> f64 {
+/// Decision 0123 §7: a kept order priced at `priced` rows of work, under what a search costs, whose line did `ran` rows,
+/// a search's work or more, when it last ran. A search can pay there, and costs less than the line ran.
+pub fn mispriced(priced: f64, ran: Option<f64>, body: &[Literal], first: Option<usize>) -> bool {
+    let search = search_rows(body, first);
+    ran.is_some_and(|ran| ran >= search.max(SEARCH_WORK) && priced <= search)
+}
+
+pub fn search_rows(body: &[Literal], first: Option<usize>) -> f64 {
     let j = body.iter().filter(|l| is_join(l)).count() as f64;
     let candidates = if j > GREEDY as f64 {
         j * j
@@ -1144,7 +1155,7 @@ type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc
 /// when it last ran, its inputs grown by no more than that allows, keeps its order with no search and no pricing;
 /// in a run, a probe is searched again only once its work has paid for its searches. `RERAIL_PLAN_BUDGET=off`
 /// plans as before (a measurement aid).
-pub(in crate::code_rule_dsl) const SEARCH_WORK: f64 = 250.0;
+pub const SEARCH_WORK: f64 = 250.0;
 
 pub(in crate::code_rule_dsl) fn plan_budget() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_PLAN_BUDGET").is_ok_and(|v| v == "off"));
@@ -1450,7 +1461,8 @@ impl Drop for KeepPlans {
             let counts: Vec<String> = PLAN_CACHE.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late", counts.join(", "), miss.join(", "), st[0], st[1], st[2]);
+            let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost)", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1]);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -1858,6 +1870,18 @@ impl Model {
                 super::profile::decision("planning budget missed: inputs grew (decision 0122)", || format!("{}product ×{}; most by {what}, from {} rows, ×{}; ran {}", if driver { "" } else { "kept order not led by its delta; " }, bucket(product), bucket(from), bucket(g), bucket(k.5.unwrap_or(0.0))));
             }
         }
+        // A kept order priced under what a search costs, whose line did a search's work or more when it last ran
+        // (decision 0123 §7): its price was wrong by enough that a search can pay, and costs less than the line ran.
+        // So an order taken without a search (`greedy first`, where its price is under a search's) is held to what it
+        // did. Until the line runs again, the new plan is not held to the old work (`ran` is cleared).
+        let mispriced = kept.as_ref().is_some_and(|k| mispriced(k.1 * nodes, k.5, body, first));
+        let kept = if mispriced {
+            plan_cache(9);
+            super::profile::decision("plan cache (decision 0038)", || "searched: a kept order priced under a search ran over a search's work (decision 0123 §7)".into());
+            None
+        } else {
+            kept
+        };
         if let Some((_, _, _, _, Some(priced), _)) = &kept
             && near(&priced.sizes, &sizes)
             && self.valid_live_driver(&priced.got.0.0, body, first)
@@ -1926,7 +1950,7 @@ impl Model {
                     super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into())
                 }
             }
-        } else {
+        } else if !mispriced {
             plan_cache(1);
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
@@ -1937,7 +1961,7 @@ impl Model {
         PLANS.with(|p| {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
-                let ran = plans_get(&key).and_then(|k| k.5);
+                let ran = if mispriced { None } else { plans_get(&key).and_then(|k| k.5) };
                 plans_put(p, key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
@@ -2827,14 +2851,17 @@ impl Model {
             (done == full_mask).then_some((work, rows, order, bound, rest))
         };
         static PROBE: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
-        let (probe, greedy_first) = *PROBE.get_or_init(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var_os("RERAIL_PLAN_GREEDY_FIRST").is_some()));
+        let (probe, greedy_first) = *PROBE.get_or_init(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
-        // Greedy first (a spike, `RERAIL_PLAN_GREEDY_FIRST`): its order where its work is under what the search would
-        // cost (`search_rows`), so the order a search finds could save less than the search costs.
+        // Greedy first (decision 0123 §7; `RERAIL_PLAN_GREEDY_FIRST=off` searches as before): its order where its work
+        // is under what the search would cost (`search_rows`), so the order a search finds could save less than the
+        // search costs. An order so taken that ran over a search's work is searched at its next plan
+        // (`plan_rule_reused`, `mispriced`).
         let cheap_greedy = (greedy_first && fixed.is_none() && joins.len() >= 3 && joins.len() <= GREEDY)
             .then(|| greedy(&mut candidates))
             .flatten()
             .filter(|g| g.0 <= search_rows(body, first));
+        SEARCHES[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(g) = cheap_greedy {
             super::profile::decision("plan cache (decision 0038)", || "greedy first: its work under a search's".into());
             best_of.insert(full_mask, g);
@@ -5631,16 +5658,18 @@ impl<'a> Strand<'a> {
         for (form, pieces) in forms {
             self.0.prog = form;
             let mut r = Default::default();
-            out.push(self.run_members(pieces, &mut times, &mut r));
+            out.push(self.run_members(pieces, &mut times, &mut r, None));
             reserved.push(r);
         }
         (out, reserved)
     }
 
-    /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint (its
-    /// device waves go out as its own batches): how many ran natively, and what stopped the next, if one did (a
-    /// decline and its reason, or an error).
-    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
+    /// Runs a component's members (decision 0113 §2) in program order on this thread, each to its fixpoint: how many
+    /// ran natively, and what stopped the next, if one did (a decline and its reason, or an error). A member that
+    /// reads one waiting on its device wave has that wave flushed first. The members still waiting when the last has
+    /// run are left in `park` (decision 0123 §6): their launches go out with the level's wave, on the run's thread
+    /// (`resume_parked`). With no `park`, the component flushes them as its own wave.
+    fn run_members(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved, park: Option<&mut Vec<(usize, Box<Driving<'a>>)>>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
         let t0 = std::time::Instant::now();
         times.clear();
         times.resize(members.len(), (t0, t0));
@@ -5700,10 +5729,46 @@ impl<'a> Strand<'a> {
                 Err(e) => (0, Some(Err(e))),
             };
         }
+        if let Some(park) = park {
+            park.append(&mut waiting);
+            return (members.len(), None);
+        }
         match finish(&mut self.0, &mut waiting, times) {
             Ok(()) => (members.len(), None),
             Err(e) => (0, Some(Err(e))),
         }
+    }
+
+    /// Runs `f` in the strand's reservation (decision 0114 §4), as `run_members` runs its members: what it made is added
+    /// to `reserved`.
+    fn reserving<R>(&mut self, reserved: &mut crate::content_store::atoms::Reserved, f: impl FnOnce(&mut Self) -> R) -> R {
+        let r = crate::content_store::atoms::reserving(&self.1);
+        let out = f(self);
+        reserved.extend(r.end());
+        out
+    }
+
+    /// Flushes the wave of the members `run_members` parked, on this thread, until none waits.
+    fn flush_parked(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut [(std::time::Instant, std::time::Instant)]) -> Result<()> {
+        while !waiting.is_empty() {
+            super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
+            self.resume_parked(members, waiting, times)?;
+        }
+        Ok(())
+    }
+
+    /// Resumes the members `run_members` parked (`waiting`) once the run's thread flushed their wave: those that wait
+    /// on a wave again stay in `waiting`, for the next flush.
+    fn resume_parked(&mut self, members: &[(BTreeSet<String>, Vec<&'a Rule>)], waiting: &mut Vec<(usize, Box<Driving<'a>>)>, times: &mut [(std::time::Instant, std::time::Instant)]) -> Result<()> {
+        for (k, d) in std::mem::take(waiting) {
+            match self.0.native_resume(d)? {
+                Native::Ran => times[k].1 = std::time::Instant::now(),
+                Native::Waiting(d) => waiting.push((k, d)),
+                Native::Declined => return Err(Error::Plan(format!("{:?}: a stratum that waited on its wave declined", members[k].0))),
+                Native::Asking(..) => return Err(Error::Plan(format!("{:?}: requests posted off the run's thread", members[k].0))),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -9565,7 +9630,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     };
                     b.collect(&mut run, stream)?;
                     b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
-                    b.retire_at(at, &mut run, stream, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
+                    b.retire_at(at, &mut run, stream, &ambient, &mut |b, run| b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient))?
                 }
                 None => issue::Got::Not,
             };

@@ -98,7 +98,6 @@ pub mod wave {
         static SUSPENDABLE: Cell<u32> = const { Cell::new(0) };
         static QUEUED: RefCell<Vec<(&'static str, u64, Kernel)>> = const { RefCell::new(Vec::new()) };
         static DONE: RefCell<HashMap<u64, Output>> = RefCell::new(HashMap::new());
-        static NEXT: Cell<u64> = const { Cell::new(0) };
         /// Waves flushed on this thread and the launches they held (for tests).
         static FLUSHED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
@@ -110,6 +109,64 @@ pub mod wave {
     /// level's strata, commits it there): once, after the wave's launches.
     pub fn defer(f: Box<dyn FnOnce() -> Result<(), String>>) {
         DEFERRED.with_borrow_mut(|d| d.push(f));
+    }
+
+    /// The next launch's ticket, of the process: a component's job queues on its own thread and hands its launches to
+    /// the run's (`take_queued`, `requeue`), where they share the run's tickets.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// Launches queued on one thread and not flushed (`take_queued`): a component's job hands them to the run's thread,
+    /// whose wave runs them with the level's (decision 0123 §6).
+    pub struct Queued(Vec<(&'static str, u64, Kernel)>);
+
+    impl Queued {
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        pub fn tickets(&self) -> Vec<u64> {
+            self.0.iter().map(|l| l.1).collect()
+        }
+    }
+
+    /// A flushed wave's outputs, taken off the thread that flushed it for the one that resumes their launches' strata
+    /// (`take_outputs`, `put_outputs`).
+    pub struct Outputs(Vec<(u64, Output)>);
+
+    /// The outputs of `tickets`' launches that this thread's waves ran, taken off it.
+    pub fn take_outputs(tickets: &[u64]) -> Outputs {
+        DONE.with_borrow_mut(|d| Outputs(tickets.iter().filter_map(|t| d.remove(t).map(|o| (*t, o))).collect()))
+    }
+
+    /// Outputs another thread's wave ran (`take_outputs`), for `take` on this one.
+    pub fn put_outputs(o: Outputs) {
+        DONE.with_borrow_mut(|d| d.extend(o.0));
+    }
+
+    /// Where this thread's wave stood (its launches queued, its deferred submissions) before a job ran on it
+    /// (`take_queued`, `deferred_since`). A thread waiting on a job may run others meanwhile (`Stream::wait` helps the
+    /// pool), so what is queued on it is not all the job's.
+    #[derive(Clone, Copy)]
+    pub struct Mark(usize, usize);
+
+    pub fn mark() -> Mark {
+        Mark(QUEUED.with_borrow(Vec::len), DEFERRED.with_borrow(Vec::len))
+    }
+
+    /// The launches queued on this thread since `mark`, taken off it.
+    pub fn take_queued(mark: Mark) -> Queued {
+        Queued(QUEUED.with_borrow_mut(|q| if q.len() > mark.0 { q.split_off(mark.0) } else { Vec::new() }))
+    }
+
+    /// Whether a submission was deferred to this thread's wave since `mark` (a device joins' command buffer,
+    /// `setfix::device::submit`): it is this thread's, and cannot go to another's wave.
+    pub fn deferred_since(mark: Mark) -> bool {
+        DEFERRED.with_borrow(Vec::len) > mark.1
+    }
+
+    /// Queues another thread's launches (`take_queued`) on this one, for its next `flush`.
+    pub fn requeue(q: Queued) {
+        QUEUED.with_borrow_mut(|mine| mine.extend(q.0));
     }
 
     /// While held, a form's launches may wait for the wave.
@@ -142,8 +199,7 @@ pub mod wave {
             kernels
                 .into_iter()
                 .map(|k| {
-                    let t = NEXT.get();
-                    NEXT.set(t + 1);
+                    let t = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     q.push((form, t, k));
                     t
                 })

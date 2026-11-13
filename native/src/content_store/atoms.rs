@@ -365,6 +365,11 @@ impl Drop for Reservation {
 pub struct Reserved(Vec<(usize, Vec<Sym>)>);
 
 impl Reserved {
+    /// Takes in what a later reservation of the same component made (its members resumed after their wave).
+    pub fn extend(&mut self, mut more: Reserved) {
+        self.0.append(&mut more.0);
+    }
+
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
     }
