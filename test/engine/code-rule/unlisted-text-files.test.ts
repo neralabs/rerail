@@ -63,7 +63,7 @@ async function workspace(git: boolean, codeRules: readonly CodeRule[], tree: Rea
     workspaceRoot: root, steerDelivery: { requestSteer: vi.fn(async () => undefined) }, audits: recorder,
     scope: "ai-output", timingLog: line => lines.push(line),
   });
-  /** One log-only audit: its status, and the sorted paths and failures it reports (a directory walk follows the file system's entry order). */
+  /** One log-only audit: its status, and the sorted paths and failures it reports, so a test checks which ones; "a repository audit's failure list" checks the walk's path order on the unsorted list. */
   const audit = async (scope: "repository" | "touched-files", paths?: string[]) => {
     const [auditId] = await enforcer.audit("unlisted", { scope, mode: "log", ...(paths === undefined ? {} : { paths }) });
     const result = audits.get(auditId!)?.result;
