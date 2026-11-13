@@ -1360,6 +1360,31 @@ pub mod tests {
         eprintln!("{} files: the same starts and lasts", inputs.len());
     }
 
+    /// The end rules' lasts (decision 0177) are the lasts the masks give: every token's, over the
+    /// corpus and the samples. The interpreter takes its lasts from the rules; the extract of the
+    /// last-byte masks is the meaning they replace.
+    #[test]
+    fn end_rules_give_the_masks_lasts() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(!r.rules.is_empty(), "the grammar's tokens have end rules");
+        let lasts_out = block.extract_outputs()[usize::from(r.lasts)];
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let mut tokens = 0;
+        for f in &inputs {
+            let run = block.run(f);
+            let words = &run.outputs[lasts_out];
+            let count = words.iter().map(|w| w.count_ones() as usize).sum();
+            let masks = rerail_compiler::block::extract::positions(words, count);
+            assert_eq!(run.positions[usize::from(r.lasts)], masks, "the rules' lasts");
+            tokens += masks.len();
+        }
+        eprintln!("{} files, {tokens} tokens: the rules' lasts are the masks'", inputs.len());
+    }
+
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
     /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
     #[test]

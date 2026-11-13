@@ -619,10 +619,24 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new() });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recends" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
+                let hex = line.word()?;
+                r.ends = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad end rule")?;
+            } else if first == "recrule" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recrule before its records"))?;
+                let how = line.word()?;
+                let o: u16 = line.number("")?;
+                r.rules.push(match how.as_str() {
+                    "run" => crate::records::EndRule::Run(o),
+                    "pair" => crate::records::EndRule::Pair(o),
+                    "last" => crate::records::EndRule::Last(o),
+                    w => return Err(format!("block {at} recrule: `run`, `pair` or `last`, not {w}")),
+                });
             } else if first == "recmark" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recmark before its records"))?;
                 let (o, w): (u16, u16) = (line.number("")?, line.number("")?);

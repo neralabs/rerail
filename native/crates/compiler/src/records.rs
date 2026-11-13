@@ -37,6 +37,69 @@ pub struct Records {
     /// outputs) of its bits at the starts, and the word it needs too (its code, 0 for any). At
     /// most `MARKS`.
     pub marks: Vec<(u16, u16)>,
+    /// Each byte's end rule as a token's first byte (decision 0177): an index into `rules`.
+    /// Empty: every token's last byte is the `lasts` extract's.
+    pub ends: Vec<u8>,
+    pub rules: Vec<EndRule>,
+}
+
+/// How a token's last byte is found from its first (`Records::rules`), each by an output's
+/// words (an index into the program's outputs):
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EndRule {
+    /// The first byte, then the output's run after it: the last is the run's.
+    Run(u16),
+    /// The first byte, and the next where the output holds at the first.
+    Pair(u16),
+    /// The output's first bit at or after the first byte (its last-byte mask).
+    Last(u16),
+}
+
+/// A token's last byte from its first, `s`, by its rule, over the file's output words; `None`
+/// where a `Last` has no bit left. A run past the words ends at their end.
+pub fn last_by_rule(rule: EndRule, s: usize, outputs: &[Vec<u64>]) -> Option<usize> {
+    let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
+    match rule {
+        EndRule::Pair(o) => Some(s + usize::from(bit(o, s))),
+        EndRule::Run(o) => {
+            // The run from `s + 1`, a word at a time.
+            let w = words(o);
+            let mut i = s + 1;
+            loop {
+                let Some(&x) = w.get(i / 64) else { return Some(i - 1) };
+                let ones = (!(x >> (i % 64))).trailing_zeros() as usize;
+                let left = 64 - i % 64;
+                if ones < left {
+                    return Some(i + ones - 1);
+                }
+                i += left;
+            }
+        }
+        EndRule::Last(o) => {
+            let w = words(o);
+            let mut q = s / 64;
+            let mut x = w.get(q)? & (!0u64 << (s % 64));
+            while x == 0 {
+                q += 1;
+                x = *w.get(q)?;
+            }
+            Some(64 * q + x.trailing_zeros() as usize)
+        }
+    }
+}
+
+/// Every token's last byte by the rules (`last_by_rule`), from its first; `None` where a
+/// token has none (the file goes to the fallback).
+pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64>]) -> Option<Vec<u32>> {
+    starts
+        .iter()
+        .map(|&s| {
+            let first = bytes.get(s as usize).copied().unwrap_or(0);
+            let rule = records.rules[usize::from(records.ends[usize::from(first)])];
+            last_by_rule(rule, s as usize, outputs).map(|l| l as u32)
+        })
+        .collect()
 }
 
 /// The most marks a code holds.

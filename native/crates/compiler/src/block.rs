@@ -945,6 +945,14 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
+                let mut positions = positions;
+                // The lasts by the end rules (decision 0177): each token's from its first byte.
+                if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
+                    match crate::records::lasts(r, bytes, &positions[usize::from(r.starts)], &outputs) {
+                        Some(l) => positions[usize::from(r.lasts)] = l,
+                        None => any = true,
+                    }
+                }
                 let codes = match (&self.records, &table) {
                     (Some(r), Some(t)) => {
                         let (codes, bad) = crate::records::pass(r, t, bytes, &positions[usize::from(r.starts)], &positions[usize::from(r.lasts)], &outputs);
@@ -1697,6 +1705,19 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N recmark O W` a mark: its output, its word's code (0 for any).
         for &(o, w) in &r.marks {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
+        }
+        // `block N recends …` each byte's end rule, then `block N recrule run|pair|last O` each
+        // rule (decision 0177).
+        if !r.rules.is_empty() {
+            let _ = writeln!(out, "  block {at} recends {}", hex(&r.ends));
+            for rule in &r.rules {
+                let (how, o) = match *rule {
+                    crate::records::EndRule::Run(o) => ("run", o),
+                    crate::records::EndRule::Pair(o) => ("pair", o),
+                    crate::records::EndRule::Last(o) => ("last", o),
+                };
+                let _ = writeln!(out, "  block {at} recrule {how} {o}");
+            }
         }
     }
 }
