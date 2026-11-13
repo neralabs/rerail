@@ -112,3 +112,27 @@ escape "a number of 19 digits or more" when int_long & digits17   # tier 2, at t
   from 1,047.7M to 1,053.8M. The JIT's `CHECK` word costs more a token than the Rust one:
   open.
 
+## The record pass's shape (step 3, in part)
+
+The record pass ran inside tier 1's one function, after a file's blocks. It shared that
+function's registers: its token loop reloaded values from the stack, and Cranelift remade
+its constants (the hash's multiplier, a table's offset) at every token. About 60 machine
+instructions a token.
+
+- **A function of its own**, which the pass calls once a file, so it keeps the cache's
+  positions and gets its own registers. The tables' bases and the multiplier are its
+  arguments, not constants.
+- **A slot's long-word flag** is the meta's top bit: one shift and branch, not a compare,
+  an AND and a test.
+- **A token's length mask** is all ones shifted by `-8 * min(len, 8)`, mod 64.
+- **Out of order** (a last before its start, a start inside the token before) is a
+  difference below zero: the differences ORed, their sign bit tested once a file.
+
+About 45 instructions a token. With the masked marks' masks, the record pass as the split
+measures it went from 194M to 161M (JIT). Tier 1 through the JIT went from 526.7M to
+496.6M; ahead of time, from 478.4M to 471.8M (LLVM had already kept the constants in
+registers).
+
+The ahead-of-time translation reads a constant inside the tables as their static and an
+offset (`clif_rust::translate`'s spans).
+
