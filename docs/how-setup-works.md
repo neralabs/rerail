@@ -392,6 +392,12 @@ runs the recorded Node itself while it exists and `node.exe` from `PATH` once it
 Node rather than two. `rerail update` chooses again from the `PATH` it runs with, and `rerail status` and the dashboard
 count Claude Code as connected in either case.
 
+Rerail 0.1.4 and earlier know only the `node` entry. Run `rerail install --remove` before installing one of them:
+its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twice, and its removal leaves the
+`cmd.exe` entries, which then fail on every event once its install is gone (Claude Code shows a hook error and goes
+on). If that has happened, delete from `~/.claude/settings.json` each hook entry whose `command` ends in `cmd.exe`
+and whose `args` name `hook-launcher.js`.
+
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
 
