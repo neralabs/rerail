@@ -700,10 +700,52 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
             }
         }
     }
+    // The engine's relations (`core.rr`'s) are read by the engine: a library clause deriving one asks it for
+    // something (`load(f, q, "python")`, python/modules.rr), though no rule reads it.
+    let core = library().join("core.rr").canonicalize().ok();
+    let listed: Vec<&String> = statements
+        .iter()
+        .filter(|(file, _)| core.as_ref() == Some(*file))
+        .flat_map(|(_, items)| items.iter())
+        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
+        .collect();
+    if listed.is_empty() {
+        reached.extend(core_names().iter().cloned());
+    } else {
+        reached.extend(listed.into_iter().cloned());
+    }
+    // A request rule: its head is read by no clause, but its body reads the file system (`dir_entry`, `file_line`,
+    // `file_digest`), which asks the engine for what it reads (`py_listed(d) :- py_file_at(_, _, d, _),
+    // dir_entry(d, _, _)`, python/modules.rr). It is kept once what it reads is reached.
+    let mut read_by_some: BTreeSet<String> = BTreeSet::new();
+    for (item, _) in statements.iter().flat_map(|(_, items)| items.iter()) {
+        if let syntax::Item::Clause { body, .. } = item {
+            lits(body, &mut read_by_some);
+        }
+    }
+    let mut askers: std::collections::HashMap<&str, Vec<(usize, usize)>> = std::collections::HashMap::new();
+    for (f, (file, items)) in statements.iter().enumerate() {
+        if whole.contains(file) {
+            continue;
+        }
+        for (s, (item, _)) in items.iter().copied().enumerate() {
+            let syntax::Item::Clause { heads, body, .. } = item else { continue };
+            if heads.iter().any(|h| read_by_some.contains(&h.rel)) {
+                continue;
+            }
+            for l in body {
+                if let syntax::Lit::Atom { rel, .. } = l
+                    && let Some((world, _)) = lower::WORLD.iter().find(|(w, _)| *w == rel.as_str())
+                {
+                    askers.entry(world).or_default().push((f, s));
+                }
+            }
+        }
+    }
     let mut keep: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut todo: Vec<String> = reached.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
-        for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten() {
+        for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten().chain(askers.get(rel.as_str()).into_iter().flatten()) {
             if !keep.insert((f, s)) {
                 continue;
             }

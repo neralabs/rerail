@@ -4128,6 +4128,16 @@ declarations. Two differences are the dropped form's gain, not a change: an unre
 declared and unread after `prune`; and a violation's `@place` variant is made when any rule makes a place (no
 reached one does there). 52–58% of the packs' and data layer's clauses are dropped.
 
+**Two roots were missing (fixed 2026-11-13).** What only the engine reads was dropped: a rule deriving one of
+the engine's relations (`load(f, q, "python") :- py_resolves(q, f, _)`, python/modules.rr), and a request rule,
+whose head nothing reads but whose body reads the file system (`py_listed(d) :- py_file_at(_, _, d, _),
+dir_entry(d, _, _)`), so no candidate directory was listed. A run that loads modules loaded nothing: the two cone
+tests (`the_cone_of_requests_is_kept_while_its_reads_and_answers_are`,
+`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`) failed after the merge into rr-align. The seven
+comparisons did not see it: `front::prune` drops both too, since neither has a reader. `core.rr`'s relations are
+now roots, and a request rule is kept once the file-system relation it reads is reached;
+`dropping_unreached_clauses_keeps_what_the_engine_reads`.
+
 **Measured** (44 policies, strict, CPU, 48 findings each): dl1 188.1 → 163.2 G instructions; dl10 280.4 →
 257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
 now: no item.
