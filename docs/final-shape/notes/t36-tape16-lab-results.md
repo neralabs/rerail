@@ -199,13 +199,216 @@ and 0.15% are ancestors of an edit.
 Supertype masks need at most 4 bits on these corpora (Python, Rust), within the 16 bits in the
 record.
 
+## Span LZ: copies of compressed input (data-layer, every 10th file)
+
+Span LZ is the user's alternative to LZ4. Instead of copying decoded output, a span re-runs a run of
+earlier *compressed* sequences, from the same block or (`x`) from earlier blocks of the same file.
+Spans nest to a depth. Every block still decodes on its own thread, because what a span copies is
+input the decoder already holds.
+
+| codec | whole file | CDC 256 | CDC 1024 |
+|---|---|---|---|
+| zstd (reference) | 0.70 | 1.02 | 0.81 |
+| lz-out (LZ4's rule) | 1.47 | 1.90 | 1.57 |
+| lp-replay | 2.12 | 2.21 | 1.84 |
+| span, depth 1 | 2.64 | 2.58 | 2.26 |
+| span, depth 4 | 1.93 | 2.23 | 1.86 |
+| span, depth 4, cross-block | 1.93 | 2.02 | **1.81** |
+
+- **Nesting** is what makes spans pay. At depth 1 a span costs more than the replays it replaces.
+- **Cross-block copies** help only once blocks are small: at CDC 256 they take 2.23 to 2.02.
+- **Python pays for the pointer.** A span's pointer is five varints, which is more than a short
+  replay.
+- **Random reads** take 1.5–3.3 µs.
+
+## The entropy stage (data-layer, every 10th file)
+
+Each table is static canonical Huffman with codes of at most 12 bits. There is one for sequence bytes
+and one for literals, shared per language and trained on the training half. Every checkpoint keeps
+its two bit offsets, so each segment decodes alone, on the CPU or on its own GPU thread.
+
+| codec | whole file | + huff | CDC 1024 | + huff |
+|---|---|---|---|---|
+| lz-out | 1.47 | 1.20 | 1.57 | 1.24 |
+| lp-lz | 3.60 | 2.52 | | |
+| lp-replay | 2.12 | 1.54 | | |
+| span4 | 1.93 | 1.40 | | |
+| span4x | | | 1.81 | **1.35** (0.88× v15) |
+
+With the entropy stage, span LZ at CDC 1024 is smaller than format 15 as stored, and every block
+still decodes on its own.
+
+## The dictionary × block size product (data-layer, every 10th file)
+
+| solution | no dictionary | 16 KB | 64 KB |
+|---|---|---|---|
+| zstd, Python, CDC 256 | 2.15 | 1.90 | 1.90 |
+| span4x+huff, JSON, CDC 256 | 1.36 | 1.07 | 1.07 |
+
+A dictionary matters for small blocks, unlike at file size. 16 KB gives all of the gain.
+
+## The whole data-layer repository (27,903 files, 48.06M test nodes)
+
+`grid --shards 12` streams the whole repository within the budget. Each shard took 46–70 s and
+peaked at about 760 MB, with 0 round-trip errors.
+
+| solution | all | python | json |
+|---|---|---|---|
+| v15 as stored | 1.54 | 2.45 | 1.27 |
+| zstd, whole file | **0.71** | 1.45 | 0.47 |
+| zstd, CDC 1024, 16 KB dictionary | 0.78 | 1.55 | 0.54 |
+| lz-out+huff, CDC 1024 | 1.19 | 2.21 | 0.86 |
+| span4x+huff, CDC 1024 | 1.32 | 2.56 | 0.93 |
+| span4x+huff, CDC 256 | 1.46 | 2.76 | 1.05 |
+
+The tenth-of-the-repository numbers hold at full size. Every GPU-decodable codec beats v15 overall.
+For Python, only lz-out does, and span LZ is 4% over.
+
+## CPython (2,000 files of CPython 3.13.0, 3.16M test nodes)
+
+| solution | python B/node | ×v15 |
+|---|---|---|
+| v15 as stored | 2.12 | 1 |
+| zstd | 1.39 | 0.66 |
+| lz-out+huff, CDC 1024 | 2.17 | 1.02 |
+| span4x+huff, CDC 1024 | 2.60 | 1.23 |
+| span4x+huff, CDC 256 | 2.74 | 1.29 |
+
+Layouts: records under zstd take 1.33 and byte planes 1.37. CPython's Python is denser than the
+data-layer's, and the GPU-friendly codecs lose more of their ground on it.
+
+## E3 again: decode on Metal (data-layer, every 10th file, warm, checked)
+
+| codec | whole file GB/s | CDC 1024 GB/s |
+|---|---|---|
+| lp-lz | 4.6–5.4 | 16.4 (JSON) |
+| lp-replay | 2.1–4.0 | |
+| span4 / span4x | 4.4–5.2 | 10.9 / 10.4 (JSON) |
+| span4x+huff | | 10.1 (Huffman pass 0.15 ms + span pass 6.4 ms) |
+| span1+huff, Python | | 6.9 |
+| lz-out | 0.3 | 0.87–2.27 |
+
+- **Small blocks give threads.** Cutting at 1024 nodes gives every codec many threads, lz-out
+  included.
+- **Huffman is cheap on the GPU:** its pass takes about 2% of the decode.
+
+## T5 again: positions, depth, parents and ends on Metal (data-layer, 4.86M nodes, depth up to 75)
+
+The scan runs in three passes:
+
+1. One thread per block finds its events' local depths and what it leaves open.
+2. One thread per file chains the blocks.
+3. One thread per node resolves the parents and ends left open.
+
+| cut | GPU ms | ns/node |
+|---|---|---|
+| whole file | 86 | 17.7 |
+| CDC 4096 | 12.7 | 2.6 |
+| CDC 1024 | 5.6 | 1.15 |
+| CDC 256 | **2.9** | **0.60** |
+| CDC 64 | 5.1 | 1.05 |
+
+The CPU decode of the same tapes takes 109 ms. The scan matches the CPU's derivation everywhere. On
+rerail the best is 1.08 ns/node, at CDC 256. So parents and sizes can be derived on the device at
+CDC 256–1024, for less than storing them costs (T5: +33% bytes).
+
+## E2: the cursor check
+
+The engine's parity test (`persisted_python_and_typescript_corpora_match_native`) compares format 15,
+restored, with the native parse node for node:
+
+| corpus | files | nodes | tree differences |
+|---|---|---|---|
+| data-layer Python (every 3rd file) | 4,362 | 7.84M | 0 |
+| CPython Python (every 2nd captured file) | 1,985 | 5.91M | 0 |
+| rerail `src/` TypeScript and TSX | 204 | 0.49M | 0 |
+
+Four CPython files are not UTF-8 (`Lib/test/encoded_modules`), and the engine refuses them before
+parsing. The lab checks that format 16 equals format 15, with 0 errors on every corpus. Together
+these chain format 16 to the native parser.
+
+## E6: the writer (1,461 `.rr` files, 2.0M nodes, instructions retired)
+
+| part | M instructions | per node |
+|---|---|---|
+| A: lean parse + format-15 write | 973.7 | 488 |
+| B: format-15 writer alone (`preorder_image`) | 396.5 | 199 |
+| C: format-16 writer alone (events into byte planes, one pass) | 398.5 | 200 |
+| A − B + C: lean parse + format-16 write | 975.8 | 489 |
+
+- **The writer is a wash.** Format 16's one-pass writer costs what format 15's does, so the switch
+  adds nothing to a parse.
+- **Checked twice.** C matches the lab's reference event writer byte for byte, and the lean parse's
+  1,461 images equal the captured ones.
+- **The first try cost more.** The first version of C cost 888 instructions a node, because it went
+  through the lab's general `layout::lay`. A writer that fills the planes as it walks is what makes C
+  cheap.
+- **The documented baseline** (425.6M over 1,360 files) was the lean parse measured elsewhere. A here
+  includes the format-15 write and a different file set.
+
+## E7: what readers take (data-layer, 7 rules of the data-layer pack)
+
+The engine's `tape-reads` feature counts every read of a node's parts through `TapeDoc`. Its records
+are private, so every reader goes through those accessors. The feature also counts the documents the
+facts builder decodes into columns.
+
+The rules are every 8th rule of `candidates/rr`, run one at a time over the whole data-layer
+repository, each with a fresh store.
+
+- **Which ran.** Three of the ten hit the 2-minute cap.
+- **pure-lazy-runtime-purity** ends on a pack error of its own (`input_error` has no producer) after
+  its reads are counted.
+- **The `datalog` candidates abort under `RERAIL_SQL_STRICT`** (see the open items).
+
+Reads per restored node:
+
+| rule | nodes restored | kind | flags | named | field | span | parent | children | classes |
+|---|---|---|---|---|---|---|---|---|---|
+| admin-async-purity | 0.33M | 2.03 | 1.00 | 1.00 | 0.02 | 0.00 | 0.01 | 0.02 | 0.01 |
+| bootstrap-lazy-sql | 0.03M | 2.35 | 1.00 | 1.05 | 0.20 | 0.05 | 0.46 | 0.22 | 0.07 |
+| connection-service-architecture | 0.83M | 5.03 | 1.00 | 1.06 | 0.29 | 0.06 | 0.64 | 0.33 | 0.11 |
+| embedding-vector-orchestration | 2.92M | 2.06 | 1.00 | 1.01 | 0.04 | 0.01 | 0.02 | 0.05 | 0.01 |
+| hasattr-async | 9.61M | 2.05 | 1.00 | 1.01 | 0.04 | 0.01 | 0.02 | 0.05 | 0.01 |
+| pure-lazy-runtime-purity | 9.95M | 2.05 | 1.00 | 1.01 | 0.04 | 0.01 | 0.02 | 0.05 | 0.01 |
+| schema-introspection-data-paths | 7.84M | 3.65 | 1.00 | 1.52 | 0.73 | 3.16 | 5.00 | 3.52 | 0.04 |
+| **all (31.5M)** | | 2.53 | 1.00 | 1.14 | 0.22 | 0.79 | 1.27 | 0.92 | 0.02 |
+
+Line and column points, previous siblings and subtree sizes are never read through `TapeDoc`.
+
+What this means for format 16:
+
+- **One sweep of every node.** The packed residency admission
+  (`residency/admission/relational/syntax/packed.rs`) copies every node's kind, flags, field,
+  parent, span and end into columns of its own. That gives the 1.00 for flags, and one of kind's
+  reads.
+- **Sparse otherwise.** Past that sweep, most rules read under 5% of the nodes' other parts. A
+  format-16 reader that decodes kind and flags in bulk, and the rest on demand, covers them.
+- **Except tree walks.** schema-introspection-data-paths walks the tree: 5 parent reads and 3.2 span
+  reads a node. Those parts must be cheap at random (parents and ends from the GPU scan, or stored).
+- **Three copies of every document.** A file built for the facts is decoded twice from its image:
+  once into a kept `TapeDoc` (`kept_tape`) and once into facts columns (`from_image`,
+  `facts/core.rs`). The packed admission then copies the `TapeDoc` a third time.
+  - `from_tape(doc)` already builds the facts from a kept document.
+  - Over the run, facts columns are built for 1.42 nodes per restored node: some documents' facts are
+    built more than once.
+
+  Format 16 could give all three readers one decoded columnar form. Until then, the double decode is
+  a read of unchanged data, and the engine could remove it.
+
+## Open items found along the way
+
+- **Strict SQL against atom lookup.** On a warm store, every rule of the `datalog` candidates and of
+  `rr` aborts under `RERAIL_SQL_STRICT`: `SELECT id FROM atom_key WHERE h IN rarray(?1)` runs inside
+  the waves. It comes from `Atoms::intern_all` (decision 0111: atoms this process does not hold are
+  looked up in the database first), called by the syntax vtab's `intern_atoms`
+  (`facts/vtab/syntax.rs`). A fresh store does not abort. Decisions 0104 and 0111 disagree here.
+- **A library clash in the pack.** The `rr` candidate directory as a whole fails because `pc_base` is
+  declared by two library files (`docs/rule-syntax/lib/data-layer/purity-calls.rr` and
+  `lib/python/pytest-collect.rr`).
+
 ## Not yet measured
 
-- E2's cursor check.
-- E6 against the engine's writer.
-- E7 (readers' needs, which needs engine counters).
-- An entropy stage for the LZ codecs.
-- Positions and parents on the GPU.
-- The dictionary × block-size product, at scale.
-- The CPython corpus.
-- The whole data-layer repository: every 10th file takes 540–750 MB of the 1 GB budget.
+- E7 over the whole pack, which needs the strict-SQL item fixed (or a fresh store per run) and runs
+  past 2 minutes.
+- A GPU decode of the format-16 records straight into the columns the readers take, instead of
+  `TapeDoc`'s records.

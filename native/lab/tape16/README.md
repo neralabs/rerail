@@ -32,13 +32,20 @@ training half only, and every number is measured on the test half.
 
 ```sh
 scripts/build.sh            # nice, plus the Homebrew rustc workaround
-target/debug/tape16 grid  <cap> [--axis layout|cut|dict|k|extras] [--full] [--langs]
-target/debug/tape16 text  <cap>
-target/debug/tape16 edits <pairs.cap>
-target/debug/tape16 keys  <cap>
-target/debug/tape16 dicts <cap>
-target/debug/tape16 gpu   <cap> [--dict KB] [--k K]
+target/debug/tape16 grid   <cap> [--axis codec|layout|cut|dict|k|extras|dictcut|huff|final] [--full] [--langs]
+                                 [--shards N [--only i]]
+target/debug/tape16 text   <cap>
+target/debug/tape16 edits  <pairs.cap>
+target/debug/tape16 keys   <cap>
+target/debug/tape16 dicts  <cap>
+target/debug/tape16 gpu    <cap> [--dict KB] [--k K] [--cut N]
+target/debug/tape16 scan   <cap>
+target/debug/tape16 writer <cap>             # --features lean adds the lean parse (E6 A)
 ```
+
+With `--shards N`, `grid` streams a capture too large for the budget: every file feeds the
+candidates, a fixed subsample (about 1.5M nodes a language) trains the dictionaries and tables, and
+the test half is measured shard by shard, the rows summed.
 
 | Command | Tradeoffs | What it measures |
 |---|---|---|
@@ -47,7 +54,9 @@ target/debug/tape16 gpu   <cap> [--dict KB] [--k K]
 | `edits` | T7, E4, T3 | Per block size: the share of blocks and block bytes an edit makes new, and the share of rows whose key or parent link changes under each identity (A ordinal, B block + local, C content path, D ordinal + shift map). |
 | `keys` | E8, U5 | The largest value every key and field takes, in bits. |
 | `dicts` | T4 | The dictionary size training gives for each size asked. |
-| `gpu` | E3 | Literal-pool LZ, the same with replays, and LZ with output references, decoded on Metal: threads, GB/s warm, against the CPU decoder, checked byte for byte. |
+| `gpu` | E3 | Every LZ codec (span LZ and the Huffman stage included) decoded on Metal: threads, GB/s warm, against the CPU decoder, checked byte for byte. |
+| `scan` | T5, E3 | Positions, depth, parents and subtree ends derived on Metal from events and placements (a pass per block, per file, per node), per block size, against the CPU pass, checked. |
+| `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
 `cargo test` runs the round trips: every codec whole and through `read_at` at random ranges, every
 layout and cut through blocks and back to the tree, and a source past 8 GiB (U5).
@@ -65,19 +74,21 @@ layout and cut through blocks and back to the tree, and a source past 8 GiB (U5)
   - literal-pool LZ, whose copies read only the dictionary and the block's literals;
   - literal-pool LZ with replays. A replay re-runs earlier sequences, a pointer into the compressed
     block rather than into its output.
+  - span LZ (`span.rs`): a span re-runs a run of earlier compressed sequences, from the same block or
+    (`x`) from earlier blocks of the file, and spans nest to a depth. So a block copies compressed
+    input, and every block still decodes in parallel.
 
   The LZ codecs keep a checkpoint every K sequences, so a read starts at the checkpoint before it.
+- **Entropy stage** (`huff.rs`, `+huff`): static canonical Huffman tables shared per language, one for
+  sequence bytes and one for literals, with each checkpoint's bit offsets, so segments decode in
+  parallel before the LZ pass.
 - **Dictionaries**: zstd's fastCover, the same bytes serving as the LZ codecs' pool.
 - **Extras**: a stored parent delta and subtree size, against deriving them.
 - **Text** (`text.rs`): pieces (gaps and leaves) as ids into a shared table plus a per-file pool.
 
 ## What it does not measure yet
 
-- **E2:** the cursor check. Masks are learned from the corpus and round-trip, but are not compared
-  with the parser.
-- **E6:** the engine's writer. The encode column is the lab's writer from a tree, not the lean
-  parser against its 425.6M-instruction baseline.
-- **E7** (readers' needs) needs counters in the engine.
-- The LZ codecs have no entropy stage. The entropy column is an order-0 estimate of one.
-- The Metal kernel writes one byte at a time, and derives no positions, depth or parents on the device.
-- A whole data-layer capture does not fit the 1 GB budget: every 10th file takes 540–750 MB.
+- The CPU span decoder runs a closure per byte, so its CPU numbers are slow; the Metal kernels are the
+  ones to read.
+- Random reads under the entropy stage decode the whole block (an upper bound).
+- E7 lives in the engine (the `tape-reads` feature), not here.
