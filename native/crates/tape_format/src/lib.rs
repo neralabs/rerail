@@ -40,6 +40,11 @@ pub const ERROR_CODE: u16 = 0;
 /// The `.rr` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
+/// The header's digest of a source: SHA-256.
+pub fn digest(src: &[u8]) -> [u8; 32] {
+    Sha256::digest(src).into()
+}
+
 /// `length` rounded up to `COLUMN_ALIGN`.
 pub const fn padded(length: usize) -> usize {
     length.div_ceil(COLUMN_ALIGN) * COLUMN_ALIGN
@@ -70,6 +75,35 @@ impl Widths {
     }
 }
 
+/// A writer's widths, as a type: `Narrow`, the widths nearly every file is written at, fixed
+/// when the writer is compiled, so that a store is one instruction; or `Widths`, any, read
+/// as the writer runs.
+pub trait Layout: Copy {
+    fn widths(self) -> Widths;
+}
+
+/// Sizes, offsets and tails at 2 bytes, tails from the last descendant.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Narrow;
+
+impl Narrow {
+    pub const WIDTHS: Widths = Widths { size: 2, off: 2, tail: 2, from_start: false };
+}
+
+impl Layout for Narrow {
+    #[inline(always)]
+    fn widths(self) -> Widths {
+        Self::WIDTHS
+    }
+}
+
+impl Layout for Widths {
+    #[inline(always)]
+    fn widths(self) -> Widths {
+        self
+    }
+}
+
 /// From this many source bytes on, `Widths::guess` writes sizes at 4 bytes. Calibrated on the
 /// repository's 1,362 `.rr` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
 /// densest has 0.334 nodes a byte, the densest of 64 KiB or more 0.205 (42,081 nodes in
@@ -78,6 +112,8 @@ impl Widths {
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
 const NO_CODE: u16 = u16::MAX;
+/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+const ID_SLOTS: usize = 1 << 19;
 
 /// A tape written as a parser parses: each node's columns at their final widths, at its place,
 /// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
@@ -87,7 +123,7 @@ const NO_CODE: u16 = u16::MAX;
 /// columns are moved into place after the code column, and the header and code table written.
 ///
 /// A node's key is its code: `kf | flags << 16`.
-pub struct Writer {
+pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
     /// whole image at `cap` nodes, so that `finish` appends the columns in place.
     out: Vec<u8>,
@@ -101,13 +137,18 @@ pub struct Writer {
     keys: Vec<u32>,
     /// The nodes, and the nodes the cells have room for.
     n: usize,
+    /// The last block's base: a push checks its start against it.
+    block_base: u32,
     cap: usize,
     /// The codes by id: each key and the node that first used it.
     codes: Vec<(u32, u32)>,
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
     id_of: Vec<u16>,
-    widths: Widths,
+    layout: L,
+    /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
+    /// node is marked (then every node does, and its marks are kept exact).
+    wide_from: u32,
     /// The nodes whose offset or tail needs 4 bytes, or that end before their last descendant
     /// starts (`OFF_WIDE`, `TAIL_WIDE`, `EARLY`): few, kept exact through every edit, so that
     /// `finish` knows the narrowest widths without reading the columns.
@@ -142,9 +183,10 @@ fn image_bytes(nodes: usize, w: Widths) -> usize {
         + CODES_RESERVED
 }
 
-impl Writer {
-    /// A writer for about `nodes` nodes (more grow it) at `widths`.
-    pub fn new(tag: u8, widths: Widths, nodes: usize) -> Self {
+impl<L: Layout> Writer<L> {
+    /// A writer for about `nodes` nodes (more grow it) at `layout`'s widths.
+    pub fn new(tag: u8, layout: L, nodes: usize) -> Self {
+        let widths = layout.widths();
         let cap = nodes.max(CHECKPOINT_STRIDE);
         let mut out = Vec::with_capacity(image_bytes(cap, widths));
         out.resize(HEADER_BYTES + 2 * cap, 0);
@@ -158,15 +200,17 @@ impl Writer {
             starts: vec![0; cap],
             keys: vec![0; cap],
             n: 0,
+            block_base: 0,
             cap,
             codes: Vec::new(),
             coded: 0,
             id_of: IDS.with(|ids| {
                 let mut ids = std::mem::take(&mut *ids.borrow_mut());
-                ids.resize(1 << 19, NO_CODE);
+                ids.resize(ID_SLOTS, NO_CODE);
                 ids
             }),
-            widths,
+            layout,
+            wide_from: 0x10000,
             marks: Vec::new(),
             tag,
         }
@@ -177,7 +221,7 @@ impl Writer {
     #[inline(never)]
     fn grow(&mut self) {
         let cap = 2 * self.cap;
-        let w = self.widths;
+        let w = self.layout.widths();
         self.out.reserve_exact(image_bytes(cap, w) - self.out.len());
         self.out.resize(HEADER_BYTES + 2 * cap, 0);
         self.size.resize(cap * usize::from(w.size), 0);
@@ -189,7 +233,8 @@ impl Writer {
     }
 
     /// Whether node `node` has mark `what`, as `on` says.
-    #[inline]
+    #[cold]
+    #[inline(never)]
     fn mark(&mut self, node: usize, what: u8, on: bool) {
         let at = self.marks.iter().position(|&m| m == (node as u32, what));
         match (on, at) {
@@ -199,6 +244,7 @@ impl Writer {
             }
             _ => {}
         }
+        self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
     }
 
     #[inline]
@@ -224,30 +270,16 @@ impl Writer {
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
     #[inline(always)]
     fn put(column: &mut [u8], at: usize, width: u8, value: u32) {
-        if width == 2 {
-            column[2 * at..2 * at + 2].copy_from_slice(&(value as u16).to_le_bytes());
-        } else {
-            column[4 * at..4 * at + 4].copy_from_slice(&value.to_le_bytes());
-        }
-    }
-
-    #[inline(always)]
-    fn set_code(&mut self, node: usize, id: u16) {
-        let at = HEADER_BYTES + 2 * node;
-        self.out[at..at + 2].copy_from_slice(&id.to_le_bytes());
-    }
-
-    /// The id of `key`, numbered by first use: new at `node` if no node before used it.
-    #[inline]
-    fn id(&mut self, key: u32, node: usize) -> u16 {
-        match self.id_of[key as usize] {
-            NO_CODE => {
-                let id = self.codes.len() as u16;
-                self.codes.push((key, node as u32));
-                self.id_of[key as usize] = id;
-                id
+        // Every column holds `cap` cells, and a node's index is below `cap` (`push`, `grow`).
+        debug_assert!((at + 1) * usize::from(width) <= column.len());
+        let p = column.as_mut_ptr();
+        // SAFETY: the cell is inside the column, as the assertion says.
+        unsafe {
+            if width == 2 {
+                std::ptr::write_unaligned(p.add(2 * at).cast::<u16>(), (value as u16).to_le());
+            } else {
+                std::ptr::write_unaligned(p.add(4 * at).cast::<u32>(), value.to_le());
             }
-            id => id,
         }
     }
 
@@ -270,14 +302,26 @@ impl Writer {
     /// The nodes so far are final (a statement parsed or recovered): their codes, numbered by
     /// first use, written to the code column.
     pub fn commit(&mut self) {
-        for n in self.coded..self.n {
-            let id = self.id(self.keys[n], n);
-            self.set_code(n, id);
+        let (from, to) = (self.coded, self.n);
+        // The columns as locals: a store to one is not a store to the writer's fields.
+        let keys = &self.keys[from..to];
+        let code = &mut self.out[HEADER_BYTES + 2 * from..HEADER_BYTES + 2 * to];
+        let (id_of, codes) = (&mut self.id_of[..], &mut self.codes);
+        for (k, (&key, cell)) in keys.iter().zip(code.chunks_exact_mut(2)).enumerate() {
+            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
+            let slot = &mut id_of[(key as usize) & (ID_SLOTS - 1)];
+            if *slot == NO_CODE {
+                *slot = codes.len() as u16;
+                codes.push((key, (from + k) as u32));
+            }
+            cell.copy_from_slice(&slot.to_le_bytes());
         }
-        self.coded = self.n;
+        self.coded = to;
     }
 
     /// Block `b`'s base and its nodes' offsets, from their starts.
+    #[cold]
+    #[inline(never)]
     fn block(&mut self, b: usize) {
         let from = b * CHECKPOINT_STRIDE;
         let to = (from + CHECKPOINT_STRIDE).min(self.n);
@@ -287,56 +331,69 @@ impl Writer {
         } else {
             self.base[b] = base;
         }
+        if b + 1 == self.base.len() {
+            self.block_base = base;
+        }
         for n in from..to {
             let off = self.starts[n] - base;
             if off > 0xffff || !self.marks.is_empty() {
                 self.mark(n, OFF_WIDE, off > 0xffff);
             }
-            Self::put(&mut self.off, n, self.widths.off, off);
+            Self::put(&mut self.off, n, self.layout.widths().off, off);
         }
     }
 
-    /// A node at the end, in preorder: its key and start. Its size is 1 and its tail 0 until
-    /// its close; its code is written when it is committed.
-    #[inline]
+    /// A node at the end, in preorder: its key and start. Its size and tail are written at its
+    /// close: every node is closed before `finish`. Its code is written when it is committed.
+    #[inline(always)]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
+        debug_assert!((key as usize) < ID_SLOTS);
         let node = self.n;
         if node == self.cap {
             self.grow();
         }
         self.n = node + 1;
-        self.keys[node] = key;
-        self.starts[node] = start;
-        let w = self.widths;
-        Self::put(&mut self.size, node, w.size, 1);
-        Self::put(&mut self.tail, node, w.tail, 0);
-        match self.base.get(node / CHECKPOINT_STRIDE) {
-            Some(&base) if base <= start => {
-                let off = start - base;
-                if off > 0xffff {
-                    self.mark(node, OFF_WIDE, true);
-                }
-                Self::put(&mut self.off, node, w.off, off);
-            }
-            _ => self.block(node / CHECKPOINT_STRIDE),
+        // SAFETY: `node < cap`, and `keys` and `starts` hold `cap` values.
+        unsafe {
+            *self.keys.get_unchecked_mut(node) = key;
+            *self.starts.get_unchecked_mut(node) = start;
+        }
+        // The block's base holds unless the node starts a block, or starts before its base
+        // (its offset wraps), or its offset needs 4 bytes, or nodes are marked.
+        let off = start.wrapping_sub(self.block_base);
+        if node % CHECKPOINT_STRIDE == 0 || off >= self.wide_from {
+            self.block(node / CHECKPOINT_STRIDE);
+        } else {
+            Self::put(&mut self.off, node, self.layout.widths().off, off);
         }
         node
     }
 
     /// `node`'s end: its subtree is the nodes from it on, and its tail from its last one.
-    #[inline]
+    #[inline(always)]
     pub fn close(&mut self, node: usize, end: u32) {
-        let size = (self.n - node) as u32;
-        let last = self.starts[self.n - 1];
-        let from = if self.widths.from_start { self.starts[node] } else { last };
+        let n = self.n;
+        debug_assert!(node < n);
+        // SAFETY: `node < n <= cap`.
+        let (last, own) = unsafe { (*self.starts.get_unchecked(n - 1), *self.starts.get_unchecked(node)) };
+        let from_start = self.layout.widths().from_start;
+        let from = if from_start { own } else { last };
         let tail = end.wrapping_sub(from);
-        let (early, wide) = (end < last, tail > 0xffff && end >= from);
-        if early || wide || !self.marks.is_empty() {
-            self.mark(node, EARLY, early);
-            self.mark(node, TAIL_WIDE, wide);
+        // From the last descendant, an end before it wraps: a tail of 0x10000 or more.
+        if tail >= self.wide_from || (from_start && end < last) {
+            self.close_marks(node, end, last, from, tail);
         }
-        Self::put(&mut self.size, node, self.widths.size, size);
-        Self::put(&mut self.tail, node, self.widths.tail, tail);
+        Self::put(&mut self.size, node, self.layout.widths().size, (n - node) as u32);
+        Self::put(&mut self.tail, node, self.layout.widths().tail, tail);
+    }
+
+    /// `close`'s marks: a node that ends early or whose tail needs 4 bytes, or any node
+    /// once some node is marked (its marks kept exact).
+    #[cold]
+    #[inline(never)]
+    fn close_marks(&mut self, node: usize, end: u32, last: u32, from: u32, tail: u32) {
+        self.mark(node, EARLY, end < last);
+        self.mark(node, TAIL_WIDE, tail > 0xffff && end >= from);
     }
 
     /// `node`'s key changed (a field set after it was made, a kind found later).
@@ -357,7 +414,7 @@ impl Writer {
         if self.n == self.cap {
             self.grow();
         }
-        let (n, ws) = (self.n, self.widths);
+        let (n, ws) = (self.n, self.layout.widths());
         let shift = |column: &mut [u8], width: u8| {
             let w = usize::from(width);
             column.copy_within(at * w..n * w, at * w + w);
@@ -393,6 +450,9 @@ impl Writer {
         self.base.truncate(blocks);
         if len % CHECKPOINT_STRIDE != 0 {
             self.block(blocks - 1);
+        } else {
+            // The next push starts a block.
+            self.block_base = 0;
         }
     }
 
@@ -407,13 +467,13 @@ impl Writer {
             size: width_for(self.n as u32),
             off: if has(OFF_WIDE) { 4 } else { 2 },
             // Tails measured from the other place say nothing of the width: 2, the guess.
-            tail: if from_start == self.widths.from_start && has(TAIL_WIDE) { 4 } else { 2 },
+            tail: if from_start == self.layout.widths().from_start && has(TAIL_WIDE) { 4 } else { 2 },
             from_start,
         };
-        if want != self.widths {
+        if want != self.layout.widths() {
             return Err(Redo(want));
         }
-        let w = self.widths;
+        let w = self.layout.widths();
         let nodes = self.n;
         let code_bytes = 6 * self.codes.len();
         let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
@@ -444,7 +504,7 @@ impl Writer {
         h.extend_from_slice(&[w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }]);
         h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
         h.extend_from_slice(&(src.len() as u64).to_le_bytes());
-        h.extend_from_slice(&Sha256::digest(src));
+        h.extend_from_slice(&digest(src));
         for length in [nodes, self.codes.len(), code_bytes, 0, 0] {
             h.extend_from_slice(&(length as u64).to_le_bytes());
         }
@@ -453,7 +513,7 @@ impl Writer {
     }
 }
 
-impl Drop for Writer {
+impl<L: Layout> Drop for Writer<L> {
     /// The code ids back to the thread, cleared.
     fn drop(&mut self) {
         for &(key, _) in &self.codes {

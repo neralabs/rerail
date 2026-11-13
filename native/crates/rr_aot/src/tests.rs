@@ -98,7 +98,7 @@ fn jit_against_aot() {
     let (mut bj, mut ba) = (batch(&jit.parser), batch(&aot.parser));
     let mut tapes: Vec<_> = bj.iter().map(|b| jit.parser.tape(b)).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole"];
+    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole", "lean: the digest"];
     let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); names.len()];
     for _ in 0..rounds {
         let mut at = (thread_cpu(), retired());
@@ -144,8 +144,13 @@ fn jit_against_aot() {
         for f in &ours {
             n += rr::lean::tape(f).len();
         }
-        std::hint::black_box(n);
         lap(8, &mut best);
+        // The tape header's digest alone: a part of the whole above.
+        for f in &ours {
+            n += usize::from(rerail_tape_format::digest(f.as_bytes())[0]);
+        }
+        std::hint::black_box(n);
+        lap(9, &mut best);
     }
     let mb = bytes as f64 / 1e6;
     eprintln!("{} files the grammar parses, {mb:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len());
@@ -214,3 +219,4 @@ fn tier2_words_a_token() {
         eprintln!("  {k}: {:.3}", n as f64 / tokens as f64);
     }
 }
+

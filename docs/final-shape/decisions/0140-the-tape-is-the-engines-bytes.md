@@ -63,10 +63,31 @@ Over the corpus (1,360 files, 8.80 MB, 1,166,154 nodes; instructions, cycles):
 | … SHA-256 by the CPU's instructions (`sha2`'s `asm`) | 1,074.4M | 178.0M |
 | … code ids at commit points | 620.8M | 116.5M |
 | … every column one capacity, indexed stores | 550.6M | 106.9M |
+| … the hot path inlined, one check a push and a close | 465.2M | about 97M |
+| … the widths a type (`Narrow`), the commit over local slices | 425.6M | 96.2M |
 
-The renumbering had cost about one renumbering a node (1.2 million over 4.0 million rows).
-What remains above the node table: the digest (about 9% of the time, 1.1 cycles a byte)
-and the columns' stores, about 50 instructions a push and 40 a close.
+Over the same files, the lean parser with a writer that keeps only keys and starts
+(what the parser reads back) is 354.2M (69.3M cycles); the digest alone is 14.2M (11.6M).
+
+**Why the column stores were slow** (each part skipped in turn, one build):
+the code ids cost 32 instructions a node, a close's size and tail 27, a push's offset 22.
+The stores were not the cost. Around each one:
+
+- **Every column was reached through the struct.** Each store reloaded the column's pointer
+  and length, and the commit loop reloaded six fields a node: a 2-byte store, as far as
+  the compiler knew, could change the writer's own fields.
+- **The widths were read as the writer ran.** A store was a load of the width, a compare,
+  a branch and the address arithmetic, for a value fixed for the whole file.
+- **Two or three checks where one does.** "Ends before its last descendant" is a tail
+  that wraps; "some node is marked" is a threshold of 0.
+- **Calls.** `push` and `close` were calls with their registers saved.
+
+Now the writer's widths are a type parameter: `Narrow` (2, 2, 2, nearly every file) is
+fixed at compile time, `Widths` is any. The lean parser is compiled for both.
+A push's offset is 8 instructions, a close's size and tail 13, a code id 11.
+About 57M above the keys-and-starts writer remain, 49 a node:
+those 32, a block's base every 16 nodes, a commit a statement, the wraps' shifts,
+the new columns' zeroing, and the columns moved into place at the end.
 
 ## Tests
 
