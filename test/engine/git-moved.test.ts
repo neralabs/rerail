@@ -40,13 +40,16 @@ describe("the Git a process keeps, gone under it", () => {
     return standIn;
   }
 
-  /** Moves the Git the process keeps to the next folder on `PATH`: `[kept, now]`. */
+  /**
+   * Moves the Git the process keeps to the next folder on `PATH`: `[kept, now]`. The kept stand-in may be gone already,
+   * when an earlier test's call did not find Git again, so each test fails on its own checks, not on this move.
+   */
   async function moveKeptGit(): Promise<[string, string]> {
     const kept = gitExecutable();
     const at = folders.findIndex(folder => kept === join(folder, GIT));
     // Only a stand-in is ever removed, never this machine's Git.
     if (at < 0) throw new Error(`the Git kept is ${kept}, not a stand-in of this file`);
-    await rm(kept);
+    await rm(kept, { force: true });
     return [kept, await placeStandIn(folders[(at + 1) % folders.length]!)];
   }
 
