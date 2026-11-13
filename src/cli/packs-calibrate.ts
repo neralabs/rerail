@@ -2,8 +2,8 @@
  * `rerail packs calibrate`: reads the repository's own lint config again, as set-up does (docs/rule-scoping.md, "The
  * repository's own lint config"), for a repository already set up, and brings the settings it gave the rules of the
  * repository's packs up to date. A setting the lint config gave is marked so (`rule_settings.origin`); a person's
- * setting (no origin) is never changed. A running daemon follows the change as it follows the dashboard's: each audit
- * compares the repository's rule configuration signature.
+ * setting (no origin, as is every setting set-up wrote before origins were recorded) is never changed. A running daemon
+ * follows the change as it follows the dashboard's: each audit compares the repository's rule configuration signature.
  */
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -30,7 +30,7 @@ export type CalibrationChangeKind =
   | "options-set"
   /** The lint config no longer gives the setting it gave: the setting is removed, and the pack's value returns. */
   | "returned"
-  /** The lint config gives a setting where a person set the rule themselves: theirs stays. */
+  /** The lint config sets the rule otherwise than a person did themselves: theirs stays. */
   | "kept";
 
 export interface CalibrationChange {
@@ -67,17 +67,36 @@ type SettingRow = typeof ruleSettings.$inferSelect;
 
 const settingKey = (folder: string, ruleId: string): string => `${folder}\0${ruleId}`;
 
+/** `config` as compared: no options and empty options alike. */
+const configText = (config: RuleConfig | null): string | undefined => stableJsonText(config === null || Object.keys(config).length === 0 ? null : config);
+
 /** Whether `row` already holds what `proposal` sets, and nothing else. */
 function holds(row: SettingRow, proposal: LintConfigSetting): boolean {
-  const config = (value: RuleConfig | null): string | undefined => stableJsonText(value === null || Object.keys(value).length === 0 ? null : value);
-  return row.on === proposal.on && row.mode === null && row.suppressions === null && config(row.config) === config(proposal.config);
+  return row.on === proposal.on && row.mode === null && row.suppressions === null && configText(row.config) === configText(proposal.config);
+}
+
+/**
+ * Whether a person's `row` gives the rule what `proposal` gives it: on or off (a row that leaves it unset has the value
+ * around it: on where `proposal` only gives options, otherwise the opposite of `proposal`, which is proposed only where
+ * it differs from the pack's value or the whole repository's) and, on, the same options.
+ * Modes and suppressions are a person's alone; the lint config sets neither.
+ */
+function agrees(row: SettingRow, proposal: LintConfigSetting): boolean {
+  const on = proposal.on ?? true;
+  return (row.on ?? proposal.on !== true) === on && (!on || configText(row.config) === configText(proposal.config));
+}
+
+/** Whether `row` leaves `proposal` nothing to do: the lint config's setting holds it, or a person's agrees with it. */
+function unchanged(row: SettingRow | undefined, proposal: LintConfigSetting): boolean {
+  if (row === undefined) return false;
+  return row.origin === null ? agrees(row, proposal) : holds(row, proposal);
 }
 
 /** What `proposal` does where the repository's own setting for its rule and folder is `row`; undefined: nothing. */
 function proposalChange(proposal: LintConfigSetting, row: SettingRow | undefined): CalibrationChange | undefined {
+  if (unchanged(row, proposal)) return undefined;
   const change = { ruleId: proposal.ruleId, folder: proposal.folder, config: proposal.config, explicit: proposal.explicit, because: proposal.because };
   if (row?.origin === null) return { kind: "kept", ...change };
-  if (row !== undefined && holds(row, proposal)) return undefined;
   return { kind: proposal.on === null ? "options-set" : proposal.on ? "turned-on" : "turned-off", ...change };
 }
 
@@ -137,15 +156,14 @@ function repositoryRuleRows(database: RerailDatabase, repositoryKey: RepositoryK
   )).all();
 }
 
-/** Reads the lint config at `root` for the repository's packs and reconciles; writes only when `write`. */
-function calibrateIn(database: RerailDatabase, repositoryKey: RepositoryKey, root: string, home: string, write: boolean): Pick<Calibration, "changes" | "notes"> {
-  const lintConfig = readRepositoryLintConfig(root, loadRuleCatalog(home), packIdsOf(database, repositoryKey));
-  const steps = reconcile(repositoryKey, repositoryRuleRows(database, repositoryKey), lintConfig.settings);
+/** Reconciles the lint config's `proposals` with the repository's own rule settings as stored now; writes only when `write`. */
+function reconcileIn(database: RerailDatabase, repositoryKey: RepositoryKey, proposals: readonly LintConfigSetting[], write: boolean): Step[] {
+  const steps = reconcile(repositoryKey, repositoryRuleRows(database, repositoryKey), proposals);
   if (write) {
     const now = Date.now();
     for (const { write: setting } of steps) if (setting !== undefined) setRuleSetting(database, setting, now);
   }
-  return { changes: steps.map(step => step.change), notes: lintConfig.notes };
+  return steps;
 }
 
 const notSetUp = (name: string): Error => new Error(`${name} is not set up, so it has no rule packs to calibrate. Set it up with rerail start.`);
@@ -158,8 +176,9 @@ function setUpCheckout(database: RerailDatabase, workspace: string, name: string
 }
 
 /**
- * Calibrates the set-up repository of the checkout `repo` is in from its lint config, in one immediate transaction;
- * with `dryRun`, reads only. Throws when the repository is not set up.
+ * Calibrates the set-up repository of the checkout `repo` is in from its lint config. The rule catalog is loaded and the
+ * config read first; only reading the repository's settings, reconciling and writing hold the immediate transaction.
+ * With `dryRun`, reads only. Throws when the repository is not set up.
  */
 export function calibratePacks(repo: string, options: CalibrateOptions = {}): Calibration {
   const workspace = resolve(repo);
@@ -172,10 +191,11 @@ export function calibratePacks(repo: string, options: CalibrateOptions = {}): Ca
   try {
     const { repositoryKey } = setUpCheckout(database, workspace, name);
     const root = repositoryIdentityLocation(workspace).workspaceRoot;
-    const calibrated = dryRun
-      ? calibrateIn(database, repositoryKey, root, home, false)
-      : database.transaction(() => calibrateIn(database, repositoryKey, root, home, true), { behavior: "immediate" });
-    return { repositoryName: name, dryRun, ...calibrated };
+    const { settings, notes } = readRepositoryLintConfig(root, loadRuleCatalog(home), packIdsOf(database, repositoryKey));
+    const steps = dryRun
+      ? reconcileIn(database, repositoryKey, settings, false)
+      : database.transaction(() => reconcileIn(database, repositoryKey, settings, true), { behavior: "immediate" });
+    return { repositoryName: name, dryRun, changes: steps.map(step => step.change), notes };
   } finally {
     database.$client.close();
   }
@@ -187,7 +207,7 @@ const SECTIONS: readonly { readonly kind: CalibrationChangeKind; readonly headin
   { kind: "turned-off", heading: "Turned off:" },
   { kind: "options-set", heading: "Options set:" },
   { kind: "returned", heading: "Back to the pack's value (your lint config no longer sets them):" },
-  { kind: "kept", heading: "Kept yours (you set them yourself; your lint config says otherwise):" },
+  { kind: "kept", heading: "Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):" },
 ];
 
 /** One change the lint config names, or that has options, as a row: the rule, where, with which options, and why. */
@@ -217,21 +237,27 @@ function sectionRows(changes: readonly CalibrationChange[]): string[] {
   ];
 }
 
+/** The first line: what calibrating changed or would change; or that nothing, but for a person's settings kept. */
+function headline(calibration: Calibration, changed: boolean): string {
+  const name = clean(calibration.repositoryName);
+  if (changed) return `● ${calibration.dryRun ? "Calibrating would change" : "Calibrated"} ${name}'s rule settings from its lint config (read as data, never run):`;
+  return calibration.changes.length === 0
+    ? `● ${name}'s rule settings already follow its lint config (read as data, never run).`
+    : `● ${name}'s rule settings already follow its lint config (read as data, never run), except yours:`;
+}
+
 /** `calibration` as `rerail packs calibrate` prints it. */
 export function calibrationText(calibration: Calibration): string {
-  const name = clean(calibration.repositoryName);
+  const changed = calibration.changes.some(change => change.kind !== "kept");
   const sections = SECTIONS.flatMap(({ kind, heading }) => {
     const changes = calibration.changes.filter(change => change.kind === kind);
     return changes.length === 0 ? [] : [`  ${heading}`, ...sectionRows(changes)];
   });
-  const head = sections.length === 0
-    ? `● ${name}'s rule settings already follow its lint config (read as data, never run).`
-    : `● ${calibration.dryRun ? "Calibrating would change" : "Calibrated"} ${name}'s rule settings from its lint config (read as data, never run):`;
   return [
-    head,
+    headline(calibration, changed),
     ...sections,
     ...(calibration.notes.length === 0 ? [] : ["  About your lint config:", ...calibration.notes.map(note => `    ${clean(note)}`)]),
-    ...(calibration.dryRun && sections.length > 0 ? ["  Nothing was written (--dry-run)."] : []),
+    ...(calibration.dryRun && changed ? ["  Nothing was written (--dry-run)."] : []),
   ].join("\n");
 }
 
