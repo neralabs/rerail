@@ -10,7 +10,8 @@
     "REVIEW.md",
     "UPSTREAM.md",
     "content-addressed-workspace-store.md",
-    "transducer-design.md"
+    "transducer-design.md",
+    "windows.md"
   ],
   "rules": [
     "Install with `npx @neralabs/rerail setup` in the repository. A coding agent runs `npx @neralabs/rerail setup --relay` and asks the person each question it prints, as written.",

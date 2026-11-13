@@ -183,9 +183,21 @@ git clone https://github.com/neralabs/rerail.git
 
 `RERAIL_ORACLES_DIR` points the build and tests at another fixtures directory.
 
-Prerequisites: Node.js 24+, npm, Rust through [rustup](https://rustup.rs/), and [`just`](https://github.com/casey/just)
-for the dev recipes (`just rerail-dev`, `just nuke-rerail`). `rust-toolchain.toml` pins the toolchain, so `cargo`
-installs and selects it on first use.
+Prerequisites:
+
+- Node.js 24.18 or later, for its npm (11.16 or later), which reads `allowScripts` in `package.json`. That denies
+  better-sqlite3's install script, so `npm ci` uses the addon better-sqlite3 ships prebuilt instead of compiling it.
+  An older npm runs the script, which fails without Python and C++ build tools. `npm run check:install-scripts` fails
+  when a bump leaves the deny on the old version.
+- Rust through [rustup](https://rustup.rs/), to build the native engine. `rust-toolchain.toml` pins the toolchain, so
+  `cargo` installs and selects it on first use. Without Rust, use a released engine ([Without Rust](#without-rust)).
+- [`just`](https://github.com/casey/just) for the dev recipes (`just rerail-dev`, `just nuke-rerail`), or the command
+  each recipe runs, which the [`Justfile`](Justfile) shows.
+- The AWS CLI v2, signed in with read access to the pack test data, for the pack tests and the conformance gate
+  ([Pack test data](#pack-test-data)). Without access, `npm run check`, the builds and `npm run test:scripts` still
+  run, and so do the tests that read no pack data; the ones that do fail, each saying to pull it.
+
+On Windows, see also [Windows](#windows).
 
 ```sh
 npm ci                    # also installs the pre-commit hook (below)
@@ -205,6 +217,31 @@ staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is le
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 
 `npm run build:native` needs `cargo` on `PATH`; after a fresh rustup install, `export PATH="$HOME/.cargo/bin:$PATH"`.
+On Windows, see [Developing on Windows](#developing-on-windows).
+
+### Without Rust
+
+`npm run engine:pull` puts a released engine in `native/` instead of building one: it runs
+`npm pack @neralabs/rerail@<version>` for the version `package.json` names (`-- --version <version>` for another) and
+copies its `native/rerail_engine.<platform>.node`. When `native/`, `Cargo.toml`, `Cargo.lock` or `languages/` changed
+since that release's tag (`git diff --stat v<version> -- native/ Cargo.toml Cargo.lock languages/`), it warns and
+lists the changes: the engine is older than the checkout, and tests of those changes need `npm run build:native`.
+`RERAIL_ENGINE_PATH` makes the runtime load an engine from another path instead.
+
+### Windows
+
+- **Rust.** The toolchain targets MSVC, so it needs Visual Studio's C++ tools: Visual Studio or its Build Tools with
+  the "Desktop development with C++" workload, or just the "MSVC v143 build tools" and a "Windows 11 SDK". Install
+  rustup with `winget install Rustlang.Rustup` (or `rustup-init.exe` from [rustup.rs](https://rustup.rs/)), then
+  open a new terminal. In a PowerShell already open, `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"` puts
+  `cargo` on `PATH`.
+- **`just`.** `winget install Casey.Just`. It runs each recipe with `sh`, so use it from Git Bash, or put Git's `bin`
+  folder (`C:\Program Files\Git\bin`) on `PATH`. Without `just`, run the command the recipe runs.
+- **Line ends.** A clone made before `.gitattributes` set `* text=auto eol=lf` has files with CRLF line ends, and the
+  model check, structure metrics #8 and #24 and 25 pack tests fail in it. After committing or stashing your work,
+  check every file out again once:
+  `git rm --cached -r . && git reset --hard`
+  ([Troubleshooting](docs/troubleshooting.md#windows-checks-and-pack-tests-fail-in-a-clone-made-before-lf-line-ends)).
 
 ### Each component
 
@@ -302,6 +339,101 @@ exits nonzero for any missing prerequisite or failed assertion. It leaves your d
 removes its profiles and workspaces after each run. When an attempt counts as inconclusive, and how each harness is set
 up, is in `scripts/host/host-smoke.ts` and `scripts/host/host-harness.ts`.
 
+### Developing on Windows
+
+Pull request CI runs the unit suite on Windows in one job (`unit-windows`), and every other test job on Linux or macOS.
+Test a change to how Rerail starts processes, resolves paths, replaces files or writes commands on Windows yourself,
+and keep to the rules in [docs/windows.md](docs/windows.md).
+
+**Git, Git LFS and line endings.** Git for Windows includes Git LFS; run `git lfs install` once before you clone. Its
+installer sets `core.autocrlf=true` for the whole machine, which checks text files out with CRLF line breaks.
+`.gitattributes` sets `* text=auto eol=lf`, so a checkout writes LF whatever that setting says, and marks
+`model/config.json` and `model/tokenizer.json` `-text`, so they keep their bytes: `model/manifest.json` pins their
+SHA-256, and a CRLF copy made every hook of a checkout build fail, so nothing was recorded. A checkout made before the
+`eol=lf` line keeps its CRLF files until Git writes them again. Commit or stash your work, then have Git write every
+tracked file again:
+
+```sh
+git rm -r --cached -q . && git reset --hard
+```
+
+**Node and the native engine.** Install Node.js 24 or newer. `npm run build:native` compiles with Microsoft's C++
+toolchain, so install the Visual Studio Build Tools with the C++ workload, and rustup:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+winget install --id Rustlang.Rustup -e
+```
+
+Then open a new terminal so `%USERPROFILE%\.cargo\bin` is on `PATH`; a terminal inside VS Code or Cursor keeps the
+editor's `PATH` until the editor restarts. rustup's default host on Windows is the MSVC one, and `rust-toolchain.toml`
+picks the toolchain. `.cargo/config.toml` links the C runtime into the engine (`+crt-static`), so it loads on a
+machine with no Visual C++ runtime. The first build writes `native/rerail_engine.win32-<arch>-msvc.node`; it took 23
+minutes on a Windows 11 laptop. Install rustup this way before you run `just rerail-native`, which then only installs
+the pinned toolchain and builds. Run `just` recipes from Git Bash: `just` runs each recipe with `sh`, which Git for
+Windows puts on `PATH` there.
+
+**Tests and your profile.** The vitest setup file (`test/support/setup-rerail-home.ts`) gives every test file its own
+user home, Rerail home and content store. It sets both `HOME` and `USERPROFILE`, since `os.homedir()` reads
+`USERPROFILE` on Windows. Git in a test reads none of your settings or the machine's: the setup file writes a fresh
+`.gitconfig` in that home holding only a test identity, points `GIT_CONFIG_GLOBAL` at it and sets
+`GIT_CONFIG_NOSYSTEM=1`, since Git for Windows' installer sets `core.autocrlf=true` for the whole machine, which once
+wrote a test repository's LF files with CRLF. A test that moves the home calls `stubUserHome`
+(`test/support/user-home.ts`), never `vi.stubEnv("HOME")` alone: on Windows that leaves `os.homedir()` on your real
+profile, and a registration test once pointed every hook in a developer's `~/.claude/settings.json` at a temp folder
+the run then deleted, so their machine recorded nothing. The setup file fails a test file that writes a temp path into
+your real coding agent settings, naming each file; `rerail install --refresh` restores them.
+
+Never run a probe script or a built CLI against your real profile either. Outside vitest, move the home in the shell
+first, as vitest does (Git Bash), and remove `$T` afterwards:
+
+```sh
+T=$(cygpath -w "$(mktemp -d)")
+export HOME="$T" USERPROFILE="$T" APPDATA="$T\\AppData\\Roaming" LOCALAPPDATA="$T\\AppData\\Local"
+export RERAIL_AUTOSTART=0 RERAIL_MODIFY_PATH=0 RERAIL_DEVICE_SECRET_STORE=file
+```
+
+`RERAIL_MODIFY_PATH=0` keeps set-up out of your user `Path`, which lives in the registry, where no environment variable
+redirects it. `RERAIL_DEVICE_SECRET_STORE=file` keeps activation out of Windows Credential Manager.
+
+**Symlinks.** Windows makes a symlink only with Developer Mode on or from an elevated process. Rerail itself never
+makes one there ([docs/windows.md, "Links"](docs/windows.md#links)), so run the suite without Developer Mode, as most
+users' machines are: a test that needs a symlink skips and says why, or makes a junction where a junction tests the
+same thing. Tests do either through `symlinkOrSkip` or `linkFolder` (`test/support/platform/links.ts`); the other
+helpers for what differs on Windows (named pipes, permission bits, removing a folder Windows still holds) sit beside
+them in `test/support/platform/`. CI's `unit-windows` job runs the whole unit suite on Windows on every push to main and
+every pull request from a branch of this repository, so a test that fails there fails CI.
+
+**PowerShell scripts.** `scripts/host/windows-install-smoke.ps1`, the release gate on Windows, runs under PowerShell 7
+in `release.yml`. It dot-sources `scripts/host/windows-host.ps1`, which the environment matrix's Windows VMs also run
+under Windows PowerShell 5.1, so keep that file working in both. Install PowerShell 7 with
+`winget install --id Microsoft.PowerShell -e`, then run the smoke on a package you packed:
+
+```sh
+npm run build && npm pack
+pwsh -NoProfile -File scripts/host/windows-install-smoke.ps1 -Tarball neralabs-rerail-<version>.tgz
+```
+
+Delete the tarball afterwards; git does not ignore it. The smoke installs into a sandbox profile whose folder name has
+an accent and a space. It puts back your user `Path`, which set-up writes and the sandbox cannot redirect, and reads
+every child's output as UTF-8, so it passes on a console whose code page is 437, an en-US install's default.
+
+**Console windows.** On Windows, a console program started by a process with no console opens a window, which
+Windows 11 hands to Windows Terminal, and it takes focus. When you change how Rerail starts a process, start it
+through `src/engine/child-process.ts`, and only the browser opener through `spawnShown`; `npm run check` holds the
+first. Then watch it on Windows 11 with Windows Terminal as the default terminal application, as it is out of the
+box: run your build as the daemon your coding agents use (`just rerail-dev --install-bridge`), work a session in a
+repository where Rerail is started, and look for any window that opens. A window that shows for a moment is easy to
+miss. The tracer posted with the
+[report of this problem](https://github.com/neralabs/rerail/issues/507#issuecomment-6754235764) logs every console
+window shown, every focus change and every process start with its parent, and exits 1 when a console window appears:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File popups.ps1 -Seconds 60
+```
+
+Run `npx @neralabs/rerail setup` afterwards to return to the published package.
+
 ### UI
 
 The browser view lives in `ui/` and has no toolchain: `index.html`, stylesheets under `ui/css/`, and native ES modules,
@@ -320,9 +452,13 @@ and `/healthz` report it as `dev` rather than `bundled`.
 
 Open a pull request against `main` that links its issue, if it has one. Changes are squash-merged after review.
 
-- `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths and
-  no internal references (ticket IDs, `nera-` names outside the public list). While the pull request stages pack data
-  in a `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
+- `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths,
+  child processes started only through `src/engine/child-process.ts`, renames only through `src/engine/file-replace.ts`,
+  test folders removed only through `test/support/platform/remove-folder.ts`, checkout paths resolved only through
+  `src/engine/catalog/checkout-control.ts`, opens that refuse a symlink only through `src/engine/no-follow.ts`, no
+  internal references (ticket IDs, `nera-` names outside the public list), and `allowScripts` denying the install
+  script of every installed package that ships its addon prebuilt. While the pull request stages pack data in a
+  `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).

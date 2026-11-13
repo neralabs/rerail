@@ -1,13 +1,17 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CodeRuleBridge,
+  filesystemClock,
   generatedEditPaths,
   isCommandTool,
   ledgerPreimage,
@@ -17,6 +21,8 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
+import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
@@ -27,6 +33,8 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+/** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
+const heldGit = vi.hoisted(() => ({ reads: 0 }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -37,6 +45,11 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      if (heldGit.reads > 0) {
+        heldGit.reads -= 1;
+        call[0] = process.execPath;
+        call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
+      }
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
@@ -56,6 +69,8 @@ vi.mock("node:fs/promises", async importOriginal => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
     },
+    // A test can make Windows hold a folder for a moment (holdRemovals).
+    rm: vi.fn(actual.rm),
   };
 });
 
@@ -109,9 +124,10 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  heldGit.reads = 0;
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
 async function workspace(): Promise<string> {
@@ -134,6 +150,16 @@ async function awaitClockAfter(...paths: string[]): Promise<void> {
     const info = await lstat(join(probe, "tick"));
     if (Math.max(info.mtimeMs, info.ctimeMs) > since) return;
   }
+}
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc") as () => void;
+/** Heap bytes in use once full collections have run and their sweeping has finished. */
+async function heapInUse(): Promise<number> {
+  for (let pass = 0; pass < 3; pass += 1) {
+    gc();
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  return process.memoryUsage().heapUsed;
 }
 function auditor(auditGeneratedEdits: CodeRuleAuditor["auditGeneratedEdits"]): CodeRuleAuditor {
   return { openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, auditGeneratedEdits, close: vi.fn(async () => undefined) };
@@ -793,6 +819,59 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
+  it("keeps one observation of an unchanged source for all the sessions that share baseline observations", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "read.py"), "stable\n");
+    await writeFile(join(root, "src", "skipped.py"), "stable\n");
+    await awaitClockAfter(join(root, "src", "read.py"), join(root, "src", "skipped.py"));
+    const observations: SourceObservationCache = new Map();
+    // A source no rule reads is observed by its stamp alone.
+    const open = async (sessionId: string): Promise<void> => {
+      const bridge = createBridge(root, {
+        ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+        acceptsPath: path => path !== "src/skipped.py",
+      }, { observations });
+      await bridge.openWorkspace(sessionId);
+    };
+    await open("session-1");
+    await vi.waitFor(() => expect(observations.get(root)?.get("src/read.py")?.digest).toBeDefined());
+    const first = observations.get(root)!;
+    await open("session-2");
+    await vi.waitFor(() => expect(observations.get(root)).not.toBe(first));
+    // Each live session keeps a baseline of every source of its checkout, so a copy each would cost a whole checkout's
+    // observations a session.
+    expect(observations.get(root)?.get("src/read.py")).toBe(first.get("src/read.py"));
+    expect(observations.get(root)?.get("src/skipped.py")).toBe(first.get("src/skipped.py"));
+  });
+
+  it("costs each session a table of the shared observations, not copies of them or of their paths", { timeout: 60_000 }, async () => {
+    const root = await workspace();
+    const files = 2_000;
+    // Names of about 165 characters: a path string of a session's own then costs more than the session's table, so a
+    // session that keys its table by the walk's own path strings fails the bound by a wide margin.
+    const name = (index: number): string => `module_${index}_${"x".repeat(150)}.py`;
+    for (let index = 0; index < files; index += 1) await writeFile(join(root, "src", name(index)), "stable\n");
+    await awaitClockAfter(join(root, "src", name(files - 1)));
+    const observations: SourceObservationCache = new Map();
+    const open = async (sessionId: string): Promise<void> => {
+      const published = observations.get(root);
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { observations });
+      await bridge.openWorkspace(sessionId);
+      await vi.waitFor(() => expect(observations.get(root)).not.toBe(published), { timeout: 20_000 });
+      // The walk that follows a baseline has finished too: nothing a walk holds while it runs is counted.
+      await bridge.checkpoint("turn");
+    };
+    // The first sessions read every source and pay for the compiled code.
+    await open("session-1");
+    await open("session-2");
+    const before = await heapInUse();
+    const sessions = 5;
+    for (let index = 0; index < sessions; index += 1) await open(`session-${index + 3}`);
+    // Each session's tables hold 60 to 69 bytes a source. A path string of its own brings that to about 250, and an
+    // observation of its own, which "keeps one observation of an unchanged source" also catches, to about 195.
+    expect((await heapInUse() - before) / sessions / files).toBeLessThan(105);
+  });
+
   it("abandons the baseline walk of an interrupted session", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");
@@ -804,6 +883,38 @@ describe("CodeRuleBridge", () => {
     await bridge.close();
 
     expect(observations.size).toBe(0);
+  });
+
+  it("closes mid-walk with no Git it started still running in the folder, which can then be removed at once", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      onIgnoreRulesChanged: () => undefined,
+    });
+
+    await bridge.openWorkspace("session-1");
+    // The baseline walk reads HEAD and the ignore rules ask Git for their exclude files, neither waited for by the open.
+    expect(runningIn(root)).not.toEqual([]);
+    await bridge.close();
+
+    expect(runningIn(root)).toEqual([]);
+    // One try: on Windows a process still running in the folder keeps it from being removed.
+    await removeFolder(root, { retry: false });
+  });
+
+  it("reopens with no Git the earlier session started still running in the folder", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // The first session's walk reads HEAD first, through a Git that runs until it is ended.
+    heldGit.reads = 1;
+    await bridge.openWorkspace("session-1");
+    const first = runningIn(root);
+    expect(first).not.toEqual([]);
+
+    await bridge.openWorkspace("session-2");
+    // The second session's own Git may still run; none of the first session's does.
+    expect(runningIn(root).filter(entry => first.includes(entry))).toEqual([]);
   });
 
   it("sends a deletion with its preimage instead of an unreadable workspace scan", async () => {
@@ -832,7 +943,7 @@ describe("CodeRuleBridge", () => {
 
     await bridge.openWorkspace("session-1");
     await bridge.begin("replace", "write", { path: "src/a.py" });
-    await rm(join(root, "src", "a.py"), { recursive: true });
+    await removeFolder(join(root, "src", "a.py"));
     await writeFile(join(root, "src", "a.py"), "after\n");
     await bridge.finish("replace");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({ edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after\n" })] }));
@@ -893,6 +1004,10 @@ describe("ledgerPreimage", () => {
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
 }
+/** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
+function repositoryPath(root: string, path: string): string {
+  return relative(root, path).split(sep).join("/");
+}
 /** Makes `root` a repository whose one commit holds every file in it. */
 function commitAll(root: string): void {
   git(root, "init", "--quiet");
@@ -905,6 +1020,9 @@ async function twoBranches(): Promise<string> {
   await writeFile(join(root, "src", "a.py"), "old\n");
   await writeFile(join(root, "src", "gone.py"), "gone\n");
   git(root, "init", "--quiet", "--initial-branch=main");
+  // Git writes the files as committed, LF, whatever the machine sets: Git for Windows sets core.autocrlf=true for every
+  // repository. The describe block on core.autocrlf sets it for its own repositories.
+  git(root, "config", "core.autocrlf", "false");
   git(root, "add", ".");
   git(root, "commit", "--quiet", "-m", "seed");
   git(root, "switch", "--quiet", "-c", "other");
@@ -1001,7 +1119,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
-      [{ path: relative(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
+      [{ path: repositoryPath(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
     ]);
   });
 
@@ -1012,7 +1130,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
-      [[relative(root, join(worktree, "src", "a.py"))], "log"],
+      [[repositoryPath(root, join(worktree, "src", "a.py"))], "log"],
       [["src/a.py"], undefined],
     ]);
   });
@@ -1051,7 +1169,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     await shellInWorktree(bridge, () => writeFile(path, "gone\nours\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-      [[{ path: relative(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
     ]);
   });
 
@@ -1075,7 +1193,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([relative(root, join(worktree, "src", "a.py"))]);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([repositoryPath(root, join(worktree, "src", "a.py"))]);
   });
 
   it("takes a worktree's first walk as its baseline, though `git worktree add` wrote it after the session opened, and records a later change", async () => {
@@ -1145,7 +1263,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     walk.release();
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "top.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "top.py"))]);
   });
 
   it("takes what a walk could not read in a worktree as a baseline once it can, but for what was written since", async () => {
@@ -1164,7 +1282,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await writeFile(join(worktree, "deep", "new.py"), "violation\n");
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "deep", "new.py"))]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
   });
 
@@ -1232,6 +1350,121 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     walk.release();
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const walk = holdDiscovery("directories", join(worktree, "src"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", worktree);
+    roots.length = 0;
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
+  /** `twoBranches` with `core.autocrlf=true`, as Git for Windows' installer sets it, its files checked out again in CRLF. */
+  async function crlfBranches(): Promise<string> {
+    const root = await twoBranches();
+    git(root, "config", "core.autocrlf", "true");
+    await rm(join(root, "src", "a.py"));
+    await rm(join(root, "src", "gone.py"));
+    git(root, "checkout", "--", ".");
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "gone.py"));
+    return root;
+  }
+
+  it("audits nothing a checkout wrote with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("audits nothing restored from another branch with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "other", "--", "src/a.py"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("audits a shell write with an LF line a checkout never writes, though another branch holds its text with LF", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // `other` holds "old\nviolation\n", which a checkout here writes with a CRLF after each line.
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nviolation\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nviolation\n" }],
+    ]);
+  });
+
+  it("gives a shell write the preimage Git holds, in the CRLF line breaks the file held it in", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
+    ]);
+  });
+
+  it("audits a shell write that gives an LF file CRLF line breaks where Git would never write them", async () => {
+    const root = await twoBranches();
+    // As on macOS and Linux, and on Windows set up to check files out as they are stored.
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "config", "core.eol", "lf");
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\r\n" }],
+    ]);
+  });
+
+  it("credits Git with CRLF line breaks an eol attribute or a text file under core.eol=crlf has it write", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", eol: "lf" },
+      { attributes: "*.py text\n", eol: "crlf" },
+    ]) {
+      const root = await twoBranches();
+      git(root, "config", "core.autocrlf", "false");
+      git(root, "config", "core.eol", setup.eol);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
+  });
+
+  it("credits Git with the CRLF line breaks a text or eol=crlf attribute has it write into a blob that already holds a CR", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", autocrlf: "false" },
+      // Git for Windows' default core.autocrlf with a text attribute.
+      { attributes: "*.py text\n", autocrlf: "true" },
+    ]) {
+      const root = await twoBranches();
+      // Committed with no attribute, so the blobs keep their CRs: a CRLF beside an LF, and a lone CR.
+      git(root, "switch", "--quiet", "other");
+      await writeFile(join(root, "src", "a.py"), "old\r\nviolation\n");
+      await writeFile(join(root, "src", "new.py"), "violation\rmore\n");
+      git(root, "commit", "--quiet", "-am", "carriage returns");
+      git(root, "switch", "--quiet", "main");
+      git(root, "config", "core.autocrlf", setup.autocrlf);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      // A checkout writes every LF without its CR as CRLF here, whatever else the blob holds.
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -1769,5 +2002,26 @@ describe("ToolCallWindows", () => {
     expect(windows.ranDuring(0, 0)).toBe(false);
     expect(windows.ranDuring(10, 10)).toBe(true);
     expect(windows.ranDuring(MAX_FINISHED_CALLS * 10, MAX_FINISHED_CALLS * 10)).toBe(true);
+  });
+});
+
+describe("the file system's clock", () => {
+  afterEach(() => {
+    vi.mocked(rm).mockReset();
+    vi.useRealTimers();
+  });
+
+  it("is sampled from its probe folder even while Windows holds that folder for a moment", async () => {
+    const { rm: actualRm } = await vi.importActual<typeof FileSystem>("node:fs/promises");
+    // Date.now() far from the file system's clock, so a sample that fell back to it shows.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2, path => /rerail-clock-[^\\/]+$/u.test(path));
+
+    const clock = await filesystemClock();
+
+    expect(refused).toHaveLength(2);
+    expect(clock).toBeGreaterThan(0);
+    expect(existsSync(refused[0]!)).toBe(false);
   });
 });

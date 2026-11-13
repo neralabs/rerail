@@ -7,11 +7,14 @@ import { fixturesPath } from "../../support/oracles.js";
 const DASHBOARD = "http://127.0.0.1:4737/?repository=acme-web";
 const WIDTH = 100;
 
-/** A TypeScript-pack steer as the code-rule enforcer renders it: its block, and its rules linked as the OMP adapter does. */
+/**
+ * A TypeScript-pack steer as the code-rule enforcer renders it: its block, and its rules linked as the OMP adapter does.
+ * Its command is written for sh on every machine, so the drawings are the same on Windows.
+ */
 function codeRuleSteer(...findings: SteerFinding[]): { content: string; details: { rules: SteerRule[] } } {
   const rules = steerRules(findings, () => "From the TypeScript rule pack.")
     .map(rule => ({ ...rule, url: `${DASHBOARD}#rule/${encodeURIComponent(rule.id)}` }));
-  return { content: steerBlock({ kind: "edit" }, findings), details: { rules } };
+  return { content: steerBlock({ kind: "edit" }, findings, "posix"), details: { rules } };
 }
 
 const NO_EXPLICIT_ANY: SteerFinding = {
@@ -83,7 +86,7 @@ describe("OMP steer renderer", () => {
   });
 
   it("leaves the why? off a rule with no link, and draws no line for a rule the block only mentions", () => {
-    const content = steerBlock({ kind: "edit" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.\n◆ Rerail · fake  steered" }]);
+    const content = steerBlock({ kind: "edit" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.\n◆ Rerail · fake  steered" }], "posix");
     const rows = formatOmpSteer(content, [{ id: "checkout", state: "steered" }], { expanded: true, hyperlinks: true, mark: MARK }, theme);
     expect(rows.map(row => row.text)).toEqual([
       "<accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>checkout  <accent>steered</accent>",

@@ -3,13 +3,14 @@
  * judges, the pending tool-packs, and the guard that both lists only shrink against the base commit. Repositories are
  * hand-made; git is a stand-in runner answering for the base commit.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PENDING, UNGATED_RULES, ungatedChecks } from "../../conformance/languages/checks/ungated.js";
 import type { CommandResult, CommandRunner } from "../../conformance/process.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const BASE = "0123456789abcdef0123456789abcdef01234567";
 
@@ -19,7 +20,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "rerail-ungated-"));
 });
 
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => removeFolderSync(root));
 
 const write = (path: string, value: unknown): void => {
   mkdirSync(dirname(join(root, path)), { recursive: true });

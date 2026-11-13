@@ -1,11 +1,11 @@
-use model2vec_rs::model::StaticModel;
+use crate::model::LoadedModel;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::cell::OnceCell;
 use std::collections::HashSet;
-use tokenizers::Tokenizer;
+use std::sync::Arc;
 
 /// Mirrors `maxRegexPatternBytes` in `code_rule_dsl/capabilities.json`.
 const MAX_REGEX_PATTERN_BYTES: usize = 16_384;
@@ -57,21 +57,22 @@ pub trait Encoder {
     fn token_count(&self, text: &str) -> Result<usize>;
 }
 
-/// The engine's model, tokenizer, and input-token cap.
+/// The engine's model, which every engine of the same model shares (`shared_model`), and its input-token cap.
 pub struct ModelEncoder {
-    pub model: StaticModel,
-    pub tokenizer: Tokenizer,
+    pub model: Arc<LoadedModel>,
     pub max_input_tokens: usize,
 }
 
 impl Encoder for ModelEncoder {
     fn embed(&self, texts: &[String]) -> Vec<Vec<f32>> {
         self.model
+            .model
             .encode_with_args(texts, Some(self.max_input_tokens), texts.len())
     }
 
     fn token_count(&self, text: &str) -> Result<usize> {
         let encoding = self
+            .model
             .tokenizer
             .encode(text, false)
             .map_err(|error| invalid(format!("failed to tokenize sample: {error}")))?;

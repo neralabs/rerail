@@ -30,4 +30,4 @@ export {
   runShowMeCommand,
 } from "./show-me.js";
 export { type DashboardPage, type SetupEnvironment, type SetupRequest, startRerail } from "./repository-setup.js";
-export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";
+export { CARRIED_FLAG_NAMES, type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";

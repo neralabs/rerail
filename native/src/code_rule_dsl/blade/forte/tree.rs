@@ -810,8 +810,8 @@ impl BladeTree {
         (index < self.nodes.len()).then_some(index)
     }
 
-    /// Nodes in the tree.
-    #[cfg(test)]
+    /// Nodes in the tree: the throughput benchmark's checksum, which builds on Unix only.
+    #[cfg(all(test, unix))]
     pub(crate) fn len(&self) -> usize {
         self.nodes.len()
     }

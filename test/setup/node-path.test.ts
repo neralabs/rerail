@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 /** A Homebrew prefix holding `<formula>` at `version` in its Cellar; the keg's node is returned. */
@@ -16,7 +18,7 @@ async function keg(prefix: string, formula: string, version: string): Promise<st
   await mkdir(dirname(node), { recursive: true });
   await writeFile(node, "", { mode: 0o755 });
   await mkdir(join(prefix, "opt"), { recursive: true });
-  await symlink(join("..", "Cellar", formula, version), join(prefix, "opt", formula));
+  linkFolder(join("..", "Cellar", formula, version), join(prefix, "opt", formula));
   return node;
 }
 
@@ -27,18 +29,25 @@ async function homebrew(): Promise<string> {
   return prefix;
 }
 
+/**
+ * Homebrew runs on macOS and Linux only, so pinnedNodePath reads only its `/`-separated keg paths and records any
+ * Windows node as it is. The two tests that link a keg into bin or opt would otherwise run wherever Windows lets the
+ * process make symbolic links (an elevated CI runner) and expect a Homebrew link that Windows never has.
+ */
+const noHomebrew = process.platform === "win32";
+
 describe("pinnedNodePath", () => {
-  it("records Homebrew's node by the link brew upgrade keeps, not its versioned keg", async () => {
+  it.skipIf(noHomebrew)("records Homebrew's node by the link brew upgrade keeps, not its versioned keg", async context => {
     const prefix = await homebrew();
     const node = await keg(prefix, "node", "26.5.0");
-    await symlink(join("..", "Cellar", "node", "26.5.0", "bin", "node"), join(prefix, "bin", "node"));
+    symlinkOrSkip(context, join("..", "Cellar", "node", "26.5.0", "bin", "node"), join(prefix, "bin", "node"), "file");
     expect(pinnedNodePath(node)).toBe(join(prefix, "bin", "node"));
   });
 
-  it("records a formula Homebrew does not link into bin by its opt link", async () => {
+  it.skipIf(noHomebrew)("records a formula Homebrew does not link into bin by its opt link", async context => {
     const prefix = await homebrew();
     const linked = await keg(prefix, "node", "26.5.0");
-    await symlink(linked, join(prefix, "bin", "node"));
+    symlinkOrSkip(context, linked, join(prefix, "bin", "node"), "file");
     const node = await keg(prefix, "node@24", "24.22.1");
     expect(pinnedNodePath(node)).toBe(join(prefix, "opt", "node@24", "bin", "node"));
   });

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,13 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
 import { repositoryIdentityLocation } from "../../src/engine/index.js";
 import { workspaceStartState } from "../../src/runtime/index.js";
-import { runSetupCommand, runSetupStepArgs, type SetupContext } from "../../src/cli/index.js";
+import { CARRIED_FLAG_NAMES, runSetupCommand, runSetupStepArgs, type SetupContext } from "../../src/cli/index.js";
 import { pickSetup, SETUP_CANCELLED, type SetupPickerUi } from "../../src/harness/setup-picker.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
+import { ENTRY_POINTS, shellWord } from "../../src/engine/index.js";
+import { stubUserHome } from "../support/user-home.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const TS_PACKS = ["typescript"];
@@ -22,7 +25,7 @@ const temporaryDirectories: string[] = [];
 afterEach(async () => {
   removeInstalledPacks();
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 interface Machine {
@@ -166,7 +169,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const setup = await machine();
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const ui = fakeUi(["Type the folder…", "Yes, start Rerail"], [`  ${setup.repo}  `]);
 
     const last = await pickSetup(ui, steps(setup, fakeSetupEnvironment(), home));
@@ -233,10 +236,41 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     // Without a terminal, `rerail setup` prints the same answers as commands, carrying both flags.
     const other = join(setup.root, "other", "rerail.sqlite");
     const said: string[] = [];
-    vi.stubEnv("HOME", join(setup.root, "user"));
+    stubUserHome(join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
-    expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
+    // The agent runs answers in a POSIX shell, Git Bash on Windows, which needs a Windows path in quotes.
+    expect(said.join("\n")).toContain(`setup --relay --database ${shellWord("posix", other)} --repository --answer start --repo ${shellWord("posix", worktree)}`);
+  });
+
+  it("carries each on-off flag of `start` into every answer, and on through the run that answer starts", async () => {
+    const setup = await machine();
+    const run = steps(setup, fakeSetupEnvironment());
+    expect(CARRIED_FLAG_NAMES).toEqual(["--powershell", "--repository"]);
+    for (const flag of CARRIED_FLAG_NAMES) {
+      const first = await run(["start", "--json", flag]);
+      const next = first.question!.options[0]!.next.args;
+      expect(next, flag).toContain(flag);
+      expect((await run(next)).question!.options[0]!.next.args, flag).toContain(flag);
+    }
+  });
+
+  it("writes each answer for PowerShell under `--powershell`, with the packs the agent names inside quotes", async () => {
+    const setup = await machine();
+    const said: string[] = [];
+    vi.stubEnv("HOME", join(setup.root, "user"));
+    const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
+    mkdirSync(join(setup.context.packageRoot, "dist", "cli"), { recursive: true });
+    writeFileSync(join(setup.context.packageRoot, ENTRY_POINTS.cli), "");
+    expect(await runSetupCommand(["--powershell", "--answer", "yes", "--repo", setup.repo], setup.context, io)).toBe(0);
+    const text = said.join("\n");
+    // Node and the CLI the launcher runs, never `rerail.cmd`, whose arguments cmd.exe would read again.
+    const cli = shellWord("powershell", join(setup.context.updater.currentLink, ENTRY_POINTS.cli));
+    expect(text).toMatch(/^1\. & /mu);
+    expect(text).toContain(` ${cli} setup --relay --powershell --answer start `);
+    expect(text).not.toContain("rerail.cmd");
+    // PowerShell hands a program `a@1,b@2` as two arguments, split at the comma, unless it is quoted.
+    expect(text).toContain(` --answer choose --repo ${setup.repo} --packs '<packs>', with comma-separated packs from: `);
   });
 
   it("carries `start --agents` through every answer, so set-up connects only the coding agents named", async () => {
@@ -275,7 +309,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     // In the home folder, `start --json` hands over to set-up itself before any answer.
     const home = join(setup.root, "user");
     mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    stubUserHome(home);
     const other = gitRepository(join(setup.root, "acme-web"));
     const fromHome = await pickSetup(fakeUi(["Type the folder…", "Yes, start Rerail"], [other]), steps(session, fakeSetupEnvironment(), home));
 

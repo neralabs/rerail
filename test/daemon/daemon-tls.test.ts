@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ import {
 } from "../../src/daemon/daemon.js";
 import { DAEMON_STATE_FILE, daemonFetch, probeDaemon, readDaemonState, type DaemonState } from "../../src/runtime/index.js";
 import { selfSignedCertificate } from "../support/self-signed-certificate.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const transport = (argv: readonly string[]) => parseArguments(
   argv,
@@ -40,6 +41,20 @@ describe("daemon transport arguments", () => {
     expect(() => parseDaemonTransport(transport(["--tls-key", "key.pem"]), "127.0.0.1", [])).toThrow(/--tls-cert/u);
     expect(() => parseDaemonTransport(transport(["--tls-cert", "c", "--tls-key", "k", "--insecure-http"]), "0.0.0.0", [])).toThrow();
   });
+
+  it("tells a Windows user to lock the new key down with icacls, which Windows has, and never chmod", () => {
+    const refusal = (platform: NodeJS.Platform): string => {
+      try {
+        parseDaemonTransport(transport([]), "0.0.0.0", [], platform);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(refusal("win32")).not.toContain("chmod");
+    expect(refusal("win32")).toContain("icacls key.pem /inheritance:r /grant:r");
+    expect(refusal("linux")).toContain("chmod 600 key.pem");
+  });
 });
 
 describe("TLS daemon", () => {
@@ -51,7 +66,7 @@ describe("TLS daemon", () => {
     await Promise.all(daemons.splice(0).map(daemon => daemon.close()));
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   /** An https daemon recording its state in `<root>/home`, as `rerail daemon start --tls-cert … --tls-key …` does. */
@@ -85,6 +100,36 @@ describe("TLS daemon", () => {
     }
     await chmod(files.keyFile, 0o600);
     expect(await loadDaemonTls(files)).toEqual({ cert, key });
+  });
+
+  it("refuses a Windows private key whose ACL lets other accounts read it, which mode bits cannot show", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    // What a key under C:\certs inherits: Users may read it.
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU)`);
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`icacls "${files.keyFile}" /inheritance:r`);
+    expect(await loadDaemonTls(files, { platform: "win32", acl: { otherReaders: () => [] } })).toEqual({ cert, key });
+    // A key whose ACL cannot be read is refused too, never served unchecked.
+    const unread = { platform: "win32" as const, acl: { otherReaders: (): string[] => {
+      throw new Error("Get-Acl failed");
+    } } };
+    await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
+  });
+
+  it("names a refused key's path in its fix as it is, a `$&` in it too", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    // In a replacement string, `$&` stands for the text replaced.
+    await mkdir(join(root, "certs $& keys"));
+    const files = { certFile: join(root, "certs $& keys", "cert.pem"), keyFile: join(root, "certs $& keys", "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`icacls "${files.keyFile}" /inheritance:r`);
   });
 
   it("answers Rerail's own client over https pinned to the certificate it recorded, and nothing pinned to another", async () => {

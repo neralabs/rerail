@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 import { checkoutPathBoundary } from "../../../src/engine/path-boundary.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -23,7 +25,7 @@ const FIX_THESE = "Fix these, or tell the user in one line why you won't and run
 
 describe("renderSteer", () => {
   it("renders one violation as the agent's steer: the edit's lead, the finding with its location and rule, the latitude", () => {
-    expect(renderSteer([violation()])).toBe([
+    expect(renderSteer([violation()], undefined, "posix")).toBe([
       "Rerail found 1 problem in your last edit:",
       "- src/a.ts:3:15 — log of user [p]",
       FIX_IT,
@@ -33,7 +35,7 @@ describe("renderSteer", () => {
   it("lists findings in first-seen order, not by rule, each fix under its finding, and names no state, mode or pack", () => {
     const fixed = violation({ fix: { span: span(2, 2, 2, 19), text: "logger.info(user)" } });
     const other = violation({ ruleId: "acme:no-print", mode: "steer", message: "print call", span: span(5, 0, 5, 5) });
-    const steer = renderSteer([fixed, other, violation({ span: span(7, 1, 7, 2) })]);
+    const steer = renderSteer([fixed, other, violation({ span: span(7, 1, 7, 2) })], undefined, "posix");
     expect(steer).toBe([
       "Rerail found 3 problems in your last edit:",
       "- src/a.ts:3:15 — log of user [p]",
@@ -46,7 +48,7 @@ describe("renderSteer", () => {
   });
 
   it("leads with the path alone for a finding about a whole file, and with the message for one with no path", () => {
-    expect(renderSteer([violation({ span: undefined }), violation({ path: undefined, span: undefined, ruleId: "q" })])).toBe([
+    expect(renderSteer([violation({ span: undefined }), violation({ path: undefined, span: undefined, ruleId: "q" })], undefined, "posix")).toBe([
       "Rerail found 2 problems in your last edit:",
       "- src/a.ts — log of user [p]",
       "- log of user [q]",
@@ -55,7 +57,7 @@ describe("renderSteer", () => {
   });
 
   it("keeps a multi-line message's later lines under its finding", () => {
-    expect(renderSteer([violation({ message: "log of user\nUse the logger.\n\nIt redacts." })])).toBe([
+    expect(renderSteer([violation({ message: "log of user\nUse the logger.\n\nIt redacts." })], undefined, "posix")).toBe([
       "Rerail found 1 problem in your last edit:",
       "- src/a.ts:3:15 — log of user [p]",
       "  Use the logger.",
@@ -111,7 +113,7 @@ describe("renderSteer", () => {
     const secret = violation({
       path: "config/secrets.yaml", message: "`API_KEY: hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY: ${SECRET}" },
     });
-    expect(renderSteer([secret])).toBe([
+    expect(renderSteer([secret], undefined, "posix")).toBe([
       "Rerail found 1 problem in your last edit:",
       `- config/secrets.yaml:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
       FIX_IT,
@@ -134,15 +136,23 @@ describe("buildSteer", () => {
     expect(steer.content).toBe(renderSteer([violation(), other, violation()]));
   });
 
-  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", () => {
+  it("writes the command for the session's shell: PowerShell for Codex and Cursor on Windows", () => {
+    const latitude = (shell: Parameters<typeof buildSteer>[4]) =>
+      buildSteer([violation()], { kind: "edit" }, undefined, undefined, shell).content.split("\n").at(-1);
+    expect(latitude("posix")).toBe(FIX_IT);
+    expect(latitude("powershell")).toBe("Fix it, or tell the user in one line why you won't and record that line with three PowerShell lines: "
+      + "`$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback p -`.");
+  });
+
+  it("withholds the message and fix of a finding in a file that links to a secret, judged in its checkout", context => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-steer-link-")));
     try {
       writeFileSync(join(root, ".env"), "API_KEY=hunter2\n");
       mkdirSync(join(root, "docs"));
-      symlinkSync("../.env", join(root, "docs", "a.md"));
+      symlinkOrSkip(context, "../.env", join(root, "docs", "a.md"));
       const linked = violation({ path: "docs/a.md", message: "`API_KEY=hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY=" } });
       expect(renderSteer([linked])).toContain("`API_KEY=hunter2` is plaintext");
-      const steer = buildSteer([linked, violation()], { kind: "edit" }, undefined, checkoutPathBoundary(root).sensitive);
+      const steer = buildSteer([linked, violation()], { kind: "edit" }, undefined, checkoutPathBoundary(root).sensitive, "posix");
       expect(steer.content).toBe([
         "Rerail found 2 problems in your last edit:",
         `- docs/a.md:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
@@ -151,7 +161,7 @@ describe("buildSteer", () => {
         "Fix these, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.",
       ].join("\n"));
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 });

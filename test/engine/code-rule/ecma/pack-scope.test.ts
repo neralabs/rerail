@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,12 +9,13 @@ import { NativeCodeRuleEnforcer } from "../../../../src/engine/code-rule/code-ru
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { repositoryPath } from "../../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 // The JavaScript and TypeScript packs split ECMA files by type (their READMEs): a core ESLint port that
 // typescript-eslint replaces runs on JavaScript files only, a typescript-eslint port on TypeScript files only.
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));

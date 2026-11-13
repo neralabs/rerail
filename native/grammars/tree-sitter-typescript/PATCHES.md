@@ -2027,3 +2027,56 @@ and `get: number`. Upstream's corpus parses as before (111 of its own 112 cases;
 Each generated parser has 117 more states (6,019 for TypeScript and 6,306 for TSX, from 5,902 and 6,189). Over the
 10,341 `.ts` and 1,258 `.tsx` files of every pack's fixtures and samples, compared with Patches 1 to 27 alone, no
 named tree changes and no file gains or loses an error.
+
+## Patch 29: a template takes a `\x` or `\u` that no hex digits follow
+
+Upstream issues: tree-sitter/tree-sitter-javascript#337 (open: ``foo`\x` ``, escape sequences too restricted for
+tagged templates) and tree-sitter/tree-sitter-javascript#362 (open: ``String.raw`C:\Users` ``), whose
+`template_string` this grammar inherits from tree-sitter-javascript 0.23.1. Present at tag `v0.23.2` and at upstream
+HEAD. The same change as Patch 17 in `grammars/tree-sitter-javascript/PATCHES.md`.
+
+Why: since ES2018 a tagged template may hold an escape that is not well formed, which has no cooked value: TypeScript
+reads ``String.raw`C:\x\users` ``, the way a Windows path is written, with no error. Upstream's `escape_sequence`
+takes `\x` only before two hex digits and `\u` only before four or a braced code point, so such a template is a parse
+error and the engine runs no rule that reads names on the file. Three of Rerail's own TypeScript test files hold one
+(`test/engine/storage/windows-acl.test.ts`, `test/cli/repository-setup.test.ts`, `test/cli/support-bundle.test.ts`).
+The grammar overrides the inherited `template_string` with one that also takes a `\x` or a `\u` that no hex digits
+follow as an `escape_sequence`, in every template, tagged or not.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -1007,6 +1007,23 @@ module.exports = function defineGrammar(dialect) {
+         'const',
+       ),
+ 
++      // tree-sitter-javascript's template_string, which also takes an escape without hex digits.
++      template_string: $ => seq(
++        '`',
++        repeat(choice(
++          alias($._template_chars, $.string_fragment),
++          $.escape_sequence,
++          alias($._template_escape_without_digits, $.escape_sequence),
++          $.template_substitution,
++        )),
++        '`',
++      ),
++
++      // A `\x` or `\u` that no hex digits follow. A tagged template allows it since ES2018, with no cooked value
++      // (``String.raw`C:\x\users` `` is a Windows path); in any other template it is a syntax error, which a
++      // parser for linting need not report. A longer escape, such as `\x41`, stays one escape_sequence.
++      _template_escape_without_digits: _ => token.immediate(seq('\\', /[xu]/)),
++
+       template_type: $ => seq('${', choice($.primary_type, $.infer_type), '}'),
+ 
+       template_literal_type: $ => seq(
+```
+
+Node kinds and field names are unchanged: the escape is an `escape_sequence`, and `\x41`, `\u0041` and `\u{41}` stay
+one escape each, as the lexer takes the longest match. A string literal still refuses `'\x'`. A template literal type
+(`` type T = `a${B}` ``) takes no escape, as before. Each generated parser has one more token and symbol (388 for
+TypeScript, 406 for TSX) and the same states (6,019 and 6,306). Upstream's corpus parses as before (111 of its own
+112 cases; the one failure patch 1's `foo++!`). Compared with Patches 1 to 28 alone over 24,196 `.ts`, `.mts`, `.cts`
+and `.d.ts` files (the 23,562 of Rerail's npm dependencies, as `package-lock.json` pins them, and the 634 in Rerail's
+repository) and 64 `.tsx` files, the 3 test files above parse and no other tree changes; the 50 dependency files that
+fail to parse fail as before.

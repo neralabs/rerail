@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { modelStatus, modelStatusLine } from "../../../src/engine/native/model-status.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 
@@ -23,7 +24,7 @@ function modelDirectory(files: Record<string, string>): string {
 const FILES = { "model.safetensors": "weights", "tokenizer.json": "{}", "config.json": "{}" };
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 describe("the model's health", () => {
