@@ -8,7 +8,7 @@ def install(backend,module,detectors=False):
         rows=backend.native(CHECK,entry,[],options,root=root.absolute())
         errors=[r['parameters']for r in rows if r['code']=='PSE_READ_ERROR']
         if errors:
-            error=sorted(errors,key=lambda p:p['file_path'])[0]
+            error=sorted(errors,key=lambda p:p['order_key'])[0]
             if error['io_kind']=='InvalidUtf8':raise UnicodeDecodeError('utf-8',bytes.fromhex(error['bytes_hex']),error['start'],error['end'],error['reason'])
             raise OSError(error['errno'],error['detail'],str(root/error['file_path']))
         if any(r['code']!='PSE_FACT'for r in rows):raise ValueError('Unexpected native plan-scope scanner response')

@@ -42,8 +42,15 @@ SideEffectsBlocking(@place("",0),i) :- option("entryPoint","blocking_violations"
 
 .decl pse_read_failure(path:symbol)
 pse_read_failure(p) :- pse_disk_file(p),file_error(p,_,_,_,_,_,_,_).
-.violation SideEffectsReadError(at:span,file_path:symbol,io_kind:symbol,errno:number,detail:symbol,bytes_hex:symbol,start:number,end:number,reason:symbol) code "PSE_READ_ERROR" "Native source read error"
-SideEffectsReadError(@place("",0),output,k,n,d,b,s,e,r) :- pse_disk_file(p),pse_output(p,output),file_error(p,k,n,d,b,s,e,r).
+.decl pse_error_spelling(path:symbol,logical:symbol)
+pse_error_spelling(p,p) :- pse_disk_file(p),env("pse.api","repository").
+pse_error_spelling(p,l) :- pse_disk_file(p),pse_explicit(p,l).
+.decl pse_error_key(path:symbol,key:symbol)
+pse_error_key(p,cat("//","\u0000",@replace_all(@slice(l,2,strlen(l)),"/","\u0000"))) :- pse_error_spelling(p,l),prefix("//",l).
+pse_error_key(p,cat("/","\u0000",@replace_all(@slice(l,1,strlen(l)),"/","\u0000"))) :- pse_error_spelling(p,l),prefix("/",l),!prefix("//",l).
+pse_error_key(p,@replace_all(l,"/","\u0000")) :- pse_error_spelling(p,l),!prefix("/",l).
+.violation SideEffectsReadError(at:span,file_path:symbol,io_kind:symbol,errno:number,detail:symbol,bytes_hex:symbol,start:number,end:number,reason:symbol,order_key:symbol) code "PSE_READ_ERROR" "Native source read error"
+SideEffectsReadError(@place("",0),output,k,n,d,b,s,e,r,key) :- pse_disk_file(p),pse_output(p,output),pse_error_key(p,key),file_error(p,k,n,d,b,s,e,r).
 
 // pathlib.rglob emits a directory's matches before walking its real child directories.
 // Enumeration positions are independent of the shared, sorted name column.

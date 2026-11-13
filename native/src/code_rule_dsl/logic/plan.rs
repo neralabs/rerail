@@ -4353,6 +4353,25 @@ struct Run<'a, 'b> {
 /// rows each produced relation gains.
 pub type Answer<'a> = &'a mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>;
 
+/// A complete request relation has no pending recursive work before its consumer. Resume held keys at once,
+/// grouped by request family, as a quiet recursive component does. Never publish the protocol rows as facts.
+fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vec<i64>]) -> Result<BTreeMap<String, Vec<Vec<i64>>>> {
+    let mut pending = BTreeMap::from([(request.to_owned(), keys.to_vec())]);
+    let mut produced: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+    while !pending.is_empty() {
+        let mut held: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        for (request, keys) in pending {
+            for (rel, rows) in answer(&request, &keys)? {
+                if let Some(request) = rel.strip_prefix(super::answers::HELD_BACK) {
+                    if !rows.is_empty() { held.entry(request.to_owned()).or_default().extend(rows); }
+                } else { produced.entry(rel).or_default().extend(rows); }
+            }
+        }
+        pending = held;
+    }
+    Ok(produced)
+}
+
 #[cfg(test)]
 mod complete_answer_tests {
     use super::*;
@@ -4382,9 +4401,11 @@ mod complete_answer_tests {
             };
             let result = run_atoms_native_answering(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), "program", &mut answer, None, None).unwrap();
             assert_eq!(result.outputs["shown"].len(), 1000, "later consumers must see all deferred positives");
+            assert_eq!(result.outputs["shown"].iter().map(|s| s.parse::<i64>().unwrap()).collect::<BTreeSet<_>>(), (0..1000).collect(), "every returned value stays exact");
             assert_eq!(batches.len(), 2, "held keys resume as one batch, never one callback per key");
             assert_eq!(batches[0].len(), 1000);
             assert_eq!(batches[1].len(), 1000-immediate);
+            assert_eq!(batches[1], batches[0][immediate..], "the complete deferred payload resumes unchanged");
         }
     }
 }
@@ -9500,7 +9521,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         };
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
-                        for (p, got) in answer(&req, &asked)? {
+                        for (p, got) in answer_complete(answer, &req, &asked)? {
                             if p == *rel { mine.extend(got) } else { run.answered.entry(p).or_default().extend(got) }
                         }
                         mine

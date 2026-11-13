@@ -883,8 +883,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/compare.rr",
-      "sha256": "1fcdd3620b05b090c1cba2d7574556a8b510ec136760fb731c6461ca3cdfad72",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "01035bc108354f7fba2e4e858cd57e40f998bbee7f45a6043b3398d3c6680174",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "1fcdd3620b05b090c1cba2d7574556a8b510ec136760fb731c6461ca3cdfad72",
+          "after": "01035bc108354f7fba2e4e858cd57e40f998bbee7f45a6043b3398d3c6680174",
+          "reason": "Adopt hub 293 shared rule library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/comprehensions.rr",
@@ -999,8 +1006,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-noqa.rr",
-      "sha256": "eaba84d2a79eab1ddac867748be7ffa5eca86176dcbbe05613f99f91e36bb5b3",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "e366d74ea4d838bad34fdc81ad4d3fdbf10e818256b38b0db872ee7e01ba4cc7",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "eaba84d2a79eab1ddac867748be7ffa5eca86176dcbbe05613f99f91e36bb5b3",
+          "after": "e366d74ea4d838bad34fdc81ad4d3fdbf10e818256b38b0db872ee7e01ba4cc7",
+          "reason": "Adopt hub 293 shared rule library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-numpy.rr",
@@ -1098,7 +1112,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/pyflakes.rr",
-      "sha256": "9928b3472d990eb77f69f169447ee962b45e87538152fbe537f5963c75faccec",
+      "sha256": "97d0dd74e8dbd2a4c701e07b622abc93d045989d11971cc1dca9c2a9acd2d29f",
       "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "repairs": [
         {
@@ -1110,6 +1124,11 @@
           "before": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
           "after": "9928b3472d990eb77f69f169447ee962b45e87538152fbe537f5963c75faccec",
           "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        },
+        {
+          "before": "9928b3472d990eb77f69f169447ee962b45e87538152fbe537f5963c75faccec",
+          "after": "97d0dd74e8dbd2a4c701e07b622abc93d045989d11971cc1dca9c2a9acd2d29f",
+          "reason": "Adopt hub 293 shared rule library resolutions"
         }
       ],
       "upstreamSha256": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a"
@@ -3456,7 +3475,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/side-effects-files.rr",
-      "sha256": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
+      "sha256": "4dc2fbe011252e490f9a490816c3ea6d34d4b8650aa77d0d5ebda6d5069d45ca",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py",
@@ -3465,6 +3484,11 @@
           "before": "752bc67715d1c3589dc15a17696cc725f2d8f7a3d8a3d4fe682c2fe3b802444d",
           "after": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
           "reason": "Adopt hub 85 shared libraries and translate the source-recorded filesystem APIs with shared directory order"
+        },
+        {
+          "before": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
+          "after": "4dc2fbe011252e490f9a490816c3ea6d34d4b8650aa77d0d5ebda6d5069d45ca",
+          "reason": "Preserve source-recorded filesystem request anchors and Path component error order"
         }
       ]
     },
@@ -6546,9 +6570,9 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "85d682828192024139c5c07909eb3460f97e254d",
+    "upstreamCommit": "83b51a47d8b3a1d254c7c98e1f8f8a8f36b54707",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Integration hub 85 with generic shared directory metadata, enumeration positions, selected file links, typed errors and value primitives",
+    "status": "Integration hub 83 with shared filesystem metadata and order, exact batched complete-request deferral, typed errors, load aliases and native value primitives",
     "nativeExtensions": [
       {
         "path": "native/src/code_rule_dsl/cpython/value.rs",
@@ -6561,11 +6585,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "aa1b854ce92eddf26ffdc06cb7d324b3559ae0604d6394ab3ccc4a8d9bafe290"
+        "sha256": "ae8de1f9a87b93eaf7b338938d7797e4fffe87f0ecabfa6f3eebd2974ab89b15"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "95a9039ae26c1cd8edf4a12aa00d0b163cee9bd3bf1d741c4ed4e7e333ad8d3f"
+        "sha256": "85fe071cdc195fbb42aaa3c5a334e7e161bfaf451996eca22863a34a4e654c31"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
@@ -6589,7 +6613,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "ae2dff1c83d3e7706c964e65953840dacde510cb7ef1bfd6e34a185dc84d70b4"
+        "sha256": "66ad6a727b71c00dd93ee89846ef723072934397971a284f31211521404074c5"
       },
       {
         "path": "native/src/code_rule_dsl/logic/simplify.rs",
@@ -6597,12 +6621,12 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "81ab9d53868653c35577f9be5bebe3fbb249063fcedfe770f7e08141856b0731",
+        "sha256": "8bcea8eb41109da92e9eef9fb35856db3d7720c88982342ba048618abf8f9d91",
         "reason": "Generic native primitive float formatting for typed caller value graphs"
       },
       {
         "path": "native/src/code_rule_dsl/mod.rs",
-        "sha256": "cf28469715c177cdec46c9fa6c95ff1ecb3b2b99751474f05af11f9fba30975f",
+        "sha256": "797872c72d095eb8a58ff5d390764fc376f1355615c32077ae8f8125af2640dc",
         "reason": "Generic native primitive float formatting for typed caller value graphs"
       },
       {
@@ -6610,7 +6634,7 @@
         "sha256": "f7e4a35a0da4ffa525f811b0fcdcf687220e30076d6072df10ffc4a37a1c0322"
       }
     ],
-    "previousUpstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
+    "previousUpstreamCommit": "293647a70983902f9707ac52701a04f16fd8cb5e",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "artifactHistory": [
       {
@@ -6978,6 +7002,62 @@
         "wallSeconds": 17.43,
         "userCpuSeconds": 92.95,
         "systemCpuSeconds": 15.87
+      },
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "ea8010cc7bfa7f50d7090b17afd8c919f2d92949",
+        "upstreamCommit": "293647a70983902f9707ac52701a04f16fd8cb5e",
+        "sourceTrees": {
+          "native": "ad48989fe6b7e7a5dddf77399dfaed9cd9e3a4f0",
+          "accel": "193e76a3e6ccbcb3d3d05444a9f47c310f639c1c",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
+          "Cargo.lock": "b6ca6ef23b16ca8589768e8569f5766fe8a2f6ee"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-a60be4aab81efea6",
+        "sha256": "a60be4aab81efea65160fef3619fb5f9eeadd1c1139bec7a04838f81643b1cdb",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "log": "build293.log",
+            "status": "deadline",
+            "wallSeconds": 110.06,
+            "userCpuSeconds": 335.43,
+            "systemCpuSeconds": 14.72
+          },
+          {
+            "log": "build293-resume.log",
+            "status": "deadline",
+            "wallSeconds": 110.04,
+            "userCpuSeconds": 346.83,
+            "systemCpuSeconds": 16.3
+          },
+          {
+            "log": "build293-resume2.log",
+            "status": "deadline",
+            "wallSeconds": 110.03,
+            "userCpuSeconds": 117.07,
+            "systemCpuSeconds": 4.96
+          },
+          {
+            "log": "build293-resume3.log",
+            "status": "deadline",
+            "wallSeconds": 110.01,
+            "userCpuSeconds": 2.04,
+            "systemCpuSeconds": 2.85
+          },
+          {
+            "log": "build293-complete.log",
+            "status": "passed",
+            "wallSeconds": 144.17,
+            "userCpuSeconds": 523.31,
+            "systemCpuSeconds": 19.16
+          }
+        ],
+        "wallSeconds": 584.31,
+        "userCpuSeconds": 1324.68,
+        "systemCpuSeconds": 57.99
       }
     ]
   },
