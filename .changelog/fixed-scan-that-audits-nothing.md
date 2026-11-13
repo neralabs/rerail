@@ -1,0 +1,1 @@
+`rerail scan` (internal testing) that audits nothing, so runs no rules, now says why in a `checkout-not-audited` failure, and its report's `rulesSource` is `null` instead of naming a configuration that never ran.

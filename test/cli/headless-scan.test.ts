@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -244,6 +244,27 @@ describe("headless rerail scan", () => {
     const report = await scan(realpathSync(worktree), { databasePath });
     expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
     expect(report.violations).toHaveLength(1);
+  });
+
+  it("names why when the home's configuration runs nothing in the checkout, and claims no rules source", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    // A copy with its `.git` keeps the clone id, so the home reads it as started, but Git's registry does not list it
+    // and no session recorded it: the scan's router has no record of it and audits nothing.
+    const copy = `${root}-copy`;
+    roots.push(copy);
+    cpSync(root, copy, { recursive: true });
+    const report = await scan(copy, { databasePath });
+    expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
+      status: "failed",
+      rulesSource: null,
+      rules: [],
+      failures: [{ code: "checkout-not-audited", message: expect.stringContaining("no record of this checkout"), path: null, ruleId: null }],
+    });
+    expect(report.summary).toEqual({ violations: 0, failures: 1 });
   });
 
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {

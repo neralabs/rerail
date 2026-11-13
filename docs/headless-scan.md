@@ -69,7 +69,9 @@ Worktree, `--rules-ref` and non-npm pack rules run in **Log** until approved wit
 
 Home applies when Rerail is started and set up in this checkout on this machine. It runs the rules as a session there
 would. `rulesSource` is `{"kind":"home"}`; a throwaway configuration gives `{"kind":"worktree"}`, or
-`{"kind":"ref","ref":…}` with `--rules-ref`.
+`{"kind":"ref","ref":…}` with `--rules-ref`. It is `null` when the scan audited nothing, so no rules ran: the scan
+fails, and a `checkout-not-audited` failure says why (for example, a copy of a checkout that no session has
+recorded).
 
 Session [rule approvals](writing-rules.md) apply. These run in **Log** until a person approves that exact content in
 the Rerail home with `rerail rules approve`:
@@ -118,7 +120,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "scope": "repository" | "git-diff",
   "base": null | { "ref": "origin/main", "mergeBase": "<sha>" },
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
-  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" },
+  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | null,
   "status": "completed" | "failed",
   "rules": [
     { "ruleId": "no-todo", "payloadHash": "sha256:…", "mode": "log" | "steer" | "block",
@@ -139,6 +141,8 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`payloadHash`**: digest of the exact rule text that produced the finding.
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
+  The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
+  `checkout-not-audited` when no audit ran.
 
 <details>
 <summary>Exact field semantics</summary>
