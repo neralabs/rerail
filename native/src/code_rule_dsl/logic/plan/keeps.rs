@@ -119,12 +119,19 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // the pack's), most of them for relations nothing prices.
     let mut need: BTreeSet<&str> = BTreeSet::new();
     let mut candidates: BTreeSet<&str> = BTreeSet::new();
+    // A candidate its inputs' counts bound under `SMALL` rows is small with nothing planned (`bounds`).
+    let bounded = if only.is_none() { bounds(prog, model, &rules_of, &sccs) } else { BTreeMap::new() };
+    let mut bounded_small: BTreeMap<&str, f64> = BTreeMap::new();
     if only.is_none() {
         for (rel, rules) in &rules_of {
             if reasons.contains_key(*rel) || rules.len() > K || prog.qualified(rel, "inline") || prog.qualified(rel, "no_inline") {
                 continue;
             }
             let Some(reads) = readers.get(rel) else { continue };
+            if let Some(&(rows, _)) = bounded.get(*rel).filter(|b| b.0 < SMALL) {
+                bounded_small.insert(rel, rows);
+                continue;
+            }
             need.insert(rel);
             candidates.insert(rel);
             for &(ri, _) in reads {
@@ -155,7 +162,13 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     let read: Vec<&str> = need.iter().flat_map(|rel| rules_of.get(rel).into_iter().flatten()).flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
     model.resolve(prog, read).map_err(|e| e.to_string())?;
     let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs, &need, &candidates);
-    let by_estimates = price_all(prog, model, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
+    let mut by_estimates = price_all(prog, model, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
+    for (rel, rows) in &bounded_small {
+        by_estimates.insert((*rel).to_owned(), Priced::Small(*rows, *rows));
+    }
+    if !bounded_small.is_empty() {
+        super::super::profile::decision("inline or store (decision 0099)", || format!("{} candidates stored small, their inputs' counts bounding them under {SMALL} rows: not planned", bounded_small.len()));
+    }
     OBSERVED.with(|o| {
         if let (Some(o), Some(h)) = (o.borrow_mut().as_mut(), held) {
             *o = h;
@@ -1249,6 +1262,86 @@ fn restore(model: &mut Model, saved: Saved) {
     }
 }
 
+/// Each derived relation's most rows, and per column its most distinct values, as its inputs' statistics count them
+/// and with no plan made. A relation's rows are distinct head tuples, so a rule makes at most the product of its head
+/// variables' distinct values, each at most the fewest distinct values of a column binding it in a positive atom (a
+/// constant: one), and at most the product of its positive atoms' rows (unless an `ast` match binds). An input's rows
+/// and distinct values are counted (`input_stats`); a relation of the program bounds by its own rules, in evaluation
+/// order. What is not bounded so (a recursion, a relation with facts, an input with no statistics yet) is unbounded:
+/// `f64::INFINITY`.
+///
+/// A candidate whose rows are bounded under `SMALL` is stored unpriced, as `price_all` stores one whose estimates are
+/// under it, with neither it nor what it reads planned: on the data-layer batch over 9 in 10 priced candidates were
+/// small, and their estimates planned three quarters of the programs' rules.
+fn bounds(prog: &Program, model: &Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, (f64, Vec<f64>)> {
+    let mut out: BTreeMap<String, (f64, Vec<f64>)> = BTreeMap::new();
+    for scc in sccs {
+        let recursive = scc.len() > 1 || scc.iter().any(|rel| rules_of.get(rel.as_str()).into_iter().flatten().any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel.as_str() == rel)));
+        for rel in scc {
+            let Some(rules) = rules_of.get(rel.as_str()) else { continue };
+            if recursive || prog.facts.contains_key(rel) {
+                continue;
+            }
+            // An atom's rows and a column's distinct values: a relation bounded above, else an input counted.
+            let rows_of = |a: &Atom| -> f64 {
+                match out.get(a.rel.as_str()) {
+                    Some((n, _)) => *n,
+                    None if rules_of.contains_key(a.rel.as_str()) || prog.facts.contains_key(a.rel.as_str()) => f64::INFINITY,
+                    None if a.rel == "node" => model.stats.nodes,
+                    None => model.stats.card.get(a.rel.as_str()).copied().unwrap_or(f64::INFINITY),
+                }
+            };
+            let ndv_of = |a: &Atom, c: usize| -> f64 {
+                match out.get(a.rel.as_str()) {
+                    Some((_, cols)) => cols.get(c).copied().unwrap_or(f64::INFINITY),
+                    None if rules_of.contains_key(a.rel.as_str()) || prog.facts.contains_key(a.rel.as_str()) => f64::INFINITY,
+                    None => match (model.stats.card.get(a.rel.as_str()), model.ndv.get(&(a.rel.to_string(), c))) {
+                        (Some(n), Some(d)) => d.min(*n),
+                        (Some(n), None) => *n,
+                        _ => f64::INFINITY,
+                    },
+                }
+            };
+            let width = rules.first().map_or(0, |r| r.head.args.len());
+            let (mut rows, mut cols) = (0.0f64, vec![0.0f64; width]);
+            for r in rules {
+                let mut var: BTreeMap<&str, f64> = BTreeMap::new();
+                // One head tuple per binding of the positive atoms: a comparison, an aggregate and a nearest step bind
+                // one value a binding, while an `ast` match binds many.
+                let mut product = if r.body.iter().any(|l| matches!(l, Literal::Ast { .. })) { f64::INFINITY } else { 1.0f64 };
+                for a in r.body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
+                    product *= rows_of(a);
+                    for (c, t) in a.args.iter().enumerate() {
+                        if let Term::Var(v) = t {
+                            let d = ndv_of(a, c);
+                            var.entry(v.as_str()).and_modify(|x| *x = x.min(d)).or_insert(d);
+                        }
+                    }
+                }
+                for l in &r.body {
+                    if let Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Int(_) | Term::Str(_) } | Literal::Cmp { l: Term::Int(_) | Term::Str(_), op: "=", r: Term::Var(v) } = l {
+                        var.insert(v.as_str(), 1.0);
+                    }
+                }
+                let head: Vec<f64> = r.head.args.iter().map(|t| match t {
+                    Term::Int(_) | Term::Str(_) => 1.0,
+                    Term::Var(v) => var.get(v.as_str()).copied().unwrap_or(f64::INFINITY),
+                    _ => f64::INFINITY,
+                }).collect();
+                rows += head.iter().product::<f64>().min(product);
+                for (c, d) in head.into_iter().enumerate().take(width) {
+                    cols[c] += d;
+                }
+            }
+            for c in &mut cols {
+                *c = c.min(rows);
+            }
+            out.insert(rel.clone(), (rows, cols));
+        }
+    }
+    out
+}
+
 /// What `estimate` put into the planner's statistics, to take back.
 #[derive(Default)]
 struct Inserted {
@@ -1562,5 +1655,82 @@ pub mod tests {
         let def = rule("r(z) :- b(z, w), a(w).");
         let (rules, _) = unfold_reads(vec![reader, def], &BTreeSet::from(["r".to_owned()]));
         assert_eq!(rules[0].to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
+    }
+
+    /// A model of `prog` whose inputs have the rows and distinct values by column given.
+    fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
+        use super::super::{Inputs, Stats};
+        use std::collections::{HashMap, HashSet};
+        let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), input_set: Default::default(), stats: Stats::empty(prog), ndv: HashMap::new(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        model.stats.nodes = 1_000_000.0;
+        for &(rel, rows, ndv) in inputs {
+            model.stats.card.insert(rel.to_owned(), rows);
+            for (c, &n) in ndv.iter().enumerate() {
+                model.ndv.insert((rel.to_owned(), c), n);
+                model.stats.fan.insert((rel.to_owned(), c), rows / n);
+            }
+        }
+        model
+    }
+
+    /// A relation's rows are bounded by its head variables' distinct values (each the fewest of a column binding it),
+    /// a constant counting one, and by its atoms' rows; its columns by the same; a recursion, and a head variable only
+    /// a comparison binds, are unbounded.
+    #[test]
+    fn a_relation_is_bounded_by_its_inputs_counts() {
+        let mut prog = super::super::super::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(y: number, z: number)\n.input a\n.input b\n.input c\n\
+             .decl r(x: number)\nr(x) :- b(x, y), c(y, z).\n\
+             .decl w(n: number)\nw(n) :- a(d), n = d.\n\
+             .decl s(x: number, k: number)\ns(x, 3) :- b(x, y), a(x).\ns(x, k) :- r(x), a(k).\n\
+             .decl p(x: number)\np(x) :- a(x).\np(x) :- p(y), b(y, x).\n\
+             .decl t(x: number)\nt(x) :- a(y), x = y + 1.\n\
+             .decl u(x: number)\nu(x) :- b(x, x), c(x, 7).\n\
+             .decl o(x: number)\no(x) :- r(x), s(x, _), p(x), t(x), u(x).\n.output o\n",
+        )
+        .unwrap();
+        // w's n is each node an `ast` match of document d finds: many a document, though a has 5 rows.
+        let w = prog.rules.iter_mut().find(|r| r.head.rel == "w").unwrap();
+        w.body[1] = Literal::Ast { document: "d".to_owned(), node: "n".to_owned(), matcher: "call".to_owned(), captures: Vec::new() };
+        let model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[10.0, 1_000.0]), ("c", 1_000_000.0, &[1_000.0, 50.0])]);
+        let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+        for r in &prog.rules {
+            rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+        }
+        let (sccs, _) = strata(&prog).unwrap();
+        let b = bounds(&prog, &model, &rules_of, &sccs);
+        // r: x at most b's 10 distinct firsts.
+        assert_eq!(b["r"], (10.0, vec![10.0]));
+        // s: x in a (5), a constant (1); then r's 10 by a's 5. Columns: 5 + 10, and 1 + 5.
+        assert_eq!(b["s"], (55.0, vec![15.0, 6.0]));
+        // u: x in b's first column (10) and c's first (1,000): 10.
+        assert_eq!(b["u"].0, 10.0);
+        assert!(b.get("p").is_none(), "a recursion is unbounded");
+        // t: x is one value for each row of a (a comparison binds it): a's 5 rows bound it, its column not.
+        assert_eq!(b["t"], (5.0, vec![5.0]));
+        assert!(b["w"].0.is_infinite(), "an `ast` match makes many rows a row of a: {:?}", b["w"]);
+        assert_eq!(b["o"].0, 5.0, "p is unbounded, but x is bounded by t (5), r and u (10)");
+    }
+
+    /// A candidate its inputs bound under `SMALL` rows is small, though the planner prices its join large: `r` keeps
+    /// a first column of `b` that has 10 values, while its join with `c` is planned at many rows, and inlined into
+    /// `o`, whose `a` binds its key. Before the bound, `estimate` planned each such candidate and everything upstream
+    /// of it (on the data-layer batch, three quarters of the programs' rules, over 9 in 10 of them small).
+    #[test]
+    fn a_candidate_bounded_small_is_stored_unplanned() {
+        let prog = super::super::super::rr::parse(
+            ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(y: number, z: number)\n.input a\n.input b\n.input c\n\
+             .decl r(x: number)\nr(x) :- b(x, y), c(y, z).\n\
+             .decl o(x: number)\no(x) :- a(x), r(x).\n.output o\n",
+        )
+        .unwrap();
+        let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[10.0, 1_000.0]), ("c", 1_000_000.0, &[1_000.0, 50.0])]);
+        // The planner's own estimate of r is over SMALL: priced, it would be weighed, not stored small.
+        let (_, planned) = calibrated_rows(&prog, &model, &prog.rules[0]).unwrap();
+        assert!(planned >= SMALL, "r planned at {planned} rows");
+        let chosen = choose(&prog, &mut model).unwrap();
+        assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.1));
     }
 }
