@@ -91,6 +91,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     uses: ./.github/workflows/package.yml
+    # package.yml's sign-windows job signs in to Azure with an OIDC token, so the matrix installs signed engines.
+    permissions:
+      contents: read
+      id-token: write
 
   # Bundles the package with this checkout's rule packs once and puts it where every environment's VM fetches it.
   stage:

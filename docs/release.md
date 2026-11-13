@@ -19,9 +19,11 @@ test-installs it on each platform before publishing.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.
-3. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
-4. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
-5. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
+3. On `main` and release tags, Authenticode-sign the two Windows kernels and check both signatures
+   ([Windows code signing](#windows-code-signing)).
+4. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
+5. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
+6. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
    `scripts/host/windows-install-smoke.ps1` on Windows, the environment matrix's `scripts/host/azure/guest.sh` through
    `matrix.mjs local` on Linux and macOS. Nothing publishes unless all three pass.
 
@@ -182,6 +184,43 @@ Otherwise the release builds cold.
 - A tag's run restores only caches saved on `main`; `package.yml` restores only the exact match.
 - On `main` it runs nightly and after changes to those files. Each target lacking a matching cache builds from scratch
   and saves one.
+
+</details>
+
+### Windows code signing
+
+Windows 11's Smart App Control, and App Control policies an organization sets, refuse to load an unsigned DLL, and a
+`.node` kernel is one: Node fails at `LoadLibrary` with "An app control policy blocked this file". So `package.yml`
+Authenticode-signs `rerail_engine.win32-x64-msvc.node` and `rerail_engine.win32-arm64-msvc.node` with
+[Azure Artifact Signing](https://learn.microsoft.com/en-us/azure/artifact-signing/) before packing them.
+
+- **When:** on `main` (the environment matrix installs the signed build) and on `v*` tags, once the repository variable
+  `ARTIFACT_SIGNING_PROFILE` is set. A build from any other ref, the Release branch's included, packs the kernels
+  unsigned, and its run carries a warning saying so.
+- **Check:** the signing job fails unless both kernels carry a signature Windows reports `Valid` and a timestamp, which
+  keeps a signature valid after the short-lived certificate expires.
+- **Not signed:** the macOS and Linux kernels, and better-sqlite3's `win32-*.node`, which ships unsigned inside the
+  `better-sqlite3` npm package and installs from there. Smart App Control can still refuse that one.
+
+<details>
+<summary>Setup</summary>
+
+`scripts/release/windows-signing.sh` makes everything but the identity validation, and is safe to run again:
+
+1. `bash scripts/release/windows-signing.sh --github` creates the Artifact Signing account, the app registration
+   `rerail-release-signing-github` (Certificate Profile Signer on that account only, trusted through OIDC for jobs of
+   the `windows-signing` environment only), the environment itself, deployable from `main` and `v*` tags, and the
+   repository variables. It sets no `ARTIFACT_SIGNING_PROFILE`, so nothing signs yet.
+2. A person completes the organization's **Public** identity validation in the Azure portal: the account's
+   **Identity validations**, with the legal name, business identifier, address, a monitored mailbox on the company's
+   domain, and one representative's government ID through Microsoft Authenticator. Microsoft takes 1 to 20 business
+   days.
+3. `bash scripts/release/windows-signing.sh --github --identity-validation-id <id>` creates the Public Trust
+   certificate profile and sets `ARTIFACT_SIGNING_PROFILE`, which turns signing on.
+
+The certificate names the validated legal entity. Signing makes Smart App Control load the kernels; it does not give
+SmartScreen reputation at once, and npm installs never meet SmartScreen. An identity validation expires; Azure emails
+from 60 days before, and signing stops if it is not renewed.
 
 </details>
 

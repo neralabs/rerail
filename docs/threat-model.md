@@ -760,6 +760,10 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
   a prompt injection in a pull request's text needs a contributor to open it.
 - **No branch code beside the write token.** `dependabot-pins.yml` runs branch code in a read-only job that uploads a
   patch; a second job applies only pin-file changes, then mints the write token and pushes.
+- **Signing identity scoped to one environment.** The app registration that signs the Windows kernels is trusted
+  through OIDC only for jobs of the `windows-signing` environment, deployable from `main` and `v*` tags, and holds
+  only Artifact Signing Certificate Profile Signer on one account (`scripts/release/windows-signing.sh`). No secret is
+  stored, and no pull request run can sign.
 
 </details>
 
@@ -771,7 +775,9 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
   contributor can push to a branch after it is approved and merge it unreviewed.
 - `scripts/host/host-auth.ts` (developer smoke runs) copies an access-only OAuth token (no refresh token) into a
   sandbox, 0600 in a 0700 folder, and deletes it and its SQLite journal files when the run ends, failures included.
-- The `.node` binaries ship without a separate signature and rely on provenance.
+- The Windows kernels carry an Authenticode signature once signing is set up ([release.md, "Windows code
+  signing"](release.md#windows-code-signing)); the macOS and Linux kernels and better-sqlite3's binaries ship without
+  one and rely on provenance.
 
 </details>
 
