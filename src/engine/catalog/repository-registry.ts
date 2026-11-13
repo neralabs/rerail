@@ -340,25 +340,29 @@ export interface RecordedCheckout extends CheckoutRecord {
 /** The columns of a checkout row, and its rowid. */
 const recordedCheckoutColumns = { ...getTableColumns(checkouts), rowid: sql<number>`rowid` };
 
-type ContainingCheckout = Pick<RecordedCheckout, "checkoutPath" | "rowid">;
+/** A checkout row that contains another checkout, and how long the key of the folder it names is ({@link listedFolderKey}). */
+interface ContainingCheckout {
+  readonly row: RecordedCheckout;
+  readonly folderLength: number;
+}
 
 /**
- * The order of a checkout's containing checkouts, nearest first: the longer path is nearer. Two paths of one length
- * that both hold it are one folder recorded under two spellings (on Windows, letter case), or two folders when one
- * row was recorded unresolved (a `.` segment, a trailing separator). The row recorded first comes first, by rowid,
- * the order SQLite reads a repository's checkouts in: so the order never depends on the clock or on how a reader got
- * its rows.
+ * A checkout's containing checkouts, nearest first: the one whose folder's key is longer is nearer, since every folder
+ * that holds the checkout is one of the folders above it. A row recorded unresolved (a `.` segment, a trailing
+ * separator) counts as the folder it names, however long its spelling. Rows of one folder (two spellings, or letter
+ * case on Windows) go in the order they were recorded, by rowid, the order SQLite reads a repository's checkouts in: so
+ * the order never depends on the clock or on how a reader got its rows.
  */
-function nearestFirst(left: ContainingCheckout, right: ContainingCheckout): number {
-  return right.checkoutPath.length - left.checkoutPath.length || left.rowid - right.rowid;
+function nearestFirst(containing: readonly ContainingCheckout[]): RecordedCheckout[] {
+  return [...containing].sort((left, right) => right.folderLength - left.folderLength || left.row.rowid - right.row.rowid).map(({ row }) => row);
 }
 
 /** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
 export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): RecordedCheckout[] {
-  return db.select(recordedCheckoutColumns).from(checkouts)
+  const rows = db.select(recordedCheckoutColumns).from(checkouts)
     .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
-    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
-    .sort(nearestFirst);
+    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath));
+  return nearestFirst(rows.map(row => ({ row, folderLength: listedFolderKey(row.checkoutPath).length })));
 }
 
 /**
@@ -429,7 +433,11 @@ export interface ListedCheckoutState {
  * path.relative ignores letter case, lower-cased.
  */
 function listedFolderKey(path: string): string {
-  const folder = resolve(path);
+  return resolvedFolderKey(resolve(path));
+}
+
+/** {@link listedFolderKey} of a folder already resolved. */
+function resolvedFolderKey(folder: string): string {
   return process.platform === "win32" ? folder.toLowerCase() : folder;
 }
 
@@ -469,14 +477,16 @@ function listedRowsAt(
   checkoutPath: string,
 ): { own: boolean | null; parents: RecordedCheckout[] } {
   let own: boolean | null = null;
-  const parents: RecordedCheckout[] = [];
+  const parents: ContainingCheckout[] = [];
+  // folderAndAbove resolves each folder once; its key is that folder's, so each folder above is resolved once.
   for (const folder of folderAndAbove(checkoutPath)) {
-    for (const row of byFolder.get(listedFolderKey(folder)) ?? []) {
+    const key = resolvedFolderKey(folder);
+    for (const row of byFolder.get(key) ?? []) {
       if (row.checkoutPath === checkoutPath) own = row.started;
-      else parents.push(row);
+      else parents.push({ row, folderLength: key.length });
     }
   }
-  return { own, parents: parents.sort(nearestFirst) };
+  return { own, parents: nearestFirst(parents) };
 }
 
 /**

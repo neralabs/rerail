@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, parse, sep } from "node:path";
+import { join, parse, resolve, sep } from "node:path";
 import { and, eq, ne } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
@@ -109,25 +109,42 @@ function bothReads(database: RerailDatabase, repositoryKey: string) {
 }
 
 /**
- * `main`'s readers of a checkout's containing checkouts and of its state, as they were before the dashboard's listing
- * reader, copied here to hold that reader to `main`'s answers. Containing checkouts of one path length come in the
- * order SQLite returns the rows: the order they were recorded in.
+ * How long a containing checkout's path counts as, which orders a checkout's containing checkouts, the longer nearer:
+ * `main` took the recorded spelling's length; this change takes the length of the folder it names.
  */
-function mainParentCheckouts(database: RerailDatabase, checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
+type PathLength = (checkoutPath: string) => number;
+const SPELLED_LENGTH: PathLength = path => path.length;
+const FOLDER_LENGTH: PathLength = path => resolve(path).length;
+
+/**
+ * `main`'s readers of a checkout's containing checkouts and of its state, as they were before the dashboard's listing
+ * reader, copied here to hold that reader to `main`'s answers, with the length that orders containing checkouts as an
+ * argument. Containing checkouts of one length come in the order SQLite returns the rows: the order they were recorded
+ * in.
+ */
+function mainParentCheckouts(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): CheckoutRecord[] {
   return database.select().from(checkouts)
     .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
     .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
-    .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
+    .sort((left, right) => length(right.checkoutPath) - length(left.checkoutPath));
 }
 
 /** `main`'s `checkoutStatus` of a recorded checkout (see {@link mainParentCheckouts}). */
-function mainCheckoutStatus(database: RerailDatabase, checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">): RepositoryStatus {
+function mainCheckoutStatus(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): RepositoryStatus {
   const repository = database.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
   const setUp = repository?.configuredAt != null;
   const own = database.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
   if (own != null) return { started: own, setUp, startedBy: "checkout" };
-  const parent = mainParentCheckouts(database, checkout).find(row => row.started !== null);
+  const parent = mainParentCheckouts(database, checkout, length).find(row => row.started !== null);
   if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
   return { started: repository?.started === true, setUp, startedBy: "repository" };
 }
@@ -150,11 +167,11 @@ function listedAnswers(database: RerailDatabase): Map<string, string> {
   return answers;
 }
 
-/** Each recorded checkout's answer, by path, as `main`'s readers give it. */
-function mainAnswers(database: RerailDatabase): Map<string, string> {
+/** Each recorded checkout's answer, by path, as `main`'s readers give it with containing checkouts ordered by `length`. */
+function mainAnswers(database: RerailDatabase, length: PathLength): Map<string, string> {
   return new Map(database.select().from(checkouts).all().map(row => [
     row.checkoutPath,
-    answerOf(mainCheckoutStatus(database, row), mainParentCheckouts(database, row)[0]?.checkoutPath ?? null),
+    answerOf(mainCheckoutStatus(database, row, length), mainParentCheckouts(database, row, length)[0]?.checkoutPath ?? null),
   ]));
 }
 
@@ -289,14 +306,22 @@ function differences(seed: number, reader: string, answers: Map<string, string>,
   return differing;
 }
 
-/** Each checkout of `tree` that the dashboard's listing reader or the runtime's readers answer otherwise than main's. */
-function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): string[] {
+/**
+ * Each checkout of `tree` that the dashboard's listing reader or the runtime's readers answer otherwise than main's
+ * readers do with containing checkouts ordered by the folder each names (`differing`), and how many checkouts main's
+ * own order, by the recorded spelling's length, answers otherwise (`byFolder`).
+ */
+function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): { differing: string[]; byFolder: number } {
   recordTree(database, tree);
-  const expected = mainAnswers(database);
-  return [
-    ...differences(seed, "listing", listedAnswers(database), expected),
-    ...differences(seed, "runtime", runtimeAnswers(database), expected),
-  ];
+  const expected = mainAnswers(database, FOLDER_LENGTH);
+  const spelled = mainAnswers(database, SPELLED_LENGTH);
+  return {
+    differing: [
+      ...differences(seed, "listing", listedAnswers(database), expected),
+      ...differences(seed, "runtime", runtimeAnswers(database), expected),
+    ],
+    byFolder: [...expected].filter(([path, answer]) => spelled.get(path) !== answer).length,
+  };
 }
 
 describe("the repository registry", () => {
@@ -405,6 +430,21 @@ describe("the repository registry", () => {
     }
   });
 
+  it("takes the deeper of two containing checkouts whose recorded paths are one length, in either order", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "b", "x", "inner");
+    // The folder b with a trailing `.` segment, and its subfolder x: both hold `inner`, and their paths are one length.
+    const farther = `${join(base, "b")}${sep}.`;
+    const nearer = join(base, "b", "x");
+    expect(farther).toHaveLength(nearer.length);
+    for (const recorded of [[[farther, false], [nearer, true]], [[nearer, true], [farther, false]]] as const) {
+      const { database, repositoryKey } = await recordedRows([...recorded, [inner, null]]);
+      const { listed, runtime } = bothReads(database, repositoryKey);
+      expect(runtime.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+      expect(listed.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+    }
+  });
+
   it("gives each checkout, in the dashboard's listing and in the runtime, the state and parent main gave it, whatever the clock did", async () => {
     const database = open(join(await temporary("rerail-registry-main-"), "rerail.sqlite"));
     // These rows need not survive a crash, so no transaction waits for the disk.
@@ -412,8 +452,16 @@ describe("the repository registry", () => {
     const base = join(parse(tmpdir()).root, "rerail-listed");
     const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
     const differing: string[] = [];
-    for (let seed = 1; seed <= 200; seed += 1) differing.push(...comparedWithMain(database, seed, randomTree(seed, roots)));
+    let byFolder = 0;
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const compared = comparedWithMain(database, seed, randomTree(seed, roots));
+      differing.push(...compared.differing);
+      byFolder += compared.byFolder;
+    }
+    // Main's answers, where a farther folder's row, as long as a nearer one's or longer, no longer comes first.
     expect(differing).toEqual([]);
+    // The trees hold such rows, so the order by folder is what this compares.
+    expect(byFolder).toBeGreaterThan(0);
   }, 30_000);
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {
