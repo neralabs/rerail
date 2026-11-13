@@ -10,6 +10,48 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Batched directory metadata on the integration hub
+
+The active engine includes hub `1ee25bdf6`, plus generic directory metadata and transport repairs.
+The frozen root CLI is `f8e78624aec7403a…`, built from `6a6d9f127`.
+No retired engine implementation was restored.
+
+`dir_metadata` now shares the observer's directory names with `dir_entry`.
+A fixed-width column holds file type, symlink status, and errno. Both views use one directory preparation.
+The persistent observer stores these columns together in a versioned binary record.
+Symlink target metadata refreshes once per run, because a target can change without changing the containing directory.
+World-cache validation includes the metadata columns. File-content edits alone do not invalidate that directory record.
+Directory, digest, and line answers each intern their text in one batch across the complete demand group.
+
+Actual porting exposed two hub defects. Both have failing tests followed by separate fixes:
+
+- Constant folding split unescaped filenames on tabs and newlines. The internal copy now quotes each text column once, then decodes it into typed facts.
+- Cached read records discarded newline-containing directory paths. A child rename then reused stale findings. Length-prefixed UTF-8 fields now preserve every dependency.
+
+Malformed and legacy read records cause a cache miss. They cannot validate a partial dependency list.
+Text quoting applies only at the constant-output transport boundary. Directory facts retain separate typed columns.
+
+The pinned Python plugin's actual `FileScopeSpec` plan supplies the discovery oracle.
+Both native APIs pass all fourteen static fixtures and all fifteen successive update stages: **58 discovery observations**.
+Fixtures cover positives, empty roots, root spelling patterns, Unicode digits, filename ordering, broken links, cycles, and directory links.
+Updates cover target type changes outside the listed directory, file additions and removals, content changes, and newline/tab directory names.
+The [retained receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-hub-directory-metadata.json.gz) includes exact comparisons, consumed programs, harness bytes, red failures, and TDD logs.
+
+All eleven observer tests, both World tests, the constant transport test, and both dependency transport tests pass.
+The complete Python tooling suite passes **754 tests in 55.340 seconds**.
+The final compiler survey passes **84 of 99 authored policies**, compared with 62 immediately after hub adoption.
+The remaining first refusals comprise five anonymous-token queries, four file-error readers, three string-offset readers, two BFS readers, and one ordered-row reader.
+Reader acceptance does not establish execution parity. Newly exposed refusals remain part of the migration.
+
+Three successful CLI builds cost 204.76 seconds wall, 1,314.95 seconds user CPU, and 45.92 seconds system CPU together.
+Each build remained below 110 seconds. Compile costs are separate from rule execution.
+No full-repository benchmark or whole-batch cold execution ran.
+
+This checkpoint completes a shared engine capability and a discovery sub-contract.
+It does not complete the side-effects rule or re-admit the earlier twenty-two rules on this hub.
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+Next, complete the integrated production metadata and the side-effects callback/public API contracts, preserving the original assertions and positives.
+
 ## 2026-11-12 — Serverplan-quality hub integration
 
 Checkpoint `6ec21001c` preserves the unfinished side-effects port and its exact progress receipts.

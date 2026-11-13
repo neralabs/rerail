@@ -21,21 +21,51 @@ def cases(_module):
         root_files=[dict(path='impl',source='pass\n'),dict(path='data_layer',source='pass\n')],
         ordering=[file('impl/'+p)for p in ['z.py','a/z.py','a-.py','a.py']],
         unicode=[file('impl/é\nname.py'),file('impl/名前.py')])
-    return [dict(kind='discovery',id=name,files=files)for name,files in groups.items()]
+    return [dict(kind='discovery',id=name,files=files)for name,files in groups.items()]+[dict(
+        kind='updates',id='link_target_and_tree_updates',
+        files=[file('impl/regular.py'),file('shared/target'),dict(path='impl/alias.py',symlink='../shared/target')],
+        steps=[[],[dict(op='remove',path='shared/target'),dict(op='directory',path='shared/target'),dict(op='file',path='shared/target/inside.py')],
+            [dict(op='remove',path='shared/target/inside.py'),dict(op='rmdir',path='shared/target'),dict(op='file',path='shared/target')],
+            [dict(op='remove',path='shared/target')],[dict(op='remove',path='impl/alias.py')],
+            [dict(op='file',path='impl/child/positive.py')],
+            [dict(op='remove',path='impl/child/positive.py'),dict(op='rmdir',path='impl/child'),dict(op='link',path='impl/child',target='../shared')],
+            [dict(op='remove',path='impl/regular.py'),dict(op='file',path='impl/regular.py/inside.py')],
+            [dict(op='file',path='impl/regular.py/inside.py',source='changed = True\n')],
+            [dict(op='file',path='impl/line\nbreak/a.py')],
+            [dict(op='remove',path='impl/line\nbreak/a.py'),dict(op='file',path='impl/line\nbreak/b.py')],
+            [dict(op='remove',path='impl/line\nbreak/b.py'),dict(op='rmdir',path='impl/line\nbreak')],
+            [dict(op='file',path='impl/tab\tname/a.py')],
+            [dict(op='remove',path='impl/tab\tname/a.py'),dict(op='file',path='impl/tab\tname/b.py')],
+            [dict(op='remove',path='impl/tab\tname/b.py'),dict(op='rmdir',path='impl/tab\tname')]])]
 
 
 def exercise(module,case,scratch):
     root=scratch.resolve()/'repo';root.mkdir();write_fixture(root,case['files'])
-    try:
-        if hasattr(module,'_rerail_directory_discovery'):files=module._rerail_directory_discovery(root)
-        else:
-            from scripts.lint_lib.fact_engine import FactEngine
-            from scripts.lint_lib.fact_store import JsonFactStore
-            plugin=module.plan_scope_side_effects_plugin(root)
-            engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors={},enable_fact_cache=False)
-            files=[p.relative_to(root).as_posix()for p in engine.plan((plugin,)).files]
-        return dict(value=canonical(files,scratch.resolve()))
-    except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch.resolve())))
+    def discover():
+        try:
+            if hasattr(module,'_rerail_directory_discovery'):files=module._rerail_directory_discovery(root)
+            else:
+                from scripts.lint_lib.fact_engine import FactEngine
+                from scripts.lint_lib.fact_store import JsonFactStore
+                plugin=module.plan_scope_side_effects_plugin(root)
+                engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors={},enable_fact_cache=False)
+                files=[p.relative_to(root).as_posix()for p in engine.plan((plugin,)).files]
+            return dict(value=canonical(files,scratch.resolve()))
+        except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch.resolve())))
+    if case['kind']=='discovery':return discover()
+    results=[]
+    for step in case['steps']:
+        for change in step:
+            path=root/change['path'];op=change['op']
+            if op=='remove':path.unlink()
+            elif op=='rmdir':path.rmdir()
+            elif op=='directory':path.mkdir()
+            elif op=='link':path.symlink_to(change['target'])
+            elif op=='file':
+                path.parent.mkdir(parents=True,exist_ok=True);path.write_text(change.get('source','pass\n'))
+            else:raise ValueError(op)
+        results.append(discover())
+    return dict(stages=results)
 
 
 def install(backend,module,detectors=False):
