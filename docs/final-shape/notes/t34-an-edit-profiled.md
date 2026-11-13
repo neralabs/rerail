@@ -122,7 +122,10 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     inputs' rows 263 MB, the joins' indexes (`open: joins`) 159 MB. Transient rises: reading the prepared program
     off the store +1.0 GB (the encoded parts, their views and the programs at once), the combined program +348 MB.
     Done: the combined program is dropped once the prepared one is found (it was held through the run): peak 2081–
-    2103 MB (was 2178–2180 MB). (see git log) Next: one form of the program where four are held; the specs' size.
+    2103 MB (was 2178–2180 MB). (f9f5cc76c) The join specs' memo (`logic::derived`, a cache not yet facts) is not
+    what holds the specs: an edit with it off costs 117.1 G and peaks at 2074 MB, with it on 115.5–119.1 G and
+    2043–2089 MB; the 366 MB are the specs the run holds. Next: one form of the program where four are held (front,
+    lowered, the split's local and cross); the specs' size.
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
     entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).
