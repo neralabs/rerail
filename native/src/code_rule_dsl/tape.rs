@@ -2115,6 +2115,12 @@ impl TapeDoc {
         })
     }
 
+    /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
+    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
+        self.implied_after(&self.root_node().at(parent), child, word) == Some(true)
+    }
+
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
@@ -2513,6 +2519,18 @@ impl Doc for TapeDoc {
     }
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
+    }
+    /// The implied word the tape leaves out in the gap after `parent`'s child `child`
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
+        let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
+        // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
+        let root = ast_grep_core::AstGrep::doc(self.clone());
+        let parent = root.adopt(root.root().get_inner_node().at(parent.index));
+        let (children, gaps) = tokens::stored_gaps(&grammar, &parent)?;
+        let next = (child + 1..children.len()).find(|&at| children[at].is_named() && !children[at].is_extra());
+        let gap = next.map_or(&gaps.end, |at| &gaps.before[at]);
+        Some(gap.len() >= word.len() && gap.iter().zip(word).all(|((text, _), token)| text == token))
     }
 }
 

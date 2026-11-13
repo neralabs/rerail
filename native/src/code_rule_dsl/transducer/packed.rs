@@ -1523,7 +1523,7 @@ impl Slotted {
                     return PatternVerdict::NoMatch;
                 }
                 let candidates = tape.transducer_children(node).collect::<Vec<_>>();
-                if Self::children(children, &candidates, tape, bindings) {
+                if Self::children(children, node, &candidates, tape, bindings) {
                     PatternVerdict::Matched
                 } else {
                     PatternVerdict::NoMatch
@@ -1534,6 +1534,7 @@ impl Slotted {
 
     fn children(
         goals: &[Self],
+        parent: u32,
         candidates: &[u32],
         tape: &TapeDoc,
         bindings: &mut AstBindings,
@@ -1546,6 +1547,8 @@ impl Slotted {
             });
         }
         let (mut goal, mut candidate) = (0_usize, 0_usize);
+        // The candidate the last goal matched, for the end of children (RER-131).
+        let mut last_matched: Option<usize> = None;
         while goal < goals.len() {
             if let Self::Ellipsis(name) = &goals[goal] {
                 let name = *name;
@@ -1638,9 +1641,20 @@ impl Slotted {
                         }
                     }
                     PatternVerdict::SkipCandidate => candidate += 1,
-                    PatternVerdict::NoMatch => return false,
+                    // The end of children refused a named candidate: where the tokens the
+                    // candidate leaves out after the last matched child begin with the goal's,
+                    // those are the goal's and the rest trails (`ast_grep_core`'s
+                    // `match_nodes_impl_recursive`, RER-131).
+                    PatternVerdict::NoMatch => {
+                        let Self::Terminal { text, .. } = &goals[goal] else { return false };
+                        let word: Vec<&str> = text.split('\u{1f}').filter(|token| !token.is_empty()).collect();
+                        return goals[goal].is_children_end()
+                            && !word.is_empty()
+                            && last_matched.is_some_and(|last| tape.transducer_implied_after(parent, last, &word));
+                    }
                 }
             }
+            last_matched = Some(candidate);
             goal += 1;
             candidate += 1;
             if goal == goals.len() {

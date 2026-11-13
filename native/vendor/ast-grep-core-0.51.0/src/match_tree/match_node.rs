@@ -64,8 +64,7 @@ pub(super) fn match_node_impl<'tree, D: Doc>(
       if !kind_matched {
         return MatchOneNode::NoMatch;
       }
-      let cand_children = candidate.children();
-      match match_nodes_impl_recursive(children, cand_children, agg, strictness) {
+      match match_nodes_impl_recursive(children, candidate, agg, strictness) {
         Some(()) => MatchOneNode::MatchedBoth,
         None => MatchOneNode::NoMatch,
       }
@@ -75,12 +74,14 @@ pub(super) fn match_node_impl<'tree, D: Doc>(
 
 fn match_nodes_impl_recursive<'tree, D: Doc>(
   goals: &[PatternNode],
-  candidates: impl Iterator<Item = Node<'tree, D>>,
+  parent: &Node<'tree, D>,
   agg: &mut impl Aggregator<'tree, D>,
   strictness: &MatchStrictness,
 ) -> Option<()> {
   let mut goal_children = goals.iter().peekable();
-  let mut cand_children = candidates.peekable();
+  let mut cand_children = parent.children().peekable();
+  // Rerail (RER-131): the candidate the last goal matched, for the end of children.
+  let mut last_matched = None;
   if cand_children.peek().is_none() {
     // Rerail (RER-131): a node with no children (a tape leaves out the tokens its grammar
     // implies) matches goals that are ellipses, each bound to nothing, and the end of children.
@@ -99,12 +100,23 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
       ControlFlow::Continue => continue,
       ControlFlow::Fallthrough => (),
     }
-    match match_single_node_while_skip_trivial(
+    let Some(flow) = match_single_node_while_skip_trivial(
       &mut goal_children,
       &mut cand_children,
       agg,
       strictness,
-    )? {
+    ) else {
+      // Rerail (RER-131): the end of children refused a named candidate. Where the tokens the
+      // candidate leaves out after the last matched child begin with the goal's, those are the
+      // goal's (upstream matches them there) and the rest trails, as after upstream's last goal.
+      let ends_there = goal_children.peek().and_then(|goal| goal.children_end_word()).is_some_and(|word| {
+        !word.is_empty()
+          && cand_children.peek().is_some()
+          && last_matched.as_ref().is_some_and(|last: &Node<'tree, D>| implied_after(parent, last, &word))
+      });
+      return (ends_there && cand_children.all(|n| strictness.should_skip_trailing(&n))).then_some(());
+    };
+    match flow {
       ControlFlow::Return => return Some(()),
       ControlFlow::Continue => continue,
       ControlFlow::Fallthrough => (),
@@ -112,7 +124,7 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
     let consumed_goal = goal_children.next();
     // if goal runs out, do not proceed cand nodes
     if consumed_goal.is_some() {
-      cand_children.next();
+      last_matched = cand_children.next();
     }
     if goal_children.peek().is_none() {
       // all goal found
@@ -124,6 +136,15 @@ fn match_nodes_impl_recursive<'tree, D: Doc>(
       return goal_children.all(PatternNode::is_children_end).then_some(());
     }
   }
+}
+
+/// Rerail (RER-131): whether the tokens `parent`'s document leaves out right after its child `child`
+/// begin with `tokens` (`Doc::implied_after`).
+fn implied_after<D: Doc>(parent: &Node<'_, D>, child: &Node<'_, D>, tokens: &[&str]) -> bool {
+  let Some(at) = parent.children().position(|n| n.node_id() == child.node_id()) else {
+    return false;
+  };
+  parent.get_doc().implied_after(&parent.inner, at, tokens) == Some(true)
 }
 
 enum ControlFlow {
@@ -389,5 +410,147 @@ mod test {
   #[test]
   fn test_template_match() {
     matched("$A = $B", "a = 123", M::Template);
+  }
+
+  // Rerail (RER-131): a document that leaves out every anonymous token, as a tape leaves out the
+  // tokens its grammar implies, and says which it left out after a child (`Doc::implied_after`).
+  #[derive(Clone)]
+  struct Tokenless(crate::tree_sitter::StrDoc<Tsx>);
+
+  #[derive(Clone, Copy)]
+  struct TokenlessNode<'r>(tree_sitter::Node<'r>);
+
+  fn kept(node: &tree_sitter::Node<'_>) -> bool {
+    node.is_named() || node.is_extra()
+  }
+
+  impl<'r> crate::source::SgNode<'r> for TokenlessNode<'r> {
+    fn parent(&self) -> Option<Self> {
+      self.0.parent().map(TokenlessNode)
+    }
+    fn children(&self) -> impl ExactSizeIterator<Item = Self> {
+      let mut cursor = self.0.walk();
+      let children: Vec<_> = self.0.children(&mut cursor).filter(kept).map(TokenlessNode).collect();
+      children.into_iter()
+    }
+    fn kind(&self) -> Cow<'_, str> {
+      Cow::Borrowed(self.0.kind())
+    }
+    fn kind_id(&self) -> u16 {
+      self.0.kind_id()
+    }
+    fn node_id(&self) -> usize {
+      self.0.id()
+    }
+    fn range(&self) -> std::ops::Range<usize> {
+      self.0.start_byte()..self.0.end_byte()
+    }
+    fn start_pos(&self) -> crate::Position {
+      crate::source::SgNode::start_pos(&self.0)
+    }
+    fn end_pos(&self) -> crate::Position {
+      crate::source::SgNode::end_pos(&self.0)
+    }
+    fn is_named(&self) -> bool {
+      self.0.is_named()
+    }
+    fn is_extra(&self) -> bool {
+      self.0.is_extra()
+    }
+    fn field(&self, name: &str) -> Option<Self> {
+      self.0.child_by_field_name(name).map(TokenlessNode)
+    }
+    fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {
+      crate::source::SgNode::field_children(&self.0, field_id).filter(kept).map(TokenlessNode)
+    }
+    fn child_by_field_id(&self, field_id: u16) -> Option<Self> {
+      self.0.child_by_field_id(field_id).map(TokenlessNode)
+    }
+  }
+
+  impl Doc for Tokenless {
+    type Source = String;
+    type Lang = Tsx;
+    type Node<'r> = TokenlessNode<'r>;
+    fn get_lang(&self) -> &Tsx {
+      &self.0.lang
+    }
+    fn get_source(&self) -> &String {
+      &self.0.src
+    }
+    fn do_edit(&mut self, _edit: &crate::source::Edit<String>) -> Result<(), String> {
+      Err("a test document is not edited".into())
+    }
+    fn root_node(&self) -> TokenlessNode<'_> {
+      TokenlessNode(self.0.tree.root_node())
+    }
+    fn get_node_text<'a>(&'a self, node: &TokenlessNode<'a>) -> Cow<'a, str> {
+      self.0.get_node_text(&node.0)
+    }
+    fn implied_after<'a>(&'a self, parent: &TokenlessNode<'a>, child: usize, tokens: &[&str]) -> Option<bool> {
+      use crate::source::SgNode;
+      let mut next = parent.children().nth(child)?.0.next_sibling();
+      let mut left_out = Vec::new();
+      while let Some(node) = next.filter(|node| !node.is_named() || node.is_extra()) {
+        if !node.is_extra() {
+          left_out.push(node.utf8_text(self.0.src.as_bytes()).ok()?);
+        }
+        next = node.next_sibling();
+      }
+      Some(left_out.starts_with(tokens))
+    }
+  }
+
+  fn tokenless_matched(goal: &PatternNode, source: &str, kind: &str, strictness: MatchStrictness) -> bool {
+    let root = Root::doc(Tokenless(crate::tree_sitter::StrDoc::new(source, Tsx)));
+    let candidate = root.root().find(KindMatcher::new(kind, Tsx)).expect("should find");
+    let mut env = Cow::Owned(MetaVarEnv::new());
+    matches!(
+      match_node_impl(goal, &candidate, &mut env, &strictness),
+      MatchOneNode::MatchedBoth
+    )
+  }
+
+  #[test]
+  fn test_children_end_meets_implied_tokens() {
+    use crate::Language;
+    let var = |name: &str| PatternNode::MetaVar {
+      meta_var: MetaVariable::Capture(name.into(), false),
+    };
+    // `case $V:` as a tape keeps it: `case` and `:` left out, `:` after the last child.
+    let case = PatternNode::Internal {
+      kind_id: Tsx.kind_to_id("switch_case"),
+      children: vec![var("V"), PatternNode::children_end(vec![":".into()])],
+    };
+    let target = "switch (x) { case 2: break; }";
+    // The `:` left out after `2` is the goal's; `break;` trails, as after upstream's `:`.
+    assert!(tokenless_matched(&case, target, "switch_case", M::Smart));
+    assert!(!tokenless_matched(&case, target, "switch_case", M::Ast));
+    // `f($A)`: `(`, `)` left out, `)` after the last argument.
+    let call = PatternNode::Internal {
+      kind_id: Tsx.kind_to_id("call_expression"),
+      children: vec![
+        PatternNode::Terminal {
+          text: "f".into(),
+          is_named: true,
+          kind_id: Tsx.kind_to_id("identifier"),
+        },
+        PatternNode::Internal {
+          kind_id: Tsx.kind_to_id("arguments"),
+          children: vec![var("A"), PatternNode::children_end(vec![")".into()])],
+        },
+      ],
+    };
+    assert!(tokenless_matched(&call, "f(a)", "call_expression", M::Smart));
+    // The gap after `a` is `,`, not `)`: `b` is no trailing node, as upstream refuses it.
+    assert!(!tokenless_matched(&call, "f(a, b)", "call_expression", M::Smart));
+    // A document that leaves no token out cannot say: the end of children refuses as before.
+    let root = Root::str(target, Tsx);
+    let candidate = root.root().find(KindMatcher::new("switch_case", Tsx)).expect("should find");
+    let mut env = Cow::Owned(MetaVarEnv::new());
+    assert!(!matches!(
+      match_node_impl(&case, &candidate, &mut env, &M::Smart),
+      MatchOneNode::MatchedBoth
+    ));
   }
 }
