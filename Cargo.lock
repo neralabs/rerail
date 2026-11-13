@@ -4077,6 +4077,7 @@ dependencies = [
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
 ]
@@ -4314,6 +4315,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "zstd",
 ]
+
+[[package]]
+name = "rerail-simd8"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-simdjson"

@@ -10,3 +10,6 @@ description = "A lean Python parser for the tape alone: tree-sitter-python's tap
 rerail-tape-format = { path = "../tape_format" }
 # Which non-ASCII characters an identifier may hold (XID), as tree-sitter-python's `identifier` reads them.
 unicode-ident = "=1.0.27"
+
+[dependencies.rerail-simd8]
+path = "../simd8"

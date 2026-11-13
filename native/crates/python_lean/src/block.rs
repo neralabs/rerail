@@ -1,221 +1,210 @@
-//! Runs of bytes found 64 a step: a mask one bit a byte over a block, the run's end at the mask's
-//! lowest bit (the micro-lexers' shape, `rr_syntax::micro`). A block past the text's end is padded
-//! with a byte that ends every run (`\n`, and `\0`, which stops a word, a blank and a string).
+//! The text's byte classes, 64 bytes a step, as simdjson's two stages split the work:
 //!
-//! On aarch64 the compares are NEON's, packed into a mask as simdjson packs them; elsewhere eight
-//! bytes a word. A test checks the two agree.
+//! - **Stage 1** (`Blocks::of`) reads the whole text once, a 64-byte block a step, and keeps four
+//!   masks a block, one bit a byte: a name's bytes, blanks, line ends, and the bytes that may end a
+//!   string's text. The classes come from simdjson's nibble tables (`LO`, `HI`: a byte is in a
+//!   class where both its nibbles' entries have the class's bit), the rest from compares. It is
+//!   written once over `rerail_simd8`'s operations and compiled for each of simdjson's
+//!   implementations (NEON, AVX2, SSE, the fallback); the best the CPU runs is chosen at run time.
+//! - **Stage 2** is the lexer: a run's end, or the next byte of a class, is the lowest bit of a
+//!   block's mask (`trailing_zeros`), the bits below the start cleared. Nothing in it is specific to a
+//!   CPU.
+//!
+//! Past the text's end the runs (names, blanks) stop and the stops are all set, so a scan never
+//! reads past the last block; its result is at most the text's length.
 
-/// The byte classes a run is made of or stopped by, one bit each in `CLASS`.
-const WORD: u8 = 1; // [A-Za-z0-9_]
-const BLANK: u8 = 2; // ' ', '\t', '\f'
-const EOL: u8 = 4; // '\n', '\r'
-const HIGH: u8 = 8; // a byte from 0x80 (a character past ASCII)
+use rerail_simd8::Simd8x64;
 
-static CLASS: [u8; 256] = {
-    let mut t = [0u8; 256];
-    let mut c = 0;
-    while c < 256 {
-        let b = c as u8;
-        t[c] = if b.is_ascii_alphanumeric() || b == b'_' {
-            WORD
-        } else if b == b' ' || b == b'\t' || b == 0x0c {
-            BLANK
-        } else if b == b'\n' || b == b'\r' {
-            EOL
-        } else if b >= 0x80 {
-            HIGH
-        } else {
-            0
-        };
-        c += 1;
+/// A block's masks, by index.
+const WORD: usize = 0; // [A-Za-z0-9_]
+const BLANK: usize = 1; // ' ', '\t', '\f'
+const EOL: usize = 2; // '\n', '\r'
+const STOP: usize = 3; // what may end a string's text: '\'', '"', '`', '\\', '{', '}', '\n', '\r'
+
+// The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
+const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
+const C_PZ: u8 = 2; // high 5 or 7, low 0..=10: P-Z, p-z
+const C_DIGIT: u8 = 4; // high 3, low 0..=9
+const C_UNDERSCORE: u8 = 8; // high 5, low 15
+const C_SPACE: u8 = 16; // high 2, low 0
+const C_TAB_FF: u8 = 32; // high 0, low 9 or 12
+const C_EOL: u8 = 64; // high 0, low 10 or 13
+const C_QUOTE: u8 = 128; // high 2, low 2 or 7: '"', '\''
+const C_WORD: u8 = C_AO | C_PZ | C_DIGIT | C_UNDERSCORE;
+const C_BLANK: u8 = C_SPACE | C_TAB_FF;
+
+static LO: [u8; 16] = {
+    let mut t = [0u8; 16];
+    let mut n = 0;
+    while n < 16 {
+        let mut b = 0;
+        if n >= 1 {
+            b |= C_AO;
+        }
+        if n <= 10 {
+            b |= C_PZ;
+        }
+        if n <= 9 {
+            b |= C_DIGIT;
+        }
+        if n == 15 {
+            b |= C_UNDERSCORE;
+        }
+        if n == 0 {
+            b |= C_SPACE;
+        }
+        if n == 9 || n == 12 {
+            b |= C_TAB_FF;
+        }
+        if n == 10 || n == 13 {
+            b |= C_EOL;
+        }
+        if n == 2 || n == 7 {
+            b |= C_QUOTE;
+        }
+        t[n] = b;
+        n += 1;
     }
     t
 };
 
-/// The 64 bytes from `at`, read in place; the last block of the text copied and padded with zeros.
+static HI: [u8; 16] = {
+    let mut t = [0u8; 16];
+    t[0] = C_TAB_FF | C_EOL;
+    t[2] = C_SPACE | C_QUOTE;
+    t[3] = C_DIGIT;
+    t[4] = C_AO;
+    t[5] = C_PZ | C_UNDERSCORE;
+    t[6] = C_AO;
+    t[7] = C_PZ;
+    t
+};
+
+/// A byte's classes, by the same tables.
 #[inline(always)]
-fn with_block<R>(src: &[u8], at: usize, f: impl FnOnce(&[u8; 64]) -> R) -> R {
-    if let Some(b) = src.get(at..at + 64) {
-        f(b.try_into().expect("64 bytes"))
-    } else {
-        f(&tail(src, at))
-    }
-}
-
-#[cold]
-fn tail(src: &[u8], at: usize) -> [u8; 64] {
-    let mut b = [0u8; 64];
-    let n = src.len().saturating_sub(at).min(64);
-    b[..n].copy_from_slice(&src[at..at + n]);
-    b
-}
-
-/// The first byte from `at` on whose class is not in `run`: a run's end (or `src.len()`).
-#[inline]
-fn run_end(src: &[u8], mut at: usize, run: u8) -> usize {
-    while at < src.len() {
-        let stop = with_block(src, at, |w| !masks::of(w, run));
-        if stop != 0 {
-            return (at + stop.trailing_zeros() as usize).min(src.len());
-        }
-        at += 64;
-    }
-    src.len()
-}
-
-/// The end of a run of `[A-Za-z0-9_]` from `at`.
-#[inline]
-pub fn word_end(src: &[u8], at: usize) -> usize {
-    // Most names are short: the first eight bytes a word before a block.
-    run_end(src, at, WORD)
-}
-
-/// The end of a run of blanks (`' '`, `'\t'`, `'\f'`) from `at`.
-#[inline]
-pub fn blank_end(src: &[u8], at: usize) -> usize {
-    match src.get(at) {
-        Some(&c) if CLASS[usize::from(c)] & BLANK != 0 => run_end(src, at, BLANK),
-        _ => at,
-    }
-}
-
-/// The first `\n` or `\r` from `at` (or `src.len()`): a comment's end.
-#[inline]
-pub fn eol(src: &[u8], at: usize) -> usize {
-    find(src, at, |w| masks::eq(w, b'\n') | masks::eq(w, b'\r'))
-}
-
-/// The first byte from `at` that may end a string's text: its quote, `\`, a line's end, or in a
-/// format string `{` and `}`.
-#[inline]
-pub fn string_stop(src: &[u8], at: usize, quote: u8, format: bool) -> usize {
-    if format {
-        find(src, at, |w| masks::eq(w, quote) | masks::eq(w, b'\\') | masks::eq(w, b'\n') | masks::eq(w, b'{') | masks::eq(w, b'}'))
-    } else {
-        find(src, at, |w| masks::eq(w, quote) | masks::eq(w, b'\\') | masks::eq(w, b'\n'))
-    }
-}
-
-/// The first byte from `at` that is in a format specifier's stops: `{`, `}`, a line's end.
-#[inline]
-pub fn spec_stop(src: &[u8], at: usize) -> usize {
-    find(src, at, |w| masks::eq(w, b'{') | masks::eq(w, b'}') | masks::eq(w, b'\n'))
-}
-
-#[inline(always)]
-fn find(src: &[u8], mut at: usize, mask: impl Fn(&[u8; 64]) -> u64) -> usize {
-    while at < src.len() {
-        let m = with_block(src, at, &mask);
-        if m != 0 {
-            return (at + m.trailing_zeros() as usize).min(src.len());
-        }
-        at += 64;
-    }
-    src.len()
+fn class(c: u8) -> u8 {
+    LO[usize::from(c & 15)] & HI[usize::from(c >> 4)]
 }
 
 /// Whether `c` may continue a name (ASCII only: a byte from 0x80 is read as a character).
 #[inline(always)]
 pub fn is_word(c: u8) -> bool {
-    CLASS[usize::from(c)] & WORD != 0
+    class(c) & C_WORD != 0
 }
 
-#[cfg(target_arch = "aarch64")]
-mod masks {
-    use std::arch::aarch64::{uint8x16_t, vandq_u8, vceqq_u8, vcgeq_u8, vcleq_u8, vdupq_n_u8, vgetq_lane_u64, vld1q_u8, vorrq_u8, vpaddq_u8, vreinterpretq_u64_u8};
-
-    /// Bit `i`: byte `i` is `x`.
-    #[inline(always)]
-    pub(super) fn eq(w: &[u8; 64], x: u8) -> u64 {
-        // SAFETY: `w` holds 64 bytes; NEON is part of every aarch64 target.
-        unsafe {
-            let s = vdupq_n_u8(x);
-            let v = load(w);
-            to_mask(vceqq_u8(v[0], s), vceqq_u8(v[1], s), vceqq_u8(v[2], s), vceqq_u8(v[3], s))
-        }
-    }
-
-    /// Bit `i`: byte `i`'s class is in `run` (`super::WORD` or `super::BLANK`), by compares.
-    #[inline(always)]
-    pub(super) fn of(w: &[u8; 64], run: u8) -> u64 {
-        // SAFETY: as `eq`.
-        unsafe {
-            let v = load(w);
-            let range = |x: uint8x16_t, lo: u8, hi: u8| vandq_u8(vcgeq_u8(x, vdupq_n_u8(lo)), vcleq_u8(x, vdupq_n_u8(hi)));
-            let one = |x: uint8x16_t| {
-                if run == super::WORD {
-                    let alpha = vorrq_u8(range(x, b'a', b'z'), range(x, b'A', b'Z'));
-                    vorrq_u8(vorrq_u8(alpha, range(x, b'0', b'9')), vceqq_u8(x, vdupq_n_u8(b'_')))
-                } else {
-                    vorrq_u8(vorrq_u8(vceqq_u8(x, vdupq_n_u8(b' ')), vceqq_u8(x, vdupq_n_u8(b'\t'))), vceqq_u8(x, vdupq_n_u8(0x0c)))
-                }
-            };
-            to_mask(one(v[0]), one(v[1]), one(v[2]), one(v[3]))
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn load(w: &[u8; 64]) -> [uint8x16_t; 4] {
-        // SAFETY: `w` holds 64 bytes.
-        unsafe {
-            let p = w.as_ptr();
-            [vld1q_u8(p), vld1q_u8(p.add(16)), vld1q_u8(p.add(32)), vld1q_u8(p.add(48))]
-        }
-    }
-
-    /// Four compare results as one mask, by simdjson's pairwise adds.
-    #[inline(always)]
-    unsafe fn to_mask(a: uint8x16_t, b: uint8x16_t, c: uint8x16_t, d: uint8x16_t) -> u64 {
-        const BITS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
-        // SAFETY: `BITS` holds 16 bytes; the rest are register operations.
-        unsafe {
-            let bits = vld1q_u8(BITS.as_ptr());
-            let ab = vpaddq_u8(vandq_u8(a, bits), vandq_u8(b, bits));
-            let cd = vpaddq_u8(vandq_u8(c, bits), vandq_u8(d, bits));
-            let s = vpaddq_u8(ab, cd);
-            let s = vpaddq_u8(s, s);
-            vgetq_lane_u64(vreinterpretq_u64_u8(s), 0)
-        }
+/// One block's masks.
+#[inline(always)]
+unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 4] {
+    unsafe {
+        let v = S::load(b);
+        let c = S::classify(v, &LO, &HI);
+        let word = S::nonzero(S::and(c, S::splat(C_WORD)));
+        let blank = S::nonzero(S::and(c, S::splat(C_BLANK)));
+        let eol = S::nonzero(S::and(c, S::splat(C_EOL)));
+        let others = S::or(S::or(S::eq(v, S::splat(b'`')), S::eq(v, S::splat(b'\\'))), S::or(S::eq(v, S::splat(b'{')), S::eq(v, S::splat(b'}'))));
+        let stop = S::nonzero(S::and(c, S::splat(C_EOL | C_QUOTE))) | S::to_bitmask(others);
+        [word, blank, eol, stop]
     }
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-mod masks {
-    pub(super) use super::portable::{eq, of};
+/// Stage 1 over `src`: each block's masks, the last block's padded.
+#[inline(always)]
+unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<[u64; 4]> {
+    let mut out = Vec::with_capacity(src.len().div_ceil(64));
+    let mut at = 0;
+    while let Some(b) = src.get(at..at + 64) {
+        out.push(unsafe { masks::<S>(b.try_into().expect("64 bytes")) });
+        at += 64;
+    }
+    if at < src.len() {
+        let mut b = [0u8; 64];
+        let n = src.len() - at;
+        b[..n].copy_from_slice(&src[at..]);
+        let [word, blank, eol, stop] = unsafe { masks::<S>(&b) };
+        let past = !0u64 << n;
+        out.push([word & !past, blank & !past, eol | past, stop | past]);
+    }
+    out
 }
 
-#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
-mod portable {
-    const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
-    const ONES: u64 = 0x0101_0101_0101_0101;
+rerail_simd8::dispatch! {
+    fn stage1_best(src: &[u8]) -> Vec<[u64; 4]> = stage1, on stage1_on;
+}
 
+/// The text's masks (stage 1), for the lexer's scans (stage 2).
+pub struct Blocks<'s> {
+    src: &'s [u8],
+    m: Vec<[u64; 4]>,
+}
+
+impl<'s> Blocks<'s> {
+    /// Stage 1 over `src`, on the best backend the CPU runs.
+    pub fn of(src: &'s [u8]) -> Self {
+        Blocks { src, m: stage1_best(src) }
+    }
+
+    /// The first byte from `at` on whose bit in mask `k` is `set`.
     #[inline(always)]
-    fn words(w: &[u8; 64]) -> [u64; 8] {
-        std::array::from_fn(|k| u64::from_le_bytes(w[8 * k..8 * k + 8].try_into().expect("8 bytes")))
-    }
-
-    /// Each byte's high bit: the byte is 0.
-    #[inline(always)]
-    fn zero(v: u64) -> u64 {
-        !(((v & LO7) + LO7) | v) & !LO7
-    }
-
-    /// The 8 high bits of `hit` as a byte.
-    #[inline(always)]
-    fn gather(hit: u64) -> u64 {
-        ((hit >> 7) & ONES).wrapping_mul(0x0102_0408_1020_4080) >> 56
-    }
-
-    pub(crate) fn eq(w: &[u8; 64], x: u8) -> u64 {
-        words(w).iter().enumerate().fold(0, |m, (k, &v)| m | gather(zero(v ^ (ONES * u64::from(x)))) << (8 * k))
-    }
-
-    pub(crate) fn of(w: &[u8; 64], run: u8) -> u64 {
-        let mut m = 0;
-        for (i, &c) in w.iter().enumerate() {
-            m |= u64::from(super::CLASS[usize::from(c)] & run != 0) << i;
+    fn next(&self, at: usize, k: usize, set: bool) -> usize {
+        if at >= self.src.len() {
+            return self.src.len();
         }
-        m
+        let flip = if set { 0 } else { !0 };
+        let mut b = at / 64;
+        let mut m = (self.m[b][k] ^ flip) & (!0u64 << (at % 64));
+        loop {
+            if m != 0 {
+                return (b * 64 + m.trailing_zeros() as usize).min(self.src.len());
+            }
+            b += 1;
+            if b >= self.m.len() {
+                return self.src.len();
+            }
+            m = self.m[b][k] ^ flip;
+        }
+    }
+
+    /// The end of a run of `[A-Za-z0-9_]` from `at`.
+    #[inline]
+    pub fn word_end(&self, at: usize) -> usize {
+        self.next(at, WORD, false)
+    }
+
+    /// The end of a run of blanks (`' '`, `'\t'`, `'\f'`) from `at`.
+    #[inline]
+    pub fn blank_end(&self, at: usize) -> usize {
+        self.next(at, BLANK, false)
+    }
+
+    /// The first `\n` or `\r` from `at` (or the text's length): a comment's end.
+    #[inline]
+    pub fn eol(&self, at: usize) -> usize {
+        self.next(at, EOL, true)
+    }
+
+    /// The first byte from `at` that may end a string's text: its quote, `\`, `\n`, or in a format
+    /// string `{` and `}`. The stop mask holds every quote and brace and `\r`: the ones this string
+    /// does not stop at are passed over a bit at a time.
+    #[inline]
+    pub fn string_stop(&self, at: usize, quote: u8, format: bool) -> usize {
+        self.stop(at, |c| c == quote || c == b'\\' || c == b'\n' || (format && (c == b'{' || c == b'}')))
+    }
+
+    /// The first byte from `at` that is in a format specifier's stops: `{`, `}`, `\n`.
+    #[inline]
+    pub fn spec_stop(&self, at: usize) -> usize {
+        self.stop(at, |c| c == b'{' || c == b'}' || c == b'\n')
+    }
+
+    #[inline(always)]
+    fn stop(&self, mut at: usize, wanted: impl Fn(u8) -> bool) -> usize {
+        loop {
+            let s = self.next(at, STOP, true);
+            if s >= self.src.len() || wanted(self.src[s]) {
+                return s;
+            }
+            at = s + 1;
+        }
     }
 }
 
@@ -223,19 +212,49 @@ mod portable {
 mod tests {
     use super::*;
 
+    /// The masks one byte at a time.
+    fn scalar(src: &[u8]) -> Vec<[u64; 4]> {
+        let mut out = vec![[0u64; 4]; src.len().div_ceil(64)];
+        for (b, o) in out.iter_mut().enumerate() {
+            for i in 0..64 {
+                let at = b * 64 + i;
+                let Some(&c) = src.get(at) else {
+                    o[EOL] |= 1 << i;
+                    o[STOP] |= 1 << i;
+                    continue;
+                };
+                let bit = |x: bool| u64::from(x) << i;
+                o[WORD] |= bit(c.is_ascii_alphanumeric() || c == b'_');
+                o[BLANK] |= bit(matches!(c, b' ' | b'\t' | 0x0c));
+                o[EOL] |= bit(matches!(c, b'\n' | b'\r'));
+                o[STOP] |= bit(matches!(c, b'\'' | b'"' | b'`' | b'\\' | b'{' | b'}' | b'\n' | b'\r'));
+            }
+        }
+        out
+    }
+
     #[test]
-    fn masks_agree_with_the_portable_ones() {
-        let mut w = [0u8; 64];
-        for seed in 0..512u32 {
-            for (i, b) in w.iter_mut().enumerate() {
-                let x = (seed.wrapping_mul(2654435761).wrapping_add(i as u32 * 40503)) >> 7;
-                *b = [b'a', b'Z', b'_', b'0', b' ', b'\t', b'\n', b'{', b'"', b'\\', 0xc3, b'.', 0x0c, b'9'][(x % 14) as usize];
-            }
-            for x in [b'\n', b'{', b'"', b'\\'] {
-                assert_eq!(masks::eq(&w, x), portable::eq(&w, x));
-            }
-            for run in [WORD, BLANK] {
-                assert_eq!(masks::of(&w, run), portable::of(&w, run));
+    fn every_backend_gives_the_byte_tests_masks() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for len in [0usize, 1, 63, 64, 65, 200, 1000] {
+            for _ in 0..20 {
+                let src: Vec<u8> = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        if x % 3 == 0 { (x >> 16) as u8 } else { b"aZ_9 \t\n\r\x0c'\"`\\{}#.(@[\x7f"[(x >> 8) as usize % 21] }
+                    })
+                    .collect();
+                let want = scalar(&src);
+                for be in rerail_simd8::Backend::ALL {
+                    if let Some(got) = stage1_on(be, &src) {
+                        assert_eq!(got, want, "{be:?}, {len} bytes");
+                    }
+                }
+                for c in 0..=255u8 {
+                    assert_eq!(is_word(c), c.is_ascii_alphanumeric() || c == b'_', "{c}");
+                }
             }
         }
     }
@@ -243,12 +262,15 @@ mod tests {
     #[test]
     fn runs_end_where_they_should() {
         let s = b"abc_9 \t x";
-        assert_eq!(word_end(s, 0), 5);
-        assert_eq!(blank_end(s, 5), 8);
+        let b = Blocks::of(s);
+        assert_eq!(b.word_end(0), 5);
+        assert_eq!(b.blank_end(5), 8);
         let long = [b'a'; 200];
-        assert_eq!(word_end(&long, 3), 200);
-        assert_eq!(eol(b"# x\r\n", 0), 3);
-        assert_eq!(string_stop(b"ab{c'", 0, b'\'', true), 2);
-        assert_eq!(string_stop(b"ab{c'", 0, b'\'', false), 4);
+        assert_eq!(Blocks::of(&long).word_end(3), 200);
+        assert_eq!(Blocks::of(b"# x\r\n").eol(0), 3);
+        let s = b"ab{c\"'";
+        assert_eq!(Blocks::of(s).string_stop(0, b'\'', true), 2);
+        assert_eq!(Blocks::of(s).string_stop(0, b'\'', false), 5);
+        assert_eq!(Blocks::of(s).spec_stop(3), 6);
     }
 }

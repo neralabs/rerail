@@ -1,0 +1,6 @@
+[package]
+name = "rerail-simd8"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "simdjson's simd8x64 operations in Rust (load, compare, nibble lookup, to_bitmask), one backend for each of its implementations (arm64, haswell, westmere, fallback), and run-time choice of the best the CPU runs."

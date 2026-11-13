@@ -188,6 +188,8 @@ struct Quote {
 
 struct Lexer<'s> {
     src: &'s [u8],
+    /// The text's byte classes, 64 bytes a step (stage 1).
+    b: block::Blocks<'s>,
     toks: Vec<Tok>,
     extras: Vec<Extra>,
     /// Where the last token or extra ended: where the scanner runs.
@@ -199,7 +201,7 @@ struct Lexer<'s> {
 const MAX_NESTING: u32 = 64;
 
 pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
-    let mut l = Lexer { src, toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0 };
+    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0 };
     l.module()?;
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
@@ -311,7 +313,7 @@ impl<'s> Lexer<'s> {
                     if first_comment < 0 {
                         first_comment = i64::from(indent);
                     }
-                    i = block::eol(src, i);
+                    i = self.b.eol(i);
                     if i < src.len() {
                         i += 1;
                     }
@@ -379,7 +381,7 @@ impl<'s> Lexer<'s> {
             loop {
                 let c = self.at(i);
                 if c == b' ' || c == b'\t' || c == 0x0c {
-                    i = block::blank_end(src, i);
+                    i = self.b.blank_end(i);
                 } else if c == b'\n' {
                     i += 1;
                 } else if c == b'\r' {
@@ -399,7 +401,7 @@ impl<'s> Lexer<'s> {
             }
             let c = src[i];
             if c == b'#' {
-                let end = block::eol(src, i);
+                let end = self.b.eol(i);
                 self.extras.push(Extra { start: i as u32, end: end as u32, comment: true });
                 self.p = end;
                 continue;
@@ -492,7 +494,7 @@ impl<'s> Lexer<'s> {
         let mut j = i;
         let mut first = true;
         loop {
-            j = block::word_end(src, j);
+            j = self.b.word_end(j);
             if self.at(j) < 0x80 {
                 break;
             }
@@ -650,7 +652,7 @@ impl<'s> Lexer<'s> {
         let mut text = j;
         let mut content = false;
         loop {
-            let s = block::string_stop(src, j, q.quote, q.format);
+            let s = self.b.string_stop(j, q.quote, q.format);
             if s >= src.len() {
                 return Err(self.refuse(s));
             }
@@ -846,7 +848,7 @@ impl<'s> Lexer<'s> {
     fn spec(&mut self, mut i: usize) -> Result<usize, Refusal> {
         let src = self.src;
         loop {
-            let s = block::spec_stop(src, i);
+            let s = self.b.spec_stop(i);
             if s >= src.len() || src[s] == b'\n' {
                 return Err(self.refuse(s));
             }
