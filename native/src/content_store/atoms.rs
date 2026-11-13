@@ -1080,7 +1080,7 @@ impl Atoms {
                     return Err(self.diverge(end, base, len - base));
                 }
                 drop(state);
-                self.state.write().atoms.advance(end)?;
+                self.advance_holding(connection, base, end)?;
                 return Ok(end);
             }
             if end >= len {
@@ -1112,6 +1112,28 @@ impl Atoms {
         let mut written = self.written.lock();
         *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
         Ok(upto)
+    }
+
+    /// Another process stored atoms `base..end` and none is pending here: this process's end moves there, and, where
+    /// it held every stored atom, it reads those too (on the writer's connection, behind the run), so a run's lookups
+    /// still read nothing (decision 0160).
+    fn advance_holding(&self, connection: &Connection, base: usize, end: usize) -> StoreResult<()> {
+        let mut state = self.state.write();
+        if state.atoms.pending().0 > 0 || state.atoms.base() != base {
+            return Ok(());
+        }
+        let whole = state.all_held >= base;
+        state.atoms.advance(end)?;
+        if !whole || !lease_free() {
+            return Ok(());
+        }
+        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
+        let mut rows = statement.query([base as i64, end as i64])?;
+        while let Some(row) = rows.next()? {
+            state.atoms.add_segment(row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+        }
+        state.all_held = state.atoms.base();
+        Ok(())
     }
 
     /// After a commit that held `write_pending`'s segment: atoms below `upto` are stored. The
@@ -1154,7 +1176,7 @@ impl Atoms {
             let mut lease = self.lease.lock();
             self.acquire(&mut lease)?;
             self.runs.fetch_add(1, Ordering::AcqRel);
-        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) {
+        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) && !super::hazards::inside_waves() {
             let _lease = self.lease.lock();
             let path = self.path.clone();
             let end = self.with_reader(|connection| {
@@ -1178,6 +1200,11 @@ impl Atoms {
         // A store's atoms are read whole when they are few (the full corpus's are about 21 MB, decision 0049): the
         // run's lookups and ids then read nothing. A larger store's are found by their key as the run needs them
         // (decision 0111), which the strict mode reports.
+        // Inside another run's waves (decision 0160's trial) nothing is read: what is held stays as complete as it was.
+        if lease_free() && super::hazards::inside_waves() {
+            let complete = held() && self.complete.load(Ordering::Acquire);
+            return Ok(complete);
+        }
         if !held() {
             let bytes = self.with_reader(|connection| Ok(connection.query_row("SELECT coalesce(sum(length(bytes)), 0) FROM atom_segment", [], |r| r.get::<_, i64>(0))?))?.unwrap_or(0);
             if bytes as usize <= READ_WHOLE {

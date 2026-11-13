@@ -18,6 +18,7 @@ mod test_load {
             wait_in_wave: profile::wait_in_wave,
             behind_the_run: profile::behind_the_run,
             statement: profile::strict_statement,
+            inside_waves: profile::inside_waves,
         });
         profile::strict_on_every_connection();
     }

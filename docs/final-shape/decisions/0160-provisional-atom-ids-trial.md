@@ -26,11 +26,13 @@ full design needs.
 Four strict runs at once, one store, over four parts of posthog (hogql, models, api, temporal: 437 to 635 files
 each), profiling build. Alone, hogql runs in 8.1 s.
 
-| | lease (0049) | provisional (this trial) |
-|---|---|---|
-| runs that ended with findings | 0 of 4 | 1 of 4 |
-| the others | 3 `busy` after the 60 s lease wait; 1 killed at 120 s | 3 diverged in phase 0, at 7.8 s |
-| wall time of the four | 120 s (killed) | 7.8 s |
+| | lease (0049), twice | lease, once more (load 70–80) | provisional (this trial), twice (load 70–80) |
+|---|---|---|---|
+| runs that ended with findings | 0 of 4, 0 of 4 | 0 of 4 | 1 of 4, 3 of 4 |
+| the others | 3 `busy` after the 60 s lease wait, 1 killed at 120 s | 4 aborted by the strict mode: `acquire` reads the store's end inside the waves | diverged |
+| wall time of the four | 120 s (killed) | under 10 s | 17.2 s, 19.4 s |
+
+The runs that ended have the findings they have alone (api 1,057; hogql 1,629; models 494).
 
 The lease's runs did not wait for each other: they deadlocked. Samples of the four processes show:
 
@@ -60,9 +62,16 @@ Nothing moves until the 60 s `LEASE_WAIT`, then the waiters fail `busy`.
 1. **No deadlock and no read inside the waves.** Only SQLite's write lock serializes processes now. A run never
    waits for another's run.
 2. **Divergence is the common case for concurrent cold runs.** All four started from an empty store and stored their
-   first atoms within milliseconds of each other ("another process stored atoms 2388..2400 while this one held 12").
-   Three of four diverged in phase 0, and a diverged process cannot use the store for its later phases. So the
-   check alone is not the design. A process must be able to carry on after another stored atoms first.
+   first atoms within milliseconds of each other ("another process stored atoms 1..2388 while this one held 2387").
+   One to three of four diverged, most in phase 0, and a diverged process cannot use the store for its later
+   phases. So the check alone is not the design. A process must be able to carry on after another stored atoms
+   first.
+   - The same strings in the same order are not a conflict, and a check that adopts such a prefix was tried. It
+     adopted nothing: each run interns strings of its own early (its rule file, its output's paths), so the
+     sequences part at once. It was taken out.
+   - Inside the waves the trial reads nothing. A run started on another thread while one is in its waves reads no
+     end and no atoms (`hazards::inside_waves`). When the writer moves this process's end past another's atoms,
+     it reads those atoms too, behind the run, so `complete` still holds.
 3. **The full design is a translation at the store's boundary.** A diverged process keeps its own ids in memory
    (they are consistent within it). The store keeps its own. Between them is a map for the ids past the point
    they parted: local to stored when a row is written, stored to local when a row is read. A string the store has

@@ -1965,7 +1965,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+    pub(crate) use super::logic::profile::{behind_the_run, inside_waves, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
 }
 #[path = "sql_executor"]
 mod sql_executor {
