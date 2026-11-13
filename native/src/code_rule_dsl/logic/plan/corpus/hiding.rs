@@ -325,7 +325,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
 /// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
 /// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
-/// `merge_to_fixpoint`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
+/// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     if bound != crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
@@ -703,7 +703,7 @@ pub mod tests {
             hide(&mut p, bound);
             let made = p.decls.keys().filter(|r| r.starts_with("rr_in_")).count();
             let folded = fold_own(&mut p, label, bound);
-            super::super::merge_to_fixpoint(&mut p);
+            super::super::merge_and_drop_repeats(&mut p);
             (made, folded, p)
         };
         let (made, folded, p) = hidden("python", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS);

@@ -1676,7 +1676,20 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
         for &r in &cands {
             let n = ids.len();
-            let rules = rules_of.get(r).map_or(0, Vec::len);
+            // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
+            // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
+            // apart from its twin.
+            let rules = rules_of.get(r).map_or(0, |rs| {
+                rs.iter()
+                    .map(|x| {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        x.hash(&mut h);
+                        h.finish()
+                    })
+                    .collect::<std::collections::HashSet<u64>>()
+                    .len()
+            });
             class.insert(r, *ids.entry((types(r), rules, facts(r))).or_insert(n));
         }
     }
@@ -1749,6 +1762,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
                 .collect();
             sig.sort();
+            sig.dedup();
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
         }
@@ -2649,5 +2663,20 @@ pub mod tests {
         assert!(text.iter().any(|r| r.starts_with("none(") && r.contains("!pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("some(") && r.contains(", pair($n") && !r.contains("count")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("many(") && r.contains("count")), "{text:?}");
+    }
+
+    /// A relation's rules are a set: `p1` has its rule twice and `p2` once, and they are one class, so one merge
+    /// finds it (a list comparison kept them apart until the repeat was dropped, which took a second merge).
+    #[test]
+    fn a_repeated_rule_does_not_keep_a_relation_from_its_twin() {
+        let mut prog = super::super::rr::parse(
+            ".decl e(a: number, b: number)\n.input e\n.decl p1(a: number, b: number)\n.decl p2(a: number, b: number)\n\
+             .decl out(a: number)\n.output out\np1(a, b) :- e(a, b).\np2(a, b) :- e(a, b).\nout(a) :- p1(a, _), p2(_, a).\n",
+        )
+        .unwrap();
+        let again = prog.rules.iter().find(|r| r.head.rel == "p1").unwrap().clone();
+        prog.rules.push(again);
+        let classes = super::congruence(&prog, false);
+        assert!(classes.iter().any(|c| c.iter().any(|r| r == "p1") && c.iter().any(|r| r == "p2")), "{classes:?}");
     }
 }

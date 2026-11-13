@@ -4757,5 +4757,12 @@ instructions, 53.2 G cycles, 13.8 s CPU (last measured 163.2 G). Shares of the m
 repeating `merge_identical` up to 16 times. It should run once per combined program, kept by the program's
 digest like the combined program (0094 §6), or merge in one pass.
 
+**One pass (built 2026-11-13).** The batch made 139 merges, 1.50 s in all, each 2 or 3 congruences: a repeated
+rule kept a relation from its twin, since rules were compared as lists. The congruence now compares a relation's
+rules as a set, and `merge_and_drop_repeats` (renamed) drops repeats, merges once and drops the repeats the merge
+made. Checked over the batch and O125 step 07: a further merge then finds nothing. dl1: 159.1 → 153.5 G
+instructions, 53.2 → 47.4 G cycles, the same 48 findings; O125 step 07 equals a full run.
+`a_repeated_rule_does_not_keep_a_relation_from_its_twin`.
+
 **Not measured:** O99 and O130 run on the 9,010-file data layer (minutes, past the run cap). O133 and O114 run
 on the 84-file Jedi recording, which is not on this machine (a 40-file subset is).
