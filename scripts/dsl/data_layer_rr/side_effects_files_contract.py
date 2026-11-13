@@ -35,6 +35,9 @@ def cases(_module):
         ('decode',[dict(path='a.py',binary='ff')],['a.py'])]
     rows.extend(dict(kind='explicit',id='explicit-'+name,files=files,selected=selected)for name,files,selected in choices)
     rows.append(dict(kind='explicit',id='explicit-external',files=[],outside=[f('outside.py')],selected=['$OUT/outside.py']))
+    rows.append(dict(kind='explicit',id='explicit-batch',files=[f(f'files/{i:03}.py')for i in range(64)],selected=[f'files/{i:03}.py'for i in range(64)]))
+    rows.append(dict(kind='explicit',id='explicit-error-order',files=[dict(path='a/x.py',binary='e282'),dict(path='a-.py',binary='ff')],selected=['a-.py','a/x.py']))
+    rows.append(dict(kind='explicit',id='explicit-relative-input',files=[f('a.py')],selected=['a.py'],relative_input=True))
     rows.append(dict(kind='repo',id='repo-external-link',files=[],outside=[f('outside.py')],outside_link=True))
     for name,files,path,text,tree in [('disk-positive',[f('a.py')],'a.py','pass\n','pass\n'),
             ('disk-clean',[f('a.py','pass\n')],'a.py',BAD,BAD),('missing',[],'absent.py',BAD,BAD),
@@ -58,7 +61,7 @@ def exercise(module,case,scratch):
             if case['kind']=='iter':value=module._iter_python_files(root)
             elif case['kind']=='repo':value=module.scan_repo(root)
             elif case['kind']=='explicit':
-                selected=[outside/p.removeprefix('$OUT/')if p.startswith('$OUT/')else root/p for p in case['selected']]
+                selected=[outside/p.removeprefix('$OUT/')if p.startswith('$OUT/')else Path(p)if case.get('relative_input')else root/p for p in case['selected']]
                 value=module._run_fact_engine_for_files(root,selected)
             else:value=module.scan_file_content(case['path'],case['source'],ast.parse(case['tree']))
         return dict(value=canonical(value,scratch))
