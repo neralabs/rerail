@@ -822,11 +822,15 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  it("forgets the home lock's record of the daemon a stop ended, which Windows ends with no exit handler", async () => {
+  /**
+   * Stops the daemon daemon.json names (DEAD_PID), which Windows ends with no exit handler, while the home lock's
+   * record names `holder`; whether that record is still there after the stop.
+   */
+  async function holderRecordAfterStop(holder: number): Promise<boolean> {
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
-    const holder = join(home, LOCKS_DIR, "daemon.json");
+    const record = join(home, LOCKS_DIR, "daemon.json");
     await mkdir(join(home, LOCKS_DIR), { recursive: true });
-    await writeFile(holder, JSON.stringify({ pid: DEAD_PID }));
+    await writeFile(record, JSON.stringify({ pid: holder }));
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: DEAD_PID })));
     let running = true;
     const machine = {
@@ -839,8 +843,14 @@ describe("a state file Windows left behind", () => {
       },
     };
     expect(await stopDaemon(home, machine)).toBe("stopped");
+    return existsSync(record);
+  }
+
+  it("forgets the home lock's record of the daemon a stop ended, which Windows ends with no exit handler", async () => {
     // Left there, it names a pid Windows soon reuses, and a later stop would ask the lock, loading the engine.
-    expect(existsSync(holder)).toBe(false);
+    expect(await holderRecordAfterStop(DEAD_PID)).toBe(false);
+    // A record naming another pid is another daemon's, written once it took the lock: it holds the home still.
+    expect(await holderRecordAfterStop(DEAD_PID - 1)).toBe(true);
   });
 
   it("stops the daemon a lookup found without looking it up, or probing it, again", async () => {
