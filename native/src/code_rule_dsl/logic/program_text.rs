@@ -409,6 +409,23 @@ pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 3
     Ok(Some((Sha256::digest(text.as_bytes()).into(), source)))
 }
 
+/// The texts `store` keeps of sha256 `digests` (`store`), by digest, with their sources, in two reads: for a caller
+/// that must read before its run's waves (decision 0104) and parse later. One the store has lost is left out.
+pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (String, SourceId)>> {
+    let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+    let ids = store.held_sources_by_hash(&hashes)?;
+    let requests: Vec<(SourceId, HashKey)> = ids.iter().zip(&hashes).filter_map(|(id, h)| Some(((*id)?, *h))).collect();
+    let mut bytes = store.get_sources_by_hash_bulk(&requests, usize::MAX)?;
+    Ok(ids
+        .iter()
+        .zip(digests)
+        .filter_map(|(id, d)| {
+            let id = (*id)?;
+            Some((*d, (String::from_utf8(bytes.remove(&id)?).ok()?, id)))
+        })
+        .collect())
+}
+
 /// The program `store` keeps as the text of sha256 `digest` (`store`), and its source; `None` when the store has
 /// lost it, or it no longer reads.
 pub fn load(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(Program, SourceId)>> {

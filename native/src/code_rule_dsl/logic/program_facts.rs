@@ -1,6 +1,10 @@
 //! A rule program as facts (decision 0074): every rule, literal, atom and term, every declaration and setting, as a
-//! row of a fixed schema. A program is then data a rule can read, a document the store keeps as a tape, and rows the
-//! facts memo keeps. A program written as facts reads back as the same program (`program`).
+//! row of a fixed schema, so a rule can read a program as data. A program written as facts reads back as the same
+//! program (`program`).
+//!
+//! These rows are not how a program is kept (decision 0155): a kept program is its `.rr` text (`program_text`). The
+//! rows are made from a program when asked for, and the text's `.about` part is the rows of what has no syntax
+//! (`write_about`).
 //!
 //! The schema, one program `p` among several in a document:
 //!
@@ -28,7 +32,7 @@ use std::collections::BTreeMap;
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
-/// A value of a fact row, as a reader takes it: owned (`Value`), or borrowed from encoded facts (`V`).
+/// A value of a fact row, as a reader takes it.
 pub trait Cell {
     fn int(&self) -> Result<i64, String>;
     fn str(&self) -> Result<&str, String>;
@@ -46,73 +50,6 @@ impl Cell for Value {
             Value::Str(x) => Ok(x),
             Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
         }
-    }
-}
-
-/// A value of encoded facts (`encode`), its string borrowed from the encoding's table.
-#[derive(Clone, Copy, Debug)]
-pub enum V<'b> {
-    Int(i64),
-    Str(&'b str),
-}
-
-impl Cell for V<'_> {
-    fn int(&self) -> Result<i64, String> {
-        match self {
-            V::Int(i) => Ok(*i),
-            V::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
-        }
-    }
-    fn str(&self) -> Result<&str, String> {
-        match self {
-            V::Str(x) => Ok(x),
-            V::Int(i) => Err(bad(format!("{i} where a string goes"))),
-        }
-    }
-}
-
-impl V<'_> {
-    pub fn owned(&self) -> Value {
-        match self {
-            V::Int(i) => Value::Int(*i),
-            V::Str(x) => Value::Str((*x).to_owned()),
-        }
-    }
-}
-
-/// One relation of encoded facts, read in place: its values in one list, and where each row starts.
-pub struct ViewRel<'b> {
-    pub name: &'b str,
-    values: Vec<V<'b>>,
-    starts: Vec<u32>,
-}
-
-impl<'b> ViewRel<'b> {
-    pub fn rows(&self) -> impl Iterator<Item = &[V<'b>]> + '_ {
-        (0..self.starts.len()).map(move |i| {
-            let end = self.starts.get(i + 1).map_or(self.values.len(), |e| *e as usize);
-            &self.values[self.starts[i] as usize..end]
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.starts.len()
-    }
-}
-
-/// Encoded facts (`encode`) read in place (`decode_view`): no row and no string is copied out.
-pub struct View<'b> {
-    pub rels: Vec<ViewRel<'b>>,
-}
-
-impl View<'_> {
-    /// The relations `keep` names, as owned facts.
-    pub fn owned(&self, keep: impl Fn(&str) -> bool) -> Facts {
-        let mut out = Facts::new();
-        for rel in self.rels.iter().filter(|r| keep(r.name)) {
-            out.entry(rel.name.to_owned()).or_default().extend(rel.rows().map(|r| r.iter().map(V::owned).collect()));
-        }
-        out
     }
 }
 
@@ -564,74 +501,6 @@ impl Kids {
     }
 }
 
-/// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
-/// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
-pub(in crate::code_rule_dsl) struct Grouped<'a, C: Cell = Value>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [C]>>>);
-
-impl<'a> Grouped<'a, Value> {
-    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
-        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
-        for (rel, all) in facts {
-            // Rows of one program come together in a relation's rows as written: each run of them is added at once,
-            // the map looked up when the program changes, not per row.
-            let mut run: Option<(&str, Vec<&[Value]>)> = None;
-            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
-                if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
-                }
-            };
-            for row in all {
-                let Some(Value::Str(q)) = row.first() else { continue };
-                match &mut run {
-                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
-                    _ => {
-                        flush(run.take(), &mut by);
-                        run = Some((q.as_str(), vec![&row[1..]]));
-                    }
-                }
-            }
-            flush(run, &mut by);
-        }
-        Grouped(by)
-    }
-}
-
-impl<'a, 'b: 'a> Grouped<'a, V<'b>> {
-    /// Each program's rows in `views` (the parts of one document's facts, `decode_view`), as `of` groups owned facts.
-    pub(in crate::code_rule_dsl) fn of_views(views: &'a [View<'b>]) -> Self {
-        let mut by: BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [V<'b>]>>> = BTreeMap::new();
-        for view in views {
-            for rel in &view.rels {
-                let mut run: Option<(&'b str, Vec<&'a [V<'b>]>)> = None;
-                for row in rel.rows() {
-                    let Some(V::Str(q)) = row.first() else { continue };
-                    match &mut run {
-                        Some((p, rows)) if *p == *q => rows.push(&row[1..]),
-                        _ => {
-                            if let Some((p, rows)) = run.take() {
-                                by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
-                            }
-                            run = Some((q, vec![&row[1..]]));
-                        }
-                    }
-                }
-                if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel.name).or_default().extend(rows);
-                }
-            }
-        }
-        Grouped(by)
-    }
-}
-
-impl<'a, C: Cell> Grouped<'a, C> {
-    /// Program `p`, as it was written.
-    pub(in crate::code_rule_dsl) fn program(&self, p: &str) -> Result<Program, String> {
-        let rows = self.0.get(p).cloned().unwrap_or_default();
-        Reader::from_rows(rows, p)?.program()
-    }
-}
-
 fn int<C: Cell>(v: &C) -> Result<i64, String> {
     v.int()
 }
@@ -940,18 +809,12 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
 }
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows (`document_facts`).
+/// same rows.
 pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
     super::rr::print(&prog).map_err(|e| bad(format!("{e:?}")))
-}
-
-/// A document's rows, as `rr::parse` reads them.
-pub fn document_facts(text: &str) -> Result<Facts, String> {
-    let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
-    Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
@@ -1051,49 +914,6 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     Ok(facts)
 }
 
-/// Bytes `encode` made, read in place: the facts `decode` reads, their strings borrowed from `bytes`.
-pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
-    let mut at = 0usize;
-    // A corrupt length is refused, not added past the end (`checked_add`).
-    let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
-        let out = bytes.get(*at..at.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
-        *at += n;
-        Ok(out)
-    };
-    let u64_at = |at: &mut usize| -> Result<u64, String> { Ok(u64::from_le_bytes(take(at, 8)?.try_into().expect("eight bytes"))) };
-    let count = u64_at(&mut at)? as usize;
-    let mut table: Vec<&str> = Vec::with_capacity(count.min(1 << 20));
-    for _ in 0..count {
-        let n = u64_at(&mut at)? as usize;
-        table.push(std::str::from_utf8(take(&mut at, n)?).map_err(|e| bad(e))?);
-    }
-    let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
-    let mut rels = Vec::new();
-    for _ in 0..u64_at(&mut at)? {
-        let name = string(u64_at(&mut at)?)?;
-        let rows_n = u64_at(&mut at)? as usize;
-        // Each value is at least nine bytes, so a relation's rows hold no more values than its row count leaves room for.
-        let mut values = Vec::with_capacity(rows_n.min((bytes.len() - at) / 9));
-        let mut starts = Vec::with_capacity(rows_n.min(1 << 24));
-        for _ in 0..rows_n {
-            starts.push(u32::try_from(values.len()).map_err(|e| bad(e))?);
-            let width = u64_at(&mut at)? as usize;
-            for _ in 0..width {
-                values.push(match take(&mut at, 1)?[0] {
-                    0 => V::Int(i64::from_le_bytes(take(&mut at, 8)?.try_into().expect("eight bytes"))),
-                    1 => V::Str(string(u64_at(&mut at)?)?),
-                    tag => return Err(bad(format!("no value tag {tag}"))),
-                });
-            }
-        }
-        rels.push(ViewRel { name, values, starts });
-    }
-    if at != bytes.len() {
-        return Err(bad("bytes after the facts"));
-    }
-    Ok(View { rels })
-}
-
 #[cfg(test)]
 pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
@@ -1139,11 +959,11 @@ pub mod tests {
         assert_eq!(super::decode(&got).unwrap(), facts);
     }
 
-    /// A program read in place off its encoded facts (`decode_view`, `Grouped::of_views`) is the program read off the
-    /// facts decoded: in any order of rows, and with ids that are not dense (a map, not a vector, indexes them).
+    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
+    /// map, not a vector, indexes them).
     #[test]
-    fn a_program_reads_back_the_same_in_place() {
-        use super::{Facts, Grouped, Value};
+    fn a_program_reads_back_the_same_in_any_order() {
+        use super::{Facts, Value};
         let prog = crate::code_rule_dsl::logic::rr::parse(
             ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
              p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
@@ -1153,9 +973,6 @@ pub mod tests {
         super::write(&mut facts, "q", &prog);
         let owned = super::program(&facts, "q").unwrap();
         let bytes = super::encode(&facts);
-        let views = [super::decode_view(&bytes).unwrap()];
-        let viewed = Grouped::of_views(&views).program("q").unwrap();
-        assert_eq!(format!("{viewed:?}"), format!("{owned:?}"));
         assert_eq!(format!("{owned:?}"), format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()));
         // Ids spread out (each times 1000) and rows reversed: read back the same.
         let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
@@ -1175,8 +992,7 @@ pub mod tests {
             far.insert(rel.clone(), rows);
         }
         let bytes = super::encode(&far);
-        let views = [super::decode_view(&bytes).unwrap()];
-        assert_eq!(format!("{:?}", Grouped::of_views(&views).program("q").unwrap()), format!("{owned:?}"));
+        assert_eq!(format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
     }
 
     /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
