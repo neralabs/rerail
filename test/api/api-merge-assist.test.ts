@@ -109,7 +109,7 @@ describe("the Merge Assist operations", () => {
       { method: "setEnabled", checkout, enabled: true },
       { method: "updateSettings", checkout, change: { hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
       { method: "setEnabled", checkout, enabled: false },
-      { method: "dismissConflict", checkout: worktree, conflictId: CONFLICT, actor: "person" },
+      { method: "dismissConflict", checkout: worktree, conflictId: CONFLICT },
     ]);
   });
 
@@ -154,8 +154,8 @@ describe("the Merge Assist operations", () => {
     expect(mergeAssistStatusSchema.parse(await call("merge_assist_get", {}, join(checkout, "src", "api"))).checkout).toBe(checkout);
     expect(await call("merge_assist_scan", {}, checkout)).toMatchObject({ checkout });
     expect(await call("merge_assist_settings_get", {}, checkout)).toEqual({ hook: null });
-    // A dismissal reaches the service as the agent's, which the service refuses.
-    expect(await call("merge_assist_conflict_dismiss", { conflictId: CONFLICT }, checkout)).toMatchObject({ checkout });
+    // Dismissing a conflict is the person's: refused before the service hears of it, even in the agent's own checkout.
+    expect(await call("merge_assist_conflict_dismiss", { conflictId: CONFLICT }, checkout)).toEqual(refused);
     // Turning it on or off, and the hook command, which runs a program as the person, are the person's.
     expect(await call("merge_assist_settings_set", { enabled: true }, checkout)).toEqual(refused);
     expect(await call("merge_assist_settings_set", { hook: null }, checkout)).toEqual(refused);
@@ -170,7 +170,6 @@ describe("the Merge Assist operations", () => {
       { method: "status", checkout },
       { method: "scan", checkout },
       { method: "settings", checkout },
-      { method: "dismissConflict", checkout, conflictId: CONFLICT, actor: "agent" },
       { method: "status", checkout: worktree },
     ]);
   });

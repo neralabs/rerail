@@ -28,7 +28,7 @@ beforeEach(() => {
   setScope({ repository: "A" });
   data.repository = { setUp: true, repositoryKey: "A" };
   data.rules = new Map([["r", { rule: { id: "r" } }]]);
-  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList(), mergeAssist: null });
+  Object.assign(data, { findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(), sessionFindings: pagedList(), mergeAssist: null, mergeAssistError: null, loaded: false });
   data.sessionDetail.clear();
   ui.panel = null;
   ui.selectedSession = null;
@@ -82,6 +82,7 @@ describe("a poll", () => {
   });
 
   it("reads only the sessions list and the selected session on Sessions, besides the sidebar's rules, packs and Merge Assist", async () => {
+    data.loaded = true;
     ui.view = "sessions";
     ui.selectedSession = "s1";
 
@@ -94,6 +95,7 @@ describe("a poll", () => {
   });
 
   it("reads nothing beyond the shared reads and the sidebar's rules, packs and Merge Assist on Settings", async () => {
+    data.loaded = true;
     ui.view = "settings";
 
     await refresh();
@@ -103,7 +105,7 @@ describe("a poll", () => {
 
   it("reads Merge Assist for the sidebar's count at most every 30 s, and on every poll on its own page", async () => {
     const mergeReads = () => requested.filter(url => url.pathname === "/api/merge-assist").length;
-    data.mergeAssist = null;
+    data.loaded = true;
     ui.view = "settings";
 
     await refresh();

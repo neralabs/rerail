@@ -103,6 +103,29 @@ describe("hook steers", () => {
     expect(receiptCount(root)).toBe(1);
   });
 
+  it.each(hookCases)("counts no $host output whose only delivery is a note naming no rule (a Merge Assist note)", async ({ host, run, input }) => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    await persistPending(pendingPath(options.storageRoot!, host, "session-1"), [{ ...delivery("Your edit overlaps open work."), conflict }]);
+    const output = await run(input(root), options);
+    expect(JSON.stringify(output)).toContain("Your edit overlaps open work.");
+    await emitHookOutput(output, new Writable({ write(_chunk, _encoding, callback) { callback(); } }));
+    expect(receiptCount(root)).toBe(0);
+  });
+
+  it("hands a held note on whose conflict is not one, without its line", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const path = pendingPath(options.storageRoot!, "claude-code", "session-1");
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, JSON.stringify([{ ...delivery("kept"), conflict }, { ...delivery("unlinked"), conflict: { ...conflict, url: null } }, { ...delivery("unnamed"), conflict: "x" }]));
+    expect(await readPending(path)).toEqual([{ ...delivery("kept"), conflict }, delivery("unlinked"), delivery("unnamed")]);
+    const output = await runClaudeHook({ cwd: root, session_id: "session-1", hook_event_name: "SessionStart", source: "startup" }, options);
+    expect(output).toMatchObject({ hookSpecificOutput: { additionalContext: expect.stringContaining("kept\n\nunlinked\n\nunnamed") } });
+  });
+
   it("keeps a held steer's rules, so its lines can still be drawn, and reads a steer held before they were kept as naming none", async () => {
     const root = await temporaryDirectory();
     const path = pendingPath(hookOptions(root).storageRoot!, "claude-code", "session-1");

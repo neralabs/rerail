@@ -4,14 +4,11 @@
  * session once: what a session was handed is kept under `delivered:<session>`, and only once a delivery has taken it.
  * A note carries the person's line for its conflict (`conflict`).
  */
-import { like } from "drizzle-orm";
-import { sep } from "node:path";
 import { z } from "zod";
 import type { ConflictNotice } from "../../engine/adapter-contract.js";
-import { conflictNote, hookFollowUpNote, hookNote, sideName } from "../../engine/code-rule/rerail-steer.js";
+import { cappedLine, conflictNote, hookFollowUpNote, hookNote, sideName, STEER_LINE_CHARS } from "../../engine/code-rule/rerail-steer.js";
 import type { Conflict } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
-import { mergeAssistState } from "../../engine/storage/schema.js";
 import { statusText } from "./conflict-delivery.js";
 import { readConflicts, type StoredConflict } from "./conflict-store.js";
 import { STATE_KEYS, readState, writeState, type StateQueries } from "./state.js";
@@ -43,11 +40,11 @@ export interface PendingNoteOptions extends ConflictNoteOptions {
 
 /**
  * The person's line for an open conflict: what it is. On a host with no status line (Codex), the line carries the
- * conflict's line too.
+ * conflict's line too. Every part from the other side is one line and cut short.
  */
 function noticeOf(conflict: Conflict, options: ConflictNoteOptions): ConflictNotice {
-  const summary = options.statusLine ? "" : ` — ${statusText(conflict)}`;
-  return { id: conflict.id, text: `your edit overlaps ${sideName(conflict.theirs)}: ${conflict.title}${summary}` };
+  const summary = options.statusLine ? "" : ` — ${cappedLine(statusText(conflict), STEER_LINE_CHARS)}`;
+  return { id: conflict.id, text: `your edit overlaps ${sideName(conflict.theirs, cappedLine)}: ${cappedLine(conflict.title)}${summary}` };
 }
 
 /**
@@ -120,25 +117,20 @@ export interface ConflictFooter {
 }
 
 /**
- * The footer's Merge Assist segment for a session working in `cwd`: from the conflicts of the checkout that holds it
- * (the longest stored checkout path `cwd` is in); undefined when none is open but quiet ones. Reads only.
+ * The footer's Merge Assist segment for a session that started in `checkoutPath` (its checkout's physical root): from
+ * that checkout's conflicts alone; undefined when none is open but quiet ones. Reads only.
  */
-export function conflictFooter(db: StateQueries, cwd: string): ConflictFooter | undefined {
-  const prefix = STATE_KEYS.conflicts("");
-  const checkout = db.select({ key: mergeAssistState.key }).from(mergeAssistState).where(like(mergeAssistState.key, `${prefix}%`)).all()
-    .map(row => row.key.slice(prefix.length))
-    .filter(path => cwd === path || cwd.startsWith(`${path}${sep}`))
-    .sort((left, right) => right.length - left.length)[0];
-  if (checkout === undefined) return undefined;
-  const open = surfacedConflicts(db, checkout);
+export function conflictFooter(db: StateQueries, checkoutPath: string): ConflictFooter | undefined {
+  const open = surfacedConflicts(db, checkoutPath);
   const newest = open.toSorted((left, right) => right.conflict.detectedAt.localeCompare(left.conflict.detectedAt))[0];
   if (newest === undefined) return undefined;
   return { conflicts: open.length, summary: { id: newest.conflict.id, text: statusText(newest.conflict) } };
 }
 
 /**
- * Record that `marks` were handed to the session. Only marks of conflicts still in the checkout are kept: a conflict
- * that is found again after it went away is news again.
+ * Record that `marks` were handed to the session: a conflict reaches a session once. Only marks of conflicts still in
+ * the checkout are kept, which bounds the record; a conflict pruned so (it went away before a later delivery) is told
+ * again should it be found again.
  */
 export function markNotesDelivered(db: RerailDatabase, sessionId: string, checkoutPath: string, marks: readonly string[], now: number): void {
   if (marks.length === 0) return;

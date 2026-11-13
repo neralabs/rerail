@@ -5,8 +5,8 @@
  * nothing from `src/`, which runs in the child processes.
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { SEED_NOW, type ScenarioManifest, type ScenarioName, type ScenarioRepository } from "./scenario-manifest.js";
@@ -19,14 +19,32 @@ const DAEMON_START_TIMEOUT_MS = 90_000;
 const DAEMON_STOP_TIMEOUT_MS = 10_000;
 const POLL_MS = 100;
 
+/** What the machine's GitHub CLI and its sign-in are configured by; a scenario process gets none of it. */
+const GITHUB_ENVIRONMENT: Record<string, true> = {
+  GH_TOKEN: true, GITHUB_TOKEN: true, GH_ENTERPRISE_TOKEN: true, GITHUB_ENTERPRISE_TOKEN: true, GH_CONFIG_DIR: true, GH_HOST: true, XDG_CONFIG_HOME: true,
+};
+
 /**
- * The environment of every scenario process: the machine's `RERAIL_*` settings dropped, the scenario's home and `HOME`
- * in their place, no autostart, no keychain, no shell profile edits, and UTC so "today" is the seed day's.
+ * A `gh` that is installed and signed in nowhere (it exits 1, as `gh auth status` does when signed out), first on the
+ * scenario's `PATH`: every machine then shows the same `gh`, and no scenario reads GitHub with the person's sign-in.
+ */
+function signedOutGh(root: string): string {
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "gh"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  return bin;
+}
+
+/**
+ * The environment of every scenario process: the machine's `RERAIL_*` and GitHub settings dropped, the scenario's home
+ * and `HOME` in their place, a signed-out `gh` (`signedOutGh`), no autostart, no keychain, no shell profile edits, and
+ * UTC so "today" is the seed day's.
  */
 export function scenarioEnvironment(root: string): NodeJS.ProcessEnv {
-  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_")));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_") && !Object.hasOwn(GITHUB_ENVIRONMENT, name)));
   return {
     ...inherited,
+    PATH: [signedOutGh(root), process.env.PATH].filter(Boolean).join(delimiter),
     RERAIL_HOME: join(root, "home"),
     HOME: join(root, "user"),
     RERAIL_AUTOSTART: "0",

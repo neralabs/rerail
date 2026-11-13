@@ -15,7 +15,10 @@ import { targetShape } from "./repository-contracts.js";
 
 export { mergeAssistSettingsSchema, mergeAssistStatusSchema };
 
-/** The checkout Merge Assist acts on: `checkout`, else the repository's main checkout, else the calling agent's. */
+/**
+ * The checkout Merge Assist acts on: `checkout`, else the repository's main checkout (or, with none on disk, the one
+ * seen last), else the calling agent's.
+ */
 export const mergeAssistTargetSchema = z.object({ ...targetShape }).strict();
 
 export const mergeAssistSettingsBodySchema = z.object({

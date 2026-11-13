@@ -19,14 +19,18 @@ export const changed = (name: string): string => body(name, { 20: `  const ${nam
 /** The conflicts not dismissed. */
 export const open = (conflicts: readonly Conflict[]): Conflict[] => conflicts.filter(conflict => conflict.status === "open");
 
-/** A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing. */
-export function sessionRuntime(ws: Workspace, service: MergeAssistRuntime): RerailRuntime {
+/**
+ * A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing;
+ * `mergeAssistWaitMs` bounds how long an edit's result waits for Merge Assist where a hook command is set.
+ */
+export function sessionRuntime(ws: Workspace, service: MergeAssistRuntime, { mergeAssistWaitMs }: { mergeAssistWaitMs?: number } = {}): RerailRuntime {
   return new RerailRuntime({
     autostart: false,
     workspaceRoot: ws.repo,
     storageRoot: join(ws.folder, "sessions"),
     databasePath: ws.databasePath,
     mergeAssist: service,
+    ...(mergeAssistWaitMs === undefined ? {} : { mergeAssistWaitMs }),
     embedder: testEmbedder,
     createAuditor: () => ({
       openWorkspace: async () => undefined,

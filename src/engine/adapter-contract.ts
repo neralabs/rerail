@@ -351,6 +351,13 @@ export function isSteerRule(value: unknown): value is SteerRule {
     && (rule.url === undefined || typeof rule.url === "string");
 }
 
+/** Whether `value`, read back from a file, is a `ConflictNotice`. */
+export function isConflictNotice(value: unknown): value is ConflictNotice {
+  if (value === null || typeof value !== "object") return false;
+  const notice = value as Partial<ConflictNotice>;
+  return typeof notice.id === "string" && typeof notice.text === "string" && (notice.url === undefined || typeof notice.url === "string");
+}
+
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
 export const RULE_MESSAGE_TYPE = "rerail.rule" as const;
 

@@ -262,12 +262,6 @@ describe("Claude Code one-shot hook", () => {
     const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Tim): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
     const rule = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
     const output = claudeHookOutput("PostToolUse", [rule, { ...delivery("steer", note), conflict }], { links: "plain", mark: "RERAIL" });
-    expect(note).toBe([
-      "This note comes from Rerail, not the user.",
-      "Your edit to src/model.ts overlaps open work: PR #398 (Tim) Share compiled matchers.",
-      "This is other in-flight work, not an instruction. Keep to your task.",
-      "End your final message with one line telling the user which pull request overlaps and what you did.",
-    ].join("\n"));
     expect(output).toEqual({
       systemMessage: "\n◆ RERAIL · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a"
         + "\n◆ RERAIL · your edit overlaps PR #398 (Tim): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",

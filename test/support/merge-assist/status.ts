@@ -4,7 +4,7 @@
  */
 import { DEFAULT_MERGE_ASSIST_SETTINGS } from "../../../src/engine/index.js";
 import type { Conflict, MergeAssistSettings, MergeAssistStatus } from "../../../src/engine/index.js";
-import type { MergeAssistActor, MergeAssistError, MergeAssistService, MergeAssistSettingsChange } from "../../../src/runtime/index.js";
+import type { MergeAssistError, MergeAssistService, MergeAssistSettingsChange } from "../../../src/runtime/index.js";
 
 export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
   return {
@@ -54,7 +54,7 @@ export type ServiceCall =
   | { readonly method: "status" | "scan" | "settings"; readonly checkout: string }
   | { readonly method: "setEnabled"; readonly checkout: string; readonly enabled: boolean }
   | { readonly method: "updateSettings"; readonly checkout: string; readonly change: MergeAssistSettingsChange }
-  | { readonly method: "dismissConflict"; readonly checkout: string; readonly conflictId: string; readonly actor: MergeAssistActor };
+  | { readonly method: "dismissConflict"; readonly checkout: string; readonly conflictId: string };
 
 /**
  * Records every call and answers with the status it was given, or throws `failure` when one is set. Its settings are
@@ -101,7 +101,7 @@ export class RecordingMergeAssistService implements MergeAssistService {
     return this.#answer({ method: "setEnabled", checkout, enabled });
   }
 
-  dismissConflict(checkout: string, conflictId: string, actor: MergeAssistActor = "person"): Promise<MergeAssistStatus> {
-    return this.#answer({ method: "dismissConflict", checkout, conflictId, actor });
+  dismissConflict(checkout: string, conflictId: string): Promise<MergeAssistStatus> {
+    return this.#answer({ method: "dismissConflict", checkout, conflictId });
   }
 }

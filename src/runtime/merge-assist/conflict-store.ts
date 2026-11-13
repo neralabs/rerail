@@ -1,7 +1,9 @@
 /**
  * The checkout's in-flight conflicts in `merge_assist_state` under `conflicts:<checkout path>`: each as the status
  * shows it, with its file and the content anchor its question is built on. A dismissal holds for its id (its question
- * and their ref) until Merge Assist is turned off for the repository, which clears them all.
+ * and their ref) until Merge Assist is turned off for the repository, which clears them all. An entry this build cannot
+ * read is left out on its own; the others stand. A dismissed conflict is kept without its hunks and evidence, which
+ * only an open conflict shows, so dismissals stay small however many accumulate.
  */
 import { z } from "zod";
 import { conflictSchema, type Conflict } from "../../engine/merge-assist/model.js";
@@ -17,14 +19,28 @@ export const storedConflictSchema = z.object({
 });
 export type StoredConflict = z.infer<typeof storedConflictSchema>;
 
-const storeSchema = z.array(storedConflictSchema);
+/** The store as a list; each entry is validated on its own. */
+const storeSchema = z.array(z.unknown());
 
 export function readConflicts(db: StateQueries, checkoutPath: string): StoredConflict[] {
-  return readState(db, STATE_KEYS.conflicts(checkoutPath), storeSchema) ?? [];
+  return (readState(db, STATE_KEYS.conflicts(checkoutPath), storeSchema) ?? []).flatMap(entry => {
+    const parsed = storedConflictSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+/** A conflict as the store keeps it: a dismissed one without the hunks and evidence only an open one shows. */
+function kept(entry: StoredConflict): StoredConflict {
+  if (entry.conflict.status === "open") return entry;
+  const { conflict } = entry;
+  return {
+    ...entry,
+    conflict: { ...conflict, mine: { ...conflict.mine, hunk: null }, theirs: { ...conflict.theirs, hunk: null }, evidence: [] },
+  };
 }
 
 export function writeConflicts(db: StateQueries, checkoutPath: string, conflicts: readonly StoredConflict[], now: number): void {
-  writeState(db, STATE_KEYS.conflicts(checkoutPath), conflicts, now);
+  writeState(db, STATE_KEYS.conflicts(checkoutPath), conflicts.map(kept), now);
 }
 
 /**

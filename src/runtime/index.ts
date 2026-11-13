@@ -34,14 +34,14 @@ export {
   createMergeAssistService,
   MERGE_ASSIST_ERROR_CODES,
   MergeAssistError,
-  type MergeAssistActor,
   type MergeAssistErrorCode,
   type MergeAssistRuntime,
   type MergeAssistService,
   type MergeAssistServiceOptions,
   type MergeAssistSettingsChange,
 } from "./merge-assist/service.js";
-export { type GithubClient, type GithubRepository, type PullRequestSummary } from "./merge-assist/github.js";
+export { type StoredConflict, writeConflicts } from "./merge-assist/conflict-store.js";
+export { type GithubClient, GithubError, type GithubRepository, type PullRequestSummary } from "./merge-assist/github.js";
 export {
   isRerailStarted,
   setCheckoutStarted,

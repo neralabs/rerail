@@ -21,7 +21,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
+import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -70,9 +70,13 @@ function contextOf<C extends string | null>(
   return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
 }
 
+/** A forgotten checkout's own rows go with it: its rule settings, and what Merge Assist found and scanned there. */
 function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): void {
   if (checkoutPaths.length === 0) return;
   db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
+  // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
+  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
+  db.delete(mergeAssistState).where(inArray(mergeAssistState.key, keys)).run();
 }
 
 /** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */

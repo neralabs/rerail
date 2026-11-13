@@ -9,13 +9,14 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
-import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { sideName } from "../engine/code-rule/rerail-steer.js";
 import {
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
   MAX_HOOK_TIMEOUT_SECONDS,
   type Conflict,
+  type GithubState,
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "../engine/merge-assist/model.js";
@@ -35,6 +36,8 @@ interface Output {
 /** A service over an open database, closed when the command is done. */
 export interface MergeAssistCommandSession {
   readonly service: MergeAssistService;
+  /** Resolves once the conflict hook's handlers a change started (the person's command) have answered. */
+  settled(): Promise<void>;
   close(): void | Promise<void>;
 }
 
@@ -50,11 +53,20 @@ export interface MergeAssistCommandIo {
 function openDefaultService(): MergeAssistCommandSession {
   const database = openRerailDatabase(defaultRerailDatabasePath());
   const service = createMergeAssistService({ database });
+  // Ctrl-C while the person's hook command runs stops it (its own process group, whose timeout lives in this
+  // process) before Rerail exits, so none is left running.
+  const interrupt = (): void => {
+    void service.stop().finally(() => process.exit(130));
+  };
+  process.once("SIGINT", interrupt);
   return {
     service,
+    settled: () => service.settled(),
     // The conflict hook's handlers (the person's command) record their answers in the database.
     close: async () => {
       await service.settled();
+      process.off("SIGINT", interrupt);
+      await service.stop();
       database.$client.close();
     },
   };
@@ -143,24 +155,29 @@ function conflictSections(status: MergeAssistStatus, hunks: boolean): string[] {
 }
 
 /** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks. */
-export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string | null): string {
+export function formatConflicts(status: MergeAssistStatus, name: string, dashboardUrl: string | null): string {
   const open = status.conflicts.filter(conflict => conflict.status === "open").length;
   return [
-    `● ${plural(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
+    `● ${plural(open, "open conflict", "open conflicts")} in ${name}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
     ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
     ...conflictSections(status, true),
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");
 }
 
+/** What `gh`'s readiness means for a scan, but signed in. */
+const GITHUB_LINES: Record<Exclude<GithubState, "signed-in">, string> = {
+  "signed-out": "gh is not signed in, so open pull requests are not read. Sign in with gh auth login.",
+  missing: "gh is not installed, so open pull requests are not read.",
+  "not-github": "the repository's remote is not on GitHub, so only local branches are read.",
+  unchecked: "not checked: Rerail runs gh only once Merge Assist is on.",
+  unavailable: "gh did not say whether it is signed in (it did not answer in time or failed), so open pull requests are not read this time.",
+};
+
 function githubLine(status: MergeAssistStatus): string {
   const { github } = status.readiness;
-  if (github.state === "signed-in") {
-    return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}`;
-  }
-  if (github.state === "signed-out") return "  GitHub: gh is not signed in, so open pull requests are not read. Sign in with gh auth login.";
-  if (github.state === "missing") return "  GitHub: gh is not installed, so open pull requests are not read.";
-  return "  GitHub: the repository's remote is not on GitHub, so only local branches are read.";
+  if (github.state !== "signed-in") return `  GitHub: ${GITHUB_LINES[github.state]}`;
+  return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}`;
 }
 
 function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] {
@@ -186,9 +203,8 @@ const TURNING_ON = [
   "  Turn it on with rerail merge-assist on.",
 ];
 
-/** The status as text; `scanRequested` when it answers `rerail merge-assist scan`. */
-export function formatMergeAssistStatus(status: MergeAssistStatus, dashboardUrl: string | null, scanRequested = false): string {
-  const name = repositoryName(status.checkout);
+/** The status as text for the repository `name`; `scanRequested` when it answers `rerail merge-assist scan`. */
+export function formatMergeAssistStatus(status: MergeAssistStatus, name: string, dashboardUrl: string | null, scanRequested = false): string {
   const branch = status.branch === null ? "detached HEAD" : plain(status.branch);
   const base = status.baseBranch === null ? "" : `, base ${plain(status.baseBranch)}`;
   const page = dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`];
@@ -214,11 +230,11 @@ function dismissLine(id: string, status: MergeAssistStatus): string {
 }
 
 /** What the command prints for `step`: a line for a dismissal, else the conflicts or the status. */
-function resultText(step: StatusStep, status: MergeAssistStatus, dashboardUrl: string | null): string {
+function resultText(step: StatusStep, status: MergeAssistStatus, name: string, dashboardUrl: string | null): string {
   const page = dashboardUrl === null ? "" : `\n  Merge Assist page: ${dashboardUrl}`;
   if (step.action === "dismiss") return `${dismissLine(step.id, status)}${page}`;
-  if (step.action === "conflicts") return formatConflicts(status, dashboardUrl);
-  return formatMergeAssistStatus(status, dashboardUrl, step.action === "scan");
+  if (step.action === "conflicts") return formatConflicts(status, name, dashboardUrl);
+  return formatMergeAssistStatus(status, name, dashboardUrl, step.action === "scan");
 }
 
 /**
@@ -243,6 +259,8 @@ type StatusStep = Exclude<Step, SettingsStep>;
 interface Invocation {
   readonly step: Step;
   readonly root: string;
+  /** The repository's folder name, as the text names it. */
+  readonly name: string;
   readonly json: boolean;
 }
 
@@ -328,7 +346,8 @@ function invocation(args: readonly string[], usage: () => string): Invocation {
   } catch {
     throw new Error(`${requested} does not exist`);
   }
-  return { step, root: repositoryIdentityLocation(physical).workspaceRoot, json: flags.has("--json") };
+  const location = repositoryIdentityLocation(physical);
+  return { step, root: location.workspaceRoot, name: repositoryFolderName(location), json: flags.has("--json") };
 }
 
 function changesSettings(request: SettingsRequest): boolean {
@@ -355,11 +374,18 @@ async function settingsAfter(service: MergeAssistService, root: string, request:
   return (await service.updateSettings(root, await hookChange(service, root, request))).settings;
 }
 
-async function run(service: MergeAssistService, step: StatusStep, root: string): Promise<MergeAssistStatus> {
-  if (step.action === "dismiss") return await service.dismissConflict(root, step.id, "person");
+/**
+ * The status a step leaves. A scan or a dismissal hands its conflict events to the person's hook command: its status is
+ * read again once the command answered, so it shows the hook's outcome.
+ */
+async function run(session: MergeAssistCommandSession, step: StatusStep, root: string): Promise<MergeAssistStatus> {
+  const { service } = session;
   if (step.action === "status" || step.action === "conflicts") return await service.status(root);
-  if (step.action === "scan") return await service.scan(root);
-  return await service.setEnabled(root, step.action === "on");
+  if (step.action === "on" || step.action === "off") return await service.setEnabled(root, step.action === "on");
+  if (step.action === "dismiss") await service.dismissConflict(root, step.id);
+  else await service.scan(root);
+  await session.settled();
+  return await service.status(root);
 }
 
 /** What a step answered: the checkout's status, or for `settings` the settings. */
@@ -367,24 +393,24 @@ type Outcome =
   | { readonly step: StatusStep; readonly status: MergeAssistStatus }
   | { readonly step: SettingsStep; readonly settings: MergeAssistSettings };
 
-async function outcomeOf(service: MergeAssistService, step: Step, root: string): Promise<Outcome> {
-  if (step.action === "settings") return { step, settings: await settingsAfter(service, root, step.request) };
-  return { step, status: await run(service, step, root) };
+async function outcomeOf(session: MergeAssistCommandSession, step: Step, root: string): Promise<Outcome> {
+  if (step.action === "settings") return { step, settings: await settingsAfter(session.service, root, step.request) };
+  return { step, status: await run(session, step, root) };
 }
 
-/** The settings as text: the conflict hook command. */
-function formatSettings(root: string, settings: MergeAssistSettings, changed: boolean, dashboardUrl: string | null): string {
+/** The settings of the repository `name` as text: the conflict hook command. */
+function formatSettings(name: string, settings: MergeAssistSettings, changed: boolean, dashboardUrl: string | null): string {
   const { hook } = settings;
   return [
-    `● ${changed ? "Saved Merge Assist settings" : "Merge Assist settings"} for ${repositoryName(root)}:`,
+    `● ${changed ? "Saved Merge Assist settings" : "Merge Assist settings"} for ${name}:`,
     `  Hook: ${hook === null ? "none" : `${plain(JSON.stringify(hook.command))} (timeout ${hook.timeoutSeconds} s)`}`,
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");
 }
 
-function outcomeText(outcome: Outcome, root: string, dashboardUrl: string | null): string {
-  if ("settings" in outcome) return formatSettings(root, outcome.settings, changesSettings(outcome.step.request), dashboardUrl);
-  return resultText(outcome.step, outcome.status, dashboardUrl);
+function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null): string {
+  if ("settings" in outcome) return formatSettings(name, outcome.settings, changesSettings(outcome.step.request), dashboardUrl);
+  return resultText(outcome.step, outcome.status, name, dashboardUrl);
 }
 
 /**
@@ -393,11 +419,11 @@ function outcomeText(outcome: Outcome, root: string, dashboardUrl: string | null
  */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
-  const { step, root, json } = invocation(args, usage);
+  const { step, root, name, json } = invocation(args, usage);
   const session = (io.openService ?? openDefaultService)();
   let outcome: Outcome;
   try {
-    outcome = await outcomeOf(session.service, step, root);
+    outcome = await outcomeOf(session, step, root);
   } catch (error) {
     if (!(error instanceof MergeAssistError)) throw error;
     if (json) stdout.write(`${JSON.stringify({ error: error.code, message: error.message })}\n`);
@@ -411,6 +437,6 @@ export async function runMergeAssistCommand(args: readonly string[], usage: () =
     return 0;
   }
   const dashboardUrl = await (io.dashboardUrl ?? defaultDashboardUrl)(root);
-  stdout.write(`${outcomeText(outcome, root, dashboardUrl)}\n`);
+  stdout.write(`${outcomeText(outcome, name, dashboardUrl)}\n`);
   return 0;
 }

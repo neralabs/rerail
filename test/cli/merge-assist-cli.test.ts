@@ -17,6 +17,8 @@ describe("rerail merge-assist", () => {
   let checkout: string;
   let service: RecordingMergeAssistService;
   let closed: number;
+  /** Runs when the command waits for the conflict hook's handlers, as the hook command's answer is recorded. */
+  let onSettled: () => void;
   let stdout: string;
   let stderr: string;
   let status: (checkout: string) => MergeAssistStatus;
@@ -29,6 +31,7 @@ describe("rerail merge-assist", () => {
     status = path => sampleStatus(path);
     service = new RecordingMergeAssistService(path => status(path));
     closed = 0;
+    onSettled = () => undefined;
     stdout = "";
     stderr = "";
   });
@@ -40,7 +43,7 @@ describe("rerail merge-assist", () => {
   const io = (dashboardUrl: string | null = PAGE): MergeAssistCommandIo => ({
     stdout: { write: text => { stdout += text; } },
     stderr: { write: text => { stderr += text; } },
-    openService: () => ({ service, close: () => { closed += 1; } }),
+    openService: () => ({ service, settled: async () => onSettled(), close: () => { closed += 1; } }),
     dashboardUrl: async () => dashboardUrl,
   });
   const run = (args: readonly string[], dashboardUrl?: string | null): Promise<number> => runMergeAssistCommand(args, usage, io(dashboardUrl));
@@ -60,7 +63,9 @@ describe("rerail merge-assist", () => {
       { method: "setEnabled", checkout, enabled: false },
       { method: "scan", checkout },
       { method: "status", checkout },
-      { method: "dismissConflict", checkout, conflictId, actor: "person" },
+      { method: "status", checkout },
+      { method: "dismissConflict", checkout, conflictId },
+      { method: "status", checkout },
     ]);
     expect(closed).toBe(7);
     // --json is the status the service answered, one line per command.
@@ -96,20 +101,20 @@ describe("rerail merge-assist", () => {
     ].join("\n"));
   });
 
-  it("explains what turning it on means while it is off, and what is missing", async () => {
+  it("explains what turning it on means while it is off, and that it ran no gh", async () => {
     status = path => sampleStatus(path, {
       enabled: false,
       branch: null,
       baseBranch: null,
       lastScan: null,
       readiness: {
-        github: { state: "missing", login: null, repository: null },
+        github: { state: "unchecked", login: null, repository: "acme/app" },
       },
     });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).toBe([
       "● Merge Assist is off in app (detached HEAD).",
-      "  GitHub: gh is not installed, so open pull requests are not read.",
+      "  GitHub: not checked: Rerail runs gh only once Merge Assist is on.",
       "  Turning it on means:",
       "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
       "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
@@ -208,7 +213,32 @@ describe("rerail merge-assist", () => {
     status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }] });
     expect(await run(["dismiss", conflict.id, "--repo", checkout], null)).toBe(0);
     expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Tim Belanger: not a conflict.\n");
-    expect(service.calls.at(-1)).toEqual({ method: "dismissConflict", checkout, conflictId: conflict.id, actor: "person" });
+    expect(service.calls.slice(-2)).toEqual([{ method: "dismissConflict", checkout, conflictId: conflict.id }, { method: "status", checkout }]);
+  });
+
+  it("prints a scan or a dismissal with what the person's hook command answered to it", async () => {
+    const conflict = sampleConflict();
+    const failed = { event: "detected" as const, ok: false, error: "exited with code 2: notify.sh: not found", note: null, status: null, at: "2026-11-03T14:05:01Z" };
+    status = path => sampleStatus(path, { conflicts: [conflict] });
+    onSettled = () => {
+      status = path => sampleStatus(path, { conflicts: [{ ...conflict, hook: failed }] });
+    };
+    expect(await run(["scan", "--repo", checkout], null)).toBe(0);
+    expect(stdout).toContain("Hook failed (detected): exited with code 2: notify.sh: not found");
+
+    stdout = "";
+    status = path => sampleStatus(path, { conflicts: [conflict] });
+    onSettled = () => {
+      status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" }, hook: { ...failed, event: "closed", ok: true, error: null } }] });
+    };
+    expect(await run(["dismiss", conflict.id, "--repo", checkout, "--json"])).toBe(0);
+    expect(mergeAssistStatusSchema.parse(JSON.parse(stdout)).conflicts[0]?.hook).toMatchObject({ event: "closed", ok: true });
+  });
+
+  it("says when gh could not tell whether it is signed in", async () => {
+    status = path => sampleStatus(path, { readiness: { github: { state: "unavailable", login: null, repository: "acme/app" } } });
+    expect(await run(["--repo", checkout], null)).toBe(0);
+    expect(stdout).toContain("  GitHub: gh did not say whether it is signed in (it did not answer in time or failed), so open pull requests are not read this time.\n");
   });
 
   it("shows the person's settings, and changes the hook command", async () => {

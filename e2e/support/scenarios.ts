@@ -38,9 +38,11 @@ import {
   approve,
   ruleSubject,
 } from "../../src/engine/index.js";
-import { createMergeAssistService, setRepositoryStarted, SqliteSessionStore } from "../../src/runtime/index.js";
-import { type StoredConflict, writeConflicts } from "../../src/runtime/merge-assist/conflict-store.js";
-import { DAY, HOUR, MINUTE, SEED_NOW, type ScenarioManifest, type ScenarioName, type ScenarioRepository } from "./scenario-manifest.js";
+import { createMergeAssistService, type GithubClient, setRepositoryStarted, SqliteSessionStore, type StoredConflict, writeConflicts } from "../../src/runtime/index.js";
+import {
+  DAY, HOSTILE_TEXT, HOUR, MINUTE, OPEN_CONFLICT_ID, OPEN_PR_URL, OTHER_REPOSITORY_URL, SCRIPT_URL, SEED_NOW,
+  type ScenarioManifest, type ScenarioName, type ScenarioRepository,
+} from "./scenario-manifest.js";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOSTS: readonly RerailHost[] = ["claude-code", "codex", "cursor"];
@@ -387,9 +389,6 @@ interface MergeAssistPlan {
   readonly conflicts: readonly StoredConflict[];
 }
 
-/** Text from someone else's branch that runs, or turns bold, if a page builds it as markup. */
-const HOSTILE_TEXT = `<img src=x onerror="window.__rerailInjected=1"><b>bold</b>`;
-
 const isoAt = (at: number): string => new Date(at).toISOString().replace(/\.\d{3}Z$/u, "Z");
 
 function side(over: Partial<ConflictSide> & Pick<ConflictSide, "label" | "ref" | "author" | "summary">): ConflictSide {
@@ -407,21 +406,22 @@ function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal"
 
 /**
  * The storefront checkout's conflicts: an overlap with PR #398 in the cart total (their summary and hunk carry
- * {@link HOSTILE_TEXT}), a quiet one in `package-lock.json` with a local branch, and one the person dismissed, whose
- * title is {@link HOSTILE_TEXT}.
+ * {@link HOSTILE_TEXT}), a quiet one in `package-lock.json` with a local branch that names another repository's pull
+ * request, and one the person dismissed, whose title, other side and its author are {@link HOSTILE_TEXT} and whose URL
+ * is a script.
  */
 function storefrontConflicts(now: number): StoredConflict[] {
   const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
   return [
     storedConflict({
-      id: "conflict:src/cart/cart.ts#1-3:pr398", shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
+      id: OPEN_CONFLICT_ID, shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
       title: "cart.ts · function total",
       mine: {
         ...mine, location: "src/cart/cart.ts:2",
         hunk: "@@ -1,3 +1,3 @@\n export function total(prices: number[]): number {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return Math.round(prices.reduce((sum, price) => sum + price, 0));\n",
       },
       theirs: side({
-        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: "https://github.com/acme/storefront/pull/398",
+        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
         tip: { at: isoAt(now - 4 * HOUR), pushed: true }, location: "src/cart/cart.ts:2",
         hunk: `@@ -1,3 +1,3 @@\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum + price, 0); // ${HOSTILE_TEXT}\n`,
       }),
@@ -434,7 +434,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
       title: "package-lock.json",
       mine: { ...mine, summary: "edits package-lock.json", location: "package-lock.json:12" },
       theirs: side({
-        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0",
+        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
         tip: { at: isoAt(now - 2 * HOUR), pushed: false }, location: "package-lock.json:12",
         hunk: "@@ -12 +12 @@\n-      \"version\": \"19.1.0\",\n+      \"version\": \"19.2.0\",\n",
       }),
@@ -446,7 +446,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
       id: "conflict:src/checkout/payment.ts#1-3:pr391", shortId: "9e31f0", quiet: false, question: "src/checkout/payment.ts#1-3",
       title: HOSTILE_TEXT,
       mine: { ...mine, location: "src/checkout/payment.ts:2" },
-      theirs: side({ label: "PR #391", ref: "refs/pull/391/head", author: "Ana", summary: "Log payments", url: "https://github.com/acme/storefront/pull/391" }),
+      theirs: side({ label: HOSTILE_TEXT, ref: "refs/pull/391/head", author: HOSTILE_TEXT, summary: "Log payments", url: SCRIPT_URL }),
       evidence: ["Both change src/checkout/payment.ts lines 1–3."],
       detectedAt: isoAt(now - 5 * HOUR),
       dismissal: { name: "tbelanger", at: isoAt(now - 2 * HOUR) },
@@ -455,9 +455,15 @@ function storefrontConflicts(now: number): StoredConflict[] {
   ];
 }
 
+/** A `gh` that is installed and signed out, so seeding reads nothing of the machine's GitHub. */
+const signedOutGithub: GithubClient = {
+  readiness: async repository => ({ state: "signed-out", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` }),
+  openPullRequests: async () => ({ pulls: [], truncated: false }),
+};
+
 /** Turns Merge Assist on in the checkout as a person does on its page, then stores its conflicts. */
 async function turnOnMergeAssist(db: RerailDatabase, checkoutPath: string, plan: MergeAssistPlan): Promise<void> {
-  await createMergeAssistService({ database: db, now: () => plan.at }).setEnabled(checkoutPath, true);
+  await createMergeAssistService({ database: db, github: signedOutGithub, now: () => plan.at }).setEnabled(checkoutPath, true);
   writeConflicts(db, checkoutPath, plan.conflicts, plan.at);
 }
 

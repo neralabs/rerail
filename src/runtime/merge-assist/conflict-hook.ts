@@ -153,7 +153,11 @@ export class ConflictHook {
     }
   }
 
-  /** Resolves once no conflict's agent note in the checkout waits for a handler: at most the note wait from now. */
+  /**
+   * Resolves once no conflict's agent note in the checkout waits for a handler. Each hold ends at most the note wait
+   * after it began, but a hold a later pass registers meanwhile is waited for too: a caller that must not wait longer
+   * than a bound races this with its own timer.
+   */
   released(checkoutPath: string): Promise<void> {
     if (!this.#awaiting.has(checkoutPath)) return Promise.resolve();
     const { promise, resolve } = Promise.withResolvers<void>();

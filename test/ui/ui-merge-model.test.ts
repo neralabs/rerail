@@ -54,6 +54,13 @@ describe("the status strip", () => {
     expect(githubText({ state: "signed-out", login: null, repository: null }).ok).toBe(false);
   });
 
+  it("tells every gh state apart, and none but signed in as ready", () => {
+    const states = ["signed-in", "signed-out", "missing", "unavailable", "unchecked", "not-github"] as const;
+    const shown = states.map(state => githubText({ state, login: null, repository: null }));
+    expect(new Set(shown.map(s => s.text)).size).toBe(states.length);
+    expect(shown.map(s => s.ok)).toEqual([true, false, false, false, false, false]);
+  });
+
   it("says what a scan read", () => {
     expect(scannedWhat({ at: at(1), peers: { branches: 1, pullRequests: 2 }, problems: [] })).toBe("1 local branch and 2 open pull requests");
     expect(scannedWhat({ at: at(1), peers: { branches: 0, pullRequests: 0 }, problems: [] })).toBe("no other branches");
@@ -85,6 +92,15 @@ describe("the readiness checklist", () => {
     const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null } });
     expect(signedOut[0]!.ok).toBe(false);
     expect(text(signedOut[0]!.text)).toContain("Run gh auth login");
+  });
+
+  it("says gh was not run while off, and that its sign-in could not be read, apart from the other states", () => {
+    const check = (state: "unchecked" | "unavailable" | "not-github") => readinessChecks({ ...status().readiness, github: { state, login: null, repository: null } })[0]!;
+    const [unchecked, unavailable, notGithub] = [check("unchecked"), check("unavailable"), check("not-github")];
+    expect(text(unchecked.text)).toContain("turn Merge Assist on");
+    expect(text(unavailable.text)).toContain("couldn’t read gh");
+    expect(new Set([unchecked, unavailable, notGithub].map(c => text(c.text))).size).toBe(3);
+    expect([unchecked.ok, unavailable.ok]).toEqual([false, false]);
   });
 });
 
@@ -133,8 +149,9 @@ describe("conflicts", () => {
     });
   });
 
-  it("colours a hunk's added, removed and header lines", () => {
+  it("colours a hunk's added, removed and @@ header lines, whatever an added or removed line starts with", () => {
     expect(hunkLines("@@ -1 +1 @@\n-old\n+new\n same\n").map(l => l.kind)).toEqual(["meta", "del", "add", "ctx"]);
+    expect(hunkLines("@@ -1,2 +1,2 @@\n--- a SQL comment\n+++i;\n").map(l => l.kind)).toEqual(["meta", "del", "add"]);
   });
 
   it("says a conflict hook failed with its event and why, and nothing when it ran fine or never ran", () => {

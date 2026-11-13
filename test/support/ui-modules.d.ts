@@ -149,6 +149,8 @@ declare module "*/ui/state.js" {
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */
+    loaded: boolean;
     /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
     mergeAssist: import("../../src/engine/index.js").MergeAssistStatus | null;
     mergeAssistError: string | null;

@@ -33,9 +33,10 @@ export interface HookPayload {
   readonly session: { readonly id: string; readonly host: string | null } | null;
 }
 
-type Answer = Pick<ConflictHookOutcome, "ok" | "error" | "note" | "status">;
+/** What the command answered to one event, as recorded on the conflict. */
+export type HookAnswer = Pick<ConflictHookOutcome, "ok" | "error" | "note" | "status">;
 
-const failed = (error: string): Answer => ({ ok: false, error, note: null, status: null });
+const failed = (error: string): HookAnswer => ({ ok: false, error, note: null, status: null });
 
 /** Output fit for a person: no escape sequences or control characters, bearer and API tokens masked, the last 300 characters. */
 function sanitizeTail(text: string): string {
@@ -49,11 +50,16 @@ function sanitizeTail(text: string): string {
   return clean.length <= DETAIL_TAIL_CHARS ? clean : `…${clean.slice(-(DETAIL_TAIL_CHARS - 1))}`;
 }
 
-/** Text kept from the command: no control character but new lines in a note, one line for a status, then cut. */
-function kept(text: string | undefined, max: number, oneLine: boolean): string | null {
-  const clean = (oneLine ? text?.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/gu, " ") : text?.replace(/[^\P{Cc}\n]+/gu, " "))?.trim() ?? "";
+/**
+ * Text kept from the command: no control character but new lines in a note, one line for a status, then cut to `max`
+ * characters (code points, so no emoji is split). Anything but a string is none.
+ */
+function kept(text: unknown, max: number, oneLine: boolean): string | null {
+  if (typeof text !== "string") return null;
+  const clean = (oneLine ? text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/gu, " ") : text.replace(/[^\P{Cc}\n]+/gu, " ")).trim();
   if (clean === "") return null;
-  return clean.length <= max ? clean : `${clean.slice(0, max - 1).trimEnd()}…`;
+  const chars = [...clean];
+  return chars.length <= max ? clean : `${chars.slice(0, max - 1).join("").trimEnd()}…`;
 }
 
 /** The command's stdout as a JSON object, or why it is not one. */
@@ -66,14 +72,17 @@ function outputObject(stdout: string): Record<string, unknown> | string {
   }
 }
 
-/** The command's stdout read as its answer: empty, or one JSON object with optional string `note` and `status`. */
-function answerOf(stdout: string): Answer {
+/**
+ * The command's stdout read as its answer: empty, or one JSON object with optional string `note` and `status`; a
+ * `null` one is left out, as most serializers write an absent field.
+ */
+function answerOf(stdout: string): HookAnswer {
   if (stdout.trim() === "") return { ok: true, error: null, note: null, status: null };
   const output = outputObject(stdout);
   if (typeof output === "string") return failed(output);
   const { note, status } = output;
-  if ([note, status].some(field => field !== undefined && typeof field !== "string")) return failed("its output's note and status must be strings");
-  return { ok: true, error: null, note: kept(note as string | undefined, MAX_HOOK_NOTE, false), status: kept(status as string | undefined, MAX_HOOK_STATUS, true) };
+  if ([note, status].some(field => !(field === undefined || field === null || typeof field === "string"))) return failed("its output's note and status must be strings");
+  return { ok: true, error: null, note: kept(note, MAX_HOOK_NOTE, false), status: kept(status, MAX_HOOK_STATUS, true) };
 }
 
 /** Why a command that ran to its end failed, from its exit and stderr; null when it exited 0. */
@@ -129,9 +138,9 @@ export class RunningCommands {
  * behind holding them (one it detached) cannot keep the answer waiting. The answer comes at most its timeout plus the
  * grace after it started.
  */
-export function runHookCommand(command: ConflictHookCommand, payload: HookPayload, options: { cwd: string; env: NodeJS.ProcessEnv; running?: RunningCommands }): Promise<Answer> {
+export function runHookCommand(command: ConflictHookCommand, payload: HookPayload, options: { cwd: string; env: NodeJS.ProcessEnv; running?: RunningCommands }): Promise<HookAnswer> {
   const [program, ...args] = command.command;
-  const { promise, resolve } = Promise.withResolvers<Answer>();
+  const { promise, resolve } = Promise.withResolvers<HookAnswer>();
   if (program === undefined) return Promise.resolve(failed("no command is set"));
   const child = spawn(program, args, {
     cwd: options.cwd,
@@ -139,6 +148,7 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
     detached: true,
+    windowsHide: true,
   });
   options.running?.add(child);
   const stdout: Buffer[] = [];
@@ -152,6 +162,7 @@ export function runHookCommand(command: ConflictHookCommand, payload: HookPayloa
     signalGroup(child, "SIGTERM");
     kill = setTimeout(() => {
       signalGroup(child, "SIGKILL");
+      child.stdin.destroy();
       child.stdout.destroy();
       child.stderr.destroy();
       resolve(failed(`timed out after ${command.timeoutSeconds} s`));

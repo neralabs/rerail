@@ -66,10 +66,10 @@ export function conflictSections(status, dismissing = new Set()) {
 /** A side's heading: "PR #398 · Tim", or the label alone when no author is known. */
 export const sideHeading = side => (side.author ? `${side.label} · ${side.author}` : side.label);
 
-/** A unified-diff hunk as lines to colour: `add`, `del`, `meta` (headers and `@@`) or `ctx`. */
+/** A unified-diff hunk as lines to colour: `add`, `del`, `meta` (`@@` headers) or `ctx`. A hunk has no file headers. */
 export function hunkLines(hunk) {
   return hunk.replace(/\n$/u, "").split("\n").map(text => {
-    if (text.startsWith("+++") || text.startsWith("---") || text.startsWith("@@")) return { kind: "meta", text };
+    if (text.startsWith("@@")) return { kind: "meta", text };
     if (text.startsWith("+")) return { kind: "add", text };
     if (text.startsWith("-")) return { kind: "del", text };
     return { kind: "ctx", text };
@@ -170,6 +170,8 @@ export function githubText(github) {
     case "signed-in": return { ok: true, text: github.login ? `Signed in as ${github.login}` : "Signed in" };
     case "signed-out": return { ok: false, text: "gh signed out" };
     case "missing": return { ok: false, text: "gh not found" };
+    case "unavailable": return { ok: false, text: "Couldn’t read gh’s sign-in" };
+    case "unchecked": return { ok: false, text: "gh not checked while off" };
     default: return { ok: false, text: "Not a GitHub repository" };
   }
 }
@@ -214,6 +216,10 @@ export function readinessChecks({ github }) {
       return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not signed in, so only local branches are read. Run ", { code: "gh auth login" }, " to read open pull requests."] }];
     case "missing":
       return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not installed, so only local branches are read."] }];
+    case "unavailable":
+      return [{ key: "github", ok: false, text: ["Rerail couldn’t read ", { code: "gh" }, "’s sign-in, so only local branches are read until it can."] }];
+    case "unchecked":
+      return [{ key: "github", ok: false, text: ["Rerail checks ", { code: "gh" }, "’s sign-in when you turn Merge Assist on, to read open pull requests; until then it runs no ", { code: "gh" }, "."] }];
     default:
       return [{ key: "github", ok: false, text: ["This repository is not on GitHub, so only local branches are read."] }];
   }

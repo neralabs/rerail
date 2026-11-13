@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
-import { captureScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
+import { captureScope, changeScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
@@ -126,5 +126,38 @@ describe("Merge Assist reads and writes", () => {
 
     expect(data.mergeAssistError).toMatch(/answered 500$/u);
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
+  });
+});
+
+// Last in the file: `changeScope` polls now and schedules the next poll, which no later test should see.
+describe("Merge Assist when the page moves to another checkout", () => {
+  const readFor = (checkout: string) => reads().find(r => r.url.searchParams.get("checkout") === checkout);
+
+  it("drops a read of the previous checkout that answers after the switch, and takes the new checkout's", async () => {
+    holding = true;
+    void refresh();
+    await vi.waitFor(() => expect(readFor("/work/a")).toBeDefined());
+
+    changeScope({ repository: "B", checkout: "/work/b" });
+    readFor("/work/a")!.resolve(json(status("open")));
+    await vi.waitFor(() => expect(readFor("/work/b")).toBeDefined());
+    expect(data.mergeAssist).toBeNull();
+
+    readFor("/work/b")!.resolve(json(sampleStatus("/work/b")));
+    await vi.waitFor(() => expect(data.mergeAssist?.checkout).toBe("/work/b"));
+  });
+
+  it("takes the new checkout's first read, though a write to the previous one answers while it is out", async () => {
+    const dismissing = dismiss();
+    await vi.waitFor(() => expect(writes()).toHaveLength(1));
+
+    holding = true;
+    changeScope({ repository: "B", checkout: "/work/b" });
+    await vi.waitFor(() => expect(readFor("/work/b")).toBeDefined());
+    writes()[0]!.resolve(json(status("dismissed")));
+    expect(await dismissing).toBeNull();
+
+    readFor("/work/b")!.resolve(json(sampleStatus("/work/b")));
+    await vi.waitFor(() => expect(data.mergeAssist?.checkout).toBe("/work/b"));
   });
 });

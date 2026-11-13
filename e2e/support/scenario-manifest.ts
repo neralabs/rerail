@@ -16,6 +16,15 @@ export function isScenarioName(value: string): value is ScenarioName {
   return (SCENARIO_NAMES as readonly string[]).includes(value);
 }
 
+/** Text from someone else's branch that runs, or turns bold, if a page builds it as markup (`merge-assist`). */
+export const HOSTILE_TEXT = `<img src=x onerror="window.__rerailInjected=1"><b>bold</b>`;
+/** The `merge-assist` scenario's open conflict with PR #398 in the storefront's cart total, and that pull request. */
+export const OPEN_CONFLICT_ID = "conflict:src/cart/cart.ts#1-3:pr398";
+export const OPEN_PR_URL = "https://github.com/acme/storefront/pull/398";
+/** Links in `merge-assist` the page must never make: a script, and a pull request of another repository. */
+export const SCRIPT_URL = "javascript:window.__rerailInjected=1";
+export const OTHER_REPOSITORY_URL = "https://github.com/evil/other/pull/1";
+
 /** One repository a scenario recorded, with the checkout the dashboard is scoped to. */
 export interface ScenarioRepository {
   readonly repositoryKey: string;

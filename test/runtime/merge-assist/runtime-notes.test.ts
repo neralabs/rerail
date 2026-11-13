@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
+import type { PullRequestListing } from "../../../src/runtime/merge-assist/github.js";
 import { commit, writeFiles } from "../../support/git.js";
 import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { sessionRuntime } from "./support/conflict-sessions.js";
@@ -16,7 +16,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const release = Promise.withResolvers<void>();
     const listing = Promise.withResolvers<void>();
     const github = new class extends FakeGithub {
-      override async openPullRequests(): Promise<PullRequestSummary[]> {
+      override async openPullRequests(): Promise<PullRequestListing> {
         listing.resolve();
         await release.promise;
         return await super.openPullRequests();
@@ -70,7 +70,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
 
       const [conflict] = (await service.status(ws.repo)).conflicts;
       expect(deliveries.filter(delivery => delivery.conflict !== undefined)).toEqual([expect.objectContaining({
-        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: jbarnes-model (Tim Belanger) Share compiled matchers."),
+        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: jbarnes-model (Tim Belanger), described on their side as \"Share compiled matchers\"."),
         conflict: { id: conflict!.id, text: "your edit overlaps jbarnes-model (Tim Belanger): model.ts" },
         rules: [],
       })]);
@@ -111,4 +111,54 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       await runtime.dispose();
     }
   });
+
+  for (const withHookCommand of [false, true]) {
+    it(`never rejects, nor fails the edit's result, when reading the notes fails after a detection${withHookCommand ? ", with a hook command set" : ""}`, async () => {
+      const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+      const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+      const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+      commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+      const service = ws.service();
+      await service.setEnabled(ws.repo, true);
+      if (withHookCommand) {
+        await service.updateSettings(ws.repo, { hook: { command: [process.execPath, "-e", "process.stdin.resume()"], timeoutSeconds: 10 } });
+      }
+      // The database is busy whenever the session's notes are read.
+      service.pendingNotes = () => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      };
+      const detections: Array<Promise<boolean>> = [];
+      const detectAfterEdit = service.detectAfterEdit.bind(service);
+      service.detectAfterEdit = (...args) => {
+        const detection = detectAfterEdit(...args);
+        detections.push(detection);
+        return detection;
+      };
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on("unhandledRejection", onUnhandled);
+      const runtime = sessionRuntime(ws, service, { mergeAssistWaitMs: 20_000 });
+      const sessionId = "busy-session";
+      const file = join(ws.repo, "src/api/model.ts");
+      try {
+        await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: ws.repo } });
+        await vi.waitFor(async () => expect((await service.status(ws.repo)).lastScan).not.toBeNull(), { timeout: 10_000 });
+        await runtime.ingest({ kind: "call", eventId: "edit", sessionId, toolCallId: "1", toolName: "Write", input: { file_path: file, content: text(12, "  cloned 12") } });
+        writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+        await expect(runtime.ingest({ kind: "result", eventId: "edited", sessionId, toolCallId: "1", toolName: "Write", output: "ok" })).resolves.toEqual([]);
+        expect(await Promise.all(detections)).toEqual([true]);
+        await service.settled();
+        // Node reports a rejection nothing handles once a task's microtasks drain: one turn of the event loop.
+        const turn = Promise.withResolvers<void>();
+        setImmediate(turn.resolve);
+        await turn.promise;
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+        await runtime.dispose();
+      }
+    });
+  }
 });

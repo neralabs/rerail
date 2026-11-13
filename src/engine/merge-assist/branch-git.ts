@@ -1,10 +1,13 @@
 /**
  * What Merge Assist asks Git about a checkout's branches: the current and base branch, local and remote-tracking
  * branches and their tips, merge bases and ancestry, and the GitHub repository a key names; and the read every Merge
- * Assist Git call shares ({@link gitRead}). Every call goes through `runGit`, so a repository's own config cannot run
- * hooks or an fsmonitor; nothing here writes a ref or the index.
+ * Assist Git call shares ({@link gitRead}, and {@link gitReadAsync} for a detection pass, which must not block). Every
+ * call goes through `runGit` or `runGitAsync`, so a repository's own config cannot run hooks or an fsmonitor; nothing
+ * here writes a ref or the index.
  */
-import { runGit, type RunGitOptions } from "../git.js";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { runGit, runGitAsync, type RunGitOptions } from "../git.js";
 
 /** Listing paths can be long on a large branch; this bounds what one call reads. */
 const LIST_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -28,6 +31,12 @@ export interface LocalBranch {
  */
 export function gitRead(root: string, args: readonly string[], options?: RunGitOptions): string | undefined {
   const result = runGit(root, ["-c", "core.quotePath=false", ...args], options);
+  return result.status === 0 && result.error === undefined ? result.stdout : undefined;
+}
+
+/** {@link gitRead} without blocking; `input` goes to Git's stdin. */
+export async function gitReadAsync(root: string, args: readonly string[], options?: RunGitOptions & { input?: string }): Promise<string | undefined> {
+  const result = await runGitAsync(root, ["-c", "core.quotePath=false", ...args], options);
   return result.status === 0 && result.error === undefined ? result.stdout : undefined;
 }
 
@@ -107,16 +116,58 @@ export function remoteBranches(root: string): Array<{ readonly ref: string; read
   });
 }
 
+const mergeBaseArgs = (a: string, b: string): string[] => ["merge-base", "--end-of-options", a, b];
+const firstLine = (output: string | undefined): string | null => output?.trim().split("\n")[0] || null;
+const ancestorArgs = (ancestor: string, descendant: string): string[] => ["merge-base", "--is-ancestor", "--end-of-options", ancestor, descendant];
+
 /** The best common ancestor of two commits, or null when they share none or either is unknown. */
 export function mergeBase(root: string, a: string, b: string): string | null {
   if (!revisionArgument(a) || !revisionArgument(b)) return null;
-  return gitRead(root, ["merge-base", "--end-of-options", a, b])?.trim().split("\n")[0] || null;
+  return firstLine(gitRead(root, mergeBaseArgs(a, b)));
+}
+
+/** {@link mergeBase} without blocking. */
+export async function mergeBaseAsync(root: string, a: string, b: string): Promise<string | null> {
+  if (!revisionArgument(a) || !revisionArgument(b)) return null;
+  return firstLine(await gitReadAsync(root, mergeBaseArgs(a, b)));
 }
 
 /** Whether `ancestor` is `descendant` or one of its ancestors; false when either is unknown. */
 export function isAncestor(root: string, ancestor: string, descendant: string): boolean {
   if (!revisionArgument(ancestor) || !revisionArgument(descendant)) return false;
-  return runGit(root, ["merge-base", "--is-ancestor", "--end-of-options", ancestor, descendant]).status === 0;
+  return runGit(root, ancestorArgs(ancestor, descendant)).status === 0;
+}
+
+/** {@link isAncestor} without blocking. */
+export async function isAncestorAsync(root: string, ancestor: string, descendant: string): Promise<boolean> {
+  if (!revisionArgument(ancestor) || !revisionArgument(descendant)) return false;
+  return (await runGitAsync(root, ancestorArgs(ancestor, descendant))).status === 0;
+}
+
+/** The commit `revision` resolves to, without blocking; null when it names none. */
+export async function resolveCommit(root: string, revision: string): Promise<string | null> {
+  if (!revisionArgument(revision)) return null;
+  return firstLine(await gitReadAsync(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${revision}^{commit}`]));
+}
+
+/**
+ * The branch a rebase in progress is rebasing (HEAD is detached meanwhile), from `rebase-merge/head-name` or
+ * `rebase-apply/head-name`; null when no rebase of a branch is in progress.
+ */
+export async function branchBeingRebased(root: string): Promise<string | null> {
+  const paths = await gitReadAsync(root, ["rev-parse", "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name"]);
+  for (const path of (paths ?? "").split("\n").filter(line => line !== "")) {
+    const name = await readFile(resolve(root, path), "utf8").then(text => text.trim(), () => "");
+    if (name.startsWith("refs/heads/")) return name.slice("refs/heads/".length);
+  }
+  return null;
+}
+
+/** The full name of the ref `branch` tracks (`refs/remotes/origin/x`, or `refs/heads/y` for a local upstream), or null. */
+export async function upstreamOf(root: string, branch: string): Promise<string | null> {
+  // No `--end-of-options`: `rev-parse --symbolic-full-name` prints it back; the check keeps an option out.
+  if (!revisionArgument(branch)) return null;
+  return firstLine(await gitReadAsync(root, ["rev-parse", "--symbolic-full-name", `${branch}@{upstream}`]));
 }
 
 /** Whether `commit` names a commit this repository holds. */

@@ -66,15 +66,16 @@ Two internal-testing features also send to endpoints **you** supply.
 </details>
 
 Merge Assist, which is in internal testing and off for every repository until you turn it on, adds read-only requests
-to GitHub through **`gh`**, with your own `gh` sign-in (`src/runtime/merge-assist/github.ts`):
+to GitHub through **`gh`**, with your own `gh` sign-in (`src/runtime/merge-assist/github.ts`). While it is off for a
+repository, Rerail runs no `gh` for it:
 
 | When | What `gh` reads |
 | --- | --- |
 | Merge Assist reads its readiness (at most every five minutes, and at each scan) | Your sign-in state and login |
-| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, and head commit |
+| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The 200 newest open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, head repository owner and whether it is a fork, and head commit |
 
 Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose
-remote is not on GitHub is not read at all; only its local branches are.
+remote is not on GitHub is not read at all; only its local and remote-tracking branches are.
 
 ## Your coding agent's provider
 
@@ -98,7 +99,7 @@ repository's `.rerail/sessions/`.
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks), its last scan and your Merge Assist settings; turning Merge Assist off clears the conflicts and scans. Also daemon state and log, consent answer, rule packs, managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps only its title, the other side's label and author, and who dismissed it), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 

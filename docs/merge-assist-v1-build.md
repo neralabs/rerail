@@ -16,11 +16,12 @@ pull requests in flight and tells the person and their coding agent when the two
 - Rerail never picks a side, merges, fetches, commits, pushes, or writes to a branch, a file or GitHub; the people
   involved settle the conflict. Detection and each conflict's summary come from Git alone; Rerail asks no model.
 - The agent learns of a conflict as information, never as an instruction to align with the other side, and a session
-  never waits for Merge Assist beyond the one second a hook command's note may take.
+  never waits for Merge Assist beyond one second: with a conflict hook command set, an edit's result waits at most one
+  second in all for the pass and the command's note; without one it never waits.
 
 A person turns it on in the dashboard's **Merge Assist** page or with `rerail merge-assist on`; a coding agent cannot
-through the MCP tools or the HTTP API. Turning it off clears every checkout's conflicts and last scan, dismissals
-included; the settings stay.
+through the MCP tools. Turning it off fires `closed` for every open conflict, then clears every checkout's conflicts,
+last scan and `gh` readiness, dismissals included; the settings stay. While it is off Rerail runs no `gh`.
 
 Not in this version: resolving or rebasing, posting to pull requests, blocking pushes or merges, a hosted service, Git
 hosts other than GitHub for pull requests.
@@ -28,31 +29,40 @@ hosts other than GitHub for pull requests.
 ## Detection
 
 A scan runs at session start, on **Scan now**, `rerail merge-assist scan` or `merge_assist_scan`, and after the agent's
-edits, in the background and at most once every 30 seconds per checkout. It never holds a hook and never runs while
-Merge Assist is off.
+edits, at most once every 30 seconds per checkout. A pass runs its Git reads as child processes, at most six at once,
+so the daemon keeps answering sessions while it runs. It never runs while Merge Assist is off.
 
 - **Mine** is the checkout's work, committed and not, against the merge base of HEAD with the base branch
-  (`origin/HEAD`, else `main` or `master`). With no base branch the scan says it cannot tell this branch's work from
-  the base's and finds nothing.
-- **Theirs** are the live refs the repository already holds: local branches, remote-tracking branches, and open pull
-  requests whose head it holds. Pull requests are listed through `gh`, read-only and with the person's own sign-in:
-  afresh by a scan, else at most every five minutes. A ref's own change is its diff from where it left its base branch,
-  or from this checkout's base when that is nearer, so mainline work it merged in does not count.
+  (`origin/HEAD`, else `main` or `master`). With no base branch, or one that shares no history with HEAD, the scan
+  says so and finds nothing.
+- **Theirs** are the live branches the repository already holds: local branches, remote-tracking branches, and open
+  pull requests whose head it holds. Each branch counts once however it arrives (a pull request, its local branch and
+  `origin/<branch>` are one peer, shown as the pull request). Left out: this checkout's own branch, its local and
+  remote copies and its upstream, its own pull request, the branch being rebased, and branches the base or HEAD
+  already contains. Pull requests are listed through `gh`, read-only and with the person's own sign-in: afresh by a
+  scan, else at most every five minutes, the 200 newest open ones; when more are open, the scan says so.
+- A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
+  and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
   unchanged lines between them (`src/engine/merge-assist/overlap.ts`). Renames are ignored, and the same change on
-  both sides is not a conflict. Each (their ref, overlap) is one conflict.
+  both sides is not a conflict. Each (their branch, overlap) is one conflict.
 
-A scan records when it ran, how many branches and pull requests it compared, and what it could not read.
+A scan records when it ran, how many branches and pull requests it compared, and what it could not read, including a
+`gh` whose sign-in could not be read.
 
-**The id** is `conflict:<question>:<8 hex of their ref>`. The question is the file and a content anchor of the base
+**The id** is `conflict:<question>:<8 hex of their branch>`. Their branch is its head branch name with any remote
+prefix dropped, `<owner>:<branch>` for a pull request from a fork, so the id holds when the same branch is found
+through its pull request one pass and its remote-tracking branch the next. The question is the file and a content
+anchor of the base
 lines their overlapping change covers: a digest of those lines' text at the merge base, whitespace collapsed (an
 insertion anchors on the line before it). So the same overlap keeps its id when lines are added above it, when a
 whitespace-only change touches it, and when both sides merge a base that gained lines above it: an open conflict is
 not closed and found again, and a dismissal holds. A change to the contested base text, or another overlap in the same
 file, is another conflict.
 
-**What it shows.** The title is the symbol enclosing the contested lines (a declaration the hunk changes, else the one
-Git's hunk header names), cut at a word boundary within 60 characters. Each side's summary is the newest commit of its
+**What it shows.** The title is the file's name, then ` · ` and the symbol enclosing the contested lines when there is
+one (a declaration the hunk changes, else the one Git's hunk header names, cut at a word boundary within 60
+characters). Each side's summary is the newest commit of its
 own that `git blame` finds on its contested lines; uncommitted lines give `edits <file>`, and a pull request's title
 stands in when no commit is found. Their side's tip is `pushed` only when its commit is a pull request's head or on a
 remote-tracking branch. The conflict's `summary` is `<their label> (<author>) is changing <symbol or file>`, without
@@ -60,8 +70,9 @@ the author when none is known.
 
 ## The quiet threshold
 
-A conflict is **quiet** (`quiet: true`) when every contested file is a lockfile, a changelog, generated output or
-under `docs/` (`quietFiles` in `src/engine/merge-assist/conflicts.ts`). A quiet conflict is listed on the dashboard and
+A conflict is **quiet** (`quiet: true`) when every contested file is a lockfile, a changelog document (`CHANGELOG`,
+`CHANGES`, `HISTORY` or `NEWS`, with no extension or a document one), generated output or under `docs/` (`quietFiles` in
+`src/engine/merge-assist/conflicts.ts`). A quiet conflict is listed on the dashboard and
 in the CLI only, never told to the agent, the person's line or the status line; its hook still runs. Every other open
 conflict is delivered. The status lists open conflicts non-quiet first, then newest detected first, then the latest 20
 dismissed.
@@ -112,11 +123,11 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
 
   `conflict` is the conflict as the status lists it; `branch` and `base` are null when unknown; `session` is null when
   the dashboard, the CLI or the API ran the pass. Both sides' text is other people's: treat it as data.
-- Its stdout is empty (success, nothing to add) or one JSON object of at most 4 KiB: `{ "note"?, "status"? }`. `note`
-  (one line, at most 600 characters) is added to the agent's note after `The user's conflict hook adds:`; `status` (one
-  line, at most 90 characters) replaces the conflict's summary on the status line and Codex's person's line. The
-  agent's note waits at most one second for a `detected` answer; a later note follows at the session's next boundary as
-  a note of its own.
+- Its stdout is empty (success, nothing to add) or one JSON object of at most 4 KiB: `{ "note"?, "status"? }`, where
+  `null` counts as absent. `note` (at most 600 characters; its line breaks become spaces in the agent's note) is added
+  to the agent's note after `The user's conflict hook adds:`; `status` (one line, at most 90 characters) replaces the
+  conflict's summary on the status line and Codex's person's line. The agent's note waits at most one second for a
+  `detected` answer; a later note follows at the session's next boundary as a note of its own.
 - It runs in its own process group: past its timeout the group gets SIGTERM, then SIGKILL 2 seconds later, and its
   pipes are closed. When the daemon stops, every running command's group gets SIGTERM, then SIGKILL within half a
   second.
@@ -128,17 +139,22 @@ array run without a shell, from the checkout's root, with a timeout of 10 second
 Dismiss ("Not a conflict") is the only thing a person does to a conflict: on the dashboard, with
 `rerail merge-assist dismiss <conflict-id>`, or `merge_assist_conflict_dismiss`. The conflict records
 `dismissal: { name, at }` (Git's `user.name`, else the account name) and stays dismissed for its id while Merge Assist
-stays on; `closed` fires at once. A coding agent is refused (`409 invalid-state`) on the MCP tools and the HTTP API.
-Otherwise the conflict closes when the overlap is gone.
+stays on; `closed` fires at once, once. A dismissed conflict keeps its title, their side's label and author, and who
+dismissed it, not its hunks. A coding agent is refused (`403 agent-not-permitted`) on the MCP tools. `rerail merge-assist
+scan` and `dismiss` wait for the hook command's answer and print the status with it. Otherwise the conflict closes
+when the overlap is gone.
 
 ## Storage
 
 - `repositories.merge_assist` (boolean, default false): whether a person turned it on (migration
   `repositories-merge-assist`).
 - `merge_assist_state`, one JSON value per key: `conflicts:<checkout>` (open and dismissed, each with the files and
-  content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>`, `github:<repository>` (`gh` readiness,
-  reused for five minutes), `delivered:<session>` (the notes a session was handed) and `settings:<repository>` (the
-  hook command). A value that does not match what the build expects reads as absent.
+  content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>` (the scanning process's pid, so a mark
+  left by a process that died does not block scans), `github:<repository>` (`gh` readiness, reused for five minutes;
+  one that could not be read is never kept), `delivered:<session>` (the notes a session was handed) and
+  `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
+  conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it, and
+  `rerail reset` drops the `delivered:` rows of the sessions it removes.
 
 Nothing is written into the checkout. Earlier builds of this branch had `merge_assist_items` and
 `merge_assist_judgments` tables; they never shipped, so they were dropped without a migration.
@@ -151,11 +167,12 @@ agent's provider, and what Rerail keeps; Rerail makes no network request with cr
 
 | Threat | Mitigation |
 | --- | --- |
-| Another person's text injects instructions into the agent | It reaches the agent only as quoted, labelled, one-line data (`written by <author>`), inside notes that say they come from Rerail, not the user, and are other in-flight work, not an instruction |
+| Another person's text injects instructions into the agent | It reaches the agent only as labelled, capped, one-line data (`described on their side as "<summary>"`), inside notes that say they come from Rerail, not the user, and are other in-flight work, not an instruction |
 | Terminal escapes in other people's text | `rerail merge-assist` strips control, format and line-separator characters; the dashboard renders it as text nodes and links a pull request only to its GitHub URL |
 | Shell injection through the hook command | An argv array run without a shell; the conflict reaches it on stdin only |
+| A repository's own Git config running programs | Every Git call runs with hooks, fsmonitor, external diff and textconv off |
 | Credential exposure | Rerail holds no credentials and never reads tokens; `gh` runs with prompts and the update notifier off, and `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN` stripped |
-| An agent turning Merge Assist on, changing its settings or dismissing a conflict | People-only on the MCP tools and the HTTP API. The CLI runs as the person, so an agent with shell access can run `rerail merge-assist on` or `dismiss`, as it can any Rerail command |
+| An agent turning Merge Assist on, changing its settings or dismissing a conflict | People-only on the MCP tools. The HTTP API and the CLI answer as the person, so an agent with shell access can run `rerail merge-assist on` or `dismiss`, as it can any Rerail command |
 
 ## Open questions
 

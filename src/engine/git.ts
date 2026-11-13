@@ -230,6 +230,33 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
+/**
+ * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
+ * stdin. Rejects with {@link GitUnavailableError} when Git is missing, never on a non-zero exit; a Git that could not
+ * start, timed out or overflowed `maxBuffer` (1 MiB by default) answers a null status with its error.
+ */
+export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitOptions & { input?: string } = {}): Promise<GitResult> {
+  const executable = gitExecutable();
+  const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
+  const child = execFile(
+    executable,
+    [...SAFE_CONFIG, "-C", cwd, ...args],
+    { encoding: "utf8", maxBuffer: options.maxBuffer ?? 1024 * 1024, timeout: options.timeout ?? DEFAULT_TIMEOUT_MS, env: gitEnvironment() },
+    (error, stdout, stderr) => {
+      if (error === null) {
+        settle({ status: 0, stdout, stderr });
+        return;
+      }
+      const status = typeof error.code === "number" && error.killed !== true ? error.code : null;
+      settle({ status, stdout, stderr, ...(status === null ? { error } : {}) });
+    },
+  );
+  // Git may exit before reading all of its input; the broken pipe is no failure of the read.
+  child.stdin?.on("error", () => undefined);
+  child.stdin?.end(options.input ?? "");
+  return await promise;
+}
+
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
 export function gitText(cwd: string, args: readonly string[]): string | undefined {
   const result = runGit(cwd, args);

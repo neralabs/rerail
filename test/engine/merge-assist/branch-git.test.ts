@@ -5,12 +5,17 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   baseBranch,
+  branchBeingRebased,
   commitExists,
   currentBranch,
   githubRepositoryOf,
   isAncestor,
+  isAncestorAsync,
   localBranches,
   mergeBase,
+  mergeBaseAsync,
+  resolveCommit,
+  upstreamOf,
 } from "../../../src/engine/merge-assist/branch-git.js";
 import { commit, git } from "../../support/git.js";
 
@@ -112,6 +117,34 @@ describe("ancestry", () => {
     expect(commitExists(root, "0".repeat(40))).toBe(false);
     expect(commitExists(root, "--all")).toBe(false);
     expect(mergeBase(root, "--all", "main")).toBeNull();
+
+    // The same answers without blocking.
+    expect(await mergeBaseAsync(root, "main", "feature")).toBe(seed);
+    expect(await mergeBaseAsync(root, "--all", "main")).toBeNull();
+    expect(await isAncestorAsync(root, "main", "feature")).toBe(true);
+    expect(await isAncestorAsync(root, "feature", "main")).toBe(false);
+    expect(await resolveCommit(root, "feature")).toBe(feature);
+    expect(await resolveCommit(root, "missing")).toBeNull();
+    expect(await resolveCommit(root, "--all")).toBeNull();
+  });
+
+  it("names a branch's upstream, and the branch a rebase in progress is rebasing", async () => {
+    const root = await repository();
+    git(root, "remote", "add", "origin", root);
+    git(root, "fetch", "--quiet", "origin");
+    git(root, "branch", "--quiet", "--track", "team/tracked", "origin/main");
+    git(root, "checkout", "--quiet", "-b", "feature");
+    commit(root, { "README.md": "feature\n" }, "feature");
+    expect(await upstreamOf(root, "team/tracked")).toBe("refs/remotes/origin/main");
+    expect(await upstreamOf(root, "feature")).toBeNull();
+    expect(await upstreamOf(root, "--all")).toBeNull();
+    expect(await branchBeingRebased(root)).toBeNull();
+
+    git(root, "checkout", "--quiet", "main");
+    commit(root, { "README.md": "main\n" }, "main");
+    expect(() => git(root, "rebase", "--quiet", "main", "feature")).toThrow();
+    expect(currentBranch(root)).toBeNull();
+    expect(await branchBeingRebased(root)).toBe("feature");
   });
 });
 

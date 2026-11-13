@@ -252,8 +252,11 @@ function conflictCard(conflict) {
       conflict.quiet ? h("span.mquiet", null, icon("logged"), QUIET_TEXT) : null));
 }
 
-/** What a card shows, for its key: a change rebuilds the card. Its age and Dismiss's state are patched. */
-const conflictContent = c => [c.quiet, c.shortId, c.title, c.mine, c.theirs, c.evidence, c.summary, c.hook];
+/**
+ * What a card shows, for its key: a change rebuilds the card. Its age and Dismiss's state are patched. The repository
+ * `gh` names is part of it, since its pull request links depend on it (`peerLink`).
+ */
+const conflictContent = c => [c.quiet, c.shortId, c.title, c.mine, c.theirs, c.evidence, c.summary, c.hook, data.mergeAssist?.readiness.github.repository];
 
 function syncCards(list, items) {
   syncChildren(list, items, c => `${c.id}\u0000${JSON.stringify(conflictContent(c))}`, conflictCard, (node, conflict) => {
@@ -310,7 +313,7 @@ function build() {
     root: h("div.mpage", null, head, notice, off, strip, settings.root, conflicts.root),
     notice, off, strip, settings, conflicts,
     // Built with the consent card and the strip; patched in place on every render.
-    onButton: null, stripWhen: null, scanButton: null, offButton: null,
+    onButton: null, stripWhen: null, scanButton: null, offButton: null, problems: null,
   };
 }
 
@@ -365,11 +368,11 @@ function stripCells(status, scan) {
     cell("Last scan", scan === null ? "Not scanned yet" : [page.stripWhen, h("span.sub", null, scannedWhat(scan))]));
 }
 
-/** What the last scan could not read, folded; nothing when it read everything. */
-function scanProblems(scan, open) {
+/** What the last scan could not read, folded; nothing when it read everything. Its fold is opened in place. */
+function scanProblems(scan) {
   if (scan === null || scan.problems.length === 0) return null;
   const n = scan.problems.length;
-  return h("details.mfold.mproblems", { open },
+  return h("details.mfold.mproblems", null,
     h("summary", { "data-act": "mafold", "data-i": "problems" }, `${fmt(n)} ${plural(n, "thing")} the last scan could not read`),
     h("div.in", null, h("ul.mbul", null, scan.problems.map(problem => h("li", null, problem)))));
 }
@@ -388,18 +391,20 @@ function patchStripButtons(status) {
 function renderStrip(status) {
   if (status === null || !status.enabled) {
     setContent(page.strip, "off", () => null);
-    Object.assign(page, { stripWhen: null, scanButton: null, offButton: null });
+    Object.assign(page, { stripWhen: null, scanButton: null, offButton: null, problems: null });
     return;
   }
-  const scan = status.lastScan, problemsOpen = ui.mergeOpen.has("problems");
-  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, scan, problemsOpen]);
+  const scan = status.lastScan;
+  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, scan]);
   setContent(page.strip, sig, () => {
     page.stripWhen = scan === null ? null : h("span.when");
     page.scanButton = h("button.btn.sm.solid.mscan", { "data-act": "mascan" });
     page.offButton = h("button.btn.sm.danger.quiet", { "data-act": "maoff", title: "Turn Merge Assist off for this repository" });
-    return h("div.list.mstrip", null, stripCells(status, scan), h("div.mstripacts", null, page.scanButton, page.offButton), scanProblems(scan, problemsOpen));
+    page.problems = scanProblems(scan);
+    return h("div.list.mstrip", null, stripCells(status, scan), h("div.mstripacts", null, page.scanButton, page.offButton), page.problems);
   });
   patchStripButtons(status);
+  if (page.problems !== null) setAttr(page.problems, "open", ui.mergeOpen.has("problems"));
   if (page.stripWhen !== null) setText(page.stripWhen, ago(Date.parse(scan.at)));
 }
 
@@ -419,7 +424,8 @@ function settingsForm(fields) {
       h("p.mnote2", { id: "ma-hook-hint" }, "A JSON array: the program, then its arguments. Rerail runs it without a shell from the checkout’s root when a conflict is detected or closes, with the conflict as JSON on stdin. Empty for none.")),
     h("div.mfieldrow", null,
       h("label.k", { for: "ma-timeout" }, "Timeout in seconds"),
-      field("input.mfield.mnum", { id: "ma-timeout", type: "number", min: 1, max: HOOK_TIMEOUT_MAX, step: 1, inputmode: "numeric", "aria-describedby": "ma-timeout-hint ma-settings-problem" }, fields.timeout),
+      // A text field: a number field reads "" for text it can't parse, which would save the default the person never typed.
+      field("input.mfield.mnum", { id: "ma-timeout", type: "text", inputmode: "numeric", "aria-describedby": "ma-timeout-hint ma-settings-problem" }, fields.timeout),
       h("p.mnote2", { id: "ma-timeout-hint" }, `1 to ${HOOK_TIMEOUT_MAX}; ${HOOK_TIMEOUT_DEFAULT} by default. A command still running then is stopped.`)),
     h("p.msetproblem", { id: "ma-settings-problem", "aria-live": "polite" }),
     h("div.macts", null, h("button.btn.sm.solid", { "data-act": "masettings" }, "Save")),
@@ -451,7 +457,10 @@ function patchSettings(form, fields) {
   patchSaving(form);
 }
 
-/** The Settings fold while on: the saved values in its summary, the form rebuilt only when they change. */
+/**
+ * The Settings fold while on: the saved values in its summary, the form rebuilt only when they or the checkout change
+ * (another checkout's form must not keep what was typed there).
+ */
 function renderSettings(status) {
   const s = page.settings, show = status !== null && status.enabled;
   setAttr(s.root, "hidden", !show);
@@ -459,7 +468,7 @@ function renderSettings(status) {
   const fields = settingsFields(status);
   setAttr(s.root, "open", ui.mergeOpen.has("settings"));
   setText(s.summary, settingsSummary(status.settings));
-  setContent(s.form, JSON.stringify(status.settings), () => settingsForm(fields));
+  setContent(s.form, JSON.stringify([status.repositoryKey, status.checkout, status.settings]), () => settingsForm(fields));
   patchSettings(s.form, fields);
 }
 

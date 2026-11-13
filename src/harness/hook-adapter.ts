@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
-import { isSteerRule, type AdapterDelivery, type ConflictNotice, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
+import { isConflictNotice, isSteerRule, type AdapterDelivery, type ConflictNotice, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
@@ -25,8 +25,12 @@ interface PreparedGuidance {
 
 const preparedGuidance = new WeakMap<HookOutput, PreparedGuidance>();
 
-export function prepareGuidanceOutput(output: HookOutput, ruleIds: readonly string[] = []): HookOutput {
-  preparedGuidance.set(output, { ruleIds });
+/**
+ * `output` as a steer whose receipt is recorded once it is written, crediting `ruleIds`. A note that names no rule (a
+ * Merge Assist note) shows the person no steer line, so it is not counted as a steer: nothing is recorded for it.
+ */
+export function prepareGuidanceOutput(output: HookOutput, ruleIds: readonly string[]): HookOutput {
+  if (ruleIds.length > 0) preparedGuidance.set(output, { ruleIds });
   return output;
 }
 
@@ -75,6 +79,23 @@ function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/** A delivery as a pending file holds it: its rules, conflict and marks still to be checked. */
+type HeldDeliveryShape = Omit<AdapterDelivery, "rules" | "conflict"> & { rules?: unknown; conflict?: unknown; late?: unknown; shown?: unknown };
+
+/** Whether `requested`, read back from a file, is a rule mode that steers. */
+function isSteerRequest(requested: unknown): requested is AdapterDelivery["requested"] {
+  return RULE_MODES.includes(requested as AdapterDelivery["requested"]) && steers(requested as AdapterDelivery["requested"]);
+}
+
+/** Whether `value`, read back from a pending file, is a held steer: its session, mechanism, text and rule ids, and a mode that steers. */
+function isHeldDeliveryShape(value: unknown): value is HeldDeliveryShape {
+  if (value === null || typeof value !== "object") return false;
+  const delivery = value as Partial<Record<keyof AdapterDelivery, unknown>>;
+  return [delivery.sessionId, delivery.mechanism, delivery.content].every(field => typeof field === "string")
+    && isSteerRequest(delivery.requested)
+    && Array.isArray(delivery.ruleIds) && delivery.ruleIds.every(id => typeof id === "string");
+}
+
 /**
  * The steers held at `path`; a symlink on the way to it under `.rerail` is refused (`readLedgerFile`). A steer held
  * at `Stop` is `late`; the 0.1.2 hook marked one `shown`, which a session updated mid-turn still holds.
@@ -85,22 +106,13 @@ export async function readPending(path: string): Promise<HeldDelivery[]> {
   const parsed = JSON.parse(text) as unknown;
   if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
   return parsed
-    .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown; late?: unknown; shown?: unknown } => {
-      if (value === null || typeof value !== "object") return false;
-      const delivery = value as Partial<AdapterDelivery>;
-      return typeof delivery.sessionId === "string"
-        && delivery.requested !== undefined
-        && RULE_MODES.includes(delivery.requested)
-        && steers(delivery.requested)
-        && typeof delivery.mechanism === "string"
-        && typeof delivery.content === "string"
-        && Array.isArray(delivery.ruleIds)
-        && delivery.ruleIds.every(id => typeof id === "string");
-    })
-    .map(({ late, shown, ...delivery }) => ({
+    .filter(isHeldDeliveryShape)
+    .map(({ late, shown, conflict, ...delivery }) => ({
       ...delivery,
       // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
       rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [],
+      // A conflict that is not one shows no line; its note still reaches the agent.
+      ...(isConflictNotice(conflict) ? { conflict } : {}),
       ...(late === true || shown === true ? { late: true as const } : {}),
     }));
 }
@@ -204,9 +216,7 @@ export function steerHookOutput(
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "") return {};
   const output = { ...lines(deliveries), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
-  // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
-  const ruleIds = deliveryRuleIds(deliveries);
-  return content === undefined || ruleIds.length === 0 ? output : prepareGuidanceOutput(output, ruleIds);
+  return content === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(deliveries));
 }
 
 interface LockOwner {

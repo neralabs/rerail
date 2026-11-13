@@ -4,7 +4,11 @@
  */
 import { z } from "zod";
 
-export const GITHUB_STATES = ["signed-in", "signed-out", "missing", "not-github"] as const;
+/**
+ * `unchecked`: Merge Assist is off for the repository, so Rerail ran no `gh`; `unavailable`: `gh` is installed but its
+ * sign-in could not be read this time (it timed out, crashed or printed something unexpected).
+ */
+export const GITHUB_STATES = ["signed-in", "signed-out", "missing", "not-github", "unchecked", "unavailable"] as const;
 export type GithubState = (typeof GITHUB_STATES)[number];
 
 export const githubReadinessSchema = z.object({
@@ -72,7 +76,7 @@ export const mergeAssistSettingsSchema = z.object({
   hook: conflictHookCommandSchema.nullable().describe("The conflict hook command, run on every conflict event; null for none."),
 });
 export type MergeAssistSettings = z.infer<typeof mergeAssistSettingsSchema>;
-export const DEFAULT_MERGE_ASSIST_SETTINGS: MergeAssistSettings = { hook: null };
+export const DEFAULT_MERGE_ASSIST_SETTINGS: Readonly<MergeAssistSettings> = Object.freeze({ hook: null });
 
 /** What the conflict hook command answered to the latest event it ran for. */
 export const conflictHookOutcomeSchema = z.object({

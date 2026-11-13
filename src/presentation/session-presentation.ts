@@ -13,7 +13,7 @@ import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
-import { conflictUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, conflictUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -160,9 +160,15 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, with `(+N)` for the others open. */
+/** The longest conflict line the footer shows: as long as the conflict hook's status may be. */
+const FOOTER_CONFLICT_CHARS = 90;
+
+/**
+ * Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, cut to
+ * {@link FOOTER_CONFLICT_CHARS}, with `(+N)` for the others open.
+ */
 function conflictSegment(dashboard: URL, { conflicts, summary }: NonNullable<z.infer<typeof sessionResponseSchema>["hud"]["mergeAssist"]>): SessionPresentation["parts"][number] {
-  return { text: `◐ ${summary.text}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
+  return { text: `◐ ${cappedLine(summary.text, FOOTER_CONFLICT_CHARS)}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
 }
 
 /**

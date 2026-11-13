@@ -8,13 +8,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createGithubClient,
   GithubError,
+  PULL_REQUEST_LIMIT,
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
 
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
 const ACCEPT = "Accept: application/vnd.github+json";
-const PR_FIELDS = "number,title,url,headRefName,headRefOid,baseRefName,author,isDraft,updatedAt";
+const PR_FIELDS = "number,title,url,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,baseRefName,author,isDraft,updatedAt";
 
 /** What the fake `gh` does for one invocation. */
 interface Reply {
@@ -98,7 +99,7 @@ describe("gh invocation", () => {
     const [call] = gh.calls;
     expect(call?.command).toBe(join(home, "gh"));
     expect(call?.args).toEqual([
-      "pr", "list", "--repo=github.com/neralabs/rerail", "--state", "open", "--limit", "50", "--json", PR_FIELDS,
+      "pr", "list", "--repo=github.com/neralabs/rerail", "--state", "open", "--limit", "200", "--json", PR_FIELDS,
     ]);
     expect(call?.options.shell).toBe(false);
     expect(call?.options.stdio).toEqual(["ignore", "pipe", "pipe"]);
@@ -155,6 +156,15 @@ describe("gh invocation", () => {
     expect(error).toBeInstanceOf(GithubError);
     expect(error).toMatchObject({ reason: "timeout" });
     expect(gh.calls[0]?.kills).toEqual(["SIGTERM"]);
+  });
+
+  it("answers at its timeout even when a process gh started still holds its output open", async () => {
+    // A gh wrapper that does not exec: the shell is stopped, the process it started keeps stdout open for 5 s.
+    writeFileSync(join(home, "gh"), "#!/bin/sh\n/bin/sleep 5 &\nwait\n");
+    const started = Date.now();
+    const error = await createGithubClient({ env, timeoutMs: 300 }).openPullRequests(REPOSITORY).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ reason: "timeout" });
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 
   it("stops gh that prints more than 4 MiB", async () => {
@@ -217,6 +227,12 @@ describe("readiness", () => {
     expect(gh.calls.map(call => call.args)).toEqual([["auth", "status", "--hostname", "github.example.com"]]);
   });
 
+  it("is unavailable, not signed-out, when gh auth status does not answer in time", async () => {
+    const gh = fakeGh(() => ({ hang: true }));
+    await expect(createGithubClient({ env, spawn: gh.spawn, timeoutMs: 20 }).readiness(REPOSITORY))
+      .resolves.toEqual({ state: "unavailable", login: null, repository: "neralabs/rerail" });
+  });
+
   it("is signed-in with the login GitHub reports for the user", async () => {
     // `gh api --method GET user --jq '{login}'` → {"login":"Moti-Velz"}
     const gh = fakeGh(args => (args[0] === "auth" ? { stdout: "github.com\n  ✓ Logged in to github.com account Moti-Velz (keyring)\n" } : { stdout: JSON.stringify({ login: "Moti-Velz", id: 1, type: "User" }) }));
@@ -233,12 +249,14 @@ describe("readiness", () => {
 });
 
 describe("openPullRequests", () => {
-  // The shape `gh pr list --json number,title,url,headRefName,headRefOid,baseRefName,author,isDraft,updatedAt` prints (gh 2.89).
+  // The shape `gh pr list --json <PR_FIELDS>` prints (gh 2.89).
   const real = {
     author: { id: "U_kgDOBnypnA", is_bot: false, login: "Moti-Velz", name: "Timo" },
     baseRefName: "main",
     headRefName: "Moti-Velz/changelog-entries",
     headRefOid: COMMIT,
+    headRepositoryOwner: { id: "O_kgDOCHyD1g", login: "neralabs" },
+    isCrossRepository: false,
     isDraft: false,
     number: 389,
     title: "Release notes: changelog entries wait in .changelog/",
@@ -259,10 +277,14 @@ describe("openPullRequests", () => {
       { ...real, number: 397, url: "https://github.com/neralabs/rerail/pull/397", author: { login: "a/b/c" } },
       { ...real, number: 398, url: "https://github.com/neralabs/rerail/pull/398", updatedAt: "yesterday" },
       "not an object",
+      // A fork's pull request names its head's owner; a deleted fork's names none.
+      { ...real, number: 399, url: "https://github.com/neralabs/rerail/pull/399", isCrossRepository: true, headRepositoryOwner: { id: "U_x", login: "Moti-Velz" } },
+      { ...real, number: 400, url: "https://github.com/neralabs/rerail/pull/400", isCrossRepository: true, headRepositoryOwner: null },
     ];
     const gh = fakeGh(() => ({ stdout: JSON.stringify(entries) }));
-    const pullRequests = await createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY);
-    expect(pullRequests).toEqual([
+    const { pulls, truncated } = await createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY);
+    expect(truncated).toBe(false);
+    expect(pulls).toEqual([
       {
         number: 389,
         title: "Release notes: changelog entries wait in .changelog/",
@@ -273,9 +295,21 @@ describe("openPullRequests", () => {
         author: "Moti-Velz",
         isDraft: false,
         updatedAt: "2026-11-02T20:09:43Z",
+        crossRepository: false,
+        headOwner: "neralabs",
       },
       expect.objectContaining({ number: 390, author: "dependabot[bot]", isDraft: true, title: "Bump zod" }),
+      expect.objectContaining({ number: 399, crossRepository: true, headOwner: "Moti-Velz" }),
+      expect.objectContaining({ number: 400, crossRepository: true, headOwner: null }),
     ]);
+  });
+
+  it("says when the listing stopped at its limit, invalid entries counted", async () => {
+    const entries = Array.from({ length: PULL_REQUEST_LIMIT }, (_, index) => (index === 0 ? "not an object" : { ...real, number: index, url: `https://github.com/neralabs/rerail/pull/${index}` }));
+    const gh = fakeGh(() => ({ stdout: JSON.stringify(entries) }));
+    const listing = await createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY);
+    expect(listing).toMatchObject({ truncated: true, pulls: expect.any(Array) });
+    expect(listing.pulls).toHaveLength(PULL_REQUEST_LIMIT - 1);
   });
 
   it("throws when gh fails, rather than reporting no pull requests", async () => {

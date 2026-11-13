@@ -2,7 +2,7 @@
  * Real Git repositories, a Rerail database, and a stand-in for `gh`, for Merge Assist's service-level tests. Nothing
  * here reaches the network.
  */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ import {
 } from "../../../src/engine/index.js";
 import {
   createMergeAssistService,
+  GithubError,
   setRepositoryStarted,
   type GithubClient,
   type GithubRepository,
@@ -36,23 +37,31 @@ const ORDERS_CLEAN = "export const orders = () => client.get(\"/orders\");\n";
 
 export interface FakeGithubOptions {
   readiness?: GithubReadiness;
+  /** `gh`'s sign-in could not be read (a timeout, a crash): readiness is `unavailable`. */
+  readinessError?: boolean;
   pullRequests?: PullRequestSummary[];
+  /** Whether the listing stopped at its limit. */
+  truncated?: boolean;
+  /** `gh pr list` fails: `openPullRequests` throws. */
+  pullsError?: boolean;
 }
 
-/** `gh` as a scan sees it, from fixed answers; it counts readiness reads. */
+/** `gh` as a scan sees it, from fixed answers a test may change between scans; it counts readiness reads. */
 export class FakeGithub implements GithubClient {
   readinessReads = 0;
 
-  constructor(private readonly options: FakeGithubOptions = {}) {}
+  constructor(readonly options: FakeGithubOptions = {}) {}
 
   async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
     this.readinessReads += 1;
     if (repository === null) return { state: "not-github", login: null, repository: null };
+    if (this.options.readinessError === true) return { state: "unavailable", login: null, repository: `${repository.owner}/${repository.name}` };
     return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };
   }
 
-  async openPullRequests(): Promise<PullRequestSummary[]> {
-    return this.options.pullRequests ?? [];
+  async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
+    if (this.options.pullsError === true) throw new GithubError("failed", "HTTP 502");
+    return { pulls: this.options.pullRequests ?? [], truncated: this.options.truncated ?? false };
   }
 }
 
@@ -65,9 +74,17 @@ export interface Workspace {
   readonly databasePath: string;
   readonly repositoryKey: string;
   /** A Merge Assist over the workspace's database, with this `gh` stand-in. */
-  service(options?: { github?: GithubClient; now?: () => number }): MergeAssistRuntime;
+  service(options?: { github?: GithubClient; now?: () => number; noteWaitMs?: number }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
+  /**
+   * Push `branch` from `checkout` (force: a rewritten branch replaces the pushed one) to the workspace's bare remote at
+   * `<folder>/origin.git`, then fetch every branch of it into the main checkout's `refs/remotes/origin/*`, pruning
+   * the deleted ones; with `upstream`, the main checkout's local `branch` tracks `origin/<branch>`.
+   */
+  push(checkout: string, branch: string, options?: { upstream?: boolean }): void;
+  /** Delete `branch` from the bare remote and prune it from the main checkout's remote-tracking branches. */
+  deleteRemoteBranch(branch: string): void;
 }
 
 /**
@@ -96,6 +113,15 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
     if (setUp) setUpRepository(database, repositoryKey, { packs: [] });
     setRepositoryStarted(database, repositoryKey, true);
     const services: MergeAssistRuntime[] = [];
+    const bare = join(folder, "origin.git");
+    /** The bare remote, made on first use. `origin`'s URL stays as the test set it: pushes and fetches name the folder. */
+    const bareRemote = (): string => {
+      if (!existsSync(bare)) git(folder, "init", "-q", "--bare", "-b", "main", bare);
+      return bare;
+    };
+    const fetchRemote = (): void => {
+      git(repo, "fetch", "-q", "--prune", bareRemote(), "+refs/heads/*:refs/remotes/origin/*");
+    };
     cleanups.push(async () => {
       // The conflict hook's handlers run in the background: let them finish before the database closes.
       await Promise.all(services.map(service => service.settled()));
@@ -113,6 +139,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
           database,
           github: options.github ?? new FakeGithub(),
           ...(options.now === undefined ? {} : { now: options.now }),
+          ...(options.noteWaitMs === undefined ? {} : { noteWaitMs: options.noteWaitMs }),
         });
         services.push(service);
         return service;
@@ -122,6 +149,18 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
         git(repo, "worktree", "add", "-q", "-b", name, path, "main");
         if (record) recordCheckout(database, path);
         return path;
+      },
+      push: (checkout, branch, { upstream = false } = {}) => {
+        git(checkout, "push", "-q", "--force", bareRemote(), `refs/heads/${branch}:refs/heads/${branch}`);
+        fetchRemote();
+        if (upstream) {
+          git(repo, "config", `branch.${branch}.remote`, "origin");
+          git(repo, "config", `branch.${branch}.merge`, `refs/heads/${branch}`);
+        }
+      },
+      deleteRemoteBranch: branch => {
+        git(bareRemote(), "branch", "-q", "-D", branch);
+        fetchRemote();
       },
     };
   };

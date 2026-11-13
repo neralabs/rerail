@@ -39,7 +39,8 @@ async function answer<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * The checkout on disk the target names: `checkout`, else the repository's main checkout, else the calling agent's.
+ * The checkout on disk the target names: `checkout`, else the repository's main checkout (or, with none on disk, the one
+ * seen last), else the calling agent's.
  * A coding agent's change stays in its own checkout and the checkouts inside it: a scan changes what the sessions there
  * are told.
  */
@@ -124,12 +125,13 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_conflict_dismiss",
     method: "POST",
     path: "/api/merge-assist/conflicts/dismiss",
-    summary: internalTesting("Dismiss an in-flight conflict with another branch as not a conflict: it stays dismissed for its question and that branch, and the conflict hook hears closed. Only a person dismisses a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
+    summary: internalTesting("Dismiss an in-flight conflict with another branch as not a conflict: it stays dismissed for its question and that branch, and the conflict hook hears closed. People only: a coding agent reads conflicts with merge_assist_get and is refused here (agent-not-permitted)."),
     body: mergeAssistDismissBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
+      peopleOnly(caller, "only a person dismisses an in-flight conflict, on the dashboard's Merge Assist page or with rerail merge-assist dismiss; tell them about it in one line");
       const checkout = checkoutOf(stores, input, caller, true);
-      return await answer(() => stores.mergeAssist().dismissConflict(checkout, input.conflictId, caller.kind));
+      return await answer(() => stores.mergeAssist().dismissConflict(checkout, input.conflictId));
     },
   }),
 ];

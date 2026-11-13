@@ -318,6 +318,14 @@ function loadMergeAssist(maxAge = 0) {
   return loading;
 }
 
+/** A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count). */
+function keepWriteStatus(write, status) {
+  if (status === undefined || write !== mergeAssistWrites.sent) return;
+  data.mergeAssist = status;
+  data.mergeAssistError = null;
+  mergeAssistRead.at = Date.now();
+}
+
 /**
  * One Merge Assist write to a captured scope's target. Every Merge Assist write answers the checkout's status: it
  * replaces `data.mergeAssist` unless a later write was sent meanwhile, and a read sent before it answered lands nowhere.
@@ -329,17 +337,14 @@ export async function writeMergeAssist(scope, method, path, body) {
   try {
     const { body: status } = await send(method, path, { ...scope.target, ...body });
     if (!inScope(scope)) return null;
-    if (status !== undefined && write === mergeAssistWrites.sent) {
-      data.mergeAssist = status;
-      data.mergeAssistError = null;
-      mergeAssistRead.at = Date.now();
-    }
+    keepWriteStatus(write, status);
     return status ?? null;
   } catch (error) {
     if (inScope(scope)) throw error;
     return null;
   } finally {
-    mergeAssistWrites.answered += 1;
+    // A write to a scope no longer shown has nothing to say about the reads of the one shown now.
+    if (inScope(scope)) mergeAssistWrites.answered += 1;
     // The slot's ETag describes the last read, not what the write put in its place.
     refetch("mergeAssist");
   }

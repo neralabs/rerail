@@ -12,7 +12,7 @@ export const DISMISSED_CONFLICTS_SHOWN = 20;
 /** Files whose overlaps are quiet, listed on the dashboard and in the CLI only: lockfiles, changelogs, generated output and docs. */
 const QUIET_FILES: readonly RegExp[] = [
   /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|go\.sum|bun\.lockb|[^/]+\.lock)$/iu,
-  /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)(?:\.[a-z]+)?$/iu,
+  /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)(?:\.(?:md|markdown|rst|txt|adoc|asciidoc))?$/iu,
   /(?:^|\/)(?:dist|build|generated|__generated__)\/|\.(?:generated|min)\.[a-z]+$|\.pb\.go$|_pb2\.py$/iu,
   /^docs\//u,
 ];
@@ -23,13 +23,16 @@ const QUIET_FILES: readonly RegExp[] = [
  * dismissal of one never settles the other; lines added above it, or a base that moved, keep it.
  */
 export function overlapQuestion(file: string, anchor: string): string {
-  const digest = createHash("sha256").update(JSON.stringify({ files: [file], symbols: [anchor] })).digest("hex");
+  const digest = createHash("sha256").update(JSON.stringify({ files: [file], anchors: [anchor] })).digest("hex");
   return `overlap:${digest.slice(0, 24)}`;
 }
 
-/** A conflict's stable id: its question and a short hash of their ref, so the same overlap keeps its id. */
-export function conflictId(question: string, theirsRef: string): string {
-  return `conflict:${question}:${createHash("sha256").update(theirsRef).digest("hex").slice(0, 8)}`;
+/**
+ * A conflict's stable id: its question and a short hash of their branch (as a pull request, a local or a
+ * remote-tracking branch alike), so the same overlap keeps its id however their branch arrives.
+ */
+export function conflictId(question: string, theirsBranch: string): string {
+  return `conflict:${question}:${createHash("sha256").update(theirsBranch).digest("hex").slice(0, 8)}`;
 }
 
 /** The six hex characters a conflict's card names it by (`#a1b2c3`). */

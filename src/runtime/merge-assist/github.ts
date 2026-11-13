@@ -27,13 +27,29 @@ export interface PullRequestSummary {
   author: string;
   isDraft: boolean;
   updatedAt: string;
+  /** Whether the head branch lives in another repository (a fork) than the one the pull request is opened in. */
+  crossRepository: boolean;
+  /** The login of the head repository's owner; null when GitHub no longer names it (a deleted fork). */
+  headOwner: string | null;
+}
+
+/** The open pull requests as listed, newest first; `truncated` when there were more than the listing holds. */
+export interface PullRequestListing {
+  pulls: PullRequestSummary[];
+  truncated: boolean;
 }
 
 export interface GithubClient {
-  /** `not-github` without a repository; `missing` without `gh`; `signed-out` when `gh auth status` fails for the host. */
+  /**
+   * `not-github` without a repository; `missing` without `gh`; `signed-out` when `gh auth status` says so for the host;
+   * `unavailable` when `gh` could not tell (it timed out, failed to start or printed too much).
+   */
   readiness(repository: GithubRepository | null): Promise<GithubReadiness>;
-  /** Up to 50 open pull requests; entries that fail validation are left out. Throws `GithubError` when `gh` fails. */
-  openPullRequests(repository: GithubRepository): Promise<PullRequestSummary[]>;
+  /**
+   * Up to {@link PULL_REQUEST_LIMIT} open pull requests, newest first; entries that fail validation are left out.
+   * Throws `GithubError` when `gh` fails.
+   */
+  openPullRequests(repository: GithubRepository): Promise<PullRequestListing>;
 }
 
 export interface GithubClientOptions {
@@ -43,12 +59,11 @@ export interface GithubClientOptions {
   readonly timeoutMs?: number;
 }
 
-export const GITHUB_ERROR_REASONS = ["invalid-input", "missing", "timeout", "output", "failed", "invalid-response"] as const;
-export type GithubErrorReason = (typeof GITHUB_ERROR_REASONS)[number];
+export type GithubErrorReason = "invalid-input" | "missing" | "timeout" | "output" | "failed" | "invalid-response";
 
 /** A `gh` read that did not happen or did not answer usably; the message says why for a person. */
 export class GithubError extends Error {
-  constructor(readonly reason: GithubErrorReason, message: string, readonly status: number | null = null) {
+  constructor(readonly reason: GithubErrorReason, message: string) {
     super(message);
     this.name = "GithubError";
   }
@@ -58,7 +73,8 @@ const GH_TIMEOUT_MS = 20_000;
 const GH_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 const STDERR_TAIL_CHARS = 2_000;
 const DETAIL_CHARS = 300;
-const PULL_REQUEST_LIMIT = 50;
+/** The most open pull requests one listing reads (`gh pr list --limit`). */
+export const PULL_REQUEST_LIMIT = 200;
 const MAX_TITLE_LENGTH = 256;
 const ACCEPT_HEADER = "Accept: application/vnd.github+json";
 
@@ -157,23 +173,45 @@ interface GhRun {
   readonly stderr: string;
 }
 
-type ApiResult =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly status: number | null; readonly detail: string };
-
 const pullRequestEntrySchema = z.object({
   number: z.number().int().positive(),
   title: z.string(),
   url: z.string(),
-  headRefName: z.string(),
+  headRefName: z.string().refine(validRefName),
   headRefOid: z.string().regex(COMMIT_PATTERN),
-  baseRefName: z.string(),
+  /** Absent, or not an owner's shape, reads as unknown (a deleted fork's owner). */
+  headRepositoryOwner: z.object({ login: z.string().regex(OWNER_PATTERN) }).nullable().catch(null),
+  baseRefName: z.string().refine(validRefName),
   author: z.object({ login: z.string(), is_bot: z.boolean().optional() }),
+  isCrossRepository: z.boolean(),
   isDraft: z.boolean(),
   updatedAt: z.iso.datetime(),
 });
 
 const userSchema = z.object({ login: z.string() });
+
+/** One entry of `gh pr list` on `host` as a summary, or null when it fails validation. */
+function pullRequestOf(entry: unknown, host: string): PullRequestSummary | null {
+  const parsed = pullRequestEntrySchema.safeParse(entry);
+  if (!parsed.success) return null;
+  const value = parsed.data;
+  const author = loginOf(value.author);
+  const url = pullRequestUrl(value.url, host, value.number);
+  if (author === null || url === null) return null;
+  return {
+    number: value.number,
+    title: cleanTitle(value.title),
+    url,
+    headRefName: value.headRefName,
+    headCommit: value.headRefOid,
+    baseRefName: value.baseRefName,
+    author,
+    isDraft: value.isDraft,
+    updatedAt: value.updatedAt,
+    crossRepository: value.isCrossRepository,
+    headOwner: value.headRepositoryOwner?.login ?? null,
+  };
+}
 
 export function createGithubClient(options: GithubClientOptions = {}): GithubClient {
   const spawnProcess = options.spawn ?? spawn;
@@ -181,7 +219,10 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
   /** Enterprise hosts `gh auth status` has confirmed a stored login for. */
   const signedInHosts = new Set<string>();
 
-  /** Runs `gh` once to completion. Throws `GithubError` when it cannot start, times out, or prints too much. */
+  /**
+   * Runs `gh` once to completion. Throws `GithubError` when it cannot start, times out, or prints too much. A stopped
+   * `gh` settles once it exits, its pipes closed by Rerail, so a process it left holding them cannot hold the answer.
+   */
   async function run(args: readonly string[]): Promise<GhRun> {
     const env = ghEnvironment(options.env ?? process.env);
     const command = resolveExecutable("gh", env);
@@ -205,9 +246,21 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
       settled = true;
       resolve(result);
     };
+    /** Settle a stopped run: stop reading its pipes, which a process it started may still hold open. */
+    const abandon = (): void => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      settle(stopped === "output"
+        ? new GithubError("output", `gh printed more than ${GH_OUTPUT_LIMIT_BYTES / (1024 * 1024)} MiB and was stopped.`)
+        : new GithubError("timeout", `gh did not answer within ${timeoutMs / 1000} s and was stopped.`));
+    };
     const stop = (reason: "timeout" | "output"): void => {
       if (stopped !== undefined) return;
       stopped = reason;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        abandon();
+        return;
+      }
       child.kill("SIGTERM");
       killer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
@@ -232,9 +285,11 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
         ? new GithubError("missing", "gh is not installed or not on PATH.")
         : new GithubError("failed", `gh could not be started: ${cleanDetail(error.message)}`));
     });
+    child.on("exit", () => {
+      if (stopped !== undefined) abandon();
+    });
     child.on("close", code => {
-      if (stopped === "timeout") settle(new GithubError("timeout", `gh did not answer within ${timeoutMs / 1000} s and was stopped.`));
-      else if (stopped === "output") settle(new GithubError("output", `gh printed more than ${GH_OUTPUT_LIMIT_BYTES / (1024 * 1024)} MiB and was stopped.`));
+      if (stopped !== undefined) abandon();
       else settle({ code: code ?? 1, stdout: Buffer.concat(chunks).toString("utf8"), stderr });
     });
     const result = await promise;
@@ -254,39 +309,44 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     }
   }
 
-  /** `gh api` with GET for one REST path. A non-zero exit is a result with GitHub's HTTP status when gh reports one. */
-  async function apiGet(host: string, path: string): Promise<ApiResult> {
+  /** `gh api` with GET for one REST path: the JSON it printed, or null when `gh` exited with an error. */
+  async function apiGet(host: string, path: string): Promise<unknown> {
     const result = await run(["api", "--method", "GET", "--hostname", host, "-H", ACCEPT_HEADER, path]);
-    if (result.code === 0) return { ok: true, value: json(result.stdout) };
-    const status = /\(HTTP (\d{3})\)/u.exec(result.stderr)?.[1];
-    return { ok: false, status: status === undefined ? null : Number(status), detail: cleanDetail(result.stderr) };
+    return result.code === 0 ? json(result.stdout) : null;
   }
 
-  function failed(what: string, result: { status: number | null; detail: string }): GithubError {
-    return new GithubError("failed", `gh could not ${what}${result.detail === "" ? "." : `: ${result.detail}`}`, result.status);
+  /** Whether `gh` holds a working sign-in for the host, as `gh auth status` says, or why that could not be read. */
+  async function signInState(host: string): Promise<"signed-in" | "signed-out" | "missing" | "unavailable"> {
+    try {
+      const status = await run(["auth", "status", "--hostname", host]);
+      if (status.code !== 0) return "signed-out";
+      signedInHosts.add(host);
+      return "signed-in";
+    } catch (error) {
+      if (!(error instanceof GithubError)) throw error;
+      // gh is there, but whether it is signed in could not be read this time: say so, not that it is signed out.
+      return error.reason === "missing" ? "missing" : "unavailable";
+    }
+  }
+
+  /** The signed-in login on the host, or null when it could not be read this time. */
+  async function userLogin(host: string): Promise<string | null> {
+    try {
+      const parsed = userSchema.safeParse(await apiGet(host, "user"));
+      return parsed.success && LOGIN_PATTERN.test(parsed.data.login) ? parsed.data.login : null;
+    } catch (error) {
+      if (!(error instanceof GithubError)) throw error;
+      return null;
+    }
   }
 
   async function readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
     if (repository === null || !validRepository(repository)) return { state: "not-github", login: null, repository: null };
     const name = `${repository.owner}/${repository.name}`;
-    try {
-      const status = await run(["auth", "status", "--hostname", repository.host]);
-      if (status.code !== 0) return { state: "signed-out", login: null, repository: name };
-      signedInHosts.add(repository.host);
-    } catch (error) {
-      if (!(error instanceof GithubError)) throw error;
-      return { state: error.reason === "missing" ? "missing" : "signed-out", login: null, repository: name };
-    }
-    let login: string | null = null;
-    try {
-      const user = await apiGet(repository.host, "user");
-      const parsed = user.ok ? userSchema.safeParse(user.value) : null;
-      if (parsed?.success === true && LOGIN_PATTERN.test(parsed.data.login)) login = parsed.data.login;
-    } catch (error) {
-      // Signed in, but the login could not be read this time; the state stands without it.
-      if (!(error instanceof GithubError)) throw error;
-    }
-    return { state: "signed-in", login, repository: name };
+    const state = await signInState(repository.host);
+    // Signed in, but the login could not be read this time: the state stands without it.
+    const login = state === "signed-in" ? await userLogin(repository.host) : null;
+    return { state, login, repository: name };
   }
 
   /**
@@ -300,7 +360,7 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     signedInHosts.add(host);
   }
 
-  async function openPullRequests(repository: GithubRepository): Promise<PullRequestSummary[]> {
+  async function openPullRequests(repository: GithubRepository): Promise<PullRequestListing> {
     checkRepository(repository);
     await requireSignedIn(repository.host);
     const result = await run([
@@ -308,32 +368,16 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
       `--repo=${repository.host}/${repository.owner}/${repository.name}`,
       "--state", "open",
       "--limit", String(PULL_REQUEST_LIMIT),
-      "--json", "number,title,url,headRefName,headRefOid,baseRefName,author,isDraft,updatedAt",
+      "--json", "number,title,url,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,baseRefName,author,isDraft,updatedAt",
     ]);
-    if (result.code !== 0) throw failed("list open pull requests", { status: null, detail: cleanDetail(result.stderr) });
+    if (result.code !== 0) {
+      const detail = cleanDetail(result.stderr);
+      throw new GithubError("failed", `gh could not list open pull requests${detail === "" ? "." : `: ${detail}`}`);
+    }
     const entries = z.array(z.unknown()).safeParse(json(result.stdout));
     if (!entries.success) throw new GithubError("invalid-response", "gh pr list did not print a list.");
-    const pullRequests: PullRequestSummary[] = [];
-    for (const entry of entries.data) {
-      const parsed = pullRequestEntrySchema.safeParse(entry);
-      if (!parsed.success) continue;
-      const value = parsed.data;
-      const author = loginOf(value.author);
-      const url = pullRequestUrl(value.url, repository.host, value.number);
-      if (author === null || url === null || !validRefName(value.headRefName) || !validRefName(value.baseRefName)) continue;
-      pullRequests.push({
-        number: value.number,
-        title: cleanTitle(value.title),
-        url,
-        headRefName: value.headRefName,
-        headCommit: value.headRefOid,
-        baseRefName: value.baseRefName,
-        author,
-        isDraft: value.isDraft,
-        updatedAt: value.updatedAt,
-      });
-    }
-    return pullRequests;
+    const pulls = entries.data.flatMap(entry => pullRequestOf(entry, repository.host) ?? []);
+    return { pulls, truncated: entries.data.length >= PULL_REQUEST_LIMIT };
   }
 
   return { readiness, openPullRequests };

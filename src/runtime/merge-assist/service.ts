@@ -21,15 +21,16 @@ import {
 } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { checkouts, repositories } from "../../engine/storage/schema.js";
+import { ownProcessAlive } from "../daemon-control.js";
 import { detectConflicts } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
 import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
-import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict } from "./conflict-store.js";
-import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
+import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict, type StoredConflict } from "./conflict-store.js";
+import { createGithubClient, PULL_REQUEST_LIMIT, type GithubClient, type GithubRepository, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
 import { currentNotice, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
 import { personName } from "./people.js";
-import { STATE_KEYS, deleteState, isoSeconds, readState, writeState } from "./state.js";
+import { STATE_KEYS, deleteState, isoSeconds, readState, writeState, type StateQueries } from "./state.js";
 
 export const MERGE_ASSIST_ERROR_CODES = ["not-a-checkout", "not-found", "invalid-state", "disabled"] as const;
 export type MergeAssistErrorCode = (typeof MERGE_ASSIST_ERROR_CODES)[number];
@@ -42,18 +43,18 @@ export class MergeAssistError extends Error {
   }
 }
 
-/** Who asks for a change: a person (dashboard, CLI), or a coding agent (MCP), which may only read and scan. */
-export type MergeAssistActor = "person" | "agent";
-
 export interface MergeAssistService {
-  /** The checkout's state and its in-flight conflicts. Reads only; runs nothing. */
+  /** The checkout's state and its in-flight conflicts. Reads only; runs no `gh` while Merge Assist is off. */
   status(checkoutPath: string): Promise<MergeAssistStatus>;
-  /** Turn Merge Assist on or off for the checkout's repository. Off clears every checkout's conflicts and scans. */
+  /**
+   * Turn Merge Assist on or off for the checkout's repository. Off fires `closed` for every open conflict, then clears
+   * every checkout's conflicts and scans and the repository's `gh` readiness.
+   */
   setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus>;
   /** Find the checkout's in-flight conflicts now, with the open pull requests listed afresh. */
   scan(checkoutPath: string): Promise<MergeAssistStatus>;
-  /** Dismiss an open in-flight conflict as not a conflict. Only a person does: a coding agent is refused. */
-  dismissConflict(checkoutPath: string, conflictId: string, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
+  /** Dismiss an open in-flight conflict as not a conflict: a person's change, which callers check is a person's. */
+  dismissConflict(checkoutPath: string, conflictId: string): Promise<MergeAssistStatus>;
   /** The person's settings for the checkout's repository: the conflict hook command. Reads only. */
   settings(checkoutPath: string): Promise<MergeAssistSettings>;
   /** Change the person's settings for the checkout's repository; a field left out stays, `hook: null` removes the command. */
@@ -79,7 +80,8 @@ export interface MergeAssistRuntime extends MergeAssistService {
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void;
   /**
    * Resolves once no conflict's agent note in the checkout waits for the person's hook command: at once without one,
-   * else when it answers or the hook's note wait passes, whichever is first.
+   * else when each held note's command answers or its note wait passes. A note a later pass holds meanwhile extends
+   * the wait, so a caller with a bound races this with its own timer.
    */
   notesReleased(checkoutPath: string): Promise<void>;
   /** Whether the person's hook command may hold the checkout's conflict notes: one is set. */
@@ -114,11 +116,13 @@ export interface MergeAssistServiceOptions {
   readonly github?: GithubClient;
   readonly now?: () => number;
   readonly env?: NodeJS.ProcessEnv;
+  /** The most a conflict's agent note waits for the person's hook command (`NOTE_WAIT_MS` by default). */
+  readonly noteWaitMs?: number;
 }
 
 /** How long `gh`'s readiness is reused before `gh auth status` runs again; a scan always reads it afresh. */
 const GITHUB_READINESS_MS = 5 * 60_000;
-/** A scan marked running for longer than this was cut short (its process died); another may start. */
+/** A scan marked running for longer than this, or by a process that is gone, was cut short; another may start. */
 const SCAN_STALE_MS = 10 * 60_000;
 /** The least time between two detections of a checkout's conflicts after the agent's edits. */
 export const CONFLICT_DETECT_INTERVAL_MS = 30_000;
@@ -128,13 +132,18 @@ const PULLS_REUSE_MS = 5 * 60_000;
 const STOP_KILL_GRACE_MS = 500;
 
 const githubCacheSchema = z.object({ at: z.number(), readiness: githubReadinessSchema });
-const scanningSchema = z.object({ since: z.number() });
+/** A scan running in some process: since when, and which process claimed it. */
+const scanningSchema = z.object({ since: z.number(), pid: z.number().int() });
+type ScanMark = z.infer<typeof scanningSchema>;
 
-/** The open pull requests as listed, and why they could not be, when `gh` failed. */
+/** The open pull requests as listed, and what the listing could not cover, one sentence each. */
 interface PullListing {
   readonly pulls: readonly PullRequestSummary[];
-  readonly problem: string | null;
+  readonly problems: readonly string[];
 }
+
+/** A checkout conflict events are fired in. */
+type FiredCheckout = Pick<CheckoutContext, "checkoutPath" | "repositoryKey">;
 
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
@@ -145,8 +154,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #commands = new RunningCommands();
   #database: RerailDatabase | undefined;
   #github: GithubClient | undefined;
-  /** Scans running in this process, by checkout; a second request joins the first. */
-  readonly #scans = new Map<string, Promise<void>>();
+  /** Scans running in this process, by checkout, with the mark each claimed; a second request joins the first. */
+  readonly #scans = new Map<string, { work: Promise<void>; mark: ScanMark }>();
   /** `gh auth status` runs in this process, by repository; concurrent status reads share one. */
   readonly #githubReads = new Map<string, Promise<GithubReadiness>>();
   /** When this process last found a checkout's conflicts after an edit, by checkout. */
@@ -161,7 +170,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
-    this.#hook = new ConflictHook([deliveryHandler, commandHandler(this.#commands)]);
+    this.#hook = new ConflictHook([deliveryHandler, commandHandler(this.#commands)], options.noteWaitMs);
   }
 
   get #db(): RerailDatabase {
@@ -223,7 +232,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /** Hand conflict events in the checkout to the conflict hook's handlers, which run in the background. */
-  #fire(checkout: CheckoutContext, fires: readonly ConflictFire[], session: { id: string; host: RerailHost | null } | null): void {
+  #fire(checkout: FiredCheckout, fires: readonly ConflictFire[], session: { id: string; host: RerailHost | null } | null): void {
     if (fires.length === 0 || this.#stopped) return;
     const root = checkout.checkoutPath;
     const context: ConflictHandlerContext = {
@@ -240,20 +249,21 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     });
   }
 
-  /** `gh`'s readiness for the repository: the one read in the last five minutes by any process, else read now. */
+  /**
+   * `gh`'s readiness for the repository: the one read in the last five minutes by any process, else read now. One
+   * `gh` could not tell (`unavailable`) is never kept, and none is kept once Merge Assist is off.
+   */
   async #githubReadiness(repositoryKey: string, fresh: boolean): Promise<GithubReadiness> {
     const repository = githubRepositoryOf(repositoryKey);
     if (repository === null) return { state: "not-github", login: null, repository: null };
     const key = STATE_KEYS.github(repositoryKey);
-    if (!fresh) {
-      const cached = readState(this.#db, key, githubCacheSchema);
-      if (cached !== undefined && this.#now() - cached.at < GITHUB_READINESS_MS) return cached.readiness;
-    }
+    const cached = fresh ? undefined : readState(this.#db, key, githubCacheSchema);
+    if (cached !== undefined && this.#now() - cached.at < GITHUB_READINESS_MS) return cached.readiness;
     let reading = this.#githubReads.get(repositoryKey);
     if (reading === undefined) {
       reading = this.#githubClient.readiness(repository)
         .then(readiness => {
-          writeState(this.#db, key, { at: this.#now(), readiness }, this.#now());
+          if (readiness.state !== "unavailable") this.#keepReadiness(repositoryKey, readiness);
           return readiness;
         })
         .finally(() => this.#githubReads.delete(repositoryKey));
@@ -262,11 +272,31 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return await reading;
   }
 
-  /** Whether a scan of the checkout runs in this process or, by its fresh mark, in another. */
+  #keepReadiness(repositoryKey: string, readiness: GithubReadiness): void {
+    this.#db.transaction(tx => {
+      if (mergeAssistEnabled(tx, repositoryKey)) writeState(tx, STATE_KEYS.github(repositoryKey), { at: this.#now(), readiness }, this.#now());
+    }, { behavior: "immediate" });
+  }
+
+  /** The checkout's scan mark when a live scan holds it: fresh, and claimed by a process that is still running. */
+  #liveMark(db: StateQueries, checkoutPath: string): ScanMark | undefined {
+    const mark = readState(db, STATE_KEYS.scanning(checkoutPath), scanningSchema);
+    return mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS && ownProcessAlive(mark.pid) ? mark : undefined;
+  }
+
+  /** Whether a scan of the checkout runs in this process or, by its live mark, in another. */
   #scanning(checkoutPath: string): boolean {
-    if (this.#scans.has(checkoutPath)) return true;
-    const mark = readState(this.#db, STATE_KEYS.scanning(checkoutPath), scanningSchema);
-    return mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS;
+    return this.#scans.has(checkoutPath) || this.#liveMark(this.#db, checkoutPath) !== undefined;
+  }
+
+  /** Remove the checkout's scan mark if it is still `mark`; nothing once the database is closed. */
+  #releaseMark(checkoutPath: string, mark: ScanMark): void {
+    if (this.#database?.$client.open !== true) return;
+    const key = STATE_KEYS.scanning(checkoutPath);
+    this.#database.transaction(tx => {
+      const current = readState(tx, key, scanningSchema);
+      if (current?.since === mark.since && current.pid === mark.pid) deleteState(tx, key);
+    }, { behavior: "immediate" });
   }
 
   /**
@@ -276,12 +306,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   #scanOnce(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null = null): Promise<void> {
     const path = checkout.checkoutPath;
     const running = this.#scans.get(path);
-    if (running !== undefined) return running;
-    const markKey = STATE_KEYS.scanning(path);
+    if (running !== undefined) return running.work;
+    const mark: ScanMark = { since: this.#now(), pid: process.pid };
     const claimed = this.#db.transaction(tx => {
-      const mark = readState(tx, markKey, scanningSchema);
-      if (mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS) return false;
-      writeState(tx, markKey, { since: this.#now() }, this.#now());
+      if (this.#liveMark(tx, path) !== undefined) return false;
+      writeState(tx, STATE_KEYS.scanning(path), mark, this.#now());
       return true;
     }, { behavior: "immediate" });
     if (!claimed) return Promise.resolve();
@@ -289,31 +318,38 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       try {
         await this.#detect(checkout, session, true);
       } finally {
-        deleteState(this.#db, markKey);
         this.#scans.delete(path);
+        this.#releaseMark(path, mark);
       }
     })();
-    this.#scans.set(path, work);
+    this.#scans.set(path, { work, mark });
     return work;
+  }
+
+  /** The open pull requests once `gh`'s readiness is read: none unless signed in, and what the listing left out. */
+  async #listPulls(repository: GithubRepository, readiness: GithubReadiness): Promise<PullListing> {
+    if (readiness.state === "unavailable") {
+      return { pulls: [], problems: ["Rerail could not read gh's sign-in (it did not answer in time or failed), so no open pull request was compared."] };
+    }
+    if (readiness.state !== "signed-in") return { pulls: [], problems: [] };
+    const { pulls, truncated } = await this.#githubClient.openPullRequests(repository);
+    return { pulls, problems: truncated ? [`Only the ${PULL_REQUEST_LIMIT} newest open pull requests were compared.`] : [] };
   }
 
   /**
    * The open pull requests for detecting conflicts: the listing of the last five minutes unless `fresh`, else read now;
-   * none without `gh`. A listing that failed says why.
+   * none without `gh`. A listing that failed or was cut short says so.
    */
   #openPulls(checkout: CheckoutContext, fresh: boolean): Promise<PullListing> {
     const repository = githubRepositoryOf(checkout.repositoryKey);
-    if (repository === null) return Promise.resolve({ pulls: [], problem: null });
+    if (repository === null) return Promise.resolve({ pulls: [], problems: [] });
     const cached = this.#pulls.get(checkout.repositoryKey);
     if (!fresh && cached !== undefined && this.#now() - cached.at < PULLS_REUSE_MS) return cached.listing;
     const listing = this.#githubReadiness(checkout.repositoryKey, fresh)
-      .then(async (readiness): Promise<PullListing> => ({
-        pulls: readiness.state === "signed-in" ? await this.#githubClient.openPullRequests(repository) : [],
-        problem: null,
-      }))
+      .then(readiness => this.#listPulls(repository, readiness))
       .catch((error: unknown): PullListing => ({
         pulls: [],
-        problem: `Rerail could not list open pull requests: ${error instanceof Error ? error.message : String(error)}`,
+        problems: [`Rerail could not list open pull requests: ${error instanceof Error ? error.message : String(error)}`],
       }));
     this.#pulls.set(checkout.repositoryKey, { at: this.#now(), listing });
     return listing;
@@ -325,11 +361,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    * as the checkout's last scan.
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
-    const { pulls, problem } = await this.#openPulls(checkout, scan);
+    const { pulls, problems } = await this.#openPulls(checkout, scan);
+    // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
+    if (this.#stopped) return;
     const detected = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
     if (detected === null) return;
     if (scan) {
-      const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...(problem === null ? [] : [problem]), ...detected.problems] };
+      const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
       this.#db.transaction(tx => {
         if (mergeAssistEnabled(tx, checkout.repositoryKey)) writeState(tx, STATE_KEYS.scan(checkout.checkoutPath), last, this.#now());
       }, { behavior: "immediate" });
@@ -337,19 +375,27 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#fire(checkout, conflictEvents(detected.before, detected.after), session);
   }
 
+  /** `gh`'s readiness as the status shows it: `unchecked` while Merge Assist is off, when Rerail runs no `gh`. */
+  async #statusReadiness(repositoryKey: string, enabled: boolean): Promise<GithubReadiness> {
+    if (enabled) return await this.#githubReadiness(repositoryKey, false);
+    const repository = githubRepositoryOf(repositoryKey);
+    return { state: "unchecked", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` };
+  }
+
   async status(checkoutPath: string): Promise<MergeAssistStatus> {
     const checkout = this.#checkout(checkoutPath, false);
     const db = this.#db;
     const root = checkout.checkoutPath;
+    const enabled = mergeAssistEnabled(db, checkout.repositoryKey);
     return {
       repositoryKey: checkout.repositoryKey,
       checkout: root,
       branch: currentBranch(root),
       baseBranch: baseBranch(root)?.name ?? null,
-      enabled: mergeAssistEnabled(db, checkout.repositoryKey),
+      enabled,
       settings: readSettings(db, checkout.repositoryKey),
       readiness: {
-        github: await this.#githubReadiness(checkout.repositoryKey, false),
+        github: await this.#statusReadiness(checkout.repositoryKey, enabled),
       },
       scanning: this.#scanning(root),
       lastScan: readState(db, STATE_KEYS.scan(root), lastScanSchema) ?? null,
@@ -357,19 +403,33 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     };
   }
 
+  /**
+   * Clear what Merge Assist found in every checkout of the repository, dismissals included, and its `gh` readiness;
+   * the person's settings stay. Returns each checkout's conflicts that were open.
+   */
+  #clearRepository(tx: StateQueries, repositoryKey: string): Array<{ path: string; open: StoredConflict[] }> {
+    deleteState(tx, STATE_KEYS.github(repositoryKey));
+    return tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all().map(({ path }) => {
+      const open = readConflicts(tx, path).filter(entry => entry.conflict.status === "open");
+      deleteState(tx, STATE_KEYS.scan(path));
+      deleteState(tx, STATE_KEYS.conflicts(path));
+      return { path, open };
+    });
+  }
+
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {
     const checkout = this.#checkout(checkoutPath, true);
-    this.#db.transaction(tx => {
+    const { repositoryKey } = checkout;
+    const cleared = this.#db.transaction(tx => {
       tx.update(repositories).set({ mergeAssist: enabled, updatedAt: this.#now() })
-        .where(eq(repositories.repositoryKey, checkout.repositoryKey)).run();
-      if (enabled) return;
-      // Off clears what Merge Assist found in every checkout of the repository, dismissals included; the person's
-      // settings stay.
-      for (const { path } of tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, checkout.repositoryKey)).all()) {
-        deleteState(tx, STATE_KEYS.scan(path));
-        deleteState(tx, STATE_KEYS.conflicts(path));
-      }
+        .where(eq(repositories.repositoryKey, repositoryKey)).run();
+      return enabled ? [] : this.#clearRepository(tx, repositoryKey);
     }, { behavior: "immediate" });
+    this.#pulls.delete(repositoryKey);
+    // Every conflict open when Merge Assist went off is closed: the hook hears it once, as for one no longer found.
+    for (const { path, open } of cleared) {
+      this.#fire({ checkoutPath: path, repositoryKey }, open.map(conflict => ({ event: "closed", conflict })), null);
+    }
     return await this.status(checkout.checkoutPath);
   }
 
@@ -379,17 +439,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return await this.status(checkout.checkoutPath);
   }
 
-  async dismissConflict(checkoutPath: string, conflictId: string, actor: MergeAssistActor = "person"): Promise<MergeAssistStatus> {
-    if (actor === "agent") {
-      throw new MergeAssistError("invalid-state", "The person dismisses in-flight conflicts, not a coding agent. Tell them about it in one line; they dismiss it on the Merge Assist page.");
-    }
+  async dismissConflict(checkoutPath: string, conflictId: string): Promise<MergeAssistStatus> {
     const checkout = this.#enabledCheckout(checkoutPath);
     const root = checkout.checkoutPath;
-    const stored = readConflicts(this.#db, root).find(entry => entry.conflict.id === conflictId);
-    if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
-    if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already dismissed.`);
-    const dismissed = dismissedConflict(stored, personName(root), this.#now());
-    this.#db.transaction(tx => replaceConflict(tx, root, dismissed, this.#now()), { behavior: "immediate" });
+    const name = personName(root);
+    // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
+    // `closed`; the other finds it dismissed.
+    const dismissed = this.#db.transaction(tx => {
+      const stored = readConflicts(tx, root).find(entry => entry.conflict.id === conflictId);
+      if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
+      if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already dismissed.`);
+      const entry = dismissedConflict(stored, name, this.#now());
+      replaceConflict(tx, root, entry, this.#now());
+      return entry;
+    }, { behavior: "immediate" });
     this.#fire(checkout, [{ event: "closed", conflict: dismissed }], null);
     return await this.status(root);
   }
@@ -466,17 +529,22 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
     const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
+    const scans = [...this.#scans.values()].map(scan => scan.work);
     try {
-      await Promise.race([this.#hook.settled(), timer.promise]);
+      await Promise.race([Promise.allSettled([this.#hook.settled(), ...scans]), timer.promise]);
     } finally {
       clearTimeout(timeout);
     }
+    // A scan still waiting for `gh` gives up its mark while the database is open, so the next process scans at once;
+    // once `gh` answers it stops without touching the database.
+    for (const [path, { mark }] of this.#scans) this.#releaseMark(path, mark);
   }
 }
 
 /**
  * Merge Assist over one database. It runs `gh` only to list open pull requests, and the person's hook command on
- * conflict events; a status read runs neither, apart from `gh auth status` at most every five minutes per repository.
+ * conflict events; a status read runs neither, apart from `gh auth status` at most every five minutes per repository
+ * while Merge Assist is on for it, and nothing while it is off.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);
