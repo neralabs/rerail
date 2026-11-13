@@ -564,7 +564,9 @@ writes wait for that lock on the thread that answers hooks. So the daemon runs `
 no process has written to the database for 2 s, and that process gives way to the daemon: when the daemon's thread
 has not answered for half a second before the `VACUUM` has committed, the daemon ends the process, SQLite drops the
 unfinished `VACUUM`, and the write that was waiting goes through. A `VACUUM` that has committed holds the lock no more,
-and runs to its end. The next try waits for a quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
+and runs to its end; the process tells the daemon when it holds the lock, so a `rerail scrub` or `rerail reset` that
+shrinks the file meanwhile is never taken for that commit. A try that finds the space already given back runs no
+`VACUUM`. The next try waits for a quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
 try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
 start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
 Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a `rerail`

@@ -4,11 +4,12 @@
  * that lock on its own thread for up to its 5 s busy timeout (`database.ts`), and the daemon's stores wait on the thread
  * that answers hooks: the `VACUUM` after 4,000 audits took 8.9 s on a loaded Windows machine. better-sqlite3 cannot stop
  * a statement once it runs, so the `VACUUM` runs in a process of its own (`vacuum-process.ts`), which this ends once the
- * watched thread has not answered for `GIVE_WAY_MS` while the `VACUUM` has not committed: SQLite drops a `VACUUM` that
- * has not committed, the lock is free, this cuts the WAL back from the pages that `VACUUM` wrote (`cutWal`), and the
- * write that waited goes through. Each attempt starts once no other connection has committed to the file for a while,
- * twice as long after each one that gave way, up to `LONGEST_QUIET_MS`, so the `VACUUM` runs in the first quiet moment
- * long enough for it; once it has waited `noticeMs` it says so, once, with what its attempts did meanwhile.
+ * watched thread has not answered for `GIVE_WAY_MS` while the `VACUUM` has not committed (`committedBy`): SQLite drops
+ * a `VACUUM` that has not committed, the lock is free, this cuts the WAL back from the pages that `VACUUM` wrote
+ * (`cutWal`), and the write that waited goes through. Each attempt starts once no other connection has committed to the
+ * file for a while, twice as long after each one that gave way, up to `LONGEST_QUIET_MS`, so the `VACUUM` runs in the
+ * first quiet moment long enough for it; once it has waited `noticeMs` it says so, once, with what its attempts did
+ * meanwhile.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -51,6 +52,12 @@ const CUT_WAL_MS = 2_000;
 
 /** The exit code of a `vacuum-process.ts` that found another connection holding the write lock. */
 export const BUSY_EXIT = 75;
+
+/**
+ * The start of the line `vacuum-process.ts` writes on stdout before its `VACUUM`, followed by the file's page count as it
+ * read it while holding the write lock (`committedBy`).
+ */
+export const HOLDING = "rerail-vacuum-holding ";
 
 /** The messages of the watch: the watching thread posts `PING`, and the watched thread answers each with `PONG`. */
 export const PING = "rerail-vacuum-ping";
@@ -208,8 +215,8 @@ async function quietFor(client: Database.Database, quietMs: number, signal: Abor
  * waited takes the lock.
  */
 async function vacuumOnce(client: Database.Database, path: string, { watch, signal }: GivingWay): Promise<Attempt> {
-  const committed = committedSince(client);
   const child = startVacuumProcess(path);
+  const committed = committedBy(child, client);
   const attempt = attemptEnd(child, client, committed);
   const unwatch = watch(() => attempt.end(false));
   const unlisten = onAbort(signal, () => attempt.end(true));
@@ -225,12 +232,26 @@ async function vacuumOnce(client: Database.Database, path: string, { watch, sign
 }
 
 /**
- * Whether a `VACUUM` has committed since this was called. It gives the free pages back, so the file's page count falls,
- * which no other write does; a `VACUUM` that has not committed leaves it as it was.
+ * Whether the `VACUUM` of `child`, the attempt's process, has committed. It gives the free pages back, so the file's
+ * page count falls; but another connection's `VACUUM` (`rerail scrub`, `rerail reset`) lowers it too, at any moment
+ * before `child` takes the write lock. So a fall counts only below the page count `child` read while it held that lock
+ * and wrote on stdout just before its `VACUUM` (`HOLDING`, `vacuum-process.ts`): from that read to the `VACUUM`'s commit
+ * no other connection commits. Until `child` has written that line, its `VACUUM` has not begun.
  */
-function committedSince(client: Database.Database): () => boolean {
-  const pages = pragmaNumber(client, "page_count");
-  return () => pragmaNumber(client, "page_count") < pages;
+function committedBy(child: ChildProcess, client: Database.Database): () => boolean {
+  let said = "";
+  let holding: number | undefined;
+  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+    said += chunk;
+    holding ??= pagesHeld(said);
+  });
+  return () => holding !== undefined && pragmaNumber(client, "page_count") < holding;
+}
+
+/** The page count of the first whole `HOLDING` line in `said`, or undefined while there is none. */
+function pagesHeld(said: string): number | undefined {
+  const line = said.split("\n").slice(0, -1).find(text => text.startsWith(HOLDING));
+  return line === undefined ? undefined : Number(line.slice(HOLDING.length));
 }
 
 /**
@@ -258,13 +279,14 @@ function attemptEnd(
 
 /**
  * `vacuum-process.ts` on `path`: its JavaScript as the package ships it, or, where this module runs from its TypeScript
- * source as the tests run it, that source through `tsx`. No console window opens for it on Windows.
+ * source as the tests run it, that source through `tsx`. Its stdout says when it holds the write lock (`committedBy`),
+ * its stderr why it failed. No console window opens for it on Windows.
  */
 function startVacuumProcess(path: string): ChildProcess {
   const fromSource = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = fileURLToPath(new URL(`./vacuum-process.${fromSource ? "ts" : "js"}`, import.meta.url));
   return spawn(process.execPath, [...(fromSource ? ["--import", "tsx"] : []), entry, path], {
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
 }

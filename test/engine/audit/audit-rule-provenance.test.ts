@@ -1,3 +1,5 @@
+import type * as ChildProcessModule from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -23,10 +25,29 @@ import { SqliteAuditStore as MainAuditStore } from "../support/main-audit-store.
 // Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
 vi.mock("node:fs", { spy: true });
 
+/**
+ * Runs, once, as the next process `vacuumGivingWay` starts on this thread is spawned, before it can take the write lock:
+ * another connection that commits as an attempt begins. Every other spawn reaches the real child_process.
+ */
+const vacuumStart = vi.hoisted(() => ({ before: undefined as (() => void) | undefined }));
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof ChildProcessModule>("node:child_process");
+  return {
+    ...actual,
+    spawn: (command: string, args: readonly string[], options: SpawnOptions) => {
+      const before = vacuumStart.before;
+      vacuumStart.before = undefined;
+      before?.();
+      return actual.spawn(command, args, options);
+    },
+  };
+});
+
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   vi.mocked(statfsSync).mockReset();
+  vacuumStart.before = undefined;
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -144,6 +165,49 @@ function fillPages(path: string, bytes: number): void {
   } finally {
     database.close();
   }
+}
+
+/** `VACUUM` on a connection of its own, as `rerail scrub` and `rerail reset` run it. */
+function vacuumOn(path: string): void {
+  const other = new Database(path);
+  try {
+    other.exec("VACUUM");
+  } finally {
+    other.close();
+  }
+}
+
+/** One write on `database`: what it threw, if anything, and how long it took. */
+function timedWrite(database: Database.Database): { failure: string | undefined; waitedMs: number } {
+  const began = performance.now();
+  try {
+    database.exec("CREATE TABLE IF NOT EXISTS daemon_writes (at); INSERT INTO daemon_writes VALUES (1)");
+    return { failure: undefined, waitedMs: performance.now() - began };
+  } catch (error) {
+    return { failure: (error as { code?: string }).code ?? String(error), waitedMs: performance.now() - began };
+  }
+}
+
+/**
+ * A file with about 8 MB in use and 8 MB free, and a connection on it as the move's, which `vacuumGivingWay` runs on;
+ * the VACUUMs of the processes it starts hold the write lock `holdMs` first, creating `held` (`slowVacuumNext`) as the
+ * first takes it. `close` closes the connection and puts the environment back.
+ */
+async function fileToVacuum(holdMs: number): Promise<{ path: string; held: string; client: Database.Database; close: () => void }> {
+  const path = await temporaryDatabase();
+  openRerailDatabase(path).$client.close();
+  fillPages(path, 8_000_000);
+  freePages(path, 8_000_000);
+  const held = join(dirname(path), "vacuum-held");
+  const restore = slowVacuumNext({ held, holdMs });
+  const client = openRerailDatabase(path).$client;
+  client.pragma("busy_timeout = 0");
+  return {
+    path, held, client, close: () => {
+      restore();
+      client.close();
+    },
+  };
 }
 
 /** The steps an older Rerail runs when it opens the file: this build's, without the one this change adds. */
@@ -668,6 +732,71 @@ describe("audit rule provenance", () => {
     expect(stalledFor).toBeLessThan(100);
     expect(pageBytes(path).free).toBe(0);
   }, 120_000);
+
+  it("ends its VACUUM when the thread it gives way to stalls, though another connection shrank the file as its process started", async () => {
+    // The first VACUUM an attempt's process runs holds the write lock 12 s before it runs, past the 5 s busy timeout of
+    // every Rerail writer.
+    const { path, held, client, close } = await fileToVacuum(12_000);
+    // As the attempt starts its process, before that process can take the lock, another connection gives the free pages
+    // back, as `rerail scrub` or `rerail reset` does, and history deleted since frees 1 MB: the file now has fewer pages
+    // than when the attempt began, and some free, so the attempt's process runs its VACUUM.
+    vacuumStart.before = () => {
+      vacuumOn(path);
+      freePages(path, 1_000_000);
+    };
+    // The watched thread stalls once that process holds the lock, as when a write of its own waits for it; that write
+    // then runs with the busy timeout the daemon's stores have.
+    const daemonWrite = new Database(path, { timeout: 5_000 });
+    let wrote: { failure: string | undefined; waitedMs: number } | undefined;
+    const watch: ThreadWatch = stalled => {
+      const poll = setInterval(() => {
+        if (wrote !== undefined || !existsSync(held)) return;
+        stalled();
+        wrote = timedWrite(daemonWrite);
+      }, 5);
+      return () => clearInterval(poll);
+    };
+    let logged: string;
+    try {
+      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
+        watch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
+      })));
+    } finally {
+      daemonWrite.close();
+      close();
+    }
+
+    // The stall ended the attempt's process, which held the lock, and the write went through inside its busy timeout.
+    // Taking the other connection's shrink for its own commit, the attempt let the process hold the lock 12 s, and the
+    // write failed with SQLITE_BUSY after 5 s.
+    const seen = {
+      failure: wrote?.failure,
+      inBusyTimeout: (wrote?.waitedMs ?? Number.POSITIVE_INFINITY) < 5_000,
+      gaveWay: logged.includes("VACUUM gave way (the daemon's thread did not answer"),
+    };
+    expect(seen, `the write waited ${Math.round(wrote?.waitedMs ?? -1)} ms`).toEqual({ failure: undefined, inBusyTimeout: true, gaveWay: true });
+    expect(pageBytes(path).free).toBe(0);
+  }, 120_000);
+
+  it("runs no VACUUM when another connection gave the free pages back as its process started", async () => {
+    // A VACUUM the attempt's process runs creates `held` as it takes the write lock, and holds it 12 s.
+    const { path, held, client, close } = await fileToVacuum(12_000);
+    // As the attempt starts its process, another connection gives every free page back, as `rerail scrub` does.
+    vacuumStart.before = () => vacuumOn(path);
+    let logged: string;
+    try {
+      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
+        watch: () => () => undefined, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
+      })));
+    } finally {
+      close();
+    }
+
+    // The process found no free page once it held the lock, and ran no VACUUM. Before, it ran one, which rewrote the file
+    // a second time and held the lock throughout.
+    expect({ vacuumed: existsSync(held), logged }).toEqual({ vacuumed: false, logged: "" });
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
 
   it("says once, naming rerail scrub, when writes keep its VACUUM from starting past its bound, and VACUUMs once they stop", async () => {
     const path = await fileOfTheBuildBefore();
