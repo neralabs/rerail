@@ -4,11 +4,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { removeFolder } from "../support/platform/remove-folder.js";
-import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
-import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
-import { MergeAssistError } from "../../src/runtime/index.js";
-import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../support/merge-assist/status.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
+import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../../src/cli/merge-assist-cli.js";
+import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../../src/engine/index.js";
+import { MergeAssistError } from "../../../src/runtime/index.js";
+import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../../support/merge-assist/status.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
 beforeEach(() => {
