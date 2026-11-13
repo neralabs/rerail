@@ -135,14 +135,7 @@ pub(super) fn fold(
     for rel in &wanted {
         let text = texts.get(rel).map_or("", String::as_str);
         let types: Vec<String> = prog.decls.get(rel).map(|d| d.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
-        let mut rows = Vec::new();
-        for line in text.lines() {
-            let vals: Vec<&str> = line.split('\t').collect();
-            if vals.len() != types.len() {
-                return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
-            }
-            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
-        }
+        let rows = read_rows(rel, text, &types)?;
         prog.facts.insert(rel.clone(), rows);
     }
     prog.rules.retain(|r| !wanted.contains(r.head.rel.as_str()));
@@ -226,4 +219,54 @@ fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted:
     let consulted = super::reuse::encode_consulted(consulted);
     super::observe(|o| o.put_run_record(&record_key(key), &consulted, &rows));
     Ok(())
+}
+
+// Decode the constants' internal boundary before putting values back into facts.
+fn read_rows(rel: &str, text: &str, types: &[String]) -> Result<Vec<Vec<Value>>> {
+    let mut rows = Vec::new();
+        for line in text.lines() {
+            let vals: Vec<&str> = line.split('\t').collect();
+            if vals.len() != types.len() {
+                return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
+            }
+            rows.push(vals.iter().zip(types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
+        }
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::code_rule_dsl::logic::front::Term;
+    use crate::code_rule_dsl::logic::strings::functions;
+
+    fn evaluate(term: &Term, input: &[String]) -> String {
+        match term {
+            Term::Var(name) => input[name[1..].parse::<usize>().unwrap()].clone(),
+            Term::Call(name, args) => {
+                let values: Vec<String> = args.iter().map(|a| evaluate(a, input)).collect();
+                let borrowed: Vec<&str> = values.iter().map(String::as_str).collect();
+                match functions::eval(name, &borrowed, &[]) {
+                    rusqlite::types::Value::Text(text) => text,
+                    other => panic!("not a text transport expression: {other:?}"),
+                }
+            }
+            other => panic!("not a boundary expression: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn folded_symbols_keep_delimiters_escapes_and_numeric_spelling() {
+        let types = vec!["symbol".to_owned(), "number".to_owned(), "sym".to_owned()];
+        let mut program = Program::default();
+        program.decls.insert("selected".into(), vec![("path".into(), types[0].clone()), ("n".into(), types[1].clone()), ("value".into(), types[2].clone())]);
+        as_outputs(&mut program, &["selected".into()]);
+        let head = &program.rules.last().unwrap().head;
+        for text in ["", "12", "\t", "\n", "\r\n", "\0", "\\n\\t", "\"quoted\"", "%0A", "é\n名前", "x\ty\nz\r\0"] {
+            let input = vec![text.to_owned(), "42".into(), "0012".into()];
+            let wire = head.args.iter().map(|term| evaluate(term, &input)).collect::<Vec<_>>().join("\t") + "\n";
+            let decoded = read_rows("selected", &wire, &types).unwrap();
+            assert_eq!(decoded, vec![vec![Value::Str(text.into()), Value::Int(42), Value::Str("0012".into())]], "{text:?}: {wire:?}");
+        }
+    }
 }
