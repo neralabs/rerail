@@ -139,6 +139,9 @@ writeFileSync(
     ...[...rules.keys()].sort(byText).map(key => `  ${JSON.stringify(key)}: [${rules.get(key).map(entry).join(", ")}],`),
     "};",
     "",
+    "/** The upstream version the table comes from. */",
+    `export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = { biome: ${JSON.stringify(PIN)} };`,
+    "",
   ].join("\n"),
 );
 console.log(`${rules.size} rules, ${domains.size} domains`);

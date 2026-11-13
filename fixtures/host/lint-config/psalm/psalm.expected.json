@@ -1,0 +1,290 @@
+{
+ "tool": "Psalm 6.19.1",
+ "probe": "<?php\nvar_dump(1);\n",
+ "cases": [
+  {
+   "name": "level-default",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" >\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "level-1",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "level-4",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"4\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "level-5",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"5\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "level-8",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"8\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "file-xml-dist",
+   "files": {
+    "psalm.xml.dist": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"5\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "file-dist-xml",
+   "files": {
+    "psalm.dist.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"5\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "file-first-wins",
+   "files": {
+    "psalm.xml.dist": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n",
+    "psalm.dist.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"8\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "file-xml-over-dists",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"8\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n",
+    "psalm.dist.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "handler-suppress",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode errorLevel=\"suppress\"/>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "handler-info",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode errorLevel=\"info\"/>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "handler-error",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"8\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode errorLevel=\"error\"/>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "handler-plugin-issue",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <PluginIssue name=\"ForbiddenCode\" errorLevel=\"suppress\"/>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "handler-folders",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"1\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode>\n      <errorLevel type=\"suppress\"><directory name=\"src/Legacy\"/><file name=\"src/probe.php\"/></errorLevel>\n      <errorLevel type=\"error\"><directory name=\"src/Legacy/Kept\"/><directory name=\"tests/**\"/></errorLevel>\n    </ForbiddenCode>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "ForbiddenCode"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/Kept/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": [
+     "ForbiddenCode"
+    ]
+   }
+  },
+  {
+   "name": "handler-folders-info",
+   "files": {
+    "psalm.xml": "<?xml version=\"1.0\"?>\n<psalm xmlns=\"https://getpsalm.org/schema/config\" errorLevel=\"8\">\n  <projectFiles><directory name=\".\"/></projectFiles>\n  <issueHandlers>\n    <ForbiddenCode errorLevel=\"info\">\n      <errorLevel type=\"error\"><directory name=\"src\"/></errorLevel>\n      <errorLevel type=\"suppress\"><directory name=\"*/Legacy\"/></errorLevel>\n    </ForbiddenCode>\n  </issueHandlers>\n</psalm>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/Kept/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/Legacy/probe.php": [
+     "ForbiddenCode"
+    ],
+    "src/probe.php": [
+     "ForbiddenCode"
+    ],
+    "tests/probe.php": []
+   }
+  }
+ ]
+}

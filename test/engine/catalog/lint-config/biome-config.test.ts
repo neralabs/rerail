@@ -107,10 +107,12 @@ describe("biomeReader", () => {
     expect(named.decision(THIS_IN_METHODS)).toEqual({ on: true, explicit: true, because: "biome.json: \"useThisInClassMethods\": \"on\" in linter.rules.nursery" });
   });
 
-  it("reads domains, and leaves a recommended domain rule to the pack when only package.json could turn it on", async () => {
-    const unset = await read({ "biome.json": "{}" });
+  it("reads domains, and leaves a recommended domain rule to the pack when only a package.json could turn it on", async () => {
+    const unset = await read({ "biome.json": "{}", "package.json": "{}" });
     expect(unset.decision(HOOKS)).toEqual({ on: "unknown", because: "biome.json: Biome turns the recommended \"react\" rules on when package.json depends on the domain's packages" });
     expect(unset.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
+    // Without a package.json, no dependency turns a domain on.
+    expect((await read({ "biome.json": "{}" })).decision(HOOKS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
     const recommended = await read({ "biome.json": json({ linter: { domains: { react: "recommended", next: "none" } } }) });
     expect(recommended.decision(HOOKS)).toEqual({ on: true, explicit: false, because: "biome.json: \"react\": \"recommended\" in linter.domains" });
     expect(recommended.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
@@ -143,13 +145,17 @@ describe("biomeReader", () => {
         ],
       }),
     });
+    // scripts/strict/ takes both overrides for scripts/, in order: on again, unlike scripts/ around it.
     expect(verdict(NO_DEBUGGER)).toEqual({
       decision: { on: true, explicit: true, because: "biome.json: \"noDebugger\": \"error\" in linter.rules.suspicious" },
-      folders: [{ folder: "scripts", on: false, because: "biome.json: \"noDebugger\": \"off\" in overrides[0].linter.rules.suspicious" }],
+      folders: [
+        { folder: "scripts", on: false, explicit: true, because: "biome.json: \"noDebugger\": \"off\" in overrides[0].linter.rules.suspicious" },
+        { folder: "scripts/strict", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[1].linter.rules.suspicious" },
+      ],
     });
-    expect(notes).toEqual(["biome.json: overrides[2] is not read: its includes [\"**/*.test.ts\"] are not whole folders (<folder>/**)."]);
+    expect(notes).toEqual(["biome.json: overrides[2] is not read: its includes [\"**/*.test.ts\"] are not whole folders (<folder>/** or **)."]);
     const disabled = await read({ "biome.json": json({ overrides: [{ includes: ["legacy/**"], linter: { enabled: false } }] }) });
-    expect(disabled.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "legacy", on: false, because: "biome.json: \"enabled\": false in overrides[0].linter" }]);
+    expect(disabled.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "legacy", on: false, explicit: false, because: "biome.json: \"enabled\": false in overrides[0].linter" }]);
   });
 
   it("merges a config it extends in the repository under its own, and the extended overrides first", async () => {
@@ -162,7 +168,7 @@ describe("biomeReader", () => {
     });
     expect(decision(NO_DEBUGGER)).toEqual({ on: true, explicit: true, because: "configs/base.jsonc: \"noDebugger\": \"warn\" in linter.rules.suspicious" });
     expect(decision(EQEQEQ)).toEqual({ on: false, explicit: true, because: "biome.json: \"noDoubleEquals\": \"off\" in linter.rules.suspicious" });
-    expect(verdict(CURLY)?.folders).toEqual([{ folder: "src", on: false, because: "configs/base.jsonc: \"style\": \"off\" in overrides[0].linter.rules" }]);
+    expect(verdict(CURLY)?.folders).toEqual([{ folder: "src", on: false, explicit: true, because: "configs/base.jsonc: \"style\": \"off\" in overrides[0].linter.rules" }]);
   });
 
   it("leaves the rules a package it extends may set to the pack, deciding only those the config names", async () => {
@@ -256,7 +262,7 @@ describe("biomeReader", () => {
   it("notes an override with a linter section but no includes", async () => {
     const { verdict, notes } = await read({ "biome.json": json({ overrides: [{ linter: { rules: { style: "error" } } }] }) });
     expect(verdict(CURLY)).toEqual({ decision: { on: false, explicit: false, because: "biome.json does not turn it on" } });
-    expect(notes).toEqual(["biome.json: overrides[0] is not read: its includes [] are not whole folders (<folder>/**)."]);
+    expect(notes).toEqual(["biome.json: overrides[0] is not read: its includes [] are not whole folders (<folder>/** or **)."]);
   });
 
   it("resolves extends: a relative path or a bare file in the repository is read, as normalised", async () => {
@@ -323,7 +329,7 @@ describe("biomeReader", () => {
     const plain = await read({ "biome.json": json({ linter: { rules: { correctness: "error", suspicious: "error" } } }) });
     expect(plain.decision(HOOKS)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
     expect(plain.decision(UNKNOWN_ATTRIBUTE)).toEqual({ on: false, explicit: false, because: "biome.json does not turn it on" });
-    const recommended = await read({ "biome.json": json({ linter: { rules: { preset: "recommended" } } }) });
+    const recommended = await read({ "biome.json": json({ linter: { rules: { preset: "recommended" } } }), "package.json": "{}" });
     expect(recommended.decision(HOOKS)).toEqual({ on: "unknown", because: "biome.json: Biome turns the recommended \"react\" rules on when package.json depends on the domain's packages" });
   });
 
@@ -351,5 +357,83 @@ describe("biomeReader", () => {
       because: "biome.json: \"useBlockStatements\": \"error\" in linter.rules.style",
       config: { ok: false, reason: "Biome's rule options are not read" },
     });
+  });
+});
+
+describe("biomeReader: overrides for every file and nested configs", () => {
+  it("applies an override for ** to every file, in order with the overrides for folders", async () => {
+    const { verdict } = await read({
+      "biome.json": json({
+        overrides: [
+          { includes: ["src/**"], linter: { rules: { suspicious: { noDebugger: "warn" } } } },
+          { includes: ["**"], linter: { rules: { suspicious: { noDebugger: "off" } } } },
+          { includes: ["src/lib/**"], linter: { rules: { suspicious: { noDebugger: "on" } } } },
+        ],
+      }),
+    });
+    // src/ takes its override, then the one for every file; src/lib/ takes all three.
+    expect(verdict(NO_DEBUGGER)).toEqual({
+      decision: { on: false, explicit: true, because: "biome.json: \"noDebugger\": \"off\" in overrides[1].linter.rules.suspicious" },
+      folders: [{ folder: "src/lib", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[2].linter.rules.suspicious" }],
+    });
+  });
+
+  it("lints a folder holding a nested config by it alone, or over the root's with extends //, matching the root's overrides from there", async () => {
+    const { verdict, notes } = await read({
+      "biome.json": json({
+        linter: { rules: { suspicious: { noDebugger: "off" } } },
+        overrides: [{ includes: ["deeper/**"], linter: { rules: { suspicious: { noDebugger: "on" } } } }, { includes: ["merged/deeper/**"], linter: { rules: { suspicious: { noDebugger: "on" } } } }],
+      }),
+      "alone/biome.json": json({ root: false }),
+      "merged/biome.jsonc": json({ extends: "//", linter: { rules: { style: { useBlockStatements: "error" } } } }),
+      "merged/biome.json": json({ extends: "//" }),
+      "plain/.biome.json": json({ root: false, linter: { rules: { suspicious: { noDebugger: "on" } } } }),
+    });
+    // merged/ matches the root's overrides from its own folder: deeper/** is merged/deeper/, merged/deeper/** is merged/merged/deeper/.
+    expect(verdict(NO_DEBUGGER)).toEqual({
+      decision: { on: false, explicit: true, because: "biome.json: \"noDebugger\": \"off\" in linter.rules.suspicious" },
+      folders: [
+        { folder: "alone", on: true, explicit: false, because: "alone/biome.json: recommended" },
+        { folder: "deeper", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[0].linter.rules.suspicious" },
+        { folder: "merged/deeper", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[0].linter.rules.suspicious" },
+        { folder: "merged/merged/deeper", on: true, explicit: true, because: "biome.json: \"noDebugger\": \"on\" in overrides[1].linter.rules.suspicious" },
+      ],
+    });
+    // merged/ takes its biome.json, not its biome.jsonc; plain/'s .biome.json is no config of Biome's.
+    expect(verdict(CURLY)?.folders).toBeUndefined();
+    expect(notes).toEqual([]);
+  });
+
+  it("reads a nested config's extends from its folder, a bare one as a package it does not read, and its overrides from its folder", async () => {
+    const { verdict, notes } = await read({
+      "biome.json": "{}",
+      "base.json": json({ linter: { rules: { suspicious: { noDebugger: "off" } } } }),
+      "sub/base.json": json({ linter: { rules: { suspicious: { noDoubleEquals: "off" } } } }),
+      "sub/biome.json": json({ root: false, extends: ["./base.json"], overrides: [{ includes: ["lib/**"], linter: { rules: { suspicious: { noDoubleEquals: "on" } } } }] }),
+      "bare/biome.json": json({ root: false, extends: ["base.json"] }),
+    });
+    expect(verdict(EQEQEQ)?.folders).toEqual([
+      { folder: "bare", on: "unknown", because: "bare/biome.json extends \"base.json\", which Rerail does not read" },
+      { folder: "sub", on: false, explicit: true, because: "sub/base.json: \"noDoubleEquals\": \"off\" in linter.rules.suspicious" },
+      { folder: "sub/lib", on: true, explicit: true, because: "sub/biome.json: \"noDoubleEquals\": \"on\" in overrides[0].linter.rules.suspicious" },
+    ]);
+    expect(verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "bare", on: "unknown", because: "bare/biome.json extends \"base.json\", which Rerail does not read" }]);
+    expect(notes).toEqual(["bare/biome.json: extends \"base.json\" is not read: it is a package or a file outside the repository; the rules it may set keep the pack's values."]);
+  });
+
+  it("leaves a folder whose nested config it cannot read unknown, and reads nothing where a nested config is a root one", async () => {
+    const unread = await read({ "biome.json": "{}", "sub/biome.json": "{ // not JSON\n}" });
+    expect(unread.verdict(NO_DEBUGGER)?.folders).toEqual([{ folder: "sub", on: "unknown", because: "sub/biome.json is not read" }]);
+    const nestedRoot = await read({ "biome.json": "{}", "sub/biome.json": json({ linter: { rules: { suspicious: { noDebugger: "off" } } } }) });
+    expect(nestedRoot.config).toBeUndefined();
+    expect(nestedRoot.notes).toEqual(["sub/biome.json is not read: it is a root config below the root's, which Biome 2.5.15 refuses, so it runs no rule."]);
+  });
+
+  it("leaves a recommended domain rule unknown where an extended config it does not read may keep the recommended rules", async () => {
+    const manifest = { "package.json": "{}" };
+    const extended = await read({ "biome.json": json({ extends: ["@acme/biome"] }), ...manifest });
+    expect(extended.decision(HOOKS)).toMatchObject({ on: "unknown" });
+    const withRules = await read({ "biome.json": json({ extends: ["@acme/biome"], linter: { rules: { style: { useBlockStatements: "error" } } } }), ...manifest });
+    expect(withRules.decision(HOOKS)).toMatchObject({ on: "unknown" });
   });
 });

@@ -9,15 +9,18 @@
  * `extends`. Rerail takes those helpers, and the modules the file imports, to do what their documentation says; it does
  * not read them. A shared config it recognises by the module the file imports and the member path it reads
  * (`js.configs.recommended`, `...tseslint.configs.strict`, `...react.configs.flat.recommended` in an object,
- * `...js.configs.recommended.rules` in `rules`: `eslint-presets.ts`) contributes its rule entries in place, marked with
- * the preset. Anything else the file takes from them (an unrecognised shared config, an imported value, a call's
- * result) is not evaluated: a rule entry whose value it decides is reported as unresolved, and a config element it is is
- * named in a note and in `unread`.
+ * `...js.configs.recommended.rules` in `rules`: `eslint-presets.ts`), or by a string `extends` through the plugin the
+ * object binds (`plugins: { js }, extends: ["js/recommended"]`), contributes its rule entries in place, marked with the
+ * preset. A namespace `plugins` binds to a plugin it recognises names that plugin's rules (`plugins: { ts:
+ * tseslint.plugin }` makes `ts/no-explicit-any` typescript-eslint's `no-explicit-any`); one bound to anything else names
+ * a plugin Rerail cannot tell. Anything else the file takes from them (an unrecognised shared config, an imported value,
+ * a call's result) is not evaluated: a rule entry whose value it decides is reported as unresolved, and a config element
+ * it is is named in a note and in `unread`.
  */
 import { createRequire } from "node:module";
 import type * as BabelParser from "@babel/parser";
 import type * as t from "@babel/types";
-import { flatPreset } from "./eslint-presets.js";
+import { flatPlugin, flatPreset, pluginPreset, type FlatPlugin } from "./eslint-presets.js";
 import type { EslintPresetEntry } from "./generated/eslint-presets.generated.js";
 import { LintConfigFormatError } from "./formats/lint-config-formats.js";
 
@@ -30,9 +33,18 @@ export type FlatConfigScope =
   /** Every file: the config object has no `files`, `ignores` or `basePath`. */
   | { readonly kind: "all" }
   /** Exactly the files under these folders (relative to the repository root), from `files: ["<folder>/**"]`. */
-  | { readonly kind: "folders"; readonly folders: readonly string[]; readonly files: string }
-  /** Some files Rerail does not map onto folders; `files` is how the config names them. */
-  | { readonly kind: "some"; readonly files: string };
+  | { readonly kind: "folders"; readonly folders: readonly string[]; readonly files: string; readonly patterns?: FilePatterns }
+  /** Some files Rerail does not map onto folders; `files` is how the config names them, `patterns` the globs where Rerail reads them. */
+  | { readonly kind: "some"; readonly files: string; readonly patterns?: FilePatterns };
+
+/**
+ * The files an entry applies to as globs from the repository root: those that match a glob of every group of `files`
+ * (an element's own, and the elements' it is extended in), less those a glob of `ignores` matches.
+ */
+export interface FilePatterns {
+  readonly files: readonly (readonly string[])[];
+  readonly ignores: readonly string[];
+}
 
 /** A rule entry of a config object, in config order. */
 export interface FlatConfigEntry {
@@ -68,6 +80,13 @@ export interface FlatConfigRead {
   readonly unread: readonly string[];
   /** What the config holds that is not read, for the person. */
   readonly notes: readonly string[];
+  /**
+   * Each namespace the config's `plugins` bind, with the namespace the plugin's own rules are named under
+   * (`ts` → `@typescript-eslint`); undefined where Rerail cannot tell which plugin it is.
+   */
+  readonly namespaces: ReadonlyMap<string, string | undefined>;
+  /** A `plugins` value Rerail does not read, which may bind any namespace, as the file names it. */
+  readonly pluginsUnread?: string;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -130,22 +149,48 @@ export function folderOfGlob(pattern: string): string | undefined {
 }
 
 /**
- * The scope of `files` patterns (JSON, as written `text`) for an element every file gets otherwise: whole folders where
- * every pattern names one, or some files.
+ * `files` less `ignores` (JSON) as globs, where each is a list of globs Rerail matches files against as ESLint does: no
+ * `files` is every file; a nested list (every glob of which must match) or a negated glob is not read.
  */
-export function filesScope(patterns: unknown, text: string): FlatConfigScope {
-  const folders = Array.isArray(patterns) ? patterns.map(pattern => (typeof pattern === "string" ? folderOfGlob(pattern) : undefined)) : [];
+export function filePatterns(files: unknown, ignores: unknown): FilePatterns | undefined {
+  const globs = (value: unknown, none: readonly string[]): readonly string[] | undefined => {
+    if (value === undefined) return none;
+    return Array.isArray(value) && value.every(glob => typeof glob === "string" && !glob.startsWith("!")) ? value as string[] : undefined;
+  };
+  const included = globs(files, ["**/*"]);
+  const excluded = globs(ignores, []);
+  return included === undefined || excluded === undefined ? undefined : { files: [included], ignores: excluded };
+}
+
+/**
+ * The scope of `files` patterns less `ignores` (JSON; `files` as written, `text`) for an element every file gets
+ * otherwise: whole folders where every pattern names one and none is ignored, or some files.
+ */
+export function filesScope(files: unknown, text: string, ignores?: unknown): FlatConfigScope {
+  const folders = Array.isArray(files) && ignores === undefined ? files.map(pattern => (typeof pattern === "string" ? folderOfGlob(pattern) : undefined)) : [];
+  const patterns = filePatterns(files, ignores);
+  const read = patterns === undefined ? {} : { patterns };
   return folders.length > 0 && folders.every(folder => folder !== undefined)
-    ? { kind: "folders", folders: folders as string[], files: text }
-    : { kind: "some", files: text };
+    ? { kind: "folders", folders: folders as string[], files: text, ...read }
+    : { kind: "some", files: text, ...read };
+}
+
+/**
+ * Scope `scope`, limited to some files, narrowed by `files` less `ignores` (JSON), named `text`: the files both match,
+ * as `defineConfig` extends an element's `files` and `ignores` with those of the configs it extends.
+ */
+function narrowScope(scope: Exclude<FlatConfigScope, { kind: "all" }>, files: unknown, ignores: unknown, text: string): FlatConfigScope {
+  const inner = filePatterns(files, ignores);
+  const outer = scope.patterns;
+  if (outer === undefined || inner === undefined) return { kind: "some", files: text };
+  return { kind: "some", files: text, patterns: { files: [...outer.files, ...inner.files], ignores: [...outer.ignores, ...inner.ignores] } };
 }
 
 /** Where a shared config's entry applies in an element for `scope`: its own `files` and `ignores` narrow it. */
 export function presetScope(entry: EslintPresetEntry, scope: FlatConfigScope): FlatConfigScope {
   if (entry.files === undefined && entry.ignores === undefined) return scope;
   const text = entry.files === undefined ? "some files" : JSON.stringify(entry.files);
-  if (scope.kind !== "all") return { kind: "some", files: `${scope.files} and ${text}` };
-  return entry.ignores === undefined ? filesScope(entry.files, text) : { kind: "some", files: text };
+  return scope.kind === "all" ? filesScope(entry.files, text, entry.ignores) : narrowScope(scope, entry.files, entry.ignores, `${scope.files} and ${text}`);
 }
 
 /** Reads flat config `text` from file `name`. Throws `LintConfigFormatError` when it does not parse or exports no config. */
@@ -173,6 +218,8 @@ class FlatConfigReader {
   readonly #entries: Entry[] = [];
   readonly #unread: string[] = [];
   readonly #notes: string[] = [];
+  readonly #namespaces = new Map<string, string | undefined>();
+  #pluginsUnread: string | undefined;
   #steps = 0;
   #values = 0;
 
@@ -186,7 +233,8 @@ class FlatConfigReader {
     if (this.#unread.length > 0) {
       this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
     }
-    return { entries: this.#entries, unread: this.#unread, notes: this.#notes };
+    const pluginsUnread = this.#pluginsUnread;
+    return { entries: this.#entries, unread: this.#unread, notes: this.#notes, namespaces: this.#namespaces, ...(pluginsUnread === undefined ? {} : { pluginsUnread }) };
   }
 
   /** The file's imports and top-level consts. */
@@ -679,9 +727,88 @@ class FlatConfigReader {
     // An object with nothing but `ignores` ignores those files everywhere; it sets no rule.
     if (keys.length === 1 && keys[0] === "ignores") return;
     const scope = this.#scope(properties, inherited, depth);
+    const plugins = this.#bindPlugins(properties.get("plugins"), depth);
     const extended = properties.get("extends");
-    if (extended !== undefined && !(extended instanceof PresetValue)) this.#elements(extended, scope, depth + 1);
+    if (extended !== undefined && !(extended instanceof PresetValue)) this.#extends(extended, plugins, scope, depth + 1);
     this.#objectRules(properties.get("rules"), scope, depth);
+  }
+
+  /**
+   * A config object's `plugins`, each namespace bound to the recognised plugin it names, or undefined where Rerail
+   * cannot tell which plugin it is. A namespace one object binds to one plugin and another to another is undefined too.
+   */
+  #bindPlugins(plugins: Property | undefined, depth: number): ReadonlyMap<string, FlatPlugin | undefined> {
+    const bound = new Map<string, FlatPlugin | undefined>();
+    // A recognised shared config spread into the object gives no `plugins` (`#spreadProperties`).
+    if (plugins === undefined || plugins instanceof PresetValue) return bound;
+    const object = this.#unwrap(plugins, depth);
+    if (object.type !== "ObjectExpression") {
+      this.#pluginsUnread ??= this.#source(plugins);
+      return bound;
+    }
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") this.#pluginsUnread ??= this.#source(property);
+      else this.#bindPlugin(bound, ...dataProperty(property), depth);
+    }
+    return bound;
+  }
+
+  /** Binds `namespace` to the plugin `node` is, in `bound` and for the whole file. */
+  #bindPlugin(bound: Map<string, FlatPlugin | undefined>, namespace: string, node: t.Expression, depth: number): void {
+    const plugin = this.#pluginOf(node, depth);
+    bound.set(namespace, plugin);
+    // A plugin of configs alone (`@eslint/js`) has no rules to name: its namespace names itself.
+    const canonical = plugin === undefined ? undefined : plugin.namespace ?? namespace;
+    const agrees = !this.#namespaces.has(namespace) || this.#namespaces.get(namespace) === canonical;
+    this.#namespaces.set(namespace, agrees ? canonical : undefined);
+  }
+
+  /** The recognised plugin `node` is: a member path of a binding the file imports that names one of `eslint-presets.ts`'s plugins. */
+  #pluginOf(node: t.Expression, depth: number): FlatPlugin | undefined {
+    const { root, path } = this.#memberPath(node, depth);
+    const from = root.type === "Identifier" ? this.#imports.get(root.name) : undefined;
+    return from === undefined ? undefined : flatPlugin(from.module, from.imported, path);
+  }
+
+  /**
+   * A config object's `extends`, applied before its own rules: config arrays and objects as elements, and a string
+   * `"<namespace>/<config>"` as `defineConfig` reads it, a config of the plugin the object binds under that namespace.
+   */
+  #extends(extended: t.Expression, plugins: ReadonlyMap<string, FlatPlugin | undefined>, scope: FlatConfigScope, depth: number): void {
+    const list = this.#unwrap(extended, depth);
+    if (list.type !== "ArrayExpression") {
+      this.#elements(extended, scope, depth);
+      return;
+    }
+    for (const element of this.#nestedElements(list)!) {
+      const value = this.#unwrap(element, depth);
+      if (value.type === "StringLiteral") this.#extendsName(value.value, plugins, scope);
+      else this.#elements(element, scope, depth + 1);
+    }
+  }
+
+  /**
+   * A string in `extends`: the config `defineConfig` finds in the plugin bound under its namespace, with the rule
+   * names of the plugin's own namespace (`meta.namespace`) renamed to the one the object binds it under (@eslint/config-helpers
+   * 0.7.0 `normalizePluginConfig`). One Rerail does not recognise is not read.
+   */
+  #extendsName(name: string, plugins: ReadonlyMap<string, FlatPlugin | undefined>, scope: FlatConfigScope): void {
+    const { namespace, name: config } = pluginMember(name);
+    const plugin = plugins.get(namespace);
+    const entries = plugin === undefined ? undefined : pluginPreset(plugin, config);
+    if (entries === undefined) {
+      this.#unreadable(JSON.stringify(name));
+      return;
+    }
+    const meta = plugin!.meta;
+    const renamed = meta === undefined || meta === namespace ? entries : entries.map(entry => ({
+      ...entry,
+      rules: Object.fromEntries(Object.entries(entry.rules).map(([key, value]) => {
+        const member = pluginMember(key);
+        return [member.namespace === meta ? `${namespace}/${member.name}` : key, value];
+      })),
+    }));
+    this.#addPreset({ text: JSON.stringify(name), entries: renamed }, scope);
   }
 
   /** A config object's `rules`: written in the file, or a recognised shared config object's, spread into it. */
@@ -690,21 +817,23 @@ class FlatConfigReader {
     else if (rules !== undefined) this.#rules(rules, scope, depth + 1);
   }
 
-  /** A config object's `files` as written (`text`) and as JSON, where Rerail can read it. */
+  /** A config object's `files` (or `ignores`) as written (`text`) and as JSON, where Rerail can read it: `null` where it cannot. */
   #files(files: Property | undefined, depth: number): { readonly text: string; readonly patterns: unknown } {
     if (files === undefined) return { text: "some files", patterns: undefined };
     if (files instanceof PresetValue) return { text: JSON.stringify(files.json), patterns: files.json };
     const patterns = this.#resolve(files, depth);
-    return { text: this.#source(files), patterns: patterns.ok ? patterns.value : undefined };
+    return { text: this.#source(files), patterns: patterns.ok ? patterns.value : null };
   }
 
   #scope(properties: ReadonlyMap<string, Property>, inherited: FlatConfigScope, depth: number): FlatConfigScope {
     const files = properties.get("files");
-    const narrowed = properties.has("ignores") || properties.has("basePath");
-    if (files === undefined && !narrowed) return inherited;
+    const ignores = properties.get("ignores");
+    if (files === undefined && ignores === undefined && !properties.has("basePath")) return inherited;
     const read = this.#files(files, depth);
-    // Within an `extends` of a limited object the files are the intersection; Rerail maps neither.
-    return inherited.kind !== "all" || narrowed ? { kind: "some", files: read.text } : filesScope(read.patterns, read.text);
+    const ignored = this.#files(ignores, depth).patterns;
+    // A `basePath` moves the patterns to a folder Rerail does not map.
+    if (properties.has("basePath")) return { kind: "some", files: read.text };
+    return inherited.kind === "all" ? filesScope(read.patterns, read.text, ignored) : narrowScope(inherited, read.patterns, ignored, read.text);
   }
 
   /**
@@ -828,6 +957,18 @@ class FlatConfigReader {
     Object.defineProperty(object, key, { value: inner.value, enumerable: true, writable: true, configurable: true });
     return undefined;
   }
+}
+
+/**
+ * A plugin member's id (`ts/recommended`, `@typescript-eslint/no-explicit-any`) as its namespace and name, as
+ * `defineConfig` splits it (@eslint/config-helpers 0.7.0 `getPluginMember`): at the first `/`, or at the second after
+ * an npm scope.
+ */
+function pluginMember(id: string): { readonly namespace: string; readonly name: string } {
+  const first = id.indexOf("/");
+  const second = id.startsWith("@") ? id.indexOf("/", first + 1) : -1;
+  const split = second > 0 ? second : first;
+  return split < 0 ? { namespace: "", name: id } : { namespace: id.slice(0, split), name: id.slice(split + 1) };
 }
 
 /** What a member path `a.b.c` hangs off: `a`. */

@@ -76,23 +76,23 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     });
   });
 
-  it("starts the ESLint ports off for an eslint.config.ts it cannot read statically, and takes an .oxlintrc.json off", async () => {
+  it("keeps the pack's values for the ESLint ports when it cannot read eslint.config.ts statically, and takes an .oxlintrc.json off", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), "throw new Error(\"run\");\n");
     writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-ts-comment\": \"off\", },\n}\n");
     const environment = fakeSetupEnvironment();
     const review = agentIo();
     await runSetup(review, request(setup, environment, { answer: "yes", repo: setup.repo }));
-    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
-    expect(review.text()).toContain(`${TS_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-ts-comment": "off"`);
+    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint keep the pack's values, since Rerail cannot tell which it turns on or off.");
+    expect(review.text()).toContain(`${TS_COMMENT} starts off  .oxlintrc.json: "typescript/ban-ts-comment": "off"`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
     expect(rulesOf(setup, [TS_COMMENT, TSLINT_COMMENT])).toEqual({ [TS_COMMENT]: { on: false, config: null }, [TSLINT_COMMENT]: { on: false, config: null } });
   });
 
-  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
-  // **/src/**/*.ts files, after shared configs; set-up used to leave the option for the person to set by hand.
+  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts for some files, after
+  // shared configs; set-up used to leave the option for the person to set by hand.
   it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), [
@@ -100,7 +100,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
       "import tsEslint from \"typescript-eslint\";",
       "const config: Linter.Config[] = [",
       "  ...tsEslint.configs.stylistic,",
-      "  { files: [\"**/src/**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
+      "  { files: [\"**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
       "  { files: [\"scripts/**\"], rules: { \"@typescript-eslint/ban-tslint-comment\": \"off\" } },",
       "];",
       "export default config;",
@@ -109,8 +109,8 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const asked = agentIo();
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toMatch(/^ {4}\d+ rules start on {2}eslint\.config\.ts: tsEslint\.configs\.stylistic$/mu);
-    // On for narrower files is on everywhere, since ESLint runs it there.
-    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"] for ["**/src/**/*.ts"]`);
+    // Files that hold every file the port runs on (here app.ts) count as every file.
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"]\n`);
     expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off in scripts/  eslint.config.ts: "@typescript-eslint/ban-tslint-comment": "off" for ["scripts/**"]`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));

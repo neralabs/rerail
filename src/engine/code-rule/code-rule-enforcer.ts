@@ -61,6 +61,7 @@ import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
+import { IGNORED_DIRECTORIES } from "./ignored-directories.js";
 import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
@@ -79,22 +80,6 @@ const AUDIT_MAX_FAILURES = 20;
 const UNREPORTED_FACTS = "\0unreported";
 /** The most source bytes the repository walk reads in total. */
 export const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
-export const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".rerail",
-  ".venv",
-  "__pycache__",
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  ".turbo",
-  "coverage",
-  "target",
-  "vendor",
-]);
 /**
  * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
  * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.

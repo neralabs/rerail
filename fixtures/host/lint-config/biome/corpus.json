@@ -1,0 +1,443 @@
+{
+ "probes": [
+  "",
+  "src",
+  "sub",
+  "sub/deeper",
+  "other"
+ ],
+ "checked": {
+  "suspicious/noDebugger": "debugger;",
+  "suspicious/noDoubleEquals": "if (globalThis.a == globalThis.b) {}",
+  "suspicious/noConsole": "console.log(1);",
+  "style/useTemplate": "globalThis.c = \"a\" + globalThis.b;",
+  "suspicious/noVar": "var v = 1;\nglobalThis.v = v;",
+  "complexity/noVoid": "void globalThis.d;",
+  "style/useBlockStatements": "if (globalThis.a) globalThis.b = 1;",
+  "nursery/noExtendNative": "Object.prototype.foo = 1;",
+  "correctness/noChildrenProp": "React.createElement(\"div\", { children: \"x\" });"
+ },
+ "cases": [
+  {
+   "name": "empty",
+   "files": {
+    "biome.json": "{}"
+   }
+  },
+  {
+   "name": "schema-only",
+   "files": {
+    "biome.json": "{\"$schema\": \"https://biomejs.dev/schemas/2.5.15/schema.json\"}"
+   }
+  },
+  {
+   "name": "jsonc-with-comments",
+   "files": {
+    "biome.jsonc": "{\n  // ours\n  \"linter\": { \"rules\": { \"suspicious\": { \"noDebugger\": \"off\", }, }, },\n}\n"
+   }
+  },
+  {
+   "name": "json-with-comments",
+   "files": {
+    "biome.json": "{\n  // ours\n  \"linter\": { \"rules\": { \"suspicious\": { \"noDebugger\": \"off\" } } }\n}\n"
+   },
+   "unknown": {
+    "*": [
+     "*"
+    ]
+   }
+  },
+  {
+   "name": "dot-biome-json",
+   "files": {
+    ".biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\", \"noConsole\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "json-over-jsonc",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}",
+    "biome.jsonc": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDoubleEquals\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "recommended-false",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false}}}"
+   }
+  },
+  {
+   "name": "recommended-false-named",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false, \"suspicious\": {\"noConsole\": \"warn\", \"noDebugger\": \"error\"}, \"style\": {\"useBlockStatements\": \"info\"}}}}"
+   }
+  },
+  {
+   "name": "preset-all",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"preset\": \"all\"}}}"
+   }
+  },
+  {
+   "name": "preset-none",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"preset\": \"none\", \"complexity\": {\"noVoid\": \"on\"}}}}"
+   }
+  },
+  {
+   "name": "preset-recommended-over-false",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false, \"preset\": \"all\"}}}"
+   }
+  },
+  {
+   "name": "group-severities",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"style\": \"error\", \"suspicious\": \"off\", \"complexity\": \"warn\"}}}"
+   }
+  },
+  {
+   "name": "group-severity-on-nursery",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"nursery\": \"error\", \"correctness\": \"error\"}}}"
+   }
+  },
+  {
+   "name": "group-presets",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"recommended\": false, \"noConsole\": \"error\"}, \"style\": {\"preset\": \"all\"}, \"complexity\": {\"recommended\": true}}}}"
+   }
+  },
+  {
+   "name": "group-preset-none-recommended",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"preset\": \"all\", \"suspicious\": {\"preset\": \"none\", \"noDebugger\": \"warn\"}}}}"
+   }
+  },
+  {
+   "name": "rule-entries",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": {\"level\": \"off\"}, \"noConsole\": {\"level\": \"error\", \"options\": {\"allow\": [\"warn\"]}}, \"noVar\": \"info\", \"noDoubleEquals\": {\"level\": \"warn\", \"fix\": \"none\"}}, \"complexity\": {\"noVoid\": \"on\"}}}}"
+   }
+  },
+  {
+   "name": "nursery-named",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"nursery\": {\"noExtendNative\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "nursery-preset-all",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"preset\": \"all\", \"nursery\": {\"recommended\": true}}}}"
+   }
+  },
+  {
+   "name": "domains-all",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"all\", \"test\": \"all\"}}}"
+   }
+  },
+  {
+   "name": "domains-recommended",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"recommended\", \"next\": \"none\"}}}"
+   }
+  },
+  {
+   "name": "domains-none",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"none\"}, \"rules\": {\"correctness\": {\"noChildrenProp\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "domains-none-group-on",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"none\"}, \"rules\": {\"correctness\": \"error\"}}}"
+   }
+  },
+  {
+   "name": "domains-with-recommended-false",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"recommended\"}, \"rules\": {\"recommended\": false}}}"
+   }
+  },
+  {
+   "name": "group-severity-domain-rule",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"correctness\": \"error\"}}}"
+   }
+  },
+  {
+   "name": "linter-disabled",
+   "files": {
+    "biome.json": "{\"linter\": {\"enabled\": false, \"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "linter-enabled",
+   "files": {
+    "biome.json": "{\"linter\": {\"enabled\": true}}"
+   }
+  },
+  {
+   "name": "extends-relative",
+   "files": {
+    "biome.json": "{\"extends\": [\"./configs/base.json\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}",
+    "configs/base.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\", \"noConsole\": \"off\"}, \"style\": {\"useBlockStatements\": \"warn\"}}}}"
+   }
+  },
+  {
+   "name": "extends-bare-file",
+   "files": {
+    "biome.json": "{\"extends\": [\"base.jsonc\"]}",
+    "base.jsonc": "{\"linter\": {\"rules\": {\"recommended\": false, \"complexity\": {\"noVoid\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "extends-order",
+   "files": {
+    "biome.json": "{\"extends\": [\"./a.json\", \"./b.json\"]}",
+    "a.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\", \"noConsole\": \"error\"}}}}",
+    "b.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "extends-not-followed",
+   "files": {
+    "biome.json": "{\"extends\": [\"./a.json\"]}",
+    "a.json": "{\"extends\": [\"./b.json\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}",
+    "b.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "extends-package",
+   "files": {
+    "biome.json": "{\"extends\": [\"@acme/biome-config\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}"
+   },
+   "unresolved": "Biome refuses the config for want of the extended config, which a repository using it has; Rerail reads it as one it cannot see"
+  },
+  {
+   "name": "extends-outside",
+   "files": {
+    "biome.json": "{\"extends\": [\"../outside.json\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}"
+   },
+   "unresolved": "Biome refuses the config for want of the extended config, which a repository using it has; Rerail reads it as one it cannot see"
+  },
+  {
+   "name": "overrides-folders",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"src/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\", \"noConsole\": \"error\"}}}}, {\"includes\": [\"sub/deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"error\"}}}}, {\"includes\": [\"./other/**/*\"], \"linter\": {\"enabled\": false}}]}"
+   }
+  },
+  {
+   "name": "overrides-every-file",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}, {\"includes\": [\"src/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"warn\"}}}}, {\"includes\": [\"**/*\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}]}"
+   }
+  },
+  {
+   "name": "overrides-ordered",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"sub/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}, {\"includes\": [\"**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"error\"}}}}, {\"includes\": [\"sub/deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}]}"
+   }
+  },
+  {
+   "name": "overrides-other-files",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"**/*.test.js\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}, {\"includes\": [\"sub\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}, {\"linter\": {\"rules\": {\"suspicious\": {\"noDoubleEquals\": \"off\"}}}}]}"
+   }
+  },
+  {
+   "name": "overrides-domains-presets",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false}}, \"overrides\": [{\"includes\": [\"src/**\"], \"linter\": {\"rules\": {\"recommended\": true}, \"domains\": {\"react\": \"all\"}}}, {\"includes\": [\"other/**\"], \"linter\": {\"rules\": {\"style\": \"error\"}}}]}"
+   }
+  },
+  {
+   "name": "overrides-from-extended",
+   "files": {
+    "biome.json": "{\"extends\": [\"./base.json\"]}",
+    "base.json": "{\"overrides\": [{\"includes\": [\"src/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}]}"
+   }
+  },
+  {
+   "name": "root-false",
+   "files": {
+    "biome.json": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}"
+   },
+   "unknown": {
+    "*": [
+     "*"
+    ]
+   }
+  },
+  {
+   "name": "root-extends-root",
+   "files": {
+    "biome.json": "{\"extends\": \"//\"}"
+   },
+   "unknown": {
+    "*": [
+     "*"
+    ]
+   }
+  },
+  {
+   "name": "nested-extends-root",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\", \"noConsole\": \"error\"}}}}",
+    "sub/biome.json": "{\"extends\": \"//\", \"linter\": {\"rules\": {\"suspicious\": {\"noDoubleEquals\": \"off\", \"noConsole\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "nested-standalone",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}",
+    "sub/biome.json": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "nested-jsonc",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false}}}",
+    "sub/biome.jsonc": "{ \"root\": false, // sub\n \"linter\": { \"rules\": { \"suspicious\": { \"noVar\": \"error\" } } } }"
+   }
+  },
+  {
+   "name": "nested-json-over-jsonc",
+   "files": {
+    "biome.json": "{}",
+    "sub/biome.json": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}",
+    "sub/biome.jsonc": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "nested-dot-biome-ignored",
+   "files": {
+    "biome.json": "{}",
+    "sub/.biome.json": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "nested-root-refused",
+   "files": {
+    "biome.json": "{}",
+    "sub/biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "nested-overrides",
+   "files": {
+    "biome.json": "{}",
+    "sub/biome.json": "{\"root\": false, \"overrides\": [{\"includes\": [\"deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}, {\"includes\": [\"sub/deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}]}"
+   }
+  },
+  {
+   "name": "nested-extends-root-overrides",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}, {\"includes\": [\"sub/deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}, {\"includes\": [\"sub/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDoubleEquals\": \"off\"}}}}]}",
+    "sub/biome.json": "{\"extends\": \"//\"}"
+   }
+  },
+  {
+   "name": "nested-standalone-root-overrides",
+   "files": {
+    "biome.json": "{\"overrides\": [{\"includes\": [\"sub/deeper/**\"], \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}]}",
+    "sub/biome.json": "{\"root\": false}"
+   }
+  },
+  {
+   "name": "nested-extends-relative",
+   "files": {
+    "biome.json": "{}",
+    "base.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}",
+    "sub/base.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDoubleEquals\": \"off\"}}}}",
+    "sub/biome.json": "{\"root\": false, \"extends\": [\"./base.json\"]}"
+   }
+  },
+  {
+   "name": "nested-deeper",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noConsole\": \"error\"}}}}",
+    "sub/biome.json": "{\"root\": false, \"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"off\"}}}}",
+    "sub/deeper/biome.json": "{\"extends\": \"//\", \"linter\": {\"rules\": {\"style\": {\"useTemplate\": \"off\"}}}}"
+   }
+  },
+  {
+   "name": "nested-linter-disabled",
+   "files": {
+    "biome.json": "{}",
+    "sub/biome.json": "{\"root\": false, \"linter\": {\"enabled\": false}}"
+   }
+  },
+  {
+   "name": "package-json-react",
+   "files": {
+    "biome.json": "{}",
+    "package.json": "{\"dependencies\": {\"react\": \"^19.0.0\"}}"
+   },
+   "unknown": {
+    "*": [
+     "@domains"
+    ]
+   }
+  },
+  {
+   "name": "package-json-recommended-false",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"recommended\": false}}}",
+    "package.json": "{\"dependencies\": {\"react\": \"^19.0.0\"}}"
+   }
+  },
+  {
+   "name": "package-json-domain-set",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"none\"}}}",
+    "package.json": "{\"dependencies\": {\"react\": \"^19.0.0\"}}"
+   }
+  },
+  {
+   "name": "refused-unknown-rule",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noSuchRule\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "refused-unknown-group",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"bogus\": {\"noDebugger\": \"error\"}}}}"
+   }
+  },
+  {
+   "name": "refused-level",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": \"loud\"}}}}"
+   }
+  },
+  {
+   "name": "refused-domain",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"bogus\": \"all\"}}}"
+   }
+  },
+  {
+   "name": "refused-domain-value",
+   "files": {
+    "biome.json": "{\"linter\": {\"domains\": {\"react\": \"some\"}}}"
+   }
+  },
+  {
+   "name": "refused-preset",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"preset\": \"most\"}}}"
+   }
+  },
+  {
+   "name": "refused-rule-object-key",
+   "files": {
+    "biome.json": "{\"linter\": {\"rules\": {\"suspicious\": {\"noDebugger\": {\"level\": \"off\", \"bogus\": 1}}}}}"
+   }
+  }
+ ]
+}

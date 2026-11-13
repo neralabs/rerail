@@ -1103,3 +1103,6 @@ export const OXLINT_TYPE_AWARE: ReadonlySet<string> = new Set([
  "typescript/unbound-method",
  "typescript/use-unknown-in-catch-callback-variable"
 ]);
+
+/** The upstream version the table comes from. */
+export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = { oxlint: "1.88.0" };

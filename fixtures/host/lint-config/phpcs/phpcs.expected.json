@@ -1,0 +1,1789 @@
+{
+ "tool": "PHP_CodeSniffer 4.0.4",
+ "probe": "<?php\n$a = [1];\nif ($a) {\n}\nforeach ($a as $v) {\n}\n$b = `ls`;\n$c = utf8_encode('x');\n$d = sizeof($a);\n$e = TRUE;\n$f = @file('x');\nfor ($i = 0; $i < count($a); $i++) {\n    echo $i;\n}\neval('$g = 1;');\n",
+ "cases": [
+  {
+   "name": "standard-psr12",
+   "files": {
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"PSR12\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "standard-squiz",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "standard-generic",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "standard-pear",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"PEAR\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "standard-psr1",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"PSR1\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/LegacyOld/probe.php": [],
+    "src/probe.php": [],
+    "src/tests/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "standard-psr2",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"PSR2\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "standard-zend",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Zend\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/LegacyOld/probe.php": [],
+    "src/probe.php": [],
+    "src/tests/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "first-config-wins",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "category-less-sniff",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP\"><exclude name=\"Generic.PHP.NoSilencedErrors\"/></rule>\n  <rule ref=\"Generic.CodeAnalysis\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "sniff-severity-0",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.BacktickOperator\"><severity>0</severity></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "message-code-only",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.BacktickOperator.Found\"/>\n  <rule ref=\"Generic.CodeAnalysis.EmptyStatement.DetectedIf\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found"
+    ]
+   }
+  },
+  {
+   "name": "message-code-back-on",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.BacktickOperator\"><severity>0</severity></rule>\n  <rule ref=\"Generic.PHP.BacktickOperator.Found\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.BacktickOperator.Found"
+    ]
+   }
+  },
+  {
+   "name": "standard-less-sniff",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz\"><exclude name=\"Squiz.PHP.Eval\"/></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ]
+   }
+  },
+  {
+   "name": "message-code-excluded",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.CodeAnalysis.EmptyStatement\"><exclude name=\"Generic.CodeAnalysis.EmptyStatement.DetectedIf\"/></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"><exclude name=\"Generic.PHP.LowerCaseConstant.Found\"/></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ]
+   }
+  },
+  {
+   "name": "message-code-severity",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic\"/>\n  <rule ref=\"Generic.PHP.NoSilencedErrors.Discouraged\"><severity>4</severity></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant.Found\"><severity>6</severity></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "standard-severity",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic\"><severity>3</severity></rule>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "category-severity",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP\"><severity>4</severity></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"><severity>5</severity></rule>\n  <rule ref=\"Squiz.PHP\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "exclude-patterns",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"><exclude-pattern>src/Legacy/*</exclude-pattern><exclude-pattern>*/tests/*</exclude-pattern><exclude-pattern>*.inc</exclude-pattern></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"><exclude-pattern>src/Legacy</exclude-pattern></rule>\n  <rule ref=\"Generic.PHP.BacktickOperator\"><exclude-pattern>*/src/*</exclude-pattern></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "exclude-pattern-standard",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic\"><exclude-pattern>build/*</exclude-pattern></rule>\n  <rule ref=\"Squiz.PHP.Eval\"><exclude-pattern>/build/*</exclude-pattern></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "exclude-pattern-message",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.CodeAnalysis.EmptyStatement\"/>\n  <rule ref=\"Generic.CodeAnalysis.EmptyStatement.DetectedIf\"><exclude-pattern>build/*</exclude-pattern></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf"
+    ]
+   }
+  },
+  {
+   "name": "exclude-pattern-ruleset",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <exclude-pattern>build/*</exclude-pattern>\n  <exclude-pattern>*/tests/*</exclude-pattern>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "exclude-pattern-ruleset-nested",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./build/base.xml\"/>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <exclude-pattern>src/Legacy/*</exclude-pattern>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "ignore-argument",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"ignore\" value=\"build/*,*/tests/*\"/>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "include-pattern",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"><include-pattern>src/*</include-pattern></rule>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "reference-dist-by-name",
+   "files": {
+    ".phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"phpcs.xml.dist\"/>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n",
+    "phpcs.xml.dist": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-relative",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./build/base.xml\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.NoSilencedErrors\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-bare-path",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"build/base.xml\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.NoSilencedErrors\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-bare-name-file",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"standard\"/>\n</ruleset>\n",
+    "standard": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-dotted-name-file",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Acme.Custom.Rules\"/>\n</ruleset>\n",
+    "Acme.Custom.Rules": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-nested-paths",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./build/base.xml\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./near.xml\"/>\n  <rule ref=\"far.xml\"/>\n  <rule ref=\"./root-only.xml\"/>\n</ruleset>\n",
+    "build/near.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "near.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.BacktickOperator\"/>\n</ruleset>\n",
+    "far.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n",
+    "build/far.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.NoSilencedErrors\"/>\n</ruleset>\n",
+    "root-only.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.DeprecatedFunctions\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "reference-folder",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./standard\"/>\n  <rule ref=\"build\"/>\n</ruleset>\n",
+    "standard/ruleset.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "build/ruleset.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.NoSilencedErrors\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "nested-exclude-reincluded",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./build/base.xml\"/>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz\"><exclude name=\"Squiz.PHP.Eval\"/></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "nested-severity-kept",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"./build/base.xml\"/>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.LowerCaseConstant\"><severity>0</severity></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "build/probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/LegacyOld/probe.php": [],
+    "src/probe.php": [],
+    "src/tests/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "argument-exclude",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"exclude\" value=\"Squiz.PHP.Eval, generic.php.backtickoperator\"/>\n  <rule ref=\"Squiz\"/>\n  <rule ref=\"Generic.PHP\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ]
+   }
+  },
+  {
+   "name": "argument-sniffs",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"sniffs\" value=\"Generic.PHP.LowerCaseConstant\"/>\n  <rule ref=\"Squiz\"/>\n  <rule ref=\"Generic\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "argument-nested-first-wins",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"exclude\" value=\"Squiz.PHP.Eval\"/>\n  <rule ref=\"./build/base.xml\"/>\n  <rule ref=\"Squiz\"/>\n  <rule ref=\"Generic.PHP\"/>\n</ruleset>\n",
+    "build/base.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"exclude\" value=\"Generic.PHP.BacktickOperator\"/>\n  <arg name=\"sniffs\" value=\"Squiz.PHP.Eval,Generic.PHP.LowerCaseConstant\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.LowerCaseConstant.Found"
+    ]
+   }
+  },
+  {
+   "name": "argument-severity",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg name=\"severity\" value=\"6\"/>\n  <rule ref=\"Generic\"/>\n  <rule ref=\"Squiz.PHP.Eval\"><severity>7</severity></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "argument-no-warnings",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <arg value=\"n\"/>\n  <rule ref=\"Generic\"/>\n  <rule ref=\"Squiz\"><exclude name=\"Squiz.PHP.Eval\"/></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "build/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "src/tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ],
+    "tests/probe.php": [
+     "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+     "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Squiz.PHP.DisallowSizeFunctionsInLoops.Found"
+    ]
+   }
+  },
+  {
+   "name": "tool-only-elements",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Squiz.PHP.Eval\" phpcbf-only=\"true\"/>\n  <rule ref=\"Generic.PHP.LowerCaseConstant\" phpcs-only=\"true\"/>\n  <rule ref=\"Generic.PHP\"><exclude name=\"Generic.PHP.NoSilencedErrors\" phpcbf-only=\"true\"/></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.BacktickOperator.Found",
+     "Generic.PHP.DeprecatedFunctions.Deprecated",
+     "Generic.PHP.ForbiddenFunctions.FoundWithAlternative",
+     "Generic.PHP.LowerCaseConstant.Found",
+     "Generic.PHP.NoSilencedErrors.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "internal-reference",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Internal.NoCodeFound\"><severity>0</severity></rule>\n  <rule ref=\"Squiz.PHP.Eval\"/>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  },
+  {
+   "name": "message-type",
+   "files": {
+    "phpcs.xml": "<?xml version=\"1.0\"?>\n<ruleset name=\"Case\">\n  <rule ref=\"Generic.PHP.NoSilencedErrors\"><type>error</type></rule>\n  <rule ref=\"Squiz.PHP.Eval\"><type>warning</type></rule>\n</ruleset>\n"
+   },
+   "reported": {
+    "probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "build/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/Legacy/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/LegacyOld/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "src/tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ],
+    "tests/probe.php": [
+     "Generic.PHP.NoSilencedErrors.Discouraged",
+     "Squiz.PHP.Eval.Discouraged"
+    ]
+   }
+  }
+ ]
+}

@@ -12,7 +12,6 @@ import { RULE_PACK_RULE_ID } from "../engine/catalog/rule-packs.js";
 import {
   AUDIT_MAX_FILES,
   AUDIT_MAX_SOURCE_BYTES,
-  IGNORED_DIRECTORIES,
   MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
@@ -20,6 +19,7 @@ import {
   type SourceFactsCache,
   type SourceFileFacts,
 } from "../engine/code-rule/code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "../engine/code-rule/ignored-directories.js";
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,

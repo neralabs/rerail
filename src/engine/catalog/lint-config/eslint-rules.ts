@@ -5,12 +5,14 @@
  * `plugin:@typescript-eslint/recommended`, ...: `eslint-presets.ts`) contribute their entries before its own `rules`, its
  * `overrides` after them. Config code is never run or imported; `.eslintrc.js` and YAML configs are reported as not read.
  */
+import { posix } from "node:path";
 import { z } from "zod";
-import { filesScope, readEslintFlatConfig, type FlatConfigEntry, type FlatConfigRead, type FlatConfigScope } from "./eslint-flat-config.js";
+import { filesScope, readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigRead, type FlatConfigScope } from "./eslint-flat-config.js";
 import { ESLINTRC_PRESETS, type EslintPresetEntry } from "./generated/eslint-presets.generated.js";
 import { configFile, jsoncFile, jsonObject, severityOf, type ConfigFile, type SeverityReading } from "./jsonc-lint-config.js";
 import { readFormat } from "./formats/lint-config-formats.js";
 import { NOT_A_FILE, readRootFile, type LinterNote } from "./linter-config.js";
+import { repositoryFiles } from "./repository-files.js";
 
 /** ESLint's flat config files: code, never run. */
 const ESLINT_FLAT_CONFIGS = ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts"];
@@ -26,6 +28,8 @@ export interface ScopedRule {
   /** The folders it covers exactly, if it covers whole folders; `files` names them for the person. */
   readonly folders: readonly string[] | undefined;
   readonly files: string;
+  /** The files it is for as globs, where Rerail reads them. */
+  readonly patterns?: FilePatterns;
   /** What comes after it that Rerail does not read and that may replace it. */
   readonly shadowedBy?: string;
   /** The recognised shared config it comes from, as the config names it. */
@@ -60,13 +64,31 @@ export interface EslintRules {
   /** The first thing the config takes and Rerail does not read, which may set any rule; none when it is read whole. */
   readonly unread?: string;
   /**
-   * Why the file is not statically readable, if it is not: Rerail cannot tell what it turns off, so every rule it
-   * ports from this linter starts off, with no options.
+   * Each namespace a flat config's `plugins` bind, with the namespace its plugin's own rules are named under
+   * (`ts` → `@typescript-eslint`); undefined where Rerail cannot tell which plugin it is.
+   */
+  readonly namespaces: ReadonlyMap<string, string | undefined>;
+  /** Something the config takes and Rerail does not read that may bind any namespace to any plugin; none when it is read whole. */
+  readonly namespacesUnread?: string;
+  /**
+   * Why the file is not statically readable, if it is not: Rerail cannot tell what it turns on or off, so every rule
+   * it ports from this linter keeps the pack's value.
    */
   readonly unreadable?: string;
   /** How its severities read: an eslintrc's (`"OFF"` is `"off"`, as ESLint's eslintrc loader lower-cases them) or a flat config's. */
   readonly severities: Exclude<SeverityReading, "oxlint">;
+  /** The folders below the root holding an ESLint config of their own, which Rerail does not read, each with its file. */
+  readonly nested: readonly NestedConfig[];
 }
+
+/** A folder below the root that holds an ESLint config of its own. */
+export interface NestedConfig {
+  readonly folder: string;
+  readonly file: string;
+}
+
+/** The root config as read, before the nested configs are looked for. */
+type ReadRules = Omit<EslintRules, "nested">;
 
 /** A severity with no options: a severity, or a list of just one, which ESLint merges as a severity alone. */
 export const severityAlone = (value: unknown): boolean => !Array.isArray(value) || value.length === 1;
@@ -101,6 +123,7 @@ function scopedRuleOf({ key, shadowedBy, preset }: FlatConfigEntry, value: unkno
     key,
     value,
     folders: scope.kind === "folders" ? scope.folders : undefined,
+    ...(scope.patterns === undefined ? {} : { patterns: scope.patterns }),
     files: scope.files,
     ...(shadowedBy === undefined ? {} : { shadowedBy }),
     ...(preset === undefined ? {} : { preset }),
@@ -187,7 +210,7 @@ function keepScopedUnresolved(state: RulesState): void {
  * for the same files that sets the rule in full. What a later unread element may replace stays so through a severity
  * alone, which keeps whatever options it set.
  */
-function applyEntries(file: string, read: Pick<FlatConfigRead, "entries" | "unread">, severities: RulesState["severities"]): EslintRules {
+function applyEntries(file: string, read: Pick<FlatConfigRead, "entries" | "unread" | "namespaces">, severities: RulesState["severities"]): ReadRules {
   const state: RulesState = {
     severities, rules: {}, presets: new Map(), unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), scopedUnresolved: new Map(), scoped: [],
   };
@@ -198,7 +221,9 @@ function applyEntries(file: string, read: Pick<FlatConfigRead, "entries" | "unre
   const { rules, presets, scoped, unresolved, shadowed, optionsUnknown } = state;
   keepScopedUnresolved(state);
   const unread = read.unread[0];
-  return { file, rules, presets, scoped, unresolved, shadowed, optionsUnknown, severities, ...(unread === undefined ? {} : { unread }) };
+  return {
+    file, rules, presets, scoped, unresolved, shadowed, optionsUnknown, severities, namespaces: read.namespaces, ...(unread === undefined ? {} : { unread }),
+  };
 }
 
 type Entry = { -readonly [K in keyof FlatConfigEntry]: FlatConfigEntry[K] };
@@ -207,6 +232,8 @@ type Entry = { -readonly [K in keyof FlatConfigEntry]: FlatConfigEntry[K] };
 class EslintrcEntries {
   readonly entries: Entry[] = [];
   readonly unread: string[] = [];
+  /** An eslintrc names a plugin by its package (`plugins: ["react"]`), so a rule's namespace is always the plugin's own. */
+  readonly namespaces: ReadonlyMap<string, string | undefined> = new Map();
 
   /** The rules of `rules` for `scope`, from `preset` where they come from one. */
   add(rules: Readonly<Record<string, unknown>>, scope: FlatConfigScope, preset?: string): void {
@@ -220,16 +247,21 @@ class EslintrcEntries {
   }
 }
 
-/** An eslintrc `files` value (and `excludedFiles`) as a scope: whole folders where every pattern is one and none is excluded. */
-function eslintrcScope(files: string | readonly unknown[], excluded: boolean): FlatConfigScope {
-  const text = JSON.stringify(files);
-  return excluded ? { kind: "some", files: text } : filesScope(typeof files === "string" ? [files] : files, text);
+/** eslintrc globs as flat config ones: one without a `/` matches a file's name in any folder (eslintrc's `matchBase`). */
+function eslintrcGlobs(globs: unknown): unknown {
+  const list: unknown = typeof globs === "string" ? [globs] : globs;
+  return Array.isArray(list) ? list.map(glob => (typeof glob === "string" && !glob.includes("/") ? `**/${glob}` : glob)) : list;
+}
+
+/** An eslintrc `files` value less `excludedFiles` as a scope: whole folders where every pattern is one and none is excluded. */
+function eslintrcScope(files: string | readonly unknown[], excluded: unknown): FlatConfigScope {
+  return filesScope(eslintrcGlobs(files), JSON.stringify(files), excluded === undefined ? undefined : eslintrcGlobs(excluded));
 }
 
 /** A recognised preset's entries, each for its own files, from the eslintrc that extends it. */
 function addPreset(gathered: EslintrcEntries, name: string, entries: readonly EslintPresetEntry[]): void {
   for (const entry of entries) {
-    gathered.add(entry.rules, entry.files === undefined ? { kind: "all" } : eslintrcScope(entry.files, entry.ignores !== undefined), name);
+    gathered.add(entry.rules, entry.files === undefined ? { kind: "all" } : eslintrcScope(entry.files, entry.ignores), name);
   }
 }
 
@@ -266,7 +298,7 @@ function addOverride(gathered: EslintrcEntries, file: string, index: number, val
   if (unread.length > 0) notes.push({ linter: "eslint", text: `${file}: overrides[${index}]: only its own rules are read, not ${unread.join(" or ")}.` });
   // An override's extends applies before its rules, its nested overrides after them.
   if (Object.hasOwn(override.data, "extends")) gathered.shadow(`${file} overrides[${index}].extends`);
-  gathered.add(override.data.rules ?? {}, eslintrcScope(override.data.files, Object.hasOwn(override.data, "excludedFiles")));
+  gathered.add(override.data.rules ?? {}, eslintrcScope(override.data.files, override.data.excludedFiles));
   if (Object.hasOwn(override.data, "overrides")) gathered.shadow(`${file} overrides[${index}].overrides`);
 }
 
@@ -288,7 +320,7 @@ function addOverrides(gathered: EslintrcEntries, file: string, overrides: unknow
  * An eslintrc config `config` (an `.eslintrc` file, `package.json` `eslintConfig`) as ESLint applies it: its `extends`
  * (recognised presets in place), its own `rules`, its `overrides`. Undefined (with a note) when `rules` is not an object.
  */
-function eslintrcRules(file: string, config: ConfigFile, notes: LinterNote[]): EslintRules | undefined {
+function eslintrcRules(file: string, config: ConfigFile, notes: LinterNote[]): ReadRules | undefined {
   const rules = jsonObject.safeParse(config.rules ?? {});
   if (!rules.success) {
     notes.push({ linter: "eslint", text: `${file} is not read: its rules are not an object.` });
@@ -303,10 +335,12 @@ function eslintrcRules(file: string, config: ConfigFile, notes: LinterNote[]): E
   return applyEntries(file, gathered, "eslintrc");
 }
 
-/** A flat config Rerail cannot read statically: it cannot tell what it turns off, so every ESLint port starts off. */
-function unreadableFlat(file: string, why: string, notes: LinterNote[]): EslintRules {
-  notes.push({ linter: "eslint", text: `${file} is not statically readable: ${why}. ${NEVER_RUN} The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.` });
-  return { file, rules: {}, presets: new Map(), scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), severities: "eslint", unreadable: why };
+/** A flat config Rerail cannot read statically: it cannot tell what it turns on or off, so every ESLint port keeps the pack's value. */
+function unreadableFlat(file: string, why: string, notes: LinterNote[]): ReadRules {
+  notes.push({ linter: "eslint", text: `${file} is not statically readable: ${why}. ${NEVER_RUN} The rules Rerail ports from ESLint keep the pack's values, since Rerail cannot tell which it turns on or off.` });
+  return {
+    file, rules: {}, presets: new Map(), scoped: [], unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), namespaces: new Map(), severities: "eslint", unreadable: why,
+  };
 }
 
 /** A config file present at the root: its name, and its text where it is a regular file Rerail reads. */
@@ -324,16 +358,19 @@ function presentFiles(root: string, names: readonly string[]): PresentFile[] {
 }
 
 /** The flat config file ESLint uses, parsed and never run. */
-function flatRules({ name, text }: PresentFile, notes: LinterNote[]): EslintRules {
+function flatRules({ name, text }: PresentFile, notes: LinterNote[]): ReadRules {
   if (text === undefined) return unreadableFlat(name, NOT_A_FILE.replace(/\.$/u, ""), notes);
   const config = readFormat(() => readEslintFlatConfig(text, name));
   if (!config.ok) return unreadableFlat(name, config.why, notes);
   for (const note of config.value.notes) notes.push({ linter: "eslint", text: `${name}: ${note}` });
-  return applyEntries(name, config.value, "eslint");
+  const rules = applyEntries(name, config.value, "eslint");
+  // An element Rerail does not read may bind any namespace, as may a `plugins` value it does not read.
+  const namespacesUnread = config.value.pluginsUnread ?? rules.unread;
+  return namespacesUnread === undefined ? rules : { ...rules, namespacesUnread };
 }
 
 /** The eslintrc file `used`: JSON read, code and YAML not. */
-function eslintrcFile(root: string, used: string, notes: LinterNote[]): EslintRules | undefined {
+function eslintrcFile({ name: used, text }: PresentFile, notes: LinterNote[]): ReadRules | undefined {
   if (ESLINTRC_CODE.has(used)) {
     notes.push({ linter: "eslint", text: `${used} is not read: ${NEVER_RUN}` });
     return undefined;
@@ -342,22 +379,23 @@ function eslintrcFile(root: string, used: string, notes: LinterNote[]): EslintRu
     notes.push({ linter: "eslint", text: `${used} is not read: Rerail reads JSON lint configs only.` });
     return undefined;
   }
-  const config = jsoncFile(root, used, "eslint", notes);
+  const config = jsoncFile(used, text, "eslint", notes);
   return config === undefined ? undefined : eslintrcRules(used, config, notes);
 }
 
-/** `package.json`'s `eslintConfig`, which ESLint reads where there is no config file. */
-function manifestConfig(root: string, notes: LinterNote[]): EslintRules | undefined {
-  const manifest = readRootFile(root, "package.json");
-  if (!manifest.present || manifest.text === undefined) return undefined;
-  let parsed: unknown;
+/** A `package.json`'s `eslintConfig`; undefined where it has none or is not JSON (the pack matcher skips such a manifest too). */
+function eslintConfigOf(text: string): unknown {
   try {
-    parsed = JSON.parse(manifest.text);
+    return z.looseObject({ eslintConfig: z.unknown().optional() }).safeParse(JSON.parse(text)).data?.eslintConfig;
   } catch {
-    // An unreadable manifest is not an ESLint config; the matcher skips it the same way.
     return undefined;
   }
-  const eslintConfig = z.looseObject({ eslintConfig: z.unknown().optional() }).safeParse(parsed).data?.eslintConfig;
+}
+
+/** `package.json`'s `eslintConfig`, which ESLint reads where there is no config file. */
+function manifestConfig(root: string, notes: LinterNote[]): ReadRules | undefined {
+  const manifest = readRootFile(root, "package.json");
+  const eslintConfig = manifest.present && manifest.text !== undefined ? eslintConfigOf(manifest.text) : undefined;
   if (eslintConfig === undefined) return undefined;
   const config = configFile.safeParse(eslintConfig);
   if (config.success) return eslintrcRules("package.json eslintConfig", config.data, notes);
@@ -370,18 +408,56 @@ function noteIgnored(ignored: readonly string[], used: string, notes: LinterNote
   for (const name of ignored) notes.push({ linter: "eslint", text: `${name} is not read: ESLint uses ${used} instead.` });
 }
 
-/** The ESLint config ESLint uses at `root`, read as data; undefined when there is none Rerail reads. */
-export function readEslintRules(root: string, notes: LinterNote[]): EslintRules | undefined {
+/** The config ESLint uses at `root`, read as data, and whether it is a flat config. */
+function rootRules(root: string, notes: LinterNote[]): { readonly rules: ReadRules | undefined; readonly flat: boolean } {
   const [used, ...ignored] = presentFiles(root, ESLINT_FLAT_CONFIGS);
-  const legacy = ESLINTRC_FILES.filter(name => readRootFile(root, name).present);
+  const legacy = presentFiles(root, ESLINTRC_FILES);
   if (used !== undefined) {
     // ESLint uses the first flat config it finds wherever there is one; the files it then ignores are named after
     // what Rerail made of that one.
     const rules = flatRules(used, notes);
-    noteIgnored([...ignored.map(file => file.name), ...legacy], used.name, notes);
-    return rules;
+    noteIgnored([...ignored, ...legacy].map(file => file.name), used.name, notes);
+    return { rules, flat: true };
   }
-  if (legacy.length === 0) return manifestConfig(root, notes);
-  noteIgnored(legacy.slice(1), legacy[0]!, notes);
-  return eslintrcFile(root, legacy[0]!, notes);
+  if (legacy.length === 0) return { rules: manifestConfig(root, notes), flat: false };
+  noteIgnored(legacy.slice(1).map(file => file.name), legacy[0]!.name, notes);
+  return { rules: eslintrcFile(legacy[0]!, notes), flat: false };
+}
+
+/** Whether repository file `path`, named `name`, is a config of its own for its folder. */
+function isNestedConfig(root: string, path: string, name: string, flat: boolean): boolean {
+  if (flat) return ESLINT_FLAT_CONFIGS.includes(name);
+  if (name !== "package.json") return ESLINTRC_FILES.includes(name);
+  const manifest = readRootFile(root, path);
+  return manifest.present && manifest.text !== undefined && eslintConfigOf(manifest.text) !== undefined;
+}
+
+/** Per folder below the root that holds a config of its own, the first such file in it. */
+function nestedConfigFiles(root: string, flat: boolean): Map<string, string> {
+  const nested = new Map<string, string>();
+  for (const path of repositoryFiles(root)) {
+    const folder = posix.dirname(path);
+    if (folder !== "." && !nested.has(folder) && isNestedConfig(root, path, posix.basename(path), flat)) nested.set(folder, path);
+  }
+  return nested;
+}
+
+/**
+ * The folders below the root that hold a config of their own: under a flat config, an `eslint.config.*` (ESLint 10
+ * takes the one nearest each file, in place of the root's); under an eslintrc, an eslintrc or a `package.json` with
+ * `eslintConfig` (the cascade merges it over the root's). Rerail does not read them, so the files there keep the pack's
+ * values.
+ */
+function nestedConfigs(root: string, flat: boolean, used: string, notes: LinterNote[]): NestedConfig[] {
+  const how = flat ? "ESLint takes it in place of" : "ESLint merges it over";
+  return [...nestedConfigFiles(root, flat)].map(([folder, file]) => {
+    notes.push({ linter: "eslint", text: `${file} is not read: ${how} ${used} for the files under its folder, which keep the pack's values.` });
+    return { folder, file };
+  });
+}
+
+/** The ESLint config ESLint uses at `root`, read as data; undefined when there is none Rerail reads. */
+export function readEslintRules(root: string, notes: LinterNote[]): EslintRules | undefined {
+  const { rules, flat } = rootRules(root, notes);
+  return rules === undefined ? undefined : { ...rules, nested: nestedConfigs(root, flat, rules.file, notes) };
 }
