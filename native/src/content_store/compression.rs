@@ -125,7 +125,10 @@ pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
 /// How a writer finds a frame's language: the tape tag of a stored tape image, and of the language a file at a
 /// path is parsed as. The engine knows both (`code_rule_dsl::tape`'s header, its languages) and sets them as it
 /// loads. Before that, or without them, a writer uses no dictionary; every reader decodes either frame.
-static LANGUAGE_TAGS: std::sync::OnceLock<(fn(&[u8]) -> Option<u8>, fn(&str) -> Option<u8>)> = std::sync::OnceLock::new();
+static LANGUAGE_TAGS: std::sync::OnceLock<LanguageTags> = std::sync::OnceLock::new();
+
+/// A stored tape image's tag, and a path's language's (`set_language_tags`).
+type LanguageTags = (fn(&[u8]) -> Option<u8>, fn(&str) -> Option<u8>);
 
 /// Sets how a writer finds a frame's language (`LANGUAGE_TAGS`); the first setting stays.
 pub fn set_language_tags(tape: fn(&[u8]) -> Option<u8>, path: fn(&str) -> Option<u8>) {

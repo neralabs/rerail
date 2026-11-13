@@ -329,7 +329,7 @@ impl ContentStore {
                 e.2 += p.rows.rows.len() * 8;
             }
             let mut by: Vec<_> = by.into_iter().collect();
-            by.sort_by(|a, b| b.1.2.cmp(&a.1.2));
+            by.sort_by_key(|b| std::cmp::Reverse(b.1.2));
             let top: Vec<String> = by.iter().take(15).map(|(r, (f, n, b))| format!("{r}: {f} frames, {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
             eprintln!("rerail: frames queued: {:.1} MB in {} frames of {} relations; by relation: {}", bytes as f64 / 1048576.0, puts.len(), by.len(), top.join("; "));
             if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
@@ -750,7 +750,7 @@ mod tests {
             reads: vec![], rows: Rows { types: vec![0], rows: vec![], n: 0 } }], vec![], None);
         let (tx, rx) = mpsc::channel();
         let read = std::thread::spawn(move || {
-            let meta = reader.frames(&[1; 32], &[r.clone()], 0).unwrap();
+            let meta = reader.frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
             let rows = reader.frame_rows(&[1; 32], &r, 0).unwrap();
             tx.send((meta, rows)).unwrap();
         });
@@ -783,8 +783,8 @@ mod tests {
         let store = ContentStore::open(&path).unwrap();
         let frames = store.admit_frames(&[1; 32], &[r.clone(), r.clone(), rel("r", 2), empty.clone(), nullary.clone()], 0).unwrap();
         assert_eq!(frames.len(), 3);
-        assert_eq!(store.admit_frames(&[1; 32], &[r.clone()], 1).unwrap()[&r].rows().unwrap().rows, [99]);
-        assert!(store.admit_frames(&[2; 32], &[r.clone()], 0).unwrap().is_empty());
+        assert_eq!(store.admit_frames(&[1; 32], std::slice::from_ref(&r), 1).unwrap()[&r].rows().unwrap().rows, [99]);
+        assert!(store.admit_frames(&[2; 32], std::slice::from_ref(&r), 0).unwrap().is_empty());
         drop(store);
         // No open store or connection remains: every consumer uses admitted memory.
         assert_eq!(frames[&r].rows().unwrap().rows, [-9, 1 << 40, 2, 3]);
@@ -806,11 +806,11 @@ mod tests {
         let (release, blocked) = std::sync::mpsc::channel();
         store.write_back("test gate", 0, vec![], Box::new(move |_| { blocked.recv().unwrap(); Ok(()) }));
         store.queue_frames([1; 32], vec![put(2)], vec![], None);
-        let replaced = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let replaced = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         store.queue_frames([1; 32], vec![], vec![(r.clone(), 0)], None);
-        let deleted = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let deleted = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         store.queue_frames([1; 32], vec![put(3)], vec![], None);
-        let latest = reader.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let latest = reader.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         release.send(()).unwrap();
         store.written().unwrap();
         assert_eq!(replaced[&r].rows().unwrap().rows, [2]);
@@ -830,7 +830,7 @@ mod tests {
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let space = [1u8; 32];
         let (r, s) = (rel("r", 1), rel("r", 2));
-        assert!(store.frames(&space, &[r.clone()], 0).unwrap().is_empty());
+        assert!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap().is_empty());
         let rows = Rows { types: vec![0, 1], rows: vec![5, -3, 1 << 40, 7], n: 2 };
         let put = Put { rel: r.clone(), part: 0, digest: 9, reads: vec![("input".into(), 4), ("q".into(), 1 << 63)], rows };
         store.keep_frames(&space, &[put], &[], None).unwrap();
@@ -843,9 +843,9 @@ mod tests {
         // Replaced, then forgotten.
         let put = Put { rel: r.clone(), part: 0, digest: 10, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
         store.keep_frames(&space, &[put], &[], None).unwrap();
-        assert_eq!(store.frames(&space, &[r.clone()], 0).unwrap()[&r].digest, 10);
+        assert_eq!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap()[&r].digest, 10);
         store.keep_frames(&space, &[], &[(r.clone(), 0)], None).unwrap();
-        assert!(store.frames(&space, &[r.clone()], 0).unwrap().is_empty());
+        assert!(store.frames(&space, std::slice::from_ref(&r), 0).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -859,7 +859,7 @@ mod tests {
         let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
         store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0))).unwrap();
         for _ in 0..RUNS {
-            assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
+            assert!(store.frames(&space, std::slice::from_ref(&old), 0).unwrap().contains_key(&old));
             store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0))).unwrap();
         }
         let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
@@ -882,12 +882,12 @@ mod tests {
         for _ in 0..2 * RUNS {
             store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7))).unwrap();
         }
-        assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
+        assert!(store.frames(&space, std::slice::from_ref(&first), 0).unwrap().contains_key(&first), "one run, not nine");
         // RUNS later runs that do not use it collect it.
         for run in 8..8 + RUNS as u64 {
             store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run))).unwrap();
         }
-        assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
+        assert!(!store.frames(&space, std::slice::from_ref(&first), 0).unwrap().contains_key(&first));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

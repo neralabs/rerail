@@ -56,6 +56,7 @@ fn on_path(name: &str) -> Option<PathBuf> {
 
 /// The identity a cursor is of: an FSEvents id is of its volume; a Watchman clock names its own instance, so one
 /// identity serves (and keeps its cursors apart from FSEvents').
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn volume(path: &Path) -> Option<[u8; 16]> {
     match backend() {
         #[cfg(target_os = "macos")]

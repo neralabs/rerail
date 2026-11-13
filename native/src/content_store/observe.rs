@@ -923,13 +923,16 @@ fn read_all(path: &Path, entries: &mut HashMap<PathBuf, Entry>, aliases: &mut Ha
 /// An observer's writer: a thread of its own with its own connection, behind the run (decision 0104), running each
 /// write in the order it was queued. Dropped, it finishes what was queued.
 struct Writer {
-    jobs: Option<std::sync::mpsc::Sender<Box<dyn FnOnce(&mut Connection) + Send>>>,
+    jobs: Option<std::sync::mpsc::Sender<WriterJob>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+/// One write the observer's writer runs on its connection.
+type WriterJob = Box<dyn FnOnce(&mut Connection) + Send>;
+
 impl Writer {
     fn open(path: &Path) -> Writer {
-        let (jobs, queued) = std::sync::mpsc::channel::<Box<dyn FnOnce(&mut Connection) + Send>>();
+        let (jobs, queued) = std::sync::mpsc::channel::<WriterJob>();
         let path = path.to_owned();
         let thread = rerail_accel::exec::service("rerail-observer-writer", None, move || {
                 super::hazards::behind_the_run();

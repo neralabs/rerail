@@ -336,6 +336,7 @@ impl ContentStore {
     /// counts) at the content-pure path or at `key.path`. Returns the run's digest
     /// (`FactsMemo::run_digest`) when it covered every clause of `set`. Writes nothing, and returns `None`, when the
     /// source was collected after the caller resolved it (O95): the file is evaluated again next time.
+    #[allow(clippy::type_complexity)]
     pub fn put_facts_memo(
         &self,
         key: FactsMemoKey<'_>,

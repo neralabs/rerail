@@ -36,7 +36,7 @@ pub type Sym = u32;
 /// The fixed hash every string key uses: the interner's table, and the dependency keys of
 /// probes (`Engine::probe`), which must agree for strings that are not (yet) interned.
 pub fn hash_str(s: &str) -> u64 {
-    foldhash::quality::FixedState::with_seed(0x5EED_71).hash_one(s)
+    foldhash::quality::FixedState::with_seed(0x005E_ED71).hash_one(s)
 }
 
 /// A run of consecutive stored atoms held in memory, as a segment row has them (decision 0111 §2).
@@ -133,6 +133,7 @@ impl Interner {
     }
 
     /// One past the last id: the database's (as far as this process knows) and the pending ones.
+    #[allow(clippy::len_without_is_empty)] // one past the last id, not a count of entries
     pub fn len(&self) -> usize {
         self.base as usize + self.ends.len()
     }
@@ -156,6 +157,7 @@ impl Interner {
     /// The pending atoms from `from` on, as one segment of at most `most` bytes (and at least one atom): their end
     /// offsets (u32, little-endian, relative to the segment's first byte), their bytes, each one's (hash, id), and
     /// the id past its last.
+    #[allow(clippy::type_complexity)]
     fn segment(&self, from: usize, most: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>, usize) {
         let i = from - self.base();
         let start = if i == 0 { 0 } else { self.ends[i - 1] };
@@ -321,6 +323,7 @@ const READ_WHOLE: usize = 64 << 20;
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
+#[allow(clippy::type_complexity)]
 static IDENTITIES: LazyLock<Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>> = LazyLock::new(Default::default);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
@@ -343,6 +346,7 @@ fn segment_bytes() -> usize {
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
+    #[allow(clippy::type_complexity)]
     static RESERVING: std::cell::RefCell<Option<(usize, Vec<(usize, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -394,6 +398,7 @@ impl Drop for Reservation {
 pub struct Reserved(Vec<(usize, Vec<Sym>)>);
 
 impl Reserved {
+    #[allow(clippy::len_without_is_empty)] // emptiness is by arena (`Drop`), not by this count
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
     }
@@ -666,6 +671,7 @@ impl Atoms {
         Ok(atoms)
     }
 
+    #[allow(clippy::len_without_is_empty)] // one past the last id, as `Interner::len`
     pub fn len(&self) -> usize {
         self.state.read().atoms.len()
     }

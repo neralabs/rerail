@@ -248,6 +248,7 @@ impl ContentStore {
 
     /// The newest run of `root` (as recorded, canonical): its memo plan, the sources it read, and the relations
     /// its plan's entries hold rows of with their declared columns (JSON). `None` if the root has no run.
+    #[allow(clippy::type_complexity)]
     pub fn corpus_run_of(&self, root: &str) -> StoreResult<Option<([u8; 32], Vec<i64>, Vec<(String, String)>)>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let run: Option<(Vec<u8>, Vec<u8>)> = connection
