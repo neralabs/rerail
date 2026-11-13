@@ -109,7 +109,8 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), shape)?;
     let program = rir::assemble(&compiled.text())?;
-    let native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    native.tag = rerail_tape_format::RR_TAG;
     // Tier 2 a function a grammar rule (`by_rules`): a call of the grammar is a native call,
     // its return a native return; the optimizer on. Its entries and arms weighted by the
     // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
@@ -1202,7 +1203,8 @@ pub mod tests {
         use rerail_compiler::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
         use rerail_compiler::native_cpu_stream::Parser;
         let c = super::compiled().expect("compiles");
-        let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        native.tag = rerail_tape_format::RR_TAG;
         let files = corpus();
         let every: usize = std::env::var("RR_PROFILE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
         let sample: Vec<&[u8]> = files.iter().step_by(every).map(|f| f.as_bytes()).collect();

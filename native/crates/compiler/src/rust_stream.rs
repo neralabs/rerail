@@ -67,7 +67,7 @@ struct Facts<'a> {
 /// Tier 2's program as Rust source: `tier2_entry(ctx)`, the harness's entry
 /// (`native_cpu_stream::Entry`), with its fingerprint, `SOURCE`.
 pub fn rust_source(native: &Structure) -> Result<String, String> {
-    rust_source_at(native, rerail_tape_format::Narrow::WIDTHS, rerail_tape_format::RR_TAG)
+    rust_source_at(native, rerail_tape_format::Narrow::WIDTHS, native.tag)
 }
 
 /// As `rust_source`, the tape written at `widths` with the language's `tag`.

@@ -79,7 +79,8 @@ from the CPU's SHA instructions, in the harness. On Metal it must be a kernel's.
 4. Metal (`tier2_on`). Tier 2 there is the JIT's code over the device's tier 1:
    its bytes are the JIT's. A kernel of its own, and the digest, are open.
 5. `NodeRow`, `Columns` and `engine_columns` go; `rr_parser::tape` gives bytes.
-   `Columns` and `engine_columns` are gone; `NodeRow` is left in `native_cpu_stream`.
+   Done. The language sets its tape tag on the lowered program (`Structure::tag`);
+   the compiler has no default.
 
 Every step: the corpus's tapes are the lean parser's, byte for byte.
 
@@ -101,5 +102,3 @@ The lean parser, lexer and all, is 454.6M (133.3M cycles) in the same run.
 
 - Wide files: code compiled at the widths a file needs, the file parsed again,
   in place of refusing it to the fallback.
-- The language passes its tag; the compiler has no default.
-- `NodeRow` and `NO_PARENT` go.

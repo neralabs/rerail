@@ -152,24 +152,6 @@ const FRAME_SHIFT: i32 = 240;
 const STATE: i32 = 248;
 const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
-/// A node of the table, as the lean parser's tape has one (`rr_syntax::tape::Row`, 24 bytes, the
-/// same layout): its kind and field, its bytes, the records in its subtree (its own counted),
-/// its parent and whether it is an extra, each written with the row as it stands at the end.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NodeRow {
-    pub kind: u16,
-    pub field: u16,
-    pub start: u32,
-    pub end: u32,
-    pub size: u32,
-    /// The parent's record; `NO_PARENT` for the root.
-    pub parent: u32,
-    /// 1 for an extra (a comment).
-    pub extra: u8,
-    pub pad: [u8; 3],
-}
-
 // The working rows (`native_cpu_tape`): a node's key, start and end, 12 bytes. The tape's columns
 // are apart, at the compiled widths.
 use crate::native_cpu_tape::{AT_END, AT_FIELD, AT_KIND, AT_START, ROW};
@@ -227,9 +209,6 @@ impl NodeCol {
         }
     }
 }
-
-/// The root's parent in the table's `parent` column.
-pub const NO_PARENT: u32 = u32::MAX;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
 /// Tier 2's entry: `ctx`, the run's end.
@@ -2520,7 +2499,7 @@ struct Lowered {
 /// calling convention): no stack grows, and every function returns the run's result to
 /// `tempo_stream`.
 pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<CompiledStream, Error> {
-    compile_at(native, cut, rerail_tape_format::Narrow::WIDTHS, rerail_tape_format::RR_TAG)
+    compile_at(native, cut, rerail_tape_format::Narrow::WIDTHS, native.tag)
 }
 
 /// `compile_cut`, the tape written at `widths` (constants of the code: docs/parser-generators/37)
