@@ -269,7 +269,25 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
 /// The prepared program `facts` holds, for `dialect`.
 pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
     // Its programs' rows, grouped by program in one pass (`Grouped`).
-    let grouped = program_facts::Grouped::of(facts);
+    prepared_from(facts, &program_facts::Grouped::of(facts), dialect)
+}
+
+/// The prepared program the encoded parts `parts` hold (`program_facts::encode`), read in place: its programs off the
+/// encodings' rows (`decode_view`), no row copied out; its other facts (`prepared_*`, a small part) as owned facts.
+pub fn prepared_of_encoded(parts: &[Vec<u8>], dialect: GrammarDialect) -> Result<Prepared, String> {
+    let views = parts.iter().map(|b| program_facts::decode_view(b)).collect::<Result<Vec<_>, String>>()?;
+    let program = program_facts::schema();
+    let mut rest = Facts::new();
+    for view in &views {
+        for (rel, rows) in view.owned(|r| !program.contains_key(r)) {
+            rest.entry(rel).or_default().extend(rows);
+        }
+    }
+    prepared_from(&rest, &program_facts::Grouped::of_views(&views), dialect)
+}
+
+/// The prepared program of `facts` (its facts other than its programs') and `grouped` (its programs' rows).
+fn prepared_from<C: program_facts::Cell>(facts: &Facts, grouped: &program_facts::Grouped<'_, C>, dialect: GrammarDialect) -> Result<Prepared, String> {
     let (prog, program) = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read the programs off the facts".into());
         (grouped.program("front")?, grouped.program("lowered")?)
@@ -390,6 +408,18 @@ fn invalid(e: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(e.to_string())
 }
 
+/// The document's facts as the store keeps them, encoded (`program_facts::encode`); read off its tape, and kept, when
+/// they are not kept (`document_facts`).
+fn document_encoded(store: &ContentStore, document: SourceId) -> StoreResult<Option<Vec<u8>>> {
+    let set = facts_plan();
+    let memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
+    // Read as it is: a part that does not decode makes the lookup miss (`prepared_of_encoded`), and the run prepares.
+    if let Some(result) = memo.results.into_iter().find(|(p, _)| *p == set.plans[0]).map(|(_, r)| r) {
+        return Ok(Some(result.entry));
+    }
+    Ok(document_facts(store, document, None)?.map(|facts| program_facts::encode(&facts)))
+}
+
 /// The document's facts as the store keeps them; read off its tape when they are not kept (and kept then). `text` is
 /// the document's, when the caller has it.
 fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) -> StoreResult<Option<Facts>> {
@@ -453,28 +483,35 @@ pub fn parts(facts: Facts) -> impl Iterator<Item = Facts> {
 /// did, or when what it stored no longer reads. With it, the sources of its parts' documents.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
     super::memo::off();
+    let start = std::time::Instant::now();
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
     if result.entry.is_empty() || result.entry.len() % 32 != 0 {
         return Ok(None);
     }
-    let mut facts = Facts::new();
     let mut documents = Vec::new();
+    let mut parts: Vec<Vec<u8>> = Vec::new();
     for digest in result.entry.chunks(32) {
         let digest: [u8; 32] = digest.try_into().expect("32 bytes");
         let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
         let part = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read a part's facts".into());
-            document_facts(store, document, None)?
+            document_encoded(store, document)?
         };
         let Some(part) = part else { return Ok(None) };
-        for (rel, rows) in part {
-            facts.entry(rel).or_default().extend(rows);
-        }
+        parts.push(part);
         documents.push(document);
     }
-    Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
+    let read = start.elapsed();
+    let at = std::time::Instant::now();
+    let got = prepared_of_encoded(&parts, dialect);
+    if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
+        eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {} parts, {:.1} MB encoded; read {:.3} s, to a program {:.3} s{}",
+            super::phases::current().unwrap_or_else(|| "main".into()), parts.len(), parts.iter().map(Vec::len).sum::<usize>() as f64 / 1e6, read.as_secs_f64(), at.elapsed().as_secs_f64(),
+            got.as_ref().err().map(|e| format!("; not read: {e}")).unwrap_or_default());
+    }
+    Ok(got.ok().map(|p| (p, documents)))
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).
