@@ -982,11 +982,39 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
         let (modules, files) = builtin_program(path)?;
         return Ok((Shared(modules.into_iter().map(|(p, s)| (p, std::sync::Arc::new(s))).collect()), files));
     }
+    if super::json_rules::is_policy_path(path) {
+        return json_program_shared(path);
+    }
     let (order, files) = program_order(path)?;
     // One handle on the tape cache for the files read (`phases::Reading`), not one each.
     let _reading = super::plan::corpus::phases::Reading::enter();
     let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
     Ok((Shared(modules), files))
+}
+
+/// A JSON policy (`rerail.policy/v1`, decision 0175), read as the `.rr` file it translates to: its text translated
+/// as it is read (`json_rules`), its `#include`s (library files only) resolved as a text's are (`resolve_shared`).
+/// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rr`, the
+/// file (its JSON bytes' digest, so an edit reads it again), then the rest.
+fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (bytes, digest) = super::plan::corpus::observe(|o| o.read(&path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
+    let file = LibraryFile { path: path.clone(), sha256: Some(digest) };
+    noted(&file);
+    let json = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let _reading = super::plan::corpus::phases::Reading::enter();
+    let statements = stored_statements(&path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (modules, own) = resolve_shared(statements)?;
+    let core = library().join("core.rr").canonicalize().ok();
+    let (first, rest): (Vec<_>, Vec<_>) = modules.iter().partition(|(p, _, _)| Some(p) == core.as_ref());
+    let mut files: Vec<LibraryFile> = first.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }).collect();
+    files.push(file);
+    files.extend(rest.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }));
+    let mut shared: Vec<(PathBuf, std::sync::Arc<Vec<syntax::Statement>>)> = modules.into_iter().map(|(p, _, s)| (p, s)).collect();
+    shared.push((path, std::sync::Arc::new(own)));
+    Ok((Shared(shared), files))
 }
 
 /// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.

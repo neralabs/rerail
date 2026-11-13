@@ -1597,6 +1597,13 @@ pub(crate) mod logic {
         pub mod tests;
     }
     pub mod convert;
+    // The JSON translator's tests (decision 0175) run in the engine's test binary.
+    #[path = "json_rules"]
+    pub mod json_rules {
+        pub use rerail_logic::code_rule_dsl::logic::json_rules::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     #[path = "front"]
     pub mod front {
         pub use rerail_rr::code_rule_dsl::logic::front::*;

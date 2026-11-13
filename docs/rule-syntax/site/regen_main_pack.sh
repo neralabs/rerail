@@ -7,7 +7,8 @@
 #
 # PACK_RULES holds main's <id>.json files (default: the pack's pinned copy, packs/python-main/source/rules, main's
 # Python pack 0.1.8); RERAIL_RR_LIB defaults to the repo's docs/rule-syntax/lib. The ids file (default: every JSON there) names the rules to
-# translate. Each rule goes through translate_rules.py (translate.py, then engine_dialect.py); a hand-written
+# translate. Each rule goes through the engine's translator (`rerail-engine translate-json`, decision 0175: the Rust
+# port of translate_rules.py, which stays as the reference the port's parity test was made against); a hand-written
 # overrides/<id>.rr then replaces the generated file. The reader check's verdicts go to reader-check.txt
 # ("<status> <id>", and the first line of the error), sorted by id.
 set -eu
@@ -23,11 +24,18 @@ ids=${1:--}
 # README stay. (Nothing is deleted: the trash dir is under /tmp.)
 trash=$(mktemp -d /tmp/ai-trash.rerail-main-pack.XXXXXX)
 find "$out" -maxdepth 1 -name '*.rr' -exec mv {} "$trash"/ \;
-nice -n 19 python3 "$here/translate_rules.py" "$PACK_RULES" "$ids" "$out"
+if [ "$ids" = - ]; then
+    set -- "$PACK_RULES"/*.json
+else
+    set --
+    for id in $(cat "$ids"); do set -- "$@" "$PACK_RULES/$id.json"; done
+fi
+nice -n 19 "$ENGINE" translate-json "$@" --out "$out"
 for o in "$out"/overrides/*.rr; do
     [ -e "$o" ] || continue
     id=$(basename "$o" .rr)
-    if [ -e "$out/$id.rr" ]; then cp "$o" "$out/$id.rr"; fi
+    # the generated text stays, for the translator's parity test (json_rules::tests)
+    if [ -e "$out/$id.rr" ]; then cp "$out/$id.rr" "$out/generated-before-override/$id.rr"; cp "$o" "$out/$id.rr"; fi
 done
 
 check="$trash/check.json"

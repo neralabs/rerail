@@ -110,6 +110,8 @@ pub mod profile {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
 }
 pub mod program_facts;
+/// Main's JSON rules translated to `.rr` on read (decision 0175).
+pub mod json_rules;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;

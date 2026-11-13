@@ -518,7 +518,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json <rule.json>... --out <dir>";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -571,6 +571,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
                 Err(format!("{failures} rules failed the .rr reader"))
             } else { Ok(text) }
         }
+        // Main's JSON rules as the engine reads them: each `<id>.json` to `<out>/<id>.rr` (decision 0175).
+        Some("translate-json") => translate_json_command(&args[1..]),
         // Each test the files carry (decision 0130).
         Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
         // `--cases <file>` gives the next rule its cases (decision 0130).
@@ -669,6 +671,43 @@ fn repeat_command(_: &str) -> Result<String, String> {
 }
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
+/// `translate-json <rule.json>... --out <dir>`: each JSON policy translated as the reader translates it, written to
+/// `<dir>/<stem>.rr`. A rule the translator cannot take is reported and the rest go on.
+fn translate_json_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::logic::json_rules;
+    let usage = "usage: rerail-engine translate-json <rule.json>... --out <dir>";
+    let (mut files, mut out) = (Vec::new(), None);
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        if a == "--out" {
+            out = Some(std::path::PathBuf::from(rest.next().ok_or(usage)?));
+        } else {
+            files.push(std::path::PathBuf::from(a));
+        }
+    }
+    let out = out.ok_or(usage)?;
+    if files.is_empty() {
+        return Err(usage.into());
+    }
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let translator = json_rules::Translator::new();
+    let mut failed = 0;
+    for f in &files {
+        match translator.translate_file(f) {
+            Ok(text) => {
+                let stem = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let dest = out.join(format!("{stem}.rr"));
+                std::fs::write(&dest, text).map_err(|e| format!("{}: {e}", dest.display()))?;
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("FAIL {e}");
+            }
+        }
+    }
+    Ok(format!("{} translated, {failed} failed", files.len() - failed))
+}
+
 fn logic_command(args: &[String]) -> Result<String, String> {
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
@@ -709,7 +748,8 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|path| path.extension().is_some_and(|x| x == "rr"))
+            // and every JSON policy (`rerail.policy/v1`), translated as it is read (decision 0175)
+            .filter(|path| path.extension().is_some_and(|x| x == "rr") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
             .collect();
         files.sort();
         // A file another one `#include`s is a library of it (`…confusables.rr`), not a program of its own: alone it
