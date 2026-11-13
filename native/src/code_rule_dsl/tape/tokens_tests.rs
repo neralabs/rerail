@@ -265,8 +265,8 @@ fn gaps_are_tree_sitters(lang: GrammarDialect, source: &str) -> Result<usize, St
 fn gaps_give_tree_sitters_tokens() {
     for (lang, source) in [
         (GrammarDialect::Python, "async def f(a, b=1, *c, **d) -> int:  # c\n    return a if a is not b else [x for x in b if x]\nimport os, sys\nfrom . import (x, y,)\nv = sys.version[:3]\ntry:\n    pass\nexcept (A, B) as e:\n    raise\nelse:\n    pass\nd = {'a': 1, **e}\nf(a, *b, k=v)\nlambda x: x\nwith a as b, c:\n    del a[1:2, ::3]\n"),
-        (GrammarDialect::JavaScript, "const f = async (a, b) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (const k of o) if (!k) break;\nlet o = { a: 1, b, [c]: 2, get d() { return 1; } };\nnew C(a, b);\nexport default function () {}\n"),
-        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\ninterface I { readonly a: string; m(x: number): void }\nclass C<T> extends B implements I { constructor(private x: T = 1) { super(); } }\ndeclare global { var g: number }\n"),
+        (GrammarDialect::JavaScript, "const f = async (a, b) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (const k of o) if (!k) break;\nfor (key in obj) foo();\nlet o = { a: 1, b, [c]: 2, get d() { return 1; } };\nnew C(a, b);\nexport default function () {}\n"),
+        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\ninterface I { readonly a: string; m(x: number): void }\nclass C<T> extends B implements I { constructor(private x: T = 1) { super(); } accessor y = 1; }\ndeclare global { var g: number }\nexport = f;\n"),
         (GrammarDialect::Rust, "fn f(x: &[u8]) -> Option<u8> { if let Some(y) = x.first() { return Some(*y + 1); } None }\nstruct P { a: u8, b: u8 }\nfn g(P { a, b: c }: P) {}\n"),
         (GrammarDialect::Php, "<?php\nFUNCTION f($a, $b = [1, 2,]) { return $a ?? $b; }\n$x = ['k' => 1, 2];\n"),
     ] {
