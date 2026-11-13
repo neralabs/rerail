@@ -66,6 +66,19 @@ describe("hook launcher started by the recorded node", () => {
     expect(JSON.parse(result.stdout), result.stderr).toEqual({ pid: result.pid, argv1: hook });
     expect(result.status).toBe(0);
   }, 30_000);
+
+  it.each([
+    ["ends the process itself", 'process.stdout.write("{}"); process.exit(3);'],
+    ["throws once it has loaded", 'setTimeout(() => { throw new Error("late failure"); }, 0);'],
+  ])("exits 0 for a hook that %s, as it does for a hook it runs as a child", async (_case, source) => {
+    const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
+    temporaryDirectories.push(base);
+    const hook = join(base, "claude-hook.mjs");
+    await writeFile(hook, source);
+    const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, process.execPath, hook], { input: "{}", encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("rerail hook: exited");
+  }, 30_000);
 });
 
 describe("hook launcher", () => {
