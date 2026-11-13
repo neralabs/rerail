@@ -1,0 +1,1 @@
+`rerail rules test` also takes a `.rr` rule file and runs the tests it carries (`.test ... .end` blocks with their fixtures and expectations), reporting each test as passed or failed; `--json` lists every test with its failures and findings.
