@@ -177,7 +177,8 @@ type FactRows = HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound
 
 /// The rows of `facts` on each of `tapes`, before any label pass (decision 0030): the producers read
 /// no label. Each tape is one file evaluation, so its scope table is built once and shared by every
-/// fact on it, as W's run shares it across clauses; the tapes run in parallel.
+/// fact on it, as W's run shares it across clauses, and so is its file memo (`with_file_memo`: the
+/// parents' gaps, the counted siblings, the utilities' verdicts); the tapes run in parallel.
 pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::matcher::Fact>>, tapes: &[TapeDoc]) -> FactRows {
     use rayon::prelude::*;
     let mut distinct: Vec<&Arc<crate::code_rule_dsl::matcher::Fact>> = Vec::new();
@@ -200,13 +201,15 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                 let source = Arc::as_ptr(tape.document_source()) as usize;
                 // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
-                distinct
-                    .iter()
-                    .map(|fact| {
-                        let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
-                    })
-                    .collect::<Vec<_>>()
+                crate::code_rule_dsl::matcher::with_file_memo(&file, || {
+                    distinct
+                        .iter()
+                        .map(|fact| {
+                            let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
+                            ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
+                        })
+                        .collect::<Vec<_>>()
+                })
             })
             .collect()
     })
@@ -1090,7 +1093,7 @@ impl LoweredWave {
             };
             active[at][tape]
         };
-        let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
+        let active: &(dyn Fn(&LoweredMatcher, usize) -> bool + Sync) = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         // Facts that are node sets are the formulas' (`formulas`): only the others' rows are made here.
@@ -1105,7 +1108,10 @@ impl LoweredWave {
                 continue;
             }
             if sweeps(levels) {
-                for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
+                // A file's sweep reads and marks its own labels only, so the files sweep in
+                // parallel, as on Metal (`matcher_metal`).
+                use rayon::prelude::*;
+                tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
                     let levels = levels
                         .iter()
                         .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
@@ -1113,7 +1119,8 @@ impl LoweredWave {
                     if levels.iter().any(|level| !level.is_empty()) {
                         sweep(&levels, tape, sets)?;
                     }
-                }
+                    Ok::<_, Error>(())
+                })?;
                 continue;
             }
             let mut settled = false;

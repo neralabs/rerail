@@ -831,7 +831,7 @@ impl TokenGrammar {
 
     /// `text` (a token text or field name of this grammar) for the life of the process: the
     /// grammar is built once per dialect and never dropped.
-    pub(in crate::code_rule_dsl) fn intern(&self, text: &str) -> &'static str {
+    pub fn intern(&self, text: &str) -> &'static str {
         match self.interned.binary_search_by(|known| (*known).cmp(text)) {
             Ok(at) => self.interned[at],
             Err(_) => "",
