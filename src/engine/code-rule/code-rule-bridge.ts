@@ -36,7 +36,7 @@ import { removeScratch, renameWithRetry } from "../file-replace.js";
 import { blobIds, heldAs, textAs } from "./line-endings.js";
 import { openNoFollow } from "../no-follow.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
-import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
+import { IGNORED_DIRECTORIES } from "./ignored-directories.js";
 import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";

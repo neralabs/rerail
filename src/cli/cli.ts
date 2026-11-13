@@ -178,6 +178,7 @@ function usage(): string {
     "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
     "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
+    "  rerail packs calibrate [--repo <dir>] [--dry-run] [--json]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",

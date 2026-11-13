@@ -155,4 +155,27 @@ describe("rules dump", () => {
       target.$client.close();
     }
   });
+
+  it("keeps a setting the lint config gave as the lint config's through export and import, and a person's as theirs", async () => {
+    const source = openRerailDatabase(await temporaryDatabase());
+    let dump: unknown;
+    try {
+      source.$client.exec("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('repo', 'repo', 0, 0)");
+      source.$client.exec(`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", origin, updated_at) VALUES
+        ('repository', 'repo', '', 'rule', 'calibrated', 0, 'lint-config', 0), ('repository', 'repo', '', 'rule', 'mine', 1, NULL, 0)`);
+      dump = JSON.parse(JSON.stringify(exportRulesDump(source)));
+    } finally {
+      source.$client.close();
+    }
+    const target = openRerailDatabase(await temporaryDatabase());
+    try {
+      importRulesDump(target, testBundle(), dump);
+      expect(target.$client.prepare("SELECT target_id, origin FROM rule_settings ORDER BY target_id").all()).toEqual([
+        { target_id: "calibrated", origin: "lint-config" },
+        { target_id: "mine", origin: null },
+      ]);
+    } finally {
+      target.$client.close();
+    }
+  });
 });

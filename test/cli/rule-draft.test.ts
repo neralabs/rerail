@@ -269,7 +269,8 @@ describe("rerail rules test", () => {
     });
   });
 
-  it("counts only where rules add would have the rule run: the draft's folder, and the folders it is added at already", async () => {
+  /** A repository set up with nothing added, a match in each of four places, and a rule that would catch all four. */
+  async function folderedRepository() {
     const repo = await repository({
       "web/src/a.ts": "console.log('web');\n",
       "web2/src/b.ts": "console.log('web2');\n",
@@ -278,28 +279,36 @@ describe("rerail rules test", () => {
     });
     setUpEmpty(repo);
     const rule = { ...noConsolePolicy(), id: "no-console-in-folders", scope: { include: ["**/*.ts"], exclude: [] } };
+    const file = (draft: object): string => writeDraft(repo, { kind: "code", rule, ...draft });
+    // The JSON report; the text one only where a test reads it, each a whole `rerail rules test` pass of its own.
     const tested = async (draft: object) => {
-      const { report, stdout } = await testReportText(writeDraft(repo, { kind: "code", rule, ...draft }), repo);
-      return { report, folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path), stdout };
+      const { report } = await testReport(file(draft), repo);
+      return { report, folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path) };
     };
+    const text = async (draft: object): Promise<string> => (await run("test", [file(draft), "--repo", repo])).stdout;
+    return { repo, file, tested, text };
+  }
 
-    // Not added yet: a draft that names no folder is added to the whole repository, and one that names a folder there.
+  // Each `rerail rules test` pass compiles and scans the repository; these make three and five, which a full suite run
+  // can slow past the default 5 s.
+  it("counts the whole repository, or the draft's folder, where the rule is not added yet", { timeout: 15_000 }, async () => {
+    const { tested, text } = await folderedRepository();
     expect(await tested({})).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
     const nested = await tested({ folder: "web/src" });
     expect(nested).toMatchObject({ folders: ["web/src"], paths: ["web/src/a.ts"] });
     expect(nested.report).not.toHaveProperty("refusal");
     expect(nested.report.repository).not.toHaveProperty("notNarrowed");
-    expect(nested.stdout).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
+    expect(await text({ folder: "web/src" })).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
+  });
 
-    // Added at web: it stays there when the draft names no folder, and a folder the draft names is one more.
-    expect((await run("add", [writeDraft(repo, { kind: "code", rule, folder: "web" }), "--repo", repo])).exit).toBe(0);
+  it("counts where rules add would have the rule run once it is added: the folders it is added at, and the draft's", { timeout: 15_000 }, async () => {
+    const { repo, file, tested, text } = await folderedRepository();
+    expect((await run("add", [file({ folder: "web" }), "--repo", repo])).exit).toBe(0);
     expect(await tested({})).toMatchObject({ folders: ["web"], paths: ["web/src/a.ts"] });
-    const both = await tested({ folder: "lib" });
-    expect(both).toMatchObject({ folders: ["lib", "web"], paths: ["lib/c.ts", "web/src/a.ts"] });
-    expect(both.stdout).toContain("  Repo: 2 places match under lib/, web/, where the rule runs.\n");
-    const whole = await tested({ folder: "" });
-    expect(whole).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
-    expect(whole.stdout).toContain("  Repo: 4 places match.\n");
+    expect(await tested({ folder: "lib" })).toMatchObject({ folders: ["lib", "web"], paths: ["lib/c.ts", "web/src/a.ts"] });
+    expect(await text({ folder: "lib" })).toContain("  Repo: 2 places match under lib/, web/, where the rule runs.\n");
+    expect(await tested({ folder: "" })).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
+    expect(await text({ folder: "" })).toContain("  Repo: 4 places match.\n");
   });
 
   it("says so where it cannot read where the rule is added, and still counts the repository", async () => {

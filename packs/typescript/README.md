@@ -1,5 +1,7 @@
 # Rerail rule pack: TypeScript
 
+**Linter-equivalent to typescript-eslint 8.70.1 and @vitest/eslint-plugin 1.6.27.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 65 code rules for TypeScript: 62 ported from typescript-eslint 8.70.1 (on ESLint 10.11.0) and 3 from @vitest/eslint-plugin
 1.6.27, each with its default options. 42 start off (`"on": false`): no approved upstream configuration turns them on,
 so they are experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their

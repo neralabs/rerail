@@ -128,7 +128,7 @@ packs/<id>/
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "typescript-eslint and @vitest/eslint-plugin rules for safe, idiomatic TypeScript and Vitest tests.",
+  "covers": "Linter-equivalent to typescript-eslint 8.70.1 and @vitest/eslint-plugin 1.6.27, for safe, idiomatic TypeScript and Vitest tests.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -152,7 +152,7 @@ packs/<id>/
 - **`honourSuppressionComments`** (optional, default `true`): whether its rules honour their linters' suppression
   comments.
 - **`rules`**: the pack's rules. Each entry has an `id` ([Rule ids](#rule-ids)), a `document` (required,
-  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on` and `examples`.
+  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and `examples`.
 
 <details>
 <summary>Field details</summary>
@@ -163,7 +163,9 @@ packs/<id>/
   this. A pack's README opens with `# Rerail rule pack: <name>`, and a published pack has a row in
   [the packs table](rule-packs.md#the-packs).
 - **`covers`** says what the rules are for and where they come from. It gives no rule counts and nothing on which
-  start on; the dashboard shows both beside it.
+  start on; the dashboard shows both beside it. A pack that ports linters opens with
+  `Linter-equivalent to <Tool> <version>, for <purpose>.` ([linter-equivalent](rule-packs.md#linter-equivalent)). A
+  test checks that every pinned version (`upstream/<tool>/gates.yaml`) appears.
 - **`category`** drives the kind chips of the dashboard's rule pack catalog, which lists languages, then frameworks,
   then repository packs.
 - **`match` signals:**
@@ -189,6 +191,12 @@ packs/<id>/
   - `mode` is the rule mode the pack starts the rule in; otherwise the document's. Ports use it for upstream's
     warning level (below).
   - `on` (default `true`) is whether the pack starts the rule on.
+  - `heldOff` is one line saying why a reviewer holds the rule off though upstream turns it on: its steer would do
+    harm. It needs `"on": false`. Set-up never turns a held-off rule on from the repository's lint config, by a
+    linter's defaults, a preset, a prefix, a group or the rule's own name; it notes what would have, with the reason
+    ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on. Cores
+    before 0.1.5 refuse the field, so once core is at 0.1.5 the pack validation fails a pack using it whose core range
+    admits an older core: the Release pull request that bumps core raises the range to `>=0.1.5-0`.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.

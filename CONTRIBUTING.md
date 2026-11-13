@@ -460,6 +460,9 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   script of every installed package that ships its addon prebuilt. While the pull request stages pack data in a
   `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
+- A change to reading a repository's own lint config (`src/engine/catalog/lint-config/`, `rerail packs calibrate`)
+  keeps `npm run test:coverage:lint-config` at 100% statements, branches, functions and lines for every file. Cover a
+  new branch with a test of what it decides, or delete it if no input reaches it; CI runs the gate.
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
 - A change to a published pack under `packs/` adds a changeset, its name opening with its change type

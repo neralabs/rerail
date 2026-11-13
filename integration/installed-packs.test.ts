@@ -47,12 +47,12 @@ beforeEach(() => {
     BROWSER: "none",
     RERAIL_AUTOSTART: "0",
   };
-  // A project outside this repository: TypeScript, with a lint config that turns eqeqeq off.
+  // A project outside this repository: TypeScript, with a lint config that turns eqeqeq on, which the pack starts off.
   repo = join(root, "shop");
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "shop", devDependencies: { typescript: "^5.9.0" } }));
   writeFileSync(join(repo, "src", "cart.ts"), "export function total(prices: number[]): number {\n  return prices.reduce((sum, price) => sum + price, 0);\n}\n");
-  writeFileSync(join(repo, ".eslintrc.json"), JSON.stringify({ rules: { eqeqeq: "off" } }));
+  writeFileSync(join(repo, ".eslintrc.json"), JSON.stringify({ rules: { eqeqeq: "error" } }));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
   execFileSync("git", ["add", "."], { cwd: repo });
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "-m", "base"], { cwd: repo });
@@ -117,10 +117,11 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
 
     const confirm = await rerail(answerArgs(read.stdout, 1));
     // A TypeScript project: the TypeScript pack fits its dependency, complexity its *.ts source, and JavaScript its
-    // source too, holding eslint-eqeqeq, which the lint config turns off. Every published pack loads.
+    // source too, holding eslint-eqeqeq, which the pack starts off and the lint config turns on. Every published pack
+    // loads.
     for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`--packs \\S*\\b${id}@\\d+\\.\\d+\\.\\d+`, "u"));
     expect(confirm.stdout).not.toContain("Rule packs set-up could not use");
-    expect(confirm.stdout).toContain("eslint-eqeqeq starts off");
+    expect(confirm.stdout).toContain("eslint-eqeqeq starts on");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
 
     // The answer carries exact versions: an older one than the tag gives is installed as named, not re-resolved.
@@ -139,7 +140,7 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     expect(listed.skipped).toEqual([]);
     const rerailRules = await daemonGet<{ rules: { rule: { id: string }; packId: string | null }[] }>("/api/rerail-rules");
     expect(rerailRules.rules.find(entry => entry.rule.id === "eslint-eqeqeq")?.packId).toBe("javascript");
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
     expect((await rerail(["state"])).stdout.trim()).toBe("started");
 
     // In a repository that is set up, `/rerail-start` just starts it: nothing is fetched or installed.
@@ -167,7 +168,7 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     expect((await step(startArgs)).step).toBe("done");
     expect(Object.entries(installed()).map(([name, version]) => `${name.slice("@neralabs/rerail-pack-".length)}@${version}`).sort())
       .toEqual(shown.split(",").sort());
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
   });
 
   it("`rerail packs` upgrades, downgrades and removes a published pack while the repository's settings stand, and leaves out one whose core range excludes Rerail", async () => {
@@ -176,15 +177,15 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     const read = await rerail(["setup", "--relay"]);
     const confirm = await rerail(answerArgs(read.stdout, 1));
     await rerail(answerArgs(confirm.stdout, 1));
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
 
     expect((await rerail(["packs", "add", `javascript@${newer}`])).stdout).toContain(`javascript@${newer}`);
     expect(installed()["@neralabs/rerail-pack-javascript"]).toBe(newer);
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
 
     expect((await rerail(["packs", "add", `javascript@${older}`])).stdout).toContain(`javascript@${older}`);
     expect(installed()["@neralabs/rerail-pack-javascript"]).toBe(older);
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
 
     // npm cannot supply a pack whose range excludes this core, so narrow an installed one.
     const manifest = join(home, "packs", "node_modules", "@neralabs", "rerail-pack-javascript", "package.json");
@@ -199,6 +200,6 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     expect(await eqeqeq()).toEqual({ on: undefined, unavailable: ["javascript: missing"] });
     // Installing it again restores what the repository had.
     await rerail(["packs", "add", `javascript@${newer}`]);
-    expect(await eqeqeq()).toEqual({ on: false, unavailable: [] });
+    expect(await eqeqeq()).toEqual({ on: true, unavailable: [] });
   });
 });

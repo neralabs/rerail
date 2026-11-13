@@ -36,8 +36,10 @@
  * How upstream tags a release is learnt from the pin itself: the first of `eslint.release.tag`'s form, `v<version>` and
  * `<version>` whose tag of the pinned release names the pinned commit. Every edit is checked by reading the file back,
  * so a pin in an unexpected shape stops the bump instead of being half-moved. Prose still naming the old release (READMEs,
- * comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not rewritten: the pull request's
- * reviewer decides it.
+ * `pack.json`'s `covers`, comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not
+ * rewritten: the pull request's reviewer decides it. So are set-up's linter tables
+ * (src/engine/catalog/lint-config/generated/, whose `UPSTREAM_VERSIONS` must equal the pins) and their generators'
+ * pins (scripts/generate/lint-config/): they are regenerated from the new release, never edited.
  *
  * Exit 0 when bumped or already at the release, 1 when the bump cannot be made, 2 on bad arguments.
  */
@@ -381,6 +383,12 @@ function filesUnder(root: string, directory: string): string[] {
 const RECIPES_DIRECTORY = "scripts/pack-data/recipes";
 
 /**
+ * Set-up's linter tables and the generators that write them at one upstream release each: a bump leaves them naming the
+ * old one until they are regenerated (test/engine/catalog/lint-config/generated-pins.test.ts holds them to the pins).
+ */
+const LINT_CONFIG_TABLES = ["src/engine/catalog/lint-config/generated", "scripts/generate/lint-config"];
+
+/**
  * Those of the files a pack pins its reference tools in by hand, outside its generators, that the checkout at `root`
  * has. They are repository paths: bump edits the checkout's tracked copies, so these are not oracle reads through the
  * fixtures root (test/support/oracles.ts).
@@ -617,10 +625,12 @@ async function writeGatedBump(
     ...scripts.shared,
     ...handPins,
     conformancePath,
+    `packs/${pack}/pack.json`,
     `packs/${pack}/README.md`,
     `packs/${pack}/candidates/README.md`,
     ...recordFiles,
     ...filesUnder(root, RECIPES_DIRECTORY),
+    ...LINT_CONFIG_TABLES.flatMap((directory) => filesIn(root, directory)),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
 
@@ -782,10 +792,12 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     common,
     ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith(".expected.json")),
     conformancePath,
+    "packs/rust/pack.json",
     "packs/rust/README.md",
     "packs/rust/candidates/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
     ...filesUnder(root, RECIPES_DIRECTORY),
+    ...LINT_CONFIG_TABLES.flatMap((directory) => filesIn(root, directory)),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], pinned.toolchain, renames);
   return {
@@ -907,7 +919,7 @@ export function renderBump(bump: Bump): string {
     "",
   ];
   if (bump.leftovers.length === 0) {
-    lines.push("Nothing else in the tool-pack's pins, scripts, README, conformance.json, UPSTREAM.md (whose Source row and heading the bump moved) or the derive recipes names it.");
+    lines.push("Nothing else in the tool-pack's pins, scripts, README, conformance.json, UPSTREAM.md (whose Source row and heading the bump moved), the derive recipes or set-up's linter tables names it.");
   } else {
     lines.push("Prose and pins the bump does not rewrite: review each before merging.", "");
     lines.push(...bump.leftovers.slice(0, LEFTOVER_LIMIT).map((line) => `- \`${line.replaceAll("`", "'")}\``));

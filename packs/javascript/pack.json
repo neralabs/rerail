@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript",
   "category": "language",
-  "covers": "ESLint's core rules for sound, consistent JavaScript and TypeScript, and eslint-plugin-unicorn rules for JavaScript.",
+  "covers": "Linter-equivalent to ESLint 10.11.0 and eslint-plugin-unicorn 76.0.0, for sound, consistent JavaScript and TypeScript.",
   "reason": "matches JavaScript or TypeScript source",
   "match": {
     "any": [

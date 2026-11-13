@@ -1,5 +1,7 @@
 # Rerail rule pack: Blade
 
+**Linter-equivalent to Bladestan 0.11.7, tlint 9.7.0 and blade-parser 2.1.0.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 10 rules for Laravel Blade templates, ported to Rerail: tlint 9.7.0's `NoDumpDirectives`, `NoRayDirective`,
 `SpaceAfterBladeDirectives` and `SpacesAroundBladeRenderContent`, stillat/blade-parser 2.1.0's
 `DebugDirectiveValidator`, `ForElseStructureValidator`, `ComponentShorthandVariableParameterValidator` and

@@ -526,6 +526,24 @@ test("a derive recipe still naming the old release is a leftover", async () => {
   assert.ok(bump.leftovers.includes('scripts/pack-data/recipes/demo.ts:1: const tools = await npmRuntime("bandit-1.9.4", runtimeCache, runner);'), bump.leftovers.join("\n"));
 });
 
+test("set-up's linter tables and their generators still naming the old release are leftovers", async () => {
+  const root = banditCheckout();
+  writeFileSync(join(root, "packs/demo/README.md"), "Rules ported from Bandit.\n");
+  const table = "src/engine/catalog/lint-config/generated/bandit-tests.generated.ts";
+  const generator = "scripts/generate/lint-config/bandit-tests.mjs";
+  for (const [path, text] of [[table, 'export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = {"demo/bandit":"1.9.4"};\n'], [generator, 'const PIN = "1.9.4";\n']] as const) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+  const bump = (await planBump(root, "demo", "bandit", "1.9.5", recorded(BANDIT_TAGS).sources))!;
+  // Listed for the reviewer, never rewritten: the table is regenerated from the new release.
+  assert.deepEqual(bump.leftovers.filter((line) => !line.startsWith("packs/") && !line.startsWith(RUNTIMES_DIRECTORY)), [
+    `${table}:1: export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = {"demo/bandit":"1.9.4"};`,
+    `${generator}:1: const PIN = "1.9.4";`,
+  ]);
+  assert.ok(!bump.files.some((file) => file.path === table || file.path === generator));
+});
+
 test("a scratch pack bumped end to end: every pin moves, its hand-pinned reference tools too, and nothing still names the old release", async () => {
   const root = checkout({
     "packs/scratch/upstream/bandit/gates.yaml": `adapter: bandit
@@ -562,7 +580,7 @@ ${popularity()}`,
   const common = "fixtures/scratch/common.py";
   assert.equal(readFileSync(join(root, common), "utf8"), `TOOLS = {\n    "bandit": "1.9.5",\n}\nCORPORA = {\n    "bandit-cases": {\n        "repository": "https://github.com/PyCQA/bandit",\n        "commit": "${BANDIT_NEXT}",\n        "tag": "1.9.5",\n    },\n}\n`);
   assert.deepEqual(upstreamPins(root).find((pin) => pin.toolPack === "scratch/bandit")!.disagreements, []);
-  assert.match(renderBump(bump), /Nothing else in the tool-pack's pins, scripts, README, conformance\.json, UPSTREAM\.md \(whose Source row and heading the bump moved\) or the derive recipes names it\./u);
+  assert.match(renderBump(bump), /Nothing else in the tool-pack's pins, scripts, README, conformance\.json, UPSTREAM\.md \(whose Source row and heading the bump moved\), the derive recipes or set-up's linter tables names it\./u);
 });
 
 test("the bump stops when UPSTREAM.md's Source row is not at the pinned release", async () => {

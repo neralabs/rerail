@@ -54,24 +54,30 @@ function insertAttachment(db: Queries, attachment: RuleAttachment, now: number):
     .run();
 }
 
+/** Option values as a row stores them: none (`null`) for no options. */
+const storedConfig = (config: RuleConfig | null | undefined): RuleConfig | null =>
+  (config === undefined || config === null || Object.keys(config).length === 0 ? null : config);
+
+/**
+ * Writes `setting`'s row, or deletes it when every field is null. The row takes `setting.origin`, null when omitted:
+ * a write that does not say the lint config gave it (the dashboard, the API, MCP) makes the row a person's.
+ */
 function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
   const { ownerKind, ownerId } = ownerColumns(setting.owner);
-  const folder = normalizeFolder(setting.folder);
-  const suppressions = setting.suppressions ?? null;
-  const config = setting.config === undefined || setting.config === null || Object.keys(setting.config).length === 0 ? null : setting.config;
-  if (setting.on === null && setting.mode === null && suppressions === null && config === null) {
+  const key = { ownerKind, ownerId, folder: normalizeFolder(setting.folder), targetKind: setting.targetKind, targetId: setting.targetId };
+  const values = { on: setting.on, mode: setting.mode, suppressions: setting.suppressions ?? null, config: storedConfig(setting.config), origin: setting.origin ?? null };
+  if (values.on === null && values.mode === null && values.suppressions === null && values.config === null) {
     db.delete(ruleSettings).where(and(
-      eq(ruleSettings.ownerKind, ownerKind),
-      eq(ruleSettings.ownerId, ownerId),
-      eq(ruleSettings.folder, folder),
-      eq(ruleSettings.targetKind, setting.targetKind),
-      eq(ruleSettings.targetId, setting.targetId),
+      eq(ruleSettings.ownerKind, key.ownerKind),
+      eq(ruleSettings.ownerId, key.ownerId),
+      eq(ruleSettings.folder, key.folder),
+      eq(ruleSettings.targetKind, key.targetKind),
+      eq(ruleSettings.targetId, key.targetId),
     )).run();
     return;
   }
-  const values = { on: setting.on, mode: setting.mode, suppressions, config };
   db.insert(ruleSettings)
-    .values({ ownerKind, ownerId, folder, targetKind: setting.targetKind, targetId: setting.targetId, ...values, updatedAt: now })
+    .values({ ...key, ...values, updatedAt: now })
     .onConflictDoUpdate({
       target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
       set: { ...values, updatedAt: now },

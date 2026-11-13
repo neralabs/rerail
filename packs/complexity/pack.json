@@ -3,7 +3,7 @@
   "id": "complexity",
   "name": "Cyclomatic complexity",
   "category": "language",
-  "covers": "Keeps Python, TypeScript, JavaScript, PHP, Rust and Vue functions, and those a Blade template's PHP defines, at cyclomatic complexity 6 or below, measured as lizard does.",
+  "covers": "Keeps functions at cyclomatic complexity 6 or below, counted like lizard 1.24.0. For Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue.",
   "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source",
   "match": {
     "any": [

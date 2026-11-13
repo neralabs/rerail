@@ -1,5 +1,7 @@
 # Rerail rule pack: Vue
 
+**Linter-equivalent to eslint-plugin-vue 10.11.1.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 23 eslint-plugin-vue 10.11.1 rules for Vue single-file components, ported to Rerail with their default options, each
 passing the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)), judged against
 eslint-plugin-vue's own findings on its RuleTester cases (`upstream/eslint-plugin-vue/fixtures.expected.json`) and

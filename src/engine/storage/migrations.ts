@@ -145,6 +145,17 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "audits", "rule_provenance_id", "integer");
     },
   },
+  {
+    // A rule setting's `origin`: `lint-config` for one the repository's lint config gave (set-up, `rerail packs
+    // calibrate`), null for a person's or an agent's, which calibrating leaves alone. No floor: an older build never
+    // reads the column. Its writes name only the columns it knows, so a row it inserts has no origin, and its upsert
+    // of an existing row keeps the row's origin: a calibrated row an older build's dashboard changed still reads as
+    // calibrated, and the next calibration may replace that change. Its delete takes the origin with the row.
+    id: "rule-settings-origin",
+    up(database) {
+      addColumn(database, "rule_settings", "origin", "text");
+    },
+  },
 ];
 
 /** `audit_rule_provenances` and its digest index as `audit-rule-provenance-once` introduced them. */

@@ -3,7 +3,7 @@
   "id": "vue",
   "name": "Vue",
   "category": "framework",
-  "covers": "eslint-plugin-vue rules for well-built Vue components and templates.",
+  "covers": "Linter-equivalent to eslint-plugin-vue 10.11.1, for well-built Vue components and templates.",
   "reason": "matches Vue single-file components",
   "match": {
     "any": [

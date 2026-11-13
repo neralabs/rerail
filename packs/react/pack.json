@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks, and Rerail's own React practice rules.",
+  "covers": "Linter-equivalent to eslint-plugin-react 7.37.5 and react-hooks 7.1.1, for well-built components and hooks. Also Rerail's own practice rules.",
   "reason": "matches React",
   "match": {
     "any": [

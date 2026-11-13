@@ -7,14 +7,22 @@
  * entries of the exported config array are read through same-file `const` bindings, array and object spreads,
  * `defineConfig(...)` (from `eslint/config` or `@eslint/config-helpers`), typescript-eslint's `config(...)` and
  * `extends`. Rerail takes those helpers, and the modules the file imports, to do what their documentation says; it does
- * not read them. What the file takes from them (a shared config such as `js.configs.recommended`, an imported value,
+ * not read them. A shared config it recognises by the module the file imports and the member path it reads
+ * (`js.configs.recommended`, `...tseslint.configs.strict`, `...react.configs.flat.recommended` in an object,
+ * `...js.configs.recommended.rules` in `rules`: `eslint-presets.ts`), or by a string `extends` through the plugin the
+ * object binds (`plugins: { js }, extends: ["js/recommended"]`), contributes its rule entries in place, marked with the
+ * preset. A namespace `plugins` binds to a plugin it recognises names that plugin's rules (`plugins: { ts:
+ * tseslint.plugin }` makes `ts/no-explicit-any` typescript-eslint's `no-explicit-any`); one bound to anything else names
+ * a plugin Rerail cannot tell. Anything else the file takes from them (an unrecognised shared config, an imported value,
  * a call's result) is not evaluated: a rule entry whose value it decides is reported as unresolved, and a config element
- * it is is named in a note.
+ * it is is named in a note and in `unread`.
  */
 import { createRequire } from "node:module";
 import type * as BabelParser from "@babel/parser";
 import type * as t from "@babel/types";
-import { LintConfigFormatError } from "./lint-config-formats.js";
+import { flatPlugin, flatPreset, pluginPreset, type FlatPlugin } from "./eslint-presets.js";
+import type { EslintPresetEntry } from "./generated/eslint-presets.generated.js";
+import { LintConfigFormatError } from "./formats/lint-config-formats.js";
 
 /** The parser, loaded on the first flat config: every `rerail` command imports this module, few parse one. */
 let babel: typeof BabelParser | undefined;
@@ -25,9 +33,18 @@ export type FlatConfigScope =
   /** Every file: the config object has no `files`, `ignores` or `basePath`. */
   | { readonly kind: "all" }
   /** Exactly the files under these folders (relative to the repository root), from `files: ["<folder>/**"]`. */
-  | { readonly kind: "folders"; readonly folders: readonly string[]; readonly files: string }
-  /** Some files Rerail does not map onto folders; `files` is how the config names them. */
-  | { readonly kind: "some"; readonly files: string };
+  | { readonly kind: "folders"; readonly folders: readonly string[]; readonly files: string; readonly patterns?: FilePatterns }
+  /** Some files Rerail does not map onto folders; `files` is how the config names them, `patterns` the globs where Rerail reads them. */
+  | { readonly kind: "some"; readonly files: string; readonly patterns?: FilePatterns };
+
+/**
+ * The files an entry applies to as globs from the repository root: those that match a glob of every group of `files`
+ * (an element's own, and the elements' it is extended in), less those a glob of `ignores` matches.
+ */
+export interface FilePatterns {
+  readonly files: readonly (readonly string[])[];
+  readonly ignores: readonly string[];
+}
 
 /** A rule entry of a config object, in config order. */
 export interface FlatConfigEntry {
@@ -37,14 +54,39 @@ export interface FlatConfigEntry {
   readonly value: { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly why: string };
   /** What comes after the entry that Rerail does not read and that may replace it (a shared config, a spread). */
   readonly shadowedBy?: string;
+  /** The recognised shared config the entry comes from, as the file names it (`js.configs.recommended`). */
+  readonly preset?: string;
 }
 
 type Entry = { -readonly [K in keyof FlatConfigEntry]: FlatConfigEntry[K] };
 
+/** A recognised shared config a flat config names: how the file names it, and its entries. */
+interface Preset {
+  readonly text: string;
+  readonly entries: readonly EslintPresetEntry[];
+}
+
+/** A config object property a recognised shared config object spread into it gives: the preset, and the value as JSON. */
+class PresetValue {
+  constructor(readonly preset: string, readonly json: unknown) {}
+}
+
+/** A config object's property: an expression of the file, or what a spread shared config gives. */
+type Property = t.Expression | PresetValue;
+
 export interface FlatConfigRead {
   readonly entries: readonly FlatConfigEntry[];
+  /** What the config holds that is not read and may set any rule after it (an unrecognised shared config, a spread), as the file names it. */
+  readonly unread: readonly string[];
   /** What the config holds that is not read, for the person. */
   readonly notes: readonly string[];
+  /**
+   * Each namespace the config's `plugins` bind, with the namespace the plugin's own rules are named under
+   * (`ts` → `@typescript-eslint`); undefined where Rerail cannot tell which plugin it is.
+   */
+  readonly namespaces: ReadonlyMap<string, string | undefined>;
+  /** A `plugins` value Rerail does not read, which may bind any namespace, as the file names it. */
+  readonly pluginsUnread?: string;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -85,6 +127,11 @@ const COERCION_KEYS = new Set(["toString", "valueOf", "toJSON", "toLocaleString"
 /** Whether `module` is named by a path (which may be the config itself or a file of the repository), not a package. */
 const isPathModule = (module: string): boolean => /^(?:\.|\/|[A-Za-z]:|file:)/u.test(module);
 
+/** TypeScript's wrappers around an expression (`x as T`, `x satisfies T`, `x!`, `<T>x`): erased before the file runs. */
+type TypeWrapper = t.TSAsExpression | t.TSSatisfiesExpression | t.TSNonNullExpression | t.TSTypeAssertion;
+const TYPE_WRAPPERS = new Set(["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "TSTypeAssertion"]);
+const isTypeWrapper = (node: t.Node): node is TypeWrapper => TYPE_WRAPPERS.has(node.type);
+
 /** The name of a member or object key, or undefined when it is computed from anything but a literal. */
 function keyName(key: t.Node, computed: boolean): string | undefined {
   if (!computed && key.type === "Identifier") return key.name;
@@ -99,6 +146,51 @@ export function folderOfGlob(pattern: string): string | undefined {
   if (match === null) return undefined;
   const folder = match[1]!;
   return folder.split("/").some(part => part === "." || part === "..") ? undefined : folder;
+}
+
+/**
+ * `files` less `ignores` (JSON) as globs, where each is a list of globs Rerail matches files against as ESLint does: no
+ * `files` is every file; a nested list (every glob of which must match) or a negated glob is not read.
+ */
+export function filePatterns(files: unknown, ignores: unknown): FilePatterns | undefined {
+  const globs = (value: unknown, none: readonly string[]): readonly string[] | undefined => {
+    if (value === undefined) return none;
+    return Array.isArray(value) && value.every(glob => typeof glob === "string" && !glob.startsWith("!")) ? value as string[] : undefined;
+  };
+  const included = globs(files, ["**/*"]);
+  const excluded = globs(ignores, []);
+  return included === undefined || excluded === undefined ? undefined : { files: [included], ignores: excluded };
+}
+
+/**
+ * The scope of `files` patterns less `ignores` (JSON; `files` as written, `text`) for an element every file gets
+ * otherwise: whole folders where every pattern names one and none is ignored, or some files.
+ */
+export function filesScope(files: unknown, text: string, ignores?: unknown): FlatConfigScope {
+  const folders = Array.isArray(files) && ignores === undefined ? files.map(pattern => (typeof pattern === "string" ? folderOfGlob(pattern) : undefined)) : [];
+  const patterns = filePatterns(files, ignores);
+  const read = patterns === undefined ? {} : { patterns };
+  return folders.length > 0 && folders.every(folder => folder !== undefined)
+    ? { kind: "folders", folders: folders as string[], files: text, ...read }
+    : { kind: "some", files: text, ...read };
+}
+
+/**
+ * Scope `scope`, limited to some files, narrowed by `files` less `ignores` (JSON), named `text`: the files both match,
+ * as `defineConfig` extends an element's `files` and `ignores` with those of the configs it extends.
+ */
+function narrowScope(scope: Exclude<FlatConfigScope, { kind: "all" }>, files: unknown, ignores: unknown, text: string): FlatConfigScope {
+  const inner = filePatterns(files, ignores);
+  const outer = scope.patterns;
+  if (outer === undefined || inner === undefined) return { kind: "some", files: text };
+  return { kind: "some", files: text, patterns: { files: [...outer.files, ...inner.files], ignores: [...outer.ignores, ...inner.ignores] } };
+}
+
+/** Where a shared config's entry applies in an element for `scope`: its own `files` and `ignores` narrow it. */
+export function presetScope(entry: EslintPresetEntry, scope: FlatConfigScope): FlatConfigScope {
+  if (entry.files === undefined && entry.ignores === undefined) return scope;
+  const text = entry.files === undefined ? "some files" : JSON.stringify(entry.files);
+  return scope.kind === "all" ? filesScope(entry.files, text, entry.ignores) : narrowScope(scope, entry.files, entry.ignores, `${scope.files} and ${text}`);
 }
 
 /** Reads flat config `text` from file `name`. Throws `LintConfigFormatError` when it does not parse or exports no config. */
@@ -126,31 +218,58 @@ class FlatConfigReader {
   readonly #entries: Entry[] = [];
   readonly #unread: string[] = [];
   readonly #notes: string[] = [];
+  readonly #namespaces = new Map<string, string | undefined>();
+  #pluginsUnread: string | undefined;
   #steps = 0;
   #values = 0;
 
   constructor(readonly text: string, readonly program: t.Program) {}
 
   read(): FlatConfigRead {
-    // The last `export default` or `module.exports = …` is the config.
-    let exported: t.Expression | undefined;
+    this.#bindings();
+    const exported = this.#exported();
+    this.#refuseCode(exported);
+    this.#elements(exported, { kind: "all" }, 0);
+    if (this.#unread.length > 0) {
+      this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
+    }
+    const pluginsUnread = this.#pluginsUnread;
+    return { entries: this.#entries, unread: this.#unread, notes: this.#notes, namespaces: this.#namespaces, ...(pluginsUnread === undefined ? {} : { pluginsUnread }) };
+  }
+
+  /** The file's imports and top-level consts. */
+  #bindings(): void {
     for (const statement of this.program.body) {
       if (statement.type === "ImportDeclaration") this.#import(statement);
       else if (statement.type === "VariableDeclaration") this.#declare(statement, false);
       else if (statement.type === "ExportNamedDeclaration" && statement.declaration?.type === "VariableDeclaration") this.#declare(statement.declaration, true);
     }
-    for (const statement of this.program.body) {
-      if (statement.type === "ExportDefaultDeclaration") exported = isExpression(statement.declaration) ? statement.declaration : undefined;
-      else if (statement.type === "TSExportAssignment") exported = statement.expression;
-      else if (statement.type === "ExpressionStatement") exported = this.#moduleExports(statement.expression) ?? exported;
-    }
-    if (exported === undefined) throw new LintConfigFormatError("it exports no config Rerail can find (export default or module.exports)");
+  }
+
+  /** What `statement` exports as the config, if it exports one: `export default`, `export =` or `module.exports = …`. */
+  #exportOf(statement: t.Statement): t.Expression | null | undefined {
+    if (statement.type === "ExportDefaultDeclaration") return isExpression(statement.declaration) ? statement.declaration : null;
+    if (statement.type === "TSExportAssignment") return statement.expression;
+    return statement.type === "ExpressionStatement" ? this.#moduleExports(statement.expression) : undefined;
+  }
+
+  /** The config the file exports: the last `export default` or `module.exports = …`; throws where there is none, or both kinds. */
+  #exported(): t.Expression {
+    // An `export default` of a declaration exports no config Rerail reads (`null`); a later export replaces it.
+    const exports = this.program.body.map(statement => this.#exportOf(statement)).filter(found => found !== undefined);
+    const exported = exports.at(-1);
+    if (exported == null) throw new LintConfigFormatError("it exports no config Rerail can find (export default or module.exports)");
     const esm = this.program.body.some(statement => statement.type === "ExportDefaultDeclaration" || statement.type === "TSExportAssignment");
     const cjs = this.program.body.some(statement => statement.type === "ExpressionStatement" && this.#moduleExports(statement.expression) !== undefined);
     if (esm && cjs) throw new LintConfigFormatError("it exports its config both as a module and through module.exports");
+    return exported;
+  }
+
+  /** Throws where the file runs code, or exports an object that may hold another config. */
+  #refuseCode(exported: t.Expression): void {
     const code = this.#code();
     if (code !== undefined) {
-      const line = this.text.slice(0, code.start ?? 0).split("\n").length;
+      const line = this.text.slice(0, code.start!).split("\n").length;
       throw new LintConfigFormatError(`it runs code Rerail does not read as data (line ${line}: ${this.#source(code)})`);
     }
     // ESLint loads a TypeScript config through Jiti and takes `config.default ?? config`: an exported object that may
@@ -160,11 +279,6 @@ class FlatConfigReader {
       && top.properties.some(property => property.type === "SpreadElement" || keyName(property.key, property.computed) === "default")) {
       throw new LintConfigFormatError("it exports an object that may hold a `default` config, which ESLint's loader can take instead");
     }
-    this.#elements(exported, { kind: "all" }, 0);
-    if (this.#unread.length > 0) {
-      this.#notes.push(`the rules of ${this.#unread.join(", ")} are not read: Rerail does not run code to find them.`);
-    }
-    return { entries: this.#entries, notes: this.#notes };
   }
 
   /** The value of `module.exports = <value>` where `module` is CommonJS's own, not a binding of the file. */
@@ -276,7 +390,7 @@ class FlatConfigReader {
         return node.operator === "delete" ? node : this.#nonData(node.argument, given);
       case "BinaryExpression":
       case "LogicalExpression":
-        return node.left.type === "PrivateName" ? node : this.#firstNonData([node.left, node.right], given);
+        return this.#firstNonData([node.left, node.right], given);
       case "ConditionalExpression":
         return this.#firstNonData([node.test, node.consequent, node.alternate], given);
       case "TSAsExpression":
@@ -284,7 +398,6 @@ class FlatConfigReader {
       case "TSNonNullExpression":
       case "TSTypeAssertion":
       case "TSInstantiationExpression":
-      case "ParenthesizedExpression":
         return this.#nonData(node.expression, given);
       default:
         return node;
@@ -386,8 +499,9 @@ class FlatConfigReader {
     }
   }
 
+  /** How `node` is written in the file, on one line and cut short. The parser gives every node its place in the text. */
   #source(node: t.Node): string {
-    const text = this.text.slice(node.start ?? 0, node.end ?? 0).replace(/\s+/gu, " ");
+    const text = this.text.slice(node.start!, node.end!).replace(/\s+/gu, " ");
     return text.length > MAX_SOURCE_TEXT ? `${text.slice(0, MAX_SOURCE_TEXT - 1)}…` : text;
   }
 
@@ -407,14 +521,9 @@ class FlatConfigReader {
   #unwrap(node: t.Expression, depth: number): t.Expression {
     let current = node;
     for (let step = depth; step < MAX_DEPTH; step += 1) {
-      if (current.type === "TSAsExpression" || current.type === "TSSatisfiesExpression" || current.type === "TSNonNullExpression"
-        || current.type === "TSTypeAssertion" || current.type === "ParenthesizedExpression") {
-        current = current.expression;
-      } else if (current.type === "Identifier" && this.#consts.has(current.name)) {
-        current = this.#consts.get(current.name)!;
-      } else {
-        return current;
-      }
+      const inner = isTypeWrapper(current) ? current.expression : current.type === "Identifier" ? this.#consts.get(current.name) : undefined;
+      if (inner === undefined) return current;
+      current = inner;
     }
     return current;
   }
@@ -424,21 +533,22 @@ class FlatConfigReader {
     this.#step();
     const value = this.#unwrap(node, depth);
     if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
-    if (value.type === "ArrayExpression") {
-      for (const element of value.elements) {
-        if (element === null) continue;
-        this.#elements(element.type === "SpreadElement" ? element.argument : element, scope, depth + 1);
-      }
-    } else if (value.type === "ObjectExpression") {
-      this.#object(value, scope, depth + 1);
-    } else if (value.type === "CallExpression" && this.#isConfigHelper(value.callee)) {
-      for (const argument of value.arguments) {
-        if (argument.type === "SpreadElement") this.#elements(argument.argument, scope, depth + 1);
-        else if (isExpression(argument)) this.#elements(argument, scope, depth + 1);
-      }
-    } else {
-      this.#notRead(node, depth);
-    }
+    const nested = this.#nestedElements(value);
+    if (nested !== undefined) for (const element of nested) this.#elements(element, scope, depth + 1);
+    else if (value.type === "ObjectExpression") this.#object(value, scope, depth + 1);
+    else this.#notRead(node, scope, depth);
+  }
+
+  /** The elements an array or a config helper's call holds, spreads taken apart; undefined for any other value. */
+  #nestedElements(value: t.Expression): t.Expression[] | undefined {
+    const items = value.type === "ArrayExpression" ? value.elements
+      : value.type === "CallExpression" && this.#isConfigHelper(value.callee) ? value.arguments
+      : undefined;
+    // The parser is given no plugin that writes an argument placeholder (`f(?)`), so every other item is an expression.
+    return items?.flatMap(item => {
+      if (item === null) return [];
+      return [item.type === "SpreadElement" ? item.argument : item as t.Expression];
+    });
   }
 
   /**
@@ -461,12 +571,59 @@ class FlatConfigReader {
   }
 
   /**
-   * What Rerail does not read in place of `node`: a value from an imported module is named as not read (see
-   * `#unreadable`); anything of the file's own that Rerail cannot follow makes the file not statically readable.
+   * What Rerail does not read in place of `node`: a recognised shared config contributes its entries in place
+   * (`#addPreset`); any other value from an imported module is named as not read (see `#unreadable`); anything of the
+   * file's own that Rerail cannot follow makes the file not statically readable.
    */
-  #notRead(node: t.Expression, depth: number, own?: ReadonlyMap<string, Entry>): void {
+  #notRead(node: t.Expression, scope: FlatConfigScope, depth: number, own?: Map<string, Entry>): void {
     if (!this.#fromImport(node, depth)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(node)} as data`);
-    this.#unreadable(this.#source(node), own);
+    const preset = this.#presetOf(node, depth);
+    if (preset === undefined) this.#unreadable(this.#source(node), own);
+    else if (own === undefined) this.#addPreset(preset, scope);
+    else for (const entry of preset.entries) this.#addPresetRules(preset.text, entry.rules, scope, own);
+  }
+
+  /**
+   * The binding a member path (`js.configs.recommended`) hangs off, with the path's keys. A file read as data names its
+   * members by literal keys only (`#memberCode`), and `super` does not parse outside a method, which is code.
+   */
+  #memberPath(node: t.Expression, depth: number): { readonly root: t.Expression; readonly path: string[] } {
+    const path: string[] = [];
+    let current = this.#unwrap(node, depth);
+    while (current.type === "MemberExpression" || current.type === "OptionalMemberExpression") {
+      path.unshift(keyName(current.property, current.computed)!);
+      current = this.#unwrap(current.object as t.Expression, depth);
+    }
+    return { root: current, path };
+  }
+
+  /**
+   * The recognised shared config `node` is, with `member` after it: a member path of a binding the file imports that
+   * names one of `eslint-presets.ts`'s presets.
+   */
+  #presetOf(node: t.Expression, depth: number, member: readonly string[] = []): Preset | undefined {
+    const { root, path } = this.#memberPath(node, depth);
+    const from = root.type === "Identifier" ? this.#imports.get(root.name) : undefined;
+    const entries = from === undefined ? undefined : flatPreset(from.module, from.imported, [...path, ...member]);
+    return entries === undefined ? undefined : { text: this.#source(node), entries };
+  }
+
+  /** A shared config's entries, in place, each for the files of the element it stands in and its own `files`. */
+  #addPreset(preset: Preset, scope: FlatConfigScope): void {
+    for (const entry of preset.entries) {
+      const own = new Map<string, Entry>();
+      this.#addPresetRules(preset.text, entry.rules, presetScope(entry, scope), own);
+      for (const added of own.values()) this.#entries.push(added);
+    }
+  }
+
+  /** A shared config's rules into the `rules` object being read, as its entries. */
+  #addPresetRules(text: string, rules: Readonly<Record<string, unknown>>, scope: FlatConfigScope, own: Map<string, Entry>): void {
+    this.#built(Object.keys(rules).length);
+    for (const [key, value] of Object.entries(rules)) {
+      own.delete(key);
+      own.set(key, { key, scope, value: { ok: true, value }, preset: text });
+    }
   }
 
   /**
@@ -533,31 +690,31 @@ class FlatConfigReader {
   }
 
   /**
-   * A config object's properties by name; undefined where a spread, a computed key or a method (a getter could return
-   * anything) hides what they are.
+   * A config object's properties by name; undefined where a spread imported config Rerail does not recognise hides what
+   * they are. A spread recognised shared config object gives its `files`, `ignores` and `rules`.
    */
-  #properties(object: t.ObjectExpression, depth: number): Map<string, t.Expression> | undefined {
+  #properties(object: t.ObjectExpression, depth: number): Map<string, Property> | undefined {
     this.#step();
-    const properties = new Map<string, t.Expression>();
+    const properties = new Map<string, Property>();
     for (const property of object.properties) {
-      if (property.type === "SpreadElement") {
-        const spread = this.#unwrap(property.argument, depth);
-        if (spread.type !== "ObjectExpression") {
-          // A spread imported config hides what the object holds; one of the file's own Rerail cannot follow is code.
-          if (!this.#fromImport(property.argument, depth)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property.argument)} as data`);
-          return undefined;
-        }
-        const inner = this.#properties(spread, depth + 1);
-        if (inner === undefined) return undefined;
-        for (const [name, value] of inner) properties.set(name, value);
-        continue;
-      }
-      if (property.type !== "ObjectProperty" || !isExpression(property.value)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
-      const name = propertyName(property) ?? this.#computedKey(property, depth);
-      if (name === undefined) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
-      properties.set(name, property.value);
+      const added = property.type === "SpreadElement" ? this.#spreadProperties(property.argument, depth) : new Map([dataProperty(property)]);
+      if (added === undefined) return undefined;
+      for (const [name, value] of added) properties.set(name, value);
     }
     return properties;
+  }
+
+  /** The properties a spread in a config object adds; undefined where it hides them (an imported config Rerail does not recognise). */
+  #spreadProperties(argument: t.Expression, depth: number): Map<string, Property> | undefined {
+    const spread = this.#unwrap(argument, depth);
+    if (spread.type === "ObjectExpression") return this.#properties(spread, depth + 1);
+    // A spread imported config hides what the object holds; one of the file's own Rerail cannot follow is code.
+    if (!this.#fromImport(argument, depth)) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(argument)} as data`);
+    // Only a config object has a `rules` member preset; spreading an array adds no config key.
+    const preset = this.#presetOf(argument, depth, ["rules"]) === undefined ? undefined : this.#presetOf(argument, depth);
+    const entry = preset?.entries[0];
+    if (entry === undefined) return undefined;
+    return new Map(Object.entries(entry).map(([name, json]) => [name, new PresetValue(preset!.text, json)]));
   }
 
   #object(object: t.ObjectExpression, inherited: FlatConfigScope, depth: number): void {
@@ -570,26 +727,113 @@ class FlatConfigReader {
     // An object with nothing but `ignores` ignores those files everywhere; it sets no rule.
     if (keys.length === 1 && keys[0] === "ignores") return;
     const scope = this.#scope(properties, inherited, depth);
+    const plugins = this.#bindPlugins(properties.get("plugins"), depth);
     const extended = properties.get("extends");
-    if (extended !== undefined) this.#elements(extended, scope, depth + 1);
-    const rules = properties.get("rules");
-    if (rules !== undefined) this.#rules(rules, scope, depth + 1);
+    if (extended !== undefined && !(extended instanceof PresetValue)) this.#extends(extended, plugins, scope, depth + 1);
+    this.#objectRules(properties.get("rules"), scope, depth);
   }
 
-  #scope(properties: ReadonlyMap<string, t.Expression>, inherited: FlatConfigScope, depth: number): FlatConfigScope {
-    const files = properties.get("files");
-    const limited = files !== undefined || properties.has("ignores") || properties.has("basePath");
-    if (!limited) return inherited;
-    const text = files === undefined ? "some files" : this.#source(files);
-    // Within an `extends` of a limited object the files are the intersection; Rerail maps neither.
-    if (inherited.kind !== "all" || files === undefined || properties.has("ignores") || properties.has("basePath")) return { kind: "some", files: text };
+  /**
+   * A config object's `plugins`, each namespace bound to the recognised plugin it names, or undefined where Rerail
+   * cannot tell which plugin it is. A namespace one object binds to one plugin and another to another is undefined too.
+   */
+  #bindPlugins(plugins: Property | undefined, depth: number): ReadonlyMap<string, FlatPlugin | undefined> {
+    const bound = new Map<string, FlatPlugin | undefined>();
+    // A recognised shared config spread into the object gives no `plugins` (`#spreadProperties`).
+    if (plugins === undefined || plugins instanceof PresetValue) return bound;
+    const object = this.#unwrap(plugins, depth);
+    if (object.type !== "ObjectExpression") {
+      this.#pluginsUnread ??= this.#source(plugins);
+      return bound;
+    }
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") this.#pluginsUnread ??= this.#source(property);
+      else this.#bindPlugin(bound, ...dataProperty(property), depth);
+    }
+    return bound;
+  }
+
+  /** Binds `namespace` to the plugin `node` is, in `bound` and for the whole file. */
+  #bindPlugin(bound: Map<string, FlatPlugin | undefined>, namespace: string, node: t.Expression, depth: number): void {
+    const plugin = this.#pluginOf(node, depth);
+    bound.set(namespace, plugin);
+    // A plugin of configs alone (`@eslint/js`) has no rules to name: its namespace names itself.
+    const canonical = plugin === undefined ? undefined : plugin.namespace ?? namespace;
+    const agrees = !this.#namespaces.has(namespace) || this.#namespaces.get(namespace) === canonical;
+    this.#namespaces.set(namespace, agrees ? canonical : undefined);
+  }
+
+  /** The recognised plugin `node` is: a member path of a binding the file imports that names one of `eslint-presets.ts`'s plugins. */
+  #pluginOf(node: t.Expression, depth: number): FlatPlugin | undefined {
+    const { root, path } = this.#memberPath(node, depth);
+    const from = root.type === "Identifier" ? this.#imports.get(root.name) : undefined;
+    return from === undefined ? undefined : flatPlugin(from.module, from.imported, path);
+  }
+
+  /**
+   * A config object's `extends`, applied before its own rules: config arrays and objects as elements, and a string
+   * `"<namespace>/<config>"` as `defineConfig` reads it, a config of the plugin the object binds under that namespace.
+   */
+  #extends(extended: t.Expression, plugins: ReadonlyMap<string, FlatPlugin | undefined>, scope: FlatConfigScope, depth: number): void {
+    const list = this.#unwrap(extended, depth);
+    if (list.type !== "ArrayExpression") {
+      this.#elements(extended, scope, depth);
+      return;
+    }
+    for (const element of this.#nestedElements(list)!) {
+      const value = this.#unwrap(element, depth);
+      if (value.type === "StringLiteral") this.#extendsName(value.value, plugins, scope);
+      else this.#elements(element, scope, depth + 1);
+    }
+  }
+
+  /**
+   * A string in `extends`: the config `defineConfig` finds in the plugin bound under its namespace, with the rule
+   * names of the plugin's own namespace (`meta.namespace`) renamed to the one the object binds it under (@eslint/config-helpers
+   * 0.7.0 `normalizePluginConfig`). One Rerail does not recognise is not read.
+   */
+  #extendsName(name: string, plugins: ReadonlyMap<string, FlatPlugin | undefined>, scope: FlatConfigScope): void {
+    const { namespace, name: config } = pluginMember(name);
+    const plugin = plugins.get(namespace);
+    const entries = plugin === undefined ? undefined : pluginPreset(plugin, config);
+    if (entries === undefined) {
+      this.#unreadable(JSON.stringify(name));
+      return;
+    }
+    const meta = plugin!.meta;
+    const renamed = meta === undefined || meta === namespace ? entries : entries.map(entry => ({
+      ...entry,
+      rules: Object.fromEntries(Object.entries(entry.rules).map(([key, value]) => {
+        const member = pluginMember(key);
+        return [member.namespace === meta ? `${namespace}/${member.name}` : key, value];
+      })),
+    }));
+    this.#addPreset({ text: JSON.stringify(name), entries: renamed }, scope);
+  }
+
+  /** A config object's `rules`: written in the file, or a recognised shared config object's, spread into it. */
+  #objectRules(rules: Property | undefined, scope: FlatConfigScope, depth: number): void {
+    if (rules instanceof PresetValue) this.#addPreset({ text: rules.preset, entries: [{ rules: rules.json as Record<string, unknown> }] }, scope);
+    else if (rules !== undefined) this.#rules(rules, scope, depth + 1);
+  }
+
+  /** A config object's `files` (or `ignores`) as written (`text`) and as JSON, where Rerail can read it: `null` where it cannot. */
+  #files(files: Property | undefined, depth: number): { readonly text: string; readonly patterns: unknown } {
+    if (files === undefined) return { text: "some files", patterns: undefined };
+    if (files instanceof PresetValue) return { text: JSON.stringify(files.json), patterns: files.json };
     const patterns = this.#resolve(files, depth);
-    const folders = patterns.ok && Array.isArray(patterns.value) && patterns.value.length > 0
-      ? patterns.value.map(pattern => (typeof pattern === "string" ? folderOfGlob(pattern) : undefined))
-      : [];
-    return folders.length > 0 && folders.every(folder => folder !== undefined)
-      ? { kind: "folders", folders: folders as string[], files: text }
-      : { kind: "some", files: text };
+    return { text: this.#source(files), patterns: patterns.ok ? patterns.value : null };
+  }
+
+  #scope(properties: ReadonlyMap<string, Property>, inherited: FlatConfigScope, depth: number): FlatConfigScope {
+    const files = properties.get("files");
+    const ignores = properties.get("ignores");
+    if (files === undefined && ignores === undefined && !properties.has("basePath")) return inherited;
+    const read = this.#files(files, depth);
+    const ignored = this.#files(ignores, depth).patterns;
+    // A `basePath` moves the patterns to a folder Rerail does not map.
+    if (properties.has("basePath")) return { kind: "some", files: read.text };
+    return inherited.kind === "all" ? filesScope(read.patterns, read.text, ignored) : narrowScope(inherited, read.patterns, ignored, read.text);
   }
 
   /**
@@ -607,29 +851,20 @@ class FlatConfigReader {
     if (depth > MAX_DEPTH) throw new LintConfigFormatError("it nests deeper than Rerail reads");
     const rules = this.#unwrap(node, depth);
     if (rules.type !== "ObjectExpression") {
-      this.#notRead(node, depth, own);
+      this.#notRead(node, scope, depth, own);
       return;
     }
     for (const property of rules.properties) {
-      if (property.type === "SpreadElement") {
-        this.#gatherRules(property.argument, scope, depth + 1, own);
-        continue;
-      }
-      const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
-      if (key === undefined) throw new LintConfigFormatError(`Rerail cannot read ${this.#source(property)} as data`);
-      if (property.type !== "ObjectProperty" || !isExpression(property.value)) {
-        own.delete(key);
-        continue;
-      }
-      const value = this.#resolve(property.value, depth + 1);
-      own.set(key, { key, scope, value: value.ok ? { ok: true, value: value.value } : { ok: false, why: value.why } });
+      if (property.type === "SpreadElement") this.#gatherRules(property.argument, scope, depth + 1, own);
+      else this.#gatherRule(property, scope, depth, own);
     }
   }
 
-  #computedKey(property: t.ObjectProperty, depth: number): string | undefined {
-    if (!property.computed || !isExpression(property.key)) return undefined;
-    const key = this.#resolve(property.key, depth + 1);
-    return key.ok && typeof key.value === "string" ? key.value : undefined;
+  /** One rule entry written out in a `rules` object. */
+  #gatherRule(property: t.ObjectProperty | t.ObjectMethod, scope: FlatConfigScope, depth: number, own: Map<string, Entry>): void {
+    const [key, node] = dataProperty(property);
+    const value = this.#resolve(node, depth + 1);
+    own.set(key, { key, scope, value: value.ok ? { ok: true, value: value.value } : { ok: false, why: value.why } });
   }
 
   /** `node` as JSON where it is literal, through same-file `const` bindings and spreads; why not otherwise. */
@@ -661,10 +896,9 @@ class FlatConfigReader {
     return { ok: false, why: `it is ${this.#source(value)}, which Rerail does not run` };
   }
 
+  /** A template literal without `${…}` is its one string; an untagged template's escapes are valid, so it has one. */
   #resolveTemplate(value: t.TemplateLiteral): Resolved {
-    return value.expressions.length === 0 && value.quasis.length === 1 && value.quasis[0]!.value.cooked != null
-      ? { ok: true, value: value.quasis[0]!.value.cooked }
-      : this.#unreadValue(value);
+    return value.expressions.length === 0 ? { ok: true, value: value.quasis[0]!.value.cooked! } : this.#unreadValue(value);
   }
 
   #resolveUnary(value: t.UnaryExpression): Resolved {
@@ -700,7 +934,7 @@ class FlatConfigReader {
     for (const property of value.properties) {
       const unresolved = property.type === "SpreadElement"
         ? this.#spreadInto(object, value, property, depth)
-        : this.#propertyInto(object, value, property, depth);
+        : this.#propertyInto(object, property, depth);
       if (unresolved !== undefined) return unresolved;
     }
     return { ok: true, value: object };
@@ -715,15 +949,26 @@ class FlatConfigReader {
     return undefined;
   }
 
-  #propertyInto(object: { [key: string]: Json }, value: t.ObjectExpression, property: t.ObjectProperty | t.ObjectMethod, depth: number): Unresolved | undefined {
-    const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
-    if (key === undefined || property.type !== "ObjectProperty" || !isExpression(property.value)) return this.#unreadValue(value);
-    const inner = this.#resolve(property.value, depth + 1);
+  #propertyInto(object: { [key: string]: Json }, property: t.ObjectProperty | t.ObjectMethod, depth: number): Unresolved | undefined {
+    const [key, node] = dataProperty(property);
+    const inner = this.#resolve(node, depth + 1);
     if (!inner.ok) return inner;
     this.#built(1);
     Object.defineProperty(object, key, { value: inner.value, enumerable: true, writable: true, configurable: true });
     return undefined;
   }
+}
+
+/**
+ * A plugin member's id (`ts/recommended`, `@typescript-eslint/no-explicit-any`) as its namespace and name, as
+ * `defineConfig` splits it (@eslint/config-helpers 0.7.0 `getPluginMember`): at the first `/`, or at the second after
+ * an npm scope.
+ */
+function pluginMember(id: string): { readonly namespace: string; readonly name: string } {
+  const first = id.indexOf("/");
+  const second = id.startsWith("@") ? id.indexOf("/", first + 1) : -1;
+  const split = second > 0 ? second : first;
+  return split < 0 ? { namespace: "", name: id } : { namespace: id.slice(0, split), name: id.slice(split + 1) };
 }
 
 /** What a member path `a.b.c` hangs off: `a`. */
@@ -769,18 +1014,17 @@ function declaresNoValue(declared: t.ExportNamedDeclaration["declaration"]): dec
   return declared == null || declared.type === "TSTypeAliasDeclaration" || declared.type === "TSInterfaceDeclaration";
 }
 
-function isExpression(node: t.Node | null | undefined): node is t.Expression {
-  return node != null && !node.type.endsWith("Declaration") && node.type !== "ArgumentPlaceholder" && node.type !== "JSXNamespacedName";
+/** Whether `export default` exports an expression rather than a declaration (`function`, `class`). */
+function isExpression(declared: t.ExportDefaultDeclaration["declaration"]): declared is t.Expression {
+  return !declared.type.endsWith("Declaration");
 }
 
-/** A property's name where it is written out: `rules`, `"no-console"`, `1`; undefined for a computed key. */
-function propertyName(property: t.ObjectProperty | t.ObjectMethod): string | undefined {
-  if (property.computed) return undefined;
-  const key = property.key;
-  if (key.type === "Identifier") return key.name;
-  if (key.type === "StringLiteral") return key.value;
-  if (key.type === "NumericLiteral") return String(key.value);
-  return undefined;
+/**
+ * A property written out in an object of a file read as data, as its key and value. `#propertyCode` lets no method
+ * through, nor any key but a name or a literal; and a property of an object literal holds an expression.
+ */
+function dataProperty(property: t.ObjectProperty | t.ObjectMethod): [string, t.Expression] {
+  return [keyName(property.key, property.computed)!, (property as t.ObjectProperty).value as t.Expression];
 }
 
 /** The value of `module.exports = <value>`, or undefined for any other expression. */

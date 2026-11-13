@@ -620,6 +620,12 @@ jobs:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
         run: npm test -- --shard=${{ matrix.shard }}/2
 
+      # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
+      # file (package.json `test:coverage:lint-config`). Once, on the first shard.
+      - name: Lint config coverage gate
+        if: matrix.shard == 1
+        run: npm run test:coverage:lint-config
+
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
   # differently on Windows, and every other test job runs on Linux or macOS. Two shards, as on Linux, so CI result waits
   # about 9 minutes for Windows rather than 14. Gated as the unit job is, and reads the same test data: the
