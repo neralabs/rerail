@@ -1,5 +1,7 @@
 """Record complete production selection, fact presence, raw payloads, and findings."""
-from first_ten_production_contract import source_case
+from dataclasses import asdict
+from first_ten_production_contract import normalize
+from dto import canonical
 from replay import write_fixture
 from side_effects_cli_contract import CHECK, BAD, AUDIT
 
@@ -30,9 +32,19 @@ def cases(_module):
 
 
 def exercise(module,case,scratch):
-    if not hasattr(module,'_rerail_side_effects_production'):return source_case(module,dict(case,check=CHECK))
     root=scratch/'repo';root.mkdir();write_fixture(root,case['files'])
-    return module._rerail_side_effects_production(root)
+    try:
+        if hasattr(module,'_rerail_side_effects_production'):return module._rerail_side_effects_production(root)
+        from scripts.lint_lib.fact_engine import FactEngine
+        from scripts.lint_lib.fact_store import JsonFactStore
+        plugin=module.plan_scope_side_effects_plugin(root)
+        engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors=module.plan_scope_side_effects_fact_extractors(root),enable_fact_cache=False)
+        plan=engine.plan([plugin]);view=engine.materialize((plugin,),max_workers=1)
+        return normalize(dict(selectedFiles=[path.relative_to(root).as_posix()for path in plan.files],
+            facts={path.relative_to(root).as_posix():bundle.facts for path,bundle in sorted(view.files.items())},
+            findings=[asdict(value)for value in plugin.reporter(view)],
+            plugin=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description)),root)
+    except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch)))
 
 
 def install(backend,module,detectors=False):
