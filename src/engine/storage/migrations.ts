@@ -13,8 +13,8 @@
 import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import {
-  currentPathKey, lookUpPathKeys, lookUpWaitingKeys, pathKeysCanMove, respellPathKeys, respellReturnedKeys, withDriveBudget,
-  type PathKeyLookups,
+  currentPathKey, lookUpPathKeys, lookUpWaitingKeys, pathKeysCanMove, readableRoots, respellPathKeys, respellReturnedKeys,
+  withDriveBudget, type PathKeyLookups,
 } from "./path-key-spelling.js";
 import { schemaMigrations } from "./schema.js";
 
@@ -34,9 +34,10 @@ export interface Migration<Read = unknown> {
    * Reads what `up` needs before the open takes the write lock: the file as it is, and what lies outside it, such as a
    * folder's spelling on disk. A plain read, which a WAL file runs beside any writer, so no other writer waits however
    * long a cold page cache or a slow drive makes it. It runs on an existing file whose record lacks the step as the
-   * open begins; `up` gets what it returned, and reads under the lock only what was written since.
+   * open begins; `up` gets what it returned, and reads under the lock only what was written since. `open` says where
+   * the open's caller works (`openedIn`).
    */
-  read?(database: RerailDatabase): Read;
+  read?(database: RerailDatabase, open?: MigrationOpen): Read;
   /**
    * Brings the file from the shape before this step to the shape after it, inside the open's write
    * transaction, where foreign keys are enforced and `PRAGMA foreign_keys` cannot change: a step that rebuilds a
@@ -47,7 +48,7 @@ export interface Migration<Read = unknown> {
    */
   up(database: RerailDatabase, read?: Read): void;
   /** `read` for `later`, before the lock at every later writable open. */
-  readLater?(database: RerailDatabase): Read;
+  readLater?(database: RerailDatabase, open?: MigrationOpen): Read;
   /**
    * Runs at every later writable open of the file, inside the same write transaction, after the DDL: for what `up` had
    * to leave until something outside the file changed (a folder absent when it ran). It must cost next to nothing when
@@ -68,9 +69,31 @@ export interface MigrationReads {
 /** No step read anything: a read-only open, a new file, or a caller that runs the steps on their own. */
 export const NO_MIGRATION_READS: MigrationReads = { up: new Map(), later: new Map() };
 
-/** The key this build gives a folder an earlier build keyed as a path, within each drive's time (`path-key-spelling.ts`). */
-function pathKeyOf(): (stored: string) => string | undefined {
-  return withDriveBudget(stored => currentPathKey(stored));
+/** What a step's reads before the lock know of the open that runs them (`Migration.read`, `readLater`). */
+export interface MigrationOpen {
+  /** The folder the open's caller works in: a hook's session folder, a command's checkout. */
+  readonly workspace?: string;
+}
+
+/**
+ * `migrations` as an open made from `workspace` runs them: each step's reads before the lock get it (`MigrationOpen`).
+ * Ids, floors and order stay, so the file's record and stamp read the same.
+ */
+export function openedIn(migrations: readonly Migration[], workspace: string): readonly Migration[] {
+  const open: MigrationOpen = { workspace };
+  return migrations.map(migration => ({
+    ...migration,
+    ...(migration.read === undefined ? {} : { read: (database: RerailDatabase) => migration.read?.(database, open) }),
+    ...(migration.readLater === undefined ? {} : { readLater: (database: RerailDatabase) => migration.readLater?.(database, open) }),
+  }));
+}
+
+/**
+ * The key this build gives a folder an earlier build keyed as a path, looked up on this computer's system drive and on
+ * the drive of the folder the open's caller works in only, within each drive's time (`path-key-spelling.ts`).
+ */
+function pathKeyOf(open: MigrationOpen | undefined): (stored: string) => string | undefined {
+  return withDriveBudget(stored => currentPathKey(stored), process.platform, readableRoots(open?.workspace));
 }
 
 /**
@@ -83,19 +106,20 @@ function pathKeyOf(): (stored: string) => string | undefined {
  * build that opens the file after this step (after a downgrade, or on another agent host sharing the file) reads all
  * it read before; the new table `path_key_spellings` records each spelling that moved, and this build's lists leave
  * its rows out, so each folder is listed once. The audit history is never rewritten: the list of repository audits
- * reads where an audit ran through that table. A key on a drive that is absent, whose root does not answer within a
- * second (a share whose host is gone, a sleeping disk), or past its drive's time in this open is recorded with no key
- * and looked up again before the lock at each later writable open until its drive answers (`later`). A folder that is
- * gone keeps its spelling. On macOS and Linux keys keep their spelling and the step reads nothing. No floor: an older
- * build ignores the new table.
+ * reads where an audit ran through that table. An open looks up keys on this computer's system drive and on the drive
+ * or share of the folder its caller works in, and reads no other drive (`readableRoots`): a key elsewhere (another
+ * disk, a mapped drive, a share), or past its drive's time in this open, is recorded with no key and looked up before
+ * the lock by a later writable open that reads its drive (`later`), such as the one a hook makes from a session there
+ * (`openRerailDatabaseIn`). A folder that is gone keeps its spelling. On macOS and Linux keys keep their spelling and
+ * the step reads nothing. No floor: an older build ignores the new table.
  */
 const PATH_KEYS_AS_STORED: Migration<PathKeyLookups | undefined> = {
   id: "path-keys-as-stored",
-  read: database => (pathKeysCanMove() ? lookUpPathKeys(database, pathKeyOf()) : undefined),
+  read: (database, open) => (pathKeysCanMove() ? lookUpPathKeys(database, pathKeyOf(open)) : undefined),
   up(database, lookups) {
     if (lookups !== undefined) respellPathKeys(database, lookups);
   },
-  readLater: database => (pathKeysCanMove() ? lookUpWaitingKeys(database, pathKeyOf()) : undefined),
+  readLater: (database, open) => (pathKeysCanMove() ? lookUpWaitingKeys(database, pathKeyOf(open)) : undefined),
   later(database, lookups) {
     if (lookups !== undefined) respellReturnedKeys(database, lookups);
   },

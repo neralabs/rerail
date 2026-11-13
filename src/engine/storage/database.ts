@@ -5,9 +5,10 @@ import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
 import {
-  NO_MIGRATION_READS, RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, pendingMigrations, readBeforeMigrating, schemaVersionOf,
-  withReads, type Migration, type MigrationReads,
+  NO_MIGRATION_READS, RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, openedIn, pendingMigrations, readBeforeMigrating,
+  schemaVersionOf, withReads, type Migration, type MigrationReads,
 } from "./migrations.js";
+import { keysWaitOn, pathKeysCanMove } from "./path-key-spelling.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
@@ -207,6 +208,39 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
     );
   }
   return openChecked(path, true, migrations, supported);
+}
+
+/**
+ * A read-only open for a caller that works in `workspace` (a hook's session folder, a command's checkout). On Windows,
+ * folder keys an earlier build stored that wait on that folder's drive or share (`keysWaitOn`: the open that ran the
+ * `path-keys-as-stored` step read only this computer's system drive) are looked up first, by a writable open that reads
+ * that drive: it answered as the caller came to it. Elsewhere, and once none waits there, it is the read-only open
+ * alone, with one read of an empty table. A caller that may not write the file reads it as it is, the keys still waiting.
+ */
+export function openRerailDatabaseIn(path: string, workspace: string): RerailDatabase {
+  const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
+  const database = openRerailDatabase(path, { readonly: true, migrations });
+  if (!keysWaitHere(database, workspace)) return database;
+  try {
+    openRerailDatabase(path, { migrations }).$client.close();
+  } catch (error) {
+    if (!cannotWrite(error)) throw error;
+  }
+  return openRerailDatabase(path, { readonly: true, migrations });
+}
+
+/**
+ * Whether keys wait on `workspace`'s drive (`keysWaitOn`), which can happen on Windows only; `database` is closed when
+ * they do, or when reading fails.
+ */
+function keysWaitHere(database: RerailDatabase, workspace: string): boolean {
+  let waiting = true;
+  try {
+    waiting = pathKeysCanMove() && keysWaitOn(database, workspace);
+    return waiting;
+  } finally {
+    if (waiting) database.$client.close();
+  }
 }
 
 /**

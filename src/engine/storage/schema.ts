@@ -658,9 +658,9 @@ export const schemaMigrations = sqliteTable("schema_migrations", {
  * Spellings of a folder's path that an earlier build stored as a key, each with the key this build gives the folder
  * (`path-key-spelling.ts`). The `path-keys-as-stored` step copies the rows under such a spelling to `current` and keeps
  * them, so an earlier build that shares the file still finds them; this build lists each folder once
- * ({@link notAnEarlierSpelling}). A null `current` is a key that waits for its drive: absent when it was looked up (a
- * disk not attached), slow to answer (a share whose host is gone), or past its drive's time in that open. A later open
- * looks it up again.
+ * ({@link notAnEarlierSpelling}). A null `current` is a key that waits for its drive: on a drive the open did not read
+ * (any but this computer's system drive and the drive of the folder its caller works in), or past its drive's time in
+ * that open. An open made from a folder on that drive looks it up.
  */
 export const pathKeySpellings = sqliteTable("path_key_spellings", {
   stored: text("stored").primaryKey(),

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseIn, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
@@ -50,11 +50,13 @@ function hasStartTables(database: Pick<RerailDatabase, "$client">): boolean {
 
 /**
  * `workspace`'s start state without side effects: no identity file, database, or schema is created and nothing
- * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped.
+ * is recorded. A database another process is still creating has recorded nothing yet, so it reads stopped. On Windows,
+ * keys an earlier build stored that wait for `workspace`'s drive are looked up first (`openRerailDatabaseIn`), so a
+ * checkout on another disk, a mapped drive or a share keeps its start state and settings.
  */
 export function workspaceStartState(workspace: string, databasePath = defaultRerailDatabasePath()): RepositoryStartState {
   if (!existsSync(databasePath)) return stateOf(STOPPED);
-  const database = openRerailDatabase(databasePath, { readonly: true });
+  const database = openRerailDatabaseIn(databasePath, workspace);
   try {
     if (!hasStartTables(database)) return stateOf(STOPPED);
     return stateOf(checkoutStatus(database, lookupCheckout(database, workspace)));

@@ -241,18 +241,21 @@ a start state either row held is kept.
 
 The step reads the keys, and where the audit history says each audit ran, and looks every folder up before it takes the
 database's write lock; under the lock it only copies rows. So no other writer waits for a lookup, nor for the read of a
-large audit history with the file out of the disk cache. It reads each drive's root once, in a thread of its own,
-waiting a second at most, then looks that drive's keys up within a second. A key on a drive mapped to a network share is
-looked up through the mapping, which gives the share's spelling, the one this version keys the folder by; a key on a
-share itself (`\\host\share\…`) is looked up the same way. A key on a drive that is absent (a disk not attached, a
-locked drive, a virtual disk not mounted), whose root does not answer within the second (a share whose host is gone,
-which Windows waits about 21 seconds for, or a sleeping disk), or left once its drive's second is spent keeps its key,
-and the table holds it with no new spelling: each later time this version opens the database for writing (as the
-daemon does when it starts), it looks such a key up again, before the lock, and copies its rows once its drive answers.
-A process waits for a root that did not answer at most once in ten minutes. A folder that is gone from a drive that is
-there keeps its key: the file system holds no spelling for it, and a session opened there as `c:\…` still finds its
-audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database still opens. On macOS
-and Linux the step reads and copies nothing.
+large audit history with the file out of the disk cache. An open reads two drives at most: this computer's system
+drive (`%SystemDrive%`, which holds Windows and is never on a network), and the drive or share of the folder its caller
+works in, when it names one, which answered as the caller came to it. It looks each drive's keys up within a second. A
+key on any other drive (another disk, a drive mapped to a network share, a share itself as `\\host\share\…`), or left
+once its drive's second is spent, keeps its key, and the table holds it with no new spelling, without any read of that
+drive. Each time a coding agent's hook, or a command such as `rerail start`, checks whether Rerail runs in a folder on
+such a drive (`workspaceStartState`), it looks the keys that wait on that drive up first, opening the database for
+writing, and copies their rows before it reads the folder's start state. A key on a drive mapped to a share is looked up
+through the mapping, which gives the share's spelling, the one this version keys the folder by; a key stored through the
+letter waits for a session that works through the letter. A drive that is absent (a disk not attached) or a share whose
+host is gone costs no open anything: Windows waits about 21 seconds for such a share, and a process that started that
+read could not exit before it ended, however briefly it waited for the answer, so no open starts it. A folder that is
+gone from a drive that is there keeps its key: the file system holds no spelling for it, and a session opened there as
+`c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database
+still opens. On macOS and Linux the step reads and copies nothing.
 
 Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
 runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version

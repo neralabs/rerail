@@ -8,19 +8,20 @@
  * records each spelling that moved, which this build's lists leave out (`notAnEarlierSpelling` in `schema.ts`). The
  * `path-keys-as-stored` step (`migrations.ts`) runs it once per file, on Windows only: it reads the keys and looks each
  * up before the open takes the write lock (`lookUpPathKeys`), then, under the lock, writes a few rows per moved folder
- * (`respellPathKeys`). It never rewrites the audit history, and no lookup on disk runs under the lock.
+ * (`respellPathKeys`). It never rewrites the audit history, and no lookup on disk runs under the lock. An open looks up
+ * only keys on this computer's system drive and on the drive or share of the folder its caller works in
+ * (`withDriveBudget`); the others wait for an open made from a folder on their drive (`openRerailDatabaseIn`).
  */
 import { existsSync } from "node:fs";
 import { resolve, win32 } from "node:path";
-import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
 import { sql } from "drizzle-orm";
 import { physicalPath } from "../catalog/checkout-control.js";
 import type { RerailDatabase } from "./database.js";
 import { holdsTable } from "./table-probe.js";
 
 /**
- * The key this build gives a folder an earlier build keyed as a path, or undefined while its drive is absent, slow to
- * answer, or past its time in this open (`withDriveBudget`).
+ * The key this build gives a folder an earlier build keyed as a path, or undefined while its drive is not one this open
+ * reads, or past its time in this open (`withDriveBudget`).
  */
 export type PathKeyOf = (stored: string) => string | undefined;
 
@@ -104,117 +105,70 @@ export function currentPathKey(stored: string, platform: NodeJS.Platform = proce
   return platform === "win32" && existsSync(stored) ? physicalPath(stored, platform) : stored;
 }
 
-/** What reading a drive's root said: it answered, it is absent (a disk not attached), or it did not answer in time. */
-export type DriveRoot = "answers" | "absent" | "slow";
-
 /**
- * How long the step waits for a drive's root. A drive mapped to a share whose host does not answer, or such a share
- * itself, holds a read about 21 s; a sleeping disk can take a second or more to spin up.
- */
-const ROOT_WAIT_MS = 1_000;
-
-/**
- * How long the lookups of one drive may take in one open, its root's read included: the keys left once it is spent
- * wait in `path_key_spellings` for a later open (`respellReturnedKeys`). One lookup runs to its end, so a drive can pass
- * its budget by one lookup.
+ * How long the lookups of one drive may take in one open: the keys left once it is spent wait in `path_key_spellings`
+ * for a later open (`respellReturnedKeys`). One lookup runs to its end, so a drive can pass its budget by one lookup, and
+ * each open that reads a drive looks up at least one of its keys.
  */
 const DRIVE_BUDGET_MS = 1_000;
 
 /**
- * How long a process answers `slow` for a root that did not answer in time, without reading it again: every writable
- * open looks up the keys that wait, and a daemon opens the file many times.
+ * The drives and shares an open looks keys up on, each a root as `win32.parse` gives it (`C:\`, `\\host\share\`), and
+ * the clock its time per drive runs on.
  */
-const SLOW_ROOT_KEPT_MS = 10 * 60_000;
-
-/** How {@link withDriveBudget} reads a drive's root and the time: injected by tests. */
-export interface DriveProbe {
-  readonly root: (root: string) => DriveRoot;
+export interface ReadableRoots {
+  readonly roots: readonly string[];
   readonly now: () => number;
 }
 
-/** The roots this process found slow, with when, so it waits for each at most once in {@link SLOW_ROOT_KEPT_MS}. */
-const slowRoots = new Map<string, number>();
-
-const THIS_COMPUTER: DriveProbe = { root: root => rootAnswer(root, Date.now()), now: () => Date.now() };
-
-function rootAnswer(root: string, now: number): DriveRoot {
-  if (now - (slowRoots.get(root) ?? Number.NEGATIVE_INFINITY) < SLOW_ROOT_KEPT_MS) return "slow";
-  const answer = rootWithin(root, ROOT_WAIT_MS);
-  if (answer === "slow") slowRoots.set(root, now);
-  else slowRoots.delete(root);
-  return answer;
+/**
+ * The roots an open reads: this computer's system drive, which holds Windows and is never on a network, and the drive or
+ * share of `workspace`, the folder the open's caller works in (a hook's session, a command's checkout), which answered
+ * as the caller came to it. An open reads no other root. A drive mapped to a share, or a share, whose host does not
+ * answer holds a read about 21 s, and no thread can cut such a read short or end the process before it does: a process
+ * that started one waited that long at its exit, however briefly it waited for the answer.
+ */
+export function readableRoots(workspace: string | undefined, environment: NodeJS.ProcessEnv = process.env): ReadableRoots {
+  const system = `${environment.SystemDrive ?? "C:"}\\`;
+  return { roots: workspace === undefined ? [system] : [system, win32.parse(workspace).root], now: () => Date.now() };
 }
 
 /**
- * Reads `root` with `realpathSync.native` in a thread of its own and waits for it at most `waitMs`: a read the network
- * holds cannot be cut short on the thread that runs it. A read still going on after the wait ends by itself; its thread
- * keeps no process alive.
+ * `keyOf` on Windows for keys on `readable`'s roots only, within a time budget per root. A key on a drive mapped to a
+ * share is looked up through the mapping, which gives the share's spelling, the key this build looks the folder up by. A
+ * key on any other drive or share, or past its root's budget, is undefined without a read: it waits for an open whose
+ * caller works on its drive (an absent disk, or a share whose host is gone, is then there again).
  */
-function rootWithin(root: string, waitMs: number): DriveRoot {
-  const done = new Int32Array(new SharedArrayBuffer(4));
-  const { port1, port2 } = new MessageChannel();
-  try {
-    // No flags of this process (a loader a test runner adds) reach the thread, which runs only the lines below.
-    new Worker(ROOT_READER, { eval: true, execArgv: [], workerData: { root, done, port: port2 }, transferList: [port2] }).unref();
-    if (Atomics.wait(done, 0, 0, waitMs) === "timed-out") return "slow";
-    return typeof receiveMessageOnPort(port1)?.message === "string" ? "answers" : "absent";
-  } catch {
-    // No thread could start: the keys wait for a later open rather than risk the wait here.
-    return "slow";
-  } finally {
-    port1.close();
-  }
-}
-
-/** {@link rootWithin}'s thread: posts the root's realpath (null when it cannot be read), then wakes the waiting thread. */
-const ROOT_READER = `
-const { workerData } = require("node:worker_threads");
-let path = null;
-try { path = require("node:fs").realpathSync.native(workerData.root); } catch {}
-workerData.port.postMessage(path);
-Atomics.store(workerData.done, 0, 1);
-Atomics.notify(workerData.done, 0);
-`;
-
-/** A drive as one open's lookups found it: what its root said, and how long its root and keys have taken so far. */
-interface Drive {
-  readonly root: DriveRoot;
-  spent: number;
-}
-
-/**
- * `keyOf` on Windows within a time budget per drive (its root `\\host\share\` for a key on a share). Each drive's root is
- * read once, waiting at most {@link ROOT_WAIT_MS}; then its keys are looked up until {@link DRIVE_BUDGET_MS} is spent,
- * root included. A key on a drive mapped to a share is looked up through the mapping, which gives the share's spelling,
- * the key this build looks the folder up by. A key on a drive that is absent, whose root did not answer in time (a share
- * whose host is gone, a sleeping disk, local or not), or past its drive's budget is undefined: it waits for a later open,
- * since its folder can come back as it was.
- */
-export function withDriveBudget(keyOf: PathKeyOf, platform: NodeJS.Platform = process.platform, probe = THIS_COMPUTER): PathKeyOf {
+export function withDriveBudget(keyOf: PathKeyOf, platform: NodeJS.Platform = process.platform, readable = readableRoots(undefined)): PathKeyOf {
   if (platform !== "win32") return keyOf;
-  const drives = new Map<string, Drive>();
+  const spent = new Map(readable.roots.map(root => [rootOf(root), 0]));
   return stored => {
-    const drive = driveOf(drives, win32.parse(stored).root, probe);
-    if (drive.root !== "answers" || drive.spent >= DRIVE_BUDGET_MS) return undefined;
-    const started = probe.now();
+    const root = rootOf(stored);
+    const used = spent.get(root);
+    if (used === undefined || used >= DRIVE_BUDGET_MS) return undefined;
+    const started = readable.now();
     try {
       return keyOf(stored);
     } finally {
-      drive.spent += probe.now() - started;
+      spent.set(root, used + readable.now() - started);
     }
   };
 }
 
-/** The drive of `root` as this open found it, its root read the first time it is asked for. */
-function driveOf(drives: Map<string, Drive>, root: string, probe: DriveProbe): Drive {
-  let drive = drives.get(root);
-  if (drive === undefined) {
-    const started = probe.now();
-    const answer = probe.root(root);
-    drive = { root: answer, spent: probe.now() - started };
-    drives.set(root, drive);
-  }
-  return drive;
+/** The drive or share `path` lies on, in one letter case: Windows reads `C:\` and `c:\` as one drive. */
+function rootOf(path: string): string {
+  return win32.parse(path).root.toLowerCase();
+}
+
+/**
+ * Whether keys wait in `path_key_spellings` (no `current`) on the drive or share of `workspace`: an open made from that
+ * folder looks them up (`openRerailDatabaseIn`). None ever waits where keys cannot move (`pathKeysCanMove`), so callers
+ * ask only on Windows.
+ */
+export function keysWaitOn(database: RerailDatabase, workspace: string): boolean {
+  if (!holdsTable(database.$client, "path_key_spellings")) return false;
+  const root = rootOf(workspace);
+  return waitingKeys(database).some(stored => rootOf(stored) === root);
 }
 
 /**
@@ -233,7 +187,8 @@ export function lookUpPathKeys(database: RerailDatabase, keyOf: PathKeyOf): Path
 
 /**
  * Before the lock, at each later writable open: each key that waits for its drive (`path_key_spellings` with no
- * `current`), looked up again. One read of a table that is empty at nearly every open.
+ * `current`), looked up again where `keyOf` reads its drive. One read of a table that is empty at nearly every open; a
+ * key on a drive the open does not read costs no lookup, however many opens it waits through.
  */
 export function lookUpWaitingKeys(database: RerailDatabase, keyOf: PathKeyOf): PathKeyLookups {
   const waiting = holdsTable(database.$client, "path_key_spellings") ? waitingKeys(database) : [];

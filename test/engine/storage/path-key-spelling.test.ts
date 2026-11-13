@@ -10,7 +10,7 @@ import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { currentPathKey, pathKeysCanMove, withDriveBudget, type DriveRoot } from "../../../src/engine/storage/path-key-spelling.js";
+import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
 import { setCheckoutStarted, SqlitePresentationPreferenceStore, workspaceStartState } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -18,8 +18,8 @@ type PathKeySpelling = typeof import("../../../src/engine/storage/path-key-spell
 
 // The key a stored path moves to, which each test sets: on Linux and macOS the stored spelling is the one this build
 // gives, so a test stands in for Windows with a spelling of its own, and the step runs there as on Windows
-// (`pathKeysCanMove`). The Windows tests use the real one. A test stands in for a drive that is not attached, or slow
-// to answer, through `withDriveBudget`; no test reaches a real share.
+// (`pathKeysCanMove`). The Windows tests use the real one. A test stands in for a drive the open does not read through
+// `withDriveBudget`, given Windows; no test reaches a real share.
 vi.mock("../../../src/engine/storage/path-key-spelling.js", async importOriginal => {
   const original = await importOriginal<PathKeySpelling>();
   return {
@@ -30,14 +30,48 @@ vi.mock("../../../src/engine/storage/path-key-spelling.js", async importOriginal
   };
 });
 
+// Every thread a module of Rerail starts: a thread blocked in a read of a share whose host does not answer is waited for
+// at the process's exit, about 21 s on Windows, and nothing can end it sooner.
+const threads = vi.hoisted(() => ({ started: 0 }));
+vi.mock("node:worker_threads", async importOriginal => {
+  const original = await importOriginal<typeof import("node:worker_threads")>();
+  class CountedWorker extends original.Worker {
+    constructor(...parameters: ConstructorParameters<typeof original.Worker>) {
+      super(...parameters);
+      threads.started += 1;
+    }
+  }
+  return { ...original, Worker: CountedWorker };
+});
+
 const STEP = "path-keys-as-stored";
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.mocked(currentPathKey).mockReset();
   vi.mocked(withDriveBudget).mockReset();
   vi.mocked(pathKeysCanMove).mockReset().mockImplementation(() => true);
+  vi.unstubAllEnvs();
+  threads.started = 0;
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
+
+/** `withDriveBudget` as on Windows, whatever this system is, so a test reads only the roots an open on Windows reads. */
+async function onWindows(): Promise<void> {
+  const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+  vi.mocked(withDriveBudget).mockImplementation((keyOf, _platform, readable) => actual.withDriveBudget(keyOf, "win32", readable));
+}
+
+/**
+ * A lookup that holds as long as Windows holds one on a share whose host does not answer, about 21 s, for a key the
+ * test says is there: it stands in for that read, and a test that ends at once never started it.
+ */
+function holdsLikeAGoneShare(onShare: (path: string) => boolean, looked: string[]): (path: string) => string {
+  return path => {
+    looked.push(path);
+    if (onShare(path)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 21_000);
+    return path.toUpperCase();
+  };
+}
 
 /**
  * Whether a writer other than the open holds the file's write lock now: a second connection that may not wait tries to
@@ -355,68 +389,110 @@ describe("path keys an earlier build stored under another spelling", () => {
 
   // The step ran once per file: a folder on a disk not attached at the first open kept its earlier spelling for good,
   // and this build read its start state, settings, audit and preference as unset once the disk was back.
-  it("copy the rows of a folder whose drive was absent as the step ran at a later open, once the drive is back", async () => {
-    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+  it("copy the rows of a folder on a drive the step did not read once Rerail checks its start state there", async () => {
+    await onWindows();
     const { folder, databasePath } = await checkoutFolder();
+    // Another drive than the one the test's folder is on: on Linux, and on Windows, whose temporary folder is on `C:`.
+    vi.stubEnv("SystemDrive", "Q:");
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
-    vi.mocked(withDriveBudget).mockImplementation(keyOf => path => (path === stored ? undefined : keyOf(path)));
+    // The daemon's start opens the file for writing: it reads no drive but `Q:`.
     openRerailDatabase(databasePath).$client.close();
     expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+    expect(vi.mocked(currentPathKey)).not.toHaveBeenCalled();
 
-    // The drive is back; the daemon's start opens the file for writing.
-    vi.mocked(withDriveBudget).mockImplementation(actual.withDriveBudget);
-    openRerailDatabase(databasePath).$client.close();
-    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+    // A coding agent's hook checks whether Rerail runs in the folder: the drive answers, and the folder keeps every record.
     expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "completed", auditId: "audit-1" }));
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
     expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
   // Round 1 left every key on a drive mapped to a share as it was, so a folder an earlier build keyed `Q:\proj` read as
-  // unset where this build looks it up by the share's spelling; and it took a local disk whose root answered after a
-  // second (a sleeping one) for such a drive, for good. Each drive's root is read once; then its keys are looked up
-  // within a second, and the rest wait for a later open.
-  it("look keys up on any drive whose root answers, within a time per drive, and leave the rest waiting", () => {
-    const roots: string[] = [];
+  // unset where this build looks it up by the share's spelling. The keys on the drives an open reads are looked up
+  // within a second each, and the rest wait without a read.
+  it("look keys up on the drives an open reads only, within a time per drive, and leave the rest waiting unread", () => {
+    const looked: string[] = [];
     let clock = 0;
-    // `Z:` is mapped to a share, `Y:` a disk whose root does not answer within the second, `E:` a disk not attached, and
-    // `\\host\share` a share; each lookup on `D:` takes 400 ms.
-    const answers: Record<string, DriveRoot> = {
-      "C:\\": "answers", "Z:\\": "answers", "Y:\\": "slow", "E:\\": "absent", "D:\\": "answers", "\\\\host\\share\\": "answers",
-    };
-    const probe = {
-      root: (root: string): DriveRoot => {
-        roots.push(root);
-        clock += root === "Y:\\" ? 1_000 : 1;
-        return answers[root] ?? "absent";
-      },
-      now: () => clock,
-    };
-    // Through the mapping, a key on `Z:` reads as the share spells it.
+    // `C:` is this computer's system drive, `z:` the drive of the folder the caller works in, mapped to a share. Each
+    // lookup on it takes 400 ms. `Y:`, `E:` and `\\host\share` are drives and a share no caller works on.
     const keyOf = withDriveBudget(stored => {
-      if (stored.startsWith("D:")) clock += 400;
+      looked.push(stored);
+      if (stored.startsWith("Z:")) clock += 400;
+      // Through the mapping, a key on `Z:` reads as the share spells it.
       return stored.startsWith("Z:") ? `\\\\server\\share${stored.slice(2).toUpperCase()}` : stored.toUpperCase();
-    }, "win32", probe);
+    }, "win32", { roots: ["C:\\", "z:\\"], now: () => clock });
 
-    expect(["C:\\a", "C:\\b", "Z:\\c", "Y:\\e", "E:\\f", "D:\\g", "D:\\h", "D:\\i", "D:\\j", "\\\\host\\share\\k"].map(keyOf)).toEqual([
-      "C:\\A", "C:\\B", "\\\\server\\share\\C", undefined, undefined, "D:\\G", "D:\\H", "D:\\I", undefined, "\\\\HOST\\SHARE\\K",
+    expect(["C:\\a", "c:\\b", "Z:\\c", "Z:\\d", "Z:\\e", "Z:\\f", "Y:\\g", "E:\\h", "\\\\host\\share\\i"].map(keyOf)).toEqual([
+      "C:\\A", "C:\\B", "\\\\server\\share\\C", "\\\\server\\share\\D", "\\\\server\\share\\E", undefined, undefined, undefined, undefined,
     ]);
-    expect(roots).toEqual(["C:\\", "Z:\\", "Y:\\", "E:\\", "D:\\", "\\\\host\\share\\"]);
-    expect(withDriveBudget(stored => stored.toUpperCase(), "linux", probe)("/a")).toBe("/A");
+    expect(looked).toEqual(["C:\\a", "c:\\b", "Z:\\c", "Z:\\d", "Z:\\e"]);
+    expect(withDriveBudget(stored => stored.toUpperCase(), "linux", { roots: [], now: () => clock })("/a")).toBe("/A");
+    expect(readableRoots(undefined, { SystemDrive: "D:" }).roots).toEqual(["D:\\"]);
+    expect(readableRoots("\\\\host\\share\\proj", {}).roots).toEqual(["C:\\", "\\\\host\\share\\"]);
   });
 
-  // Each drive's root is read in a thread of its own, so a share whose host does not answer holds the open a second at
-  // most, not the 21 s Windows waits for it. Here only roots that answer at once are read: this computer's, and a drive
-  // letter that names no drive.
-  it("read a drive's root in a thread of its own: a root that is there answers, a drive that is not is absent", async () => {
+  // Each drive's root was read in a thread of its own, waiting a second at most. A share whose host does not answer held
+  // that read about 21 s, the thread could not be ended, and the process waited for it at its exit: on a Windows 11 VM a
+  // writing open with one such key waiting ended its process 21.1 s after the read began, every time.
+  it("start no thread and read no drive no caller works on at a writable open, so no exit waits for a share", async () => {
+    await onWindows();
+    // The test's folder stands for a share no caller works on: `Q:` is the system drive.
+    vi.stubEnv("SystemDrive", "Q:");
+    const looked: string[] = [];
+    vi.mocked(currentPathKey).mockImplementation(holdsLikeAGoneShare(() => true, looked));
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    const started = performance.now();
+    // The first writable open runs the step; the next one looks up what waits.
+    openRerailDatabase(databasePath).$client.close();
+    openRerailDatabase(databasePath).$client.close();
+
+    expect({ threads: threads.started, looked }).toEqual({ threads: 0, looked: [] });
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+  }, 60_000);
+
+  // Every writable open looked a key waiting on a drive not attached up again, a thread each time, with no end: a disk
+  // that held a repository once and is never attached again.
+  it("look a key waiting on another drive up once Rerail runs in a folder there, and at no other writable open", async () => {
+    await onWindows();
+    vi.stubEnv("SystemDrive", "Q:");
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    const looked: string[] = [];
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      looked.push(path);
+      return path === stored ? folder : path;
+    });
+    for (let open = 0; open < 100; open += 1) openRerailDatabase(databasePath).$client.close();
+    expect({ looked, threads: threads.started }).toEqual({ looked: [], threads: 0 });
+
+    // A coding agent's hook checks each event's folder: the first check looks the key up, and no later one does.
+    for (let check = 0; check < 100; check += 1) expect(workspaceStartState(folder, databasePath)).toBe("started");
+    expect({ looked, threads: threads.started }).toEqual({ looked: [stored], threads: 0 });
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("look, on Windows, a key on a drive not attached up at no writable open", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
-    const absent = [..."ZYXWVUTSRQPONMLKJIHGF"].map(letter => `${letter}:\\`).find(root => !existsSync(root));
-    const keyOf = actual.withDriveBudget(stored => `${stored}-looked-up`, "win32");
-    const here = realpathSync.native(tmpdir());
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    const absent = [..."ZYXWVUTSRQPONMLKJIHGF"].map(letter => `${letter}:`).find(drive => !existsSync(`${drive}\\`));
+    const stored = `${absent}\\work\\app`;
+    const { databasePath } = await checkoutFolder();
+    openRerailDatabase(databasePath).$client.close();
+    write(databasePath, [
+      [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"repository","mode":"log"}', 1)`, stored],
+      ["DELETE FROM schema_migrations WHERE id = ?", STEP],
+      ["DROP TABLE IF EXISTS path_key_spellings"],
+    ]);
+    for (let open = 0; open < 100; open += 1) openRerailDatabase(databasePath).$client.close();
 
-    expect([here, `${absent}app`].map(keyOf)).toEqual([`${here}-looked-up`, undefined]);
-  });
+    expect({ lookups: vi.mocked(currentPathKey).mock.calls.length, threads: threads.started }).toEqual({ lookups: 0, threads: 0 });
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+  }, 60_000);
 
   // The step looked every key up inside the open's write lock, and read the whole audit history there: with the file
   // out of the page cache that took seconds (7.1 s over 20,000 audits), and a slow drive as long, while every other
@@ -473,13 +549,11 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
-  // A lookup on a share whose host does not answer waits about 21 s for the connection. The root read here stands in
-  // for one that did not answer within the second (`withDriveBudget` reads it in a thread of its own): no share is reached.
-  it.runIf(process.platform === "win32")("wait, on Windows, for a share whose root does not answer, and copy the rest", async () => {
+  // A lookup on a share whose host does not answer waits about 21 s for the connection, and the process that started it
+  // cannot exit sooner. The step reads no share no caller works on: the address is one no host answers on, never read.
+  it.runIf(process.platform === "win32")("leave, on Windows, a share's keys waiting without reading it, and copy the rest", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
-    const probe = { root: (root: string): DriveRoot => (root.startsWith("\\\\") ? "slow" : "answers"), now: () => Date.now() };
-    vi.mocked(withDriveBudget).mockImplementation(keyOf => actual.withDriveBudget(keyOf, "win32", probe));
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
