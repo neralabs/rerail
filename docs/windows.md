@@ -148,10 +148,11 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 <summary>The launcher, install locations and Git's home</summary>
 
 - `<Git>\cmd\git.exe` and `<Git>\bin\git.exe` are launchers: they set up the environment and run
-  `<Git>\mingw64\bin\git.exe` (`clangarm64` on ARM64, `mingw32` on 32-bit) as their child. Killing a process on
-  Windows leaves its children running, so when a Git call timed out the real Git ran on in the repository and kept
-  its locks. `gitBehindLauncher` (`src/engine/git.ts`) resolves a launcher to that `git.exe`, which finds its own DLLs,
-  helpers and system configuration from its folder.
+  `<Git>\mingw64\bin\git.exe` (`ucrt64` in Git for Windows 2.56's x64 build, `clangarm64` on ARM64, `mingw32` on
+  32-bit) as their child. Killing a process on Windows leaves its children running, so when a Git call timed out the
+  real Git ran on in the repository and kept its locks. `gitBehindLauncher` (`src/engine/git.ts`) resolves a launcher
+  to that `git.exe`, which finds its own DLLs, helpers and system configuration from its folder. An install that holds
+  `ucrt64` and one of the other folders runs the other one's.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside

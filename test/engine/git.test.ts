@@ -1,7 +1,8 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, join } from "node:path";
+import { basename, delimiter, join, win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -313,14 +314,15 @@ describe("gitExcludeFiles", () => {
 });
 
 describe("gitBehindLauncher", () => {
+  const git = String.raw`C:\Program Files\Git`;
+  const launcher = String.raw`${git}\cmd\git.exe`;
+  const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, path: undefined, cwd: undefined };
+  const installed = (...paths: string[]) => {
+    const files = [launcher, String.raw`${git}\etc\gitconfig`, ...paths];
+    return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), realpath: (path: string) => path, developerDir: () => undefined };
+  };
+
   it("runs Git for Windows' own git.exe, not the launcher that starts it as a child a timeout would leave running", () => {
-    const git = String.raw`C:\Program Files\Git`;
-    const launcher = String.raw`${git}\cmd\git.exe`;
-    const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, path: undefined, cwd: undefined };
-    const installed = (...paths: string[]) => {
-      const files = [launcher, String.raw`${git}\etc\gitconfig`, ...paths];
-      return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), realpath: (path: string) => path, developerDir: () => undefined };
-    };
     const real = String.raw`${git}\mingw64\bin\git.exe`;
     expect(gitBehindLauncher(launcher, search, installed(real))).toBe(real);
     expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, search, installed(real))).toBe(real);
@@ -331,9 +333,29 @@ describe("gitBehindLauncher", () => {
     expect(gitBehindLauncher(launcher, search, installed())).toBe(launcher);
   });
 
+  it("runs the git.exe of Git for Windows 2.56's x64 build from ucrt64, and another build's where an install also holds one", () => {
+    const ucrt = String.raw`${git}\ucrt64\bin\git.exe`;
+    const x64 = String.raw`${git}\mingw64\bin\git.exe`;
+    const arm = String.raw`${git}\clangarm64\bin\git.exe`;
+    expect(gitBehindLauncher(launcher, search, installed(ucrt))).toBe(ucrt);
+    expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, search, installed(ucrt))).toBe(ucrt);
+    expect(gitBehindLauncher(ucrt, search, installed(ucrt))).toBe(ucrt);
+    expect(gitBehindLauncher(launcher, search, installed(x64, ucrt))).toBe(x64);
+    expect(gitBehindLauncher(launcher, search, installed(arm, ucrt))).toBe(arm);
+  });
+
   it.runIf(process.platform === "win32")("is what Rerail runs on this Windows machine", () => {
     expect(gitExecutable()).toBe(gitBehindLauncher(gitExecutable()));
     expect(gitExecutable().toLowerCase()).not.toMatch(/\\cmd\\git\.exe$/u);
+  });
+
+  it.runIf(process.platform === "win32")("goes behind this machine's Git for Windows launcher to the build's own git.exe", ({ skip }) => {
+    // Git's exec path is `<Git>\<build>\libexec\git-core` whichever git.exe answers: a `PATH` that names the build's own
+    // `bin` before `cmd`, as Git Bash's does, finds the real Git without going behind any launcher.
+    const build = win32.dirname(win32.dirname(runGit(process.cwd(), ["--exec-path"]).stdout.trim()));
+    const machineLauncher = win32.join(win32.dirname(build), "cmd", "git.exe");
+    skip(!existsSync(machineLauncher), "this machine's Git is not a Git for Windows install");
+    expect(gitBehindLauncher(machineLauncher)).toBe(win32.join(build, "bin", "git.exe"));
   });
 });
 
