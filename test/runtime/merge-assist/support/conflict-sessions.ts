@@ -13,9 +13,8 @@ export const body = (name: string, changes: Readonly<Record<number, string>> = {
   `${[`function ${name}() {`, ...Array.from({ length: 38 }, (_, index) => `  const ${name}${index + 2} = ${index + 2};`), "}"]
     .map((line, index) => changes[index + 1] ?? line).join("\n")}\n`;
 
-/** Line 20 changed and `extra` lines built on it, as theirs commits it. */
-export const grown = (name: string, extra: number): string =>
-  body(name, { 20: [`  const ${name}20 = "theirs";`, ...Array.from({ length: extra }, (_, index) => `  const grown${index} = ${name}20;`)].join("\n") });
+/** Line 20 changed, as theirs commits it. */
+export const changed = (name: string): string => body(name, { 20: `  const ${name}20 = "theirs";` });
 
 /** The conflicts not dismissed. */
 export const open = (conflicts: readonly Conflict[]): Conflict[] => conflicts.filter(conflict => conflict.status === "open");

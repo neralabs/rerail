@@ -160,24 +160,16 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** The longest conflict title the footer's `◉ decide:` segment shows. */
-const FOOTER_TITLE = 48;
-
-/**
- * Merge Assist's footer segment, linked to the conflict's card: `◉ decide: <title>` for the loudest one waiting on the
- * person, else `◐ <summary>` for the newest open one, with `(+N)` for the others open.
- */
-function conflictSegment(dashboard: URL, { decide, conflicts, summary }: NonNullable<z.infer<typeof sessionResponseSchema>["hud"]["mergeAssist"]>): SessionPresentation["parts"][number] {
-  if (decide === null) return { text: `◐ ${summary.text}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
-  const title = decide.title.length <= FOOTER_TITLE ? decide.title : `${decide.title.slice(0, FOOTER_TITLE - 1).trimEnd()}…`;
-  return { text: `◉ decide: ${title}`, url: conflictUrl(dashboard.href, decide.id) };
+/** Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, with `(+N)` for the others open. */
+function conflictSegment(dashboard: URL, { conflicts, summary }: NonNullable<z.infer<typeof sessionResponseSchema>["hud"]["mergeAssist"]>): SessionPresentation["parts"][number] {
+  return { text: `◐ ${summary.text}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
 }
 
 /**
  * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
  * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it),
- * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has a
- * conflict open above logged (`conflictSegment`).
+ * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has an
+ * open conflict that is not quiet (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,

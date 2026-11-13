@@ -17,8 +17,8 @@ const SHARED = ["  const line20 = \"shared\";", ...Array.from({ length: 5 }, (_,
 
 /**
  * A teammate's branch `jbarnes-model` from main changing line 20 of the model (and building five lines on it) and of
- * the guide, committed, and this checkout's uncommitted edits two lines below both: one ambient overlap (the model:
- * 7 lines in the hour, 1 caller, so 168 lines of expected rework) and one logged (the guide is docs).
+ * the guide, committed, and this checkout's uncommitted edits two lines below both: one overlap in the model, and one
+ * quiet overlap in the guide (it is docs).
  */
 async function overlapping(): Promise<{ ws: Workspace; theirs: string }> {
   const ws = await workspace({ files: BASE_FILES });
@@ -36,7 +36,7 @@ const modelConflict = (conflicts: readonly Conflict[]): Conflict => {
 
 // Each test builds Git repositories; under a full run that outlasts the default 5 s.
 describe("in-flight conflicts", { timeout: 30_000 }, () => {
-  it("finds overlapping work on a scan, both sides with their hunks, levelled by the dimmer, and logs one only in docs", async () => {
+  it("finds overlapping work on a scan, both sides with their hunks, and marks one only in docs quiet, listed last", async () => {
     const { ws } = await overlapping();
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -48,7 +48,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     expect(conflict).toMatchObject({
       kind: "overlap",
       status: "open",
-      level: "ambient",
+      quiet: false,
       title: "model.ts · export function model",
       mine: { label: "This branch", ref: "mine", author: "Tim Belanger", summary: `edits ${MODEL}`, location: `${MODEL}:22` },
       theirs: { label: "jbarnes-model", ref: "jbarnes-model", author: "Tim Belanger", summary: "Share compiled matchers", location: `${MODEL}:20`, url: null },
@@ -57,17 +57,12 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     expect(conflict.id).toMatch(/^conflict:overlap:[0-9a-f]{24}:[0-9a-f]{8}$/u);
     expect(conflict.mine.hunk).toContain("+  const line22 = \"cloned\";");
     expect(conflict.theirs.hunk).toContain("+  const line20 = \"shared\";");
-    expect(conflict).toMatchObject({
-      shortId: expect.stringMatching(/^[0-9a-f]{6}$/u),
-      signals: { quiet: false, lockIn: 1, lockInClass: "local", callers: 1, otherRefs: 0, linesTheirs: 6, linesMine: 1, windowHours: 1, hoursToMerge: 24, pullRequest: false },
-      score: 168,
-      reasons: ["local code: ×1", "+6 lines on theirs and +1 on this branch in 1 h", "1 caller", "about 24 h to merge", "even odds either side loses"],
-      queued: false,
-    });
-    expect(status.conflicts.find(entry => entry !== conflict)).toMatchObject({ level: "logged", title: "guide.md · export function model", signals: { quiet: true } });
+    expect(conflict.shortId).toMatch(/^[0-9a-f]{6}$/u);
+    expect(status.conflicts.map(entry => entry.title)).toEqual(["model.ts · export function model", "guide.md · export function model"]);
+    expect(status.conflicts[1]).toMatchObject({ quiet: true, status: "open" });
   });
 
-  it("tells each session's agent of an ambient overlap once, as information, with the person's line", async () => {
+  it("tells each session's agent of an overlap once, as information, with the person's line, and nothing of a quiet one", async () => {
     const { ws } = await overlapping();
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -98,7 +93,7 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
 
     now += 60_000;
     const dismissed = modelConflict((await service.dismissConflict(ws.repo, id)).conflicts);
-    expect(dismissed).toMatchObject({ id, status: "dismissed", level: "logged", queued: false, dismissal: { name: "Tim Belanger", at: "2026-11-08T12:01:00Z" } });
+    expect(dismissed).toMatchObject({ id, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-08T12:01:00Z" } });
     now += 60_000;
     const status = await service.scan(ws.repo);
     expect(mergeAssistStatusSchema.parse(status)).toEqual(status);

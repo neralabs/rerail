@@ -1,6 +1,6 @@
 /**
  * What Merge Assist reports for one checkout: the shapes the runtime service returns and the API, CLI and dashboard
- * show. See docs/merge-assist-v1-build.md §5 and §9.
+ * show. See docs/merge-assist-v1-build.md.
  */
 import { z } from "zod";
 
@@ -30,39 +30,6 @@ export type ConflictKind = (typeof CONFLICT_KINDS)[number];
 export const CONFLICT_STATUSES = ["open", "dismissed"] as const;
 export type ConflictStatus = (typeof CONFLICT_STATUSES)[number];
 
-/**
- * How loud an open conflict is (the dimmer, `dimmer.ts`): logged, on the Conflicts page only; ambient, one line to the
- * agent and the person and a footer segment; checkpoint, a card the agent shows the person at the next boundary;
- * stop, the person is asked before an edit to a contested file.
- */
-export const CONFLICT_LEVELS = ["logged", "ambient", "checkpoint", "stop"] as const;
-export type ConflictLevel = (typeof CONFLICT_LEVELS)[number];
-
-/**
- * What makes a contested change hard to undo, from the hardest: a persisted schema, migration or file format; a public
- * API (an exported signature in a package entry or index file); a retirement (a deleted file or exported symbol); an
- * exported signature elsewhere; local code.
- */
-export const LOCK_IN_CLASSES = ["persisted", "public-api", "retirement", "exported", "local"] as const;
-export type LockInClass = (typeof LOCK_IN_CLASSES)[number];
-
-export const conflictSignalsSchema = z.object({
-  quiet: z.boolean().describe("Every contested file is a lockfile, a changelog, generated output or under docs/."),
-  lockIn: z.union([z.literal(1), z.literal(2), z.literal(4)]),
-  lockInClass: z.enum(LOCK_IN_CLASSES),
-  blastRadius: z.number().int().nonnegative().describe("callers plus otherRefs."),
-  callers: z.number().int().nonnegative().describe("Files in the base referring to the contested symbols, at most 200."),
-  otherRefs: z.number().int().nonnegative().describe("Other live refs touching the contested files."),
-  growthPerHour: z.number().nonnegative(),
-  linesTheirs: z.number().int().nonnegative().describe("Lines theirs added to the contested files since their work forked."),
-  linesMine: z.number().int().nonnegative().describe("Lines this branch, committed and working, added to them since it forked."),
-  windowHours: z.number().nonnegative().describe("Hours since the two sides' work forked (at least 1): growth's window."),
-  pLose: z.number().min(0).max(1),
-  hoursToMerge: z.number().nonnegative(),
-  pullRequest: z.boolean().describe("A pull request is open on theirs."),
-});
-export type ConflictSignals = z.infer<typeof conflictSignalsSchema>;
-
 export const conflictSideSchema = z.object({
   label: z.string().describe("\"This branch\" for this checkout's side; \"PR #398\" or a branch name for theirs."),
   ref: z.string(),
@@ -84,11 +51,8 @@ export const conflictDismissalSchema = z.object({
 });
 export type ConflictDismissal = z.infer<typeof conflictDismissalSchema>;
 
-/**
- * What fires the conflict hook, once each per conflict: `detected`, first seen in this checkout; `level-changed`, its
- * level rose; `closed`, dismissed or no longer found.
- */
-export const CONFLICT_EVENTS = ["detected", "level-changed", "closed"] as const;
+/** What fires the conflict hook, once each per conflict: `detected`, first seen in this checkout; `closed`, dismissed or no longer found. */
+export const CONFLICT_EVENTS = ["detected", "closed"] as const;
 export type ConflictEvent = (typeof CONFLICT_EVENTS)[number];
 
 /** The conflict hook command's timeout: 10 seconds unless the person sets another, at most 60. */
@@ -126,12 +90,7 @@ export const conflictSchema = z.object({
   shortId: z.string().describe("Six hex characters its card names it by."),
   kind: z.enum(CONFLICT_KINDS),
   status: z.enum(CONFLICT_STATUSES),
-  level: z.enum(CONFLICT_LEVELS).describe("While open, it never drops; a dismissal resets it."),
-  signals: conflictSignalsSchema.nullable().describe("What the dimmer measured at the last detection; null before the first."),
-  score: z.number().nonnegative().describe("Expected rework lines if it is left to merge."),
-  reasons: z.array(z.string()).describe("One plain sentence per signal, as the card shows them."),
-  queued: z.boolean().describe("Over the interruption budget: shown below its level until the budget allows it."),
-  queuedFor: z.enum(CONFLICT_LEVELS).nullable().describe("While queued, the level it waits for; it rises to it once the budget frees."),
+  quiet: z.boolean().describe("Every contested file is a lockfile, a changelog, generated output or under docs/: listed on the dashboard and in the CLI only, never told to the agent, the person's line or the status line."),
   question: z.string().describe("What the sides collide on: the file and the base lines their overlapping change covers."),
   title: z.string(),
   mine: conflictSideSchema,
@@ -156,6 +115,6 @@ export const mergeAssistStatusSchema = z.object({
   }),
   scanning: z.boolean(),
   lastScan: lastScanSchema.nullable(),
-  conflicts: z.array(conflictSchema).describe("Open first, loudest first, then dismissed (latest 20)."),
+  conflicts: z.array(conflictSchema).describe("Open first (the ones not quiet first, then newest first), then dismissed (latest 20)."),
 });
 export type MergeAssistStatus = z.infer<typeof mergeAssistStatusSchema>;

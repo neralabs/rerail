@@ -37,7 +37,7 @@ function repositoryItems() {
   ];
 }
 
-/** Merge Assist's open conflicts: "3", or nothing at 0 and while the last read failed (the count may no longer hold). */
+/** Merge Assist's open conflicts that are not quiet: "3", or nothing at 0 and while the last read failed (the count may no longer hold). */
 function mergeCount() {
   const n = data.mergeAssistError === null ? openConflictCount(data.mergeAssist, ui.mergeDismissing) : 0;
   if (n === 0) return null;

@@ -896,8 +896,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
       if (paths.length > 0) state.mergeAssistEdits.add(id);
-      const stops = await this.#mergeAssistStops(state, event);
-      if (stops.length > 0) state.eventDeliveries.set(event.eventId, [...(state.eventDeliveries.get(event.eventId) ?? []), ...stops]);
     }
     await this.#router(descriptor.host).ingest(event);
     if (event.kind === "result") {
@@ -1837,7 +1835,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * A session started where a person turned Merge Assist on: scan its checkout for in-flight conflicts in the
-   * background (docs/merge-assist-v1-build.md §9.1). No boundary waits for it; its notes go out at a later one.
+   * background (docs/merge-assist-v1-build.md). No boundary waits for it; its notes go out at a later one.
    */
   #scanMergeAssist(state: RuntimeSessionState): void {
     if (state.closed || this.#stopped()) return;
@@ -1922,47 +1920,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  /**
-   * A tool call about to edit a contested file of a conflict that stops the line: its stop notes ride this call's own
-   * answer (a hook host's `PreToolUse`), asking the person first where the host can. Recorded as given at once, since
-   * the answer carries them. Reads only the database; never fails the call.
-   */
-  async #mergeAssistStops(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "call" }>): Promise<AdapterDelivery[]> {
-    try {
-      const running = this.#mergeAssistService(state);
-      if (running === undefined) return [];
-      const { sessionId, host } = state.descriptor;
-      const root = state.checkout.root;
-      const notes = running.stopNotes(sessionId, root, { toolName: event.toolName, input: event.input }, ADAPTER_CAPABILITIES[host].asksPerson, state.mergeAssistNotesInFlight, host);
-      this.#supersedeConflictNotes(state, new Set(notes.flatMap(note => (note.conflict === undefined ? [] : [note.conflict.id]))));
-      const deliveries: AdapterDelivery[] = [];
-      for (const note of notes) {
-        const delivery = mergeAssistDelivery(state.descriptor, note);
-        await this.#append(state, { type: "delivery", delivery });
-        deliveries.push(delivery);
-      }
-      running.markNotesDelivered(sessionId, root, notes.flatMap(note => note.marks));
-      return deliveries;
-    } catch (error) {
-      process.stderr.write(`rerail: Merge Assist could not check a call against its conflicts in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
-      return [];
-    }
-  }
-
-  /**
-   * Drop the queued Merge Assist notes about conflicts a stop at this boundary speaks for: the stop carries the card
-   * and the person's line, so neither goes out twice. Its marks record the checkpoint as given, so none is queued again.
-   */
-  #supersedeConflictNotes(state: RuntimeSessionState, conflictIds: ReadonlySet<string>): void {
-    if (conflictIds.size === 0) return;
-    state.pendingSteers = state.pendingSteers.filter(pending => {
-      const id = pending.delivery.conflict?.id;
-      if (id === undefined || !conflictIds.has(id)) return true;
-      pending.settled?.(false);
-      return false;
-    });
   }
 
   /**

@@ -1,9 +1,9 @@
 /**
- * Detecting the checkout's in-flight conflicts (docs/merge-assist-v1-build.md §9.1). Mine is this checkout's working
+ * Detecting the checkout's in-flight conflicts (docs/merge-assist-v1-build.md). Mine is this checkout's working
  * changes, committed and not, against the merge base of HEAD with the base branch. Theirs are the live branches: local
  * branches, remote-tracking branches, and open pull requests whose head this repository holds. An overlap is one
- * conflict per (their ref, file). Every open one is levelled by the dimmer (`conflict-level.ts`). Reads Git only and
- * writes no file; never merges.
+ * conflict per (their ref, file); one whose every file is a lockfile, a changelog, generated output or under `docs/`
+ * is quiet. Reads Git only and writes no file; never merges.
  */
 import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
@@ -11,11 +11,10 @@ import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js"
 import { sideName } from "../../engine/code-rule/rerail-steer.js";
 import { gitText, runGit } from "../../engine/git.js";
 import { baseBranch, commitExists, currentBranch, isAncestor, localBranches, mergeBase, remoteBranches } from "../../engine/merge-assist/branch-git.js";
-import { conflictId, overlapQuestion, undimmed } from "../../engine/merge-assist/conflicts.js";
+import { conflictId, overlapQuestion, quietFiles, shortConflictId } from "../../engine/merge-assist/conflicts.js";
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, contestedAnchor, type GitConflict, HUNK_LINES, identify, ownBase, refHunks, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
-import { levelConflicts, saveBudget } from "./conflict-level.js";
 import { mergeDetected, readConflicts, type StoredConflict, writeConflicts } from "./conflict-store.js";
 import type { PullRequestSummary } from "./github.js";
 import { personName } from "./people.js";
@@ -30,8 +29,6 @@ export interface DetectContext {
   readonly now: () => number;
   /** The open pull requests, as last listed; none without `gh`. */
   readonly pulls: readonly PullRequestSummary[];
-  /** The session whose boundary asked for this detection; null for the dashboard and the CLI, which grant no stop. */
-  readonly sessionId: string | null;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -196,18 +193,17 @@ function mySide(root: string, view: MineView, file: string, ours: readonly RefHu
   };
 }
 
-/** One overlap with one ref as a stored conflict: the status's view of it, its file, its base lines and their anchor. */
+/** One overlap with one ref as a stored conflict: the status's view of it, its file, and the anchor its question is built on. */
 function overlapConflict(context: DetectContext, view: MineView, ref: LiveRef, own: string, overlap: GitConflict & { ours: readonly RefHunk[] }): StoredConflict {
   const { file } = overlap;
-  const lines = overlap.theirs.map(hunk => ({ lo: hunk.lo, hi: hunk.hi }));
-  const anchor = contestedAnchor(context.checkout.checkoutPath, view.start, file, lines);
+  const anchor = contestedAnchor(context.checkout.checkoutPath, view.start, file, overlap.theirs);
   const question = overlapQuestion(file, anchor);
   const mine = mySide(context.checkout.checkoutPath, view, file, overlap.ours);
   const theirs = theirSide(context.checkout.checkoutPath, ref, own, overlap);
   const symbol = enclosingSymbol(overlap.theirs);
   const id = conflictId(question, ref.ref);
   const conflict: Conflict = {
-    id, kind: "overlap", status: "open", ...undimmed(id), question,
+    id, kind: "overlap", status: "open", shortId: shortConflictId(id), quiet: quietFiles([file]), question,
     title: symbol === null ? basename(file) : `${basename(file)} · ${symbol}`, mine, theirs,
     evidence: [
       `Both sides change ${file} within ${ADJACENT_LINES} lines of each other: yours near line ${lineOf(overlap.ours)}, theirs near line ${lineOf(overlap.theirs)} of the base.`,
@@ -215,7 +211,7 @@ function overlapConflict(context: DetectContext, view: MineView, ref: LiveRef, o
     ],
     detectedAt: isoSeconds(context.now()), dismissal: null, summary: `${sideName(theirs)} is changing ${symbol ?? file}`, hook: null,
   };
-  return { conflict, files: [file], lines, anchor };
+  return { conflict, files: [file], anchor };
 }
 
 /** The live refs this checkout's work is compared with: open pull requests, then branches. */
@@ -224,15 +220,14 @@ function liveRefs(root: string, view: MineView, pulls: readonly PullRequestSumma
   return { pulls: open, branches: branchRefs(root, view, new Set(open.map(pull => pull.sha))) };
 }
 
-/** The overlaps of this branch's changes with each live ref; `touches` gets every changed file's refs that change it too. */
-function overlapConflicts(context: DetectContext, view: MineView, refs: readonly LiveRef[], touches: Map<string, Set<string>>): StoredConflict[] {
+/** The overlaps of this branch's changes with each live ref. */
+function overlapConflicts(context: DetectContext, view: MineView, refs: readonly LiveRef[]): StoredConflict[] {
   if (view.ranges.size === 0) return [];
   const root = context.checkout.checkoutPath;
   return refs.flatMap(ref => {
     const own = ownBase(root, ref.sha, view.base.ref, view.start);
     if (own === null) return [];
     const files = refHunks(root, view.start, own, ref.sha, [...view.ranges.keys()]);
-    for (const file of Object.keys(files)) touches.set(file, (touches.get(file) ?? new Set()).add(ref.ref));
     return identify(view.ranges, [{ ref: ref.ref, files }]).map(overlap => overlapConflict(context, view, ref, own, overlap));
   });
 }
@@ -249,33 +244,26 @@ export interface DetectedConflicts {
 }
 
 /**
- * Find the checkout's conflicts and store them with the dismissed ones, and give every open one its level from the
- * dimmer. A detection that finishes after Merge Assist was turned off stores nothing and answers null.
+ * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
+ * was turned off stores nothing and answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
   const view = mineView(root);
   if (view === null) return { before: [], after: [], peers: { branches: 0, pullRequests: 0 }, problems: [NO_BASE_PROBLEM] };
-  const touches = new Map<string, Set<string>>();
   const refs = liveRefs(root, view, context.pulls);
-  const detected = overlapConflicts(context, view, [...refs.pulls, ...refs.branches], touches);
+  const detected = overlapConflicts(context, view, [...refs.pulls, ...refs.branches]);
   const known = readConflicts(context.database, root);
-  const result = mergeDetected(known, detected);
   const now = context.now();
-  const levelled = levelConflicts({
-    db: context.database, root, base: view.base, start: view.start, head: view.head, person: view.person, sessionId: context.sessionId,
-    pulls: context.pulls, touches, now,
-  }, result);
-  const examined = new Set([...known, ...levelled.entries].map(entry => entry.conflict.id));
+  const examined = new Set([...known, ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
     if (!mergeAssistEnabled(tx, context.checkout.repositoryKey)) return null;
     // A dismissal given while this ran stands, and an open conflict another pass stored meanwhile, which this one
     // never examined, stays as it is: it was not found gone.
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
-    const after = [...mergeDetected(before, levelled.entries), ...unexamined];
+    const after = [...mergeDetected(before, detected), ...unexamined];
     writeConflicts(tx, root, after, now);
-    saveBudget(tx, view.person, levelled.grants, now);
     return { before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems: [] };
   }, { behavior: "immediate" });
 }

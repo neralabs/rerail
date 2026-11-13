@@ -62,5 +62,4 @@ Internal designs for contributors.
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
 - [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (internal testing), which detects in-flight
   conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person and their
-  coding agent before they merge, and
-  [branch-coordination-amp-comparison.md](branch-coordination-amp-comparison.md) compares the earlier approach with Amp
+  coding agent before they merge

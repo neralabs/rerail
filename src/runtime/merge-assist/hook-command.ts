@@ -1,5 +1,5 @@
 /**
- * The command handler (docs/merge-assist-v1-build.md §9.5): the person's conflict hook command, run on every conflict
+ * The command handler (docs/merge-assist-v1-build.md): the person's conflict hook command, run on every conflict
  * event. It runs from the checkout's root as an argv array, never through a shell, with the person's environment plus
  * `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID`; the conflict reaches it only on stdin, as one JSON object, never in
  * its arguments. It may answer on stdout with `{ "note"?: string, "status"?: string }` (at most 4 KiB): `note` joins
@@ -191,13 +191,13 @@ function payloadOf(event: ConflictEvent, stored: StoredConflict, context: Confli
 
 /**
  * The person's command, when one is set, run as one of `running`. A conflict's agent note waits for its answer to
- * `detected` and `level-changed`, so its `note` joins the note; never longer than the hook's bound on such a wait
- * (`NOTE_WAIT_MS`): an answer after that follows as a note of its own.
+ * `detected`, so its `note` joins the note; never longer than the hook's bound on such a wait (`NOTE_WAIT_MS`): an
+ * answer after that follows as a note of its own.
  */
 export function commandHandler(running: RunningCommands): ConflictHandler {
   return {
     name: "command",
-    awaits: (event, context) => context.settings.hook !== null && event !== "closed",
+    awaits: (event, context) => context.settings.hook !== null && event === "detected",
     on: async (event, stored, context) => {
       const command = context.settings.hook;
       if (command === null) return;

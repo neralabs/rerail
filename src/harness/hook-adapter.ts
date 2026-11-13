@@ -40,18 +40,8 @@ function carriesText(delivery: AdapterDelivery): boolean {
   return steers(delivery.requested) && delivery.content.trim() !== "";
 }
 
-/**
- * The deliveries one output renders: a conflict's note that a later one about the same conflict supersedes is left
- * out (a stop's card over the checkpoint's held for the same boundary), so each conflict has one card and one person's
- * line per output.
- */
-function latestPerConflict(deliveries: readonly AdapterDelivery[]): AdapterDelivery[] {
-  const last = new Map(deliveries.flatMap((delivery, index) => (delivery.conflict === undefined ? [] : [[delivery.conflict.id, index] as const])));
-  return deliveries.filter((delivery, index) => delivery.conflict === undefined || last.get(delivery.conflict.id) === index);
-}
-
 export function deliveryText(deliveries: readonly AdapterDelivery[]): string | undefined {
-  const content = latestPerConflict(deliveries)
+  const content = deliveries
     .filter(carriesText)
     .map(delivery => delivery.content.trim())
     .join("\n\n");
@@ -60,17 +50,17 @@ export function deliveryText(deliveries: readonly AdapterDelivery[]): string | u
 
 /** The rules behind the deliveries `deliveryText` rendered, in order: what the person's lines are built from. */
 export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule[] {
-  return latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => [...delivery.rules]);
+  return deliveries.filter(carriesText).flatMap(delivery => [...delivery.rules]);
 }
 
-/** The conflicts behind the deliveries `deliveryText` rendered, in order: the person's line for each, after the rules', one per conflict. */
+/** The conflicts behind the deliveries `deliveryText` rendered, in order: the person's line for each, after the rules'. */
 export function deliveryConflicts(deliveries: readonly AdapterDelivery[]): ConflictNotice[] {
-  return latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
+  return deliveries.filter(carriesText).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
 }
 
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
 export function deliveryRuleIds(deliveries: readonly AdapterDelivery[]): string[] {
-  return [...new Set(latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
+  return [...new Set(deliveries.filter(carriesText).flatMap(delivery => [...delivery.ruleIds]))];
 }
 
 function sessionFile(storageRoot: string, host: HookHost, kind: "pending" | "locks", sessionId: string, extension: string): string {

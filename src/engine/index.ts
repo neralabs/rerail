@@ -159,9 +159,7 @@ export {
   mergeAssistStatusSchema,
   type Conflict,
   type ConflictSide,
-  type ConflictSignals,
   type GithubReadiness,
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "./merge-assist/model.js";
-export { dimConflict, type DimmerBudget, type DimmerPrevious } from "./merge-assist/dimmer.js";

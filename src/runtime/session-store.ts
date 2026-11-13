@@ -109,7 +109,7 @@ export interface SessionHud {
   overlays: string[];
   /** While `activeRuleCount` is current, how many rules and packs that are on run in Log waiting for a person's approval. */
   awaitingApproval: number | null;
-  /** The footer's Merge Assist segment, present only while the session's checkout has a conflict open above logged. */
+  /** The footer's Merge Assist segment, present only while the session's checkout has an open conflict that is not quiet. */
   mergeAssist?: ConflictFooter;
 }
 

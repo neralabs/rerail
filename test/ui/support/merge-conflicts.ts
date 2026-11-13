@@ -8,10 +8,9 @@ export const side = (over: Partial<ConflictSide> = {}): ConflictSide => ({
   ...over,
 });
 
-/** An open, ambient overlap with pull request #398, detected `detectedAt`. */
+/** An open overlap with pull request #398 that is not quiet, detected `detectedAt`. */
 export const conflict = (id: string, over: Partial<Conflict> = {}): Conflict => ({
-  id, shortId: "a1b2c3", kind: "overlap", status: "open", level: "ambient", signals: null, score: 120,
-  reasons: ["local code: ×1", "+40 lines on theirs in 2 h", "3 callers", "even odds either side loses"], queued: false, queuedFor: null,
+  id, shortId: "a1b2c3", kind: "overlap", status: "open", quiet: false,
   question: `question:${id}`, title: `Shared matchers ${id}`,
   mine: side(),
   theirs: side({

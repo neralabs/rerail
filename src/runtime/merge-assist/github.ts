@@ -4,7 +4,7 @@
  *
  * `gh` only ever runs `auth status`, `pr list` and `api` with GET, with no shell, prompts off, a timeout and an output
  * cap. Everything it prints is untrusted: each response is validated, and every value placed in an API path is checked
- * for shape first. See docs/merge-assist-v1-build.md §6.
+ * for shape first. See docs/merge-assist-v1-build.md.
  */
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";

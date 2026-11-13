@@ -7,7 +7,7 @@ import { sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
 
-/** Their change to line 10 of the model, and 7 lines that build on it: enough growth for the dimmer to make it ambient. */
+/** Their change to line 10 of the model, and 7 lines that build on it. */
 const SHARED = ["  shared 10", ...Array.from({ length: 7 }, (_, index) => `  built ${index + 1}`)].join("\n");
 
 describe("Merge Assist in a session", { timeout: 30_000 }, () => {
@@ -43,7 +43,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    // Their change to line 10 and 7 lines built on it, and this edit's line: 9 lines in the hour, an ambient overlap.
+    // Their change to line 10 and the lines built on it, and this edit's line two below: an overlap.
     commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -98,7 +98,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       const before = await runtime.ingest({ kind: "user-prompt", eventId: "first", sessionId, text: "Go on." });
       expect(before.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
 
-      // The person dismisses it elsewhere (the dashboard, the CLI); found again by a later edit, it stays quiet.
+      // The person dismisses it elsewhere (the dashboard, the CLI); found again by a later edit, it stays dismissed.
       const [conflict] = (await service.status(ws.repo)).conflicts;
       await service.dismissConflict(ws.repo, conflict!.id);
       await service.settled();

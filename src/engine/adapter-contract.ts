@@ -53,8 +53,6 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
-  /** Whether its tool-call hook can ask the person before a call goes ahead (Claude Code's `permissionDecision: "ask"`). */
-  asksPerson: boolean;
   /** Whether it draws Rerail's footer: Claude Code's status line, OMP's and Pi's widget. */
   statusLine: boolean;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
@@ -69,7 +67,6 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
-    asksPerson: false,
     statusLine: true,
     delivery: {
       log: "observe",
@@ -91,7 +88,6 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
-    asksPerson: false,
     statusLine: true,
     delivery: {
       log: "observe",
@@ -113,7 +109,6 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "event",
     persistence: "jsonl-ledger",
-    asksPerson: true,
     statusLine: true,
     delivery: {
       log: "observe",
@@ -135,7 +130,6 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
-    asksPerson: false,
     statusLine: false,
     delivery: {
       log: "observe",
@@ -157,7 +151,6 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
-    asksPerson: false,
     statusLine: false,
     delivery: {
       log: "observe",
@@ -346,11 +339,6 @@ export interface ConflictNotice {
   /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
   readonly text: string;
   readonly url?: string | undefined;
-  /**
-   * A stop: the question a host that can ask the person before a tool call (`asksPerson`) puts to them, at the call that
-   * edits a contested file. Absent for every other surface.
-   */
-  readonly ask?: string | undefined;
 }
 
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */

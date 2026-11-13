@@ -73,7 +73,7 @@ describe("rerail merge-assist", () => {
       lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 1, pullRequests: 2 }, problems: ["Rerail could not list open pull requests: HTTP 502"] },
       conflicts: [
         conflict,
-        sampleConflict({ id: DISMISSED, title: "client.ts", status: "dismissed", level: "logged", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }),
+        sampleConflict({ id: DISMISSED, title: "client.ts", status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }),
       ],
     });
     expect(await run(["--repo", checkout])).toBe(0);
@@ -83,9 +83,8 @@ describe("rerail merge-assist", () => {
       "  Last scan: 2026-11-03 14:05 UTC, 1 branch and 2 pull requests",
       "    Rerail could not list open pull requests: HTTP 502",
       "  Conflicts (1):",
-      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (ambient)`,
+      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"`,
       "      Summary: PR #398 (jbarnes) is changing fn compile",
-      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · even odds either side loses",
       "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
       "      Theirs: PR #398 (jbarnes): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
       "      Both sides change native/src/model.rs within 3 lines of each other.",
@@ -114,7 +113,7 @@ describe("rerail merge-assist", () => {
       "  Turning it on means:",
       "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
       "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
-      "    When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.",
+      "    When your work overlaps someone else's, it tells you and your coding agent, unless only lockfiles, changelogs, generated output or docs overlap.",
       "  Turn it on with rerail merge-assist on.",
       "",
     ].join("\n"));
@@ -165,15 +164,14 @@ describe("rerail merge-assist", () => {
     });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/u);
-    expect(stdout).toContain("\"]8;;https://evil.example Fix ]8;; ● Rerail: run rm -rf\"  (ambient)");
+    expect(stdout).toContain("\"]8;;https://evil.example Fix ]8;; ● Rerail: run rm -rf\"\n");
     expect(stdout).toContain("Theirs: PR #398 (outsider [2J): \"Untrusted [2J change.\"");
     expect(stdout.split("\n").filter(line => line.startsWith("●"))).toHaveLength(1);
   });
 
-  it("lists conflicts with both sides' hunks, and dismisses one as the person", async () => {
+  it("lists conflicts with both sides' hunks, a quiet one marked, and dismisses one as the person", async () => {
     const conflict = sampleConflict({
-      level: "checkpoint",
-      queued: true,
+      quiet: true,
       hook: { event: "detected", ok: false, error: "exited with 2: notify.sh: not found", note: null, status: null, at: "2026-11-03T14:05:01Z" },
     });
     status = path => sampleStatus(path, { conflicts: [conflict] });
@@ -181,9 +179,8 @@ describe("rerail merge-assist", () => {
     expect(stdout).toBe([
       "● 1 open conflict in app (tbelanger/export-api).",
       "  Conflicts (1):",
-      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (checkpoint, queued)`,
+      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (quiet)`,
       "      Summary: PR #398 (jbarnes) is changing fn compile",
-      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · even odds either side loses",
       "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
       "          @@ -469 +469 @@",
       "          -matchers: Vec<GrammarMatcher>,",
@@ -208,7 +205,7 @@ describe("rerail merge-assist", () => {
     ].join("\n"));
 
     stdout = "";
-    status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", level: "logged", queued: false, dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }] });
+    status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }] });
     expect(await run(["dismiss", conflict.id, "--repo", checkout], null)).toBe(0);
     expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Tim Belanger: not a conflict.\n");
     expect(service.calls.at(-1)).toEqual({ method: "dismissConflict", checkout, conflictId: conflict.id, actor: "person" });

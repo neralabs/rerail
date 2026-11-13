@@ -3,7 +3,7 @@
  * against the one Rerail database. It runs as the person, so turning Merge Assist on or off, changing its settings and
  * dismissing a conflict are allowed here as they are on the dashboard's Merge Assist page. A coding agent with a shell
  * can run it too, as it can any Rerail command: the people-only guarantee covers the MCP and HTTP API. See
- * docs/merge-assist-v1-build.md §5.3 and §6.
+ * docs/merge-assist-v1-build.md.
  * Internal testing: the whole command.
  */
 import { realpathSync } from "node:fs";
@@ -11,7 +11,6 @@ import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { sideName } from "../engine/code-rule/rerail-steer.js";
-import { plural } from "../engine/merge-assist/dimmer.js";
 import {
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
@@ -103,10 +102,8 @@ function dismissalText(conflict: Conflict): string {
   return conflict.dismissal === null ? conflict.status : `dismissed by ${plain(conflict.dismissal.name)}: not a conflict`;
 }
 
-/** A conflict's level as a line says it: the level, and whether it waits over budget (queued). */
-function levelWords(conflict: Conflict): string {
-  return `${conflict.level}${conflict.queued ? ", queued" : ""}`;
-}
+/** `count` with its noun: `1 branch`, `3 branches`. */
+const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 
 /** The conflict hook command's failure on the conflict's latest event, when it failed. */
 function hookLines(conflict: Conflict): string[] {
@@ -115,13 +112,12 @@ function hookLines(conflict: Conflict): string[] {
   return [`  Hook failed (${hook.event}): ${plain(hook.error ?? "no reason recorded")}`];
 }
 
-/** One open conflict: what, how loud and why, both sides, why it is a conflict, and how to dismiss it. */
+/** One open conflict: what, whether it is quiet, both sides, why it is a conflict, and how to dismiss it. */
 function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
   const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
   return [
-    `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}  (${levelWords(conflict)})`,
+    `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}${conflict.quiet ? "  (quiet)" : ""}`,
     `  Summary: ${plain(conflict.summary)}`,
-    ...(conflict.reasons.length === 0 ? [] : [`  Size:   ${conflict.reasons.map(plain).join(" · ")}`]),
     `  Yours:  ${sideLine(conflict.mine)}`,
     ...hunk(conflict.mine),
     `  Theirs: ${sideLine(conflict.theirs)}${conflict.theirs.url === null ? "" : ` ${plain(conflict.theirs.url)}`}`,
@@ -181,12 +177,12 @@ function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] 
   return lines;
 }
 
-/** What turning Merge Assist on means, before a person does it (docs/merge-assist-v1-build.md §5.1). */
+/** What turning Merge Assist on means, before a person does it (docs/merge-assist-v1-build.md). */
 const TURNING_ON = [
   "  Turning it on means:",
   "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
   "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
-  "    When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.",
+  "    When your work overlaps someone else's, it tells you and your coding agent, unless only lockfiles, changelogs, generated output or docs overlap.",
   "  Turn it on with rerail merge-assist on.",
 ];
 

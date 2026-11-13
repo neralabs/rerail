@@ -1,12 +1,11 @@
 /**
- * The conflict hook (docs/merge-assist-v1-build.md §9.5): an extensible point after detection. Each detection pass
- * fires `detected` (first seen in this checkout), `level-changed` (its level rose) and `closed` (dismissed or no longer
- * found) once per conflict, and every registered handler hears each one in the background: the pass, the session's
- * boundary and the agent never wait for a handler. A handler that throws is logged and skipped. The handlers are
- * delivery and the person's command.
+ * The conflict hook (docs/merge-assist-v1-build.md): an extensible point after detection. Each detection pass fires
+ * `detected` (first seen in this checkout) and `closed` (dismissed or no longer found) once per conflict, and every
+ * registered handler hears each one in the background: the pass, the session's boundary and the agent never wait for
+ * a handler. A handler that throws is logged and skipped. The handlers are delivery and the person's command.
  */
 import type { RerailHost } from "../../engine/adapter-contract.js";
-import { CONFLICT_LEVELS, type ConflictEvent, type ConflictHookOutcome, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
+import type { ConflictEvent, ConflictHookOutcome, MergeAssistSettings } from "../../engine/merge-assist/model.js";
 import type { StoredConflict } from "./conflict-store.js";
 
 /** What every handler hears an event with. */
@@ -43,14 +42,12 @@ export interface ConflictFire {
 /** The event between a conflict as the store held it (or did not) and as it holds it now; null when nothing happened. */
 function eventOf(was: StoredConflict | undefined, entry: StoredConflict): ConflictEvent | null {
   if (was === undefined) return entry.conflict.status === "open" ? "detected" : null;
-  if (was.conflict.status !== "open") return null;
-  if (entry.conflict.status !== "open") return "closed";
-  return CONFLICT_LEVELS.indexOf(entry.conflict.level) > CONFLICT_LEVELS.indexOf(was.conflict.level) ? "level-changed" : null;
+  return was.conflict.status === "open" && entry.conflict.status !== "open" ? "closed" : null;
 }
 
 /**
  * The events between what the store held before a change and after it: `detected` for an open conflict it did not
- * hold, `level-changed` for an open one whose level rose, `closed` for an open one now dismissed or gone.
+ * hold, `closed` for an open one now dismissed or gone.
  */
 export function conflictEvents(before: readonly StoredConflict[], after: readonly StoredConflict[]): ConflictFire[] {
   const prior = new Map(before.map(entry => [entry.conflict.id, entry]));
@@ -101,8 +98,8 @@ export class ConflictHook {
    * a conflict's agent note waits only for the handlers that `awaits` its event, as {@link awaiting} says, and for each
    * at most the note wait. Every wait is registered before any handler starts, so a handler that hands notes out at
    * once (delivery) never hands out a note another handler (the command) is still to add to. One handler hears one
-   * conflict's events in the order they were fired (`detected` before `level-changed` before `closed`), each after it
-   * finished the one before; other conflicts and other handlers run alongside.
+   * conflict's events in the order they were fired (`detected` before `closed`), each after it finished the one
+   * before; other conflicts and other handlers run alongside.
    */
   fire(fires: readonly ConflictFire[], context: ConflictHandlerContext, apply: (conflictId: string, result: HandlerResult) => void): void {
     const jobs = fires.flatMap(({ event, conflict }) => this.#handlers.map(handler => ({

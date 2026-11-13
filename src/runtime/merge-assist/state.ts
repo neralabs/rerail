@@ -21,8 +21,6 @@ export const STATE_KEYS = {
   github: (repositoryKey: string) => `github:${repositoryKey}`,
   /** The checkout's in-flight conflicts, open and dismissed (`conflict-store.ts`). */
   conflicts: (checkoutPath: string) => `conflicts:${checkoutPath}`,
-  /** The interruptions the dimmer granted a person: checkpoint prompts per day, stops per session (`conflict-level.ts`). */
-  budget: (person: string) => `budget:${person}`,
   /** The person's Merge Assist settings for a repository: the conflict hook command (`conflict-delivery.ts`). */
   settings: (repositoryKey: string) => `settings:${repositoryKey}`,
 } as const;

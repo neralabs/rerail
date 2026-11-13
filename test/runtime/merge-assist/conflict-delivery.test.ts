@@ -8,24 +8,21 @@ import type { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git, writeFiles } from "../../support/git.js";
 import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
-import { body, grown, open, sessionRuntime } from "./support/conflict-sessions.js";
+import { body, changed, open, sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
 
-/** Lines theirs builds on its change: enough for a checkpoint, and few enough for an ambient overlap. */
-const CHECKPOINT = 30;
-const AMBIENT = 8;
 /** The overlap's line: who on the other side is changing what. */
 const SUMMARY = "jbarnes-1 (Tim Belanger) is changing function retry";
 
 /**
- * The base holds `file` (a `body`), branch `jbarnes-1` changes its line 20 and builds `extra` lines on it, and this
- * checkout edits line 22, uncommitted: one overlap.
+ * The base holds `file` (a `body`), branch `jbarnes-1` changes its line 20, and this checkout edits line 22,
+ * uncommitted: one overlap.
  */
-async function overlap(file: string, extra: number): Promise<{ ws: Workspace; theirs: string }> {
+async function overlap(file: string): Promise<{ ws: Workspace; theirs: string }> {
   const ws = await workspace({ files: { [file]: body("retry") } });
   const theirs = ws.worktree("jbarnes-1");
-  commit(theirs, { [file]: grown("retry", extra) }, "Grow retry");
+  commit(theirs, { [file]: changed("retry") }, "Grow retry");
   writeFiles(ws.repo, { [file]: body("retry", { 22: "  const retry22 = \"mine\";" }) });
   return { ws, theirs };
 }
@@ -117,8 +114,8 @@ const FILE = "src/retry.ts";
 
 describe("conflict delivery", { timeout: 60_000 }, () => {
   describe("where a conflict reaches", () => {
-    async function detected(extra: number): Promise<{ ws: Workspace; service: MergeAssistRuntime; conflict: Conflict }> {
-      const { ws } = await overlap(FILE, extra);
+    async function detected(file = FILE): Promise<{ ws: Workspace; service: MergeAssistRuntime; conflict: Conflict }> {
+      const { ws } = await overlap(file);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
@@ -127,8 +124,8 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     }
 
     it("the agent's note once at the first boundary, the person's line with it, and the status line", async () => {
-      const { ws, service, conflict } = await detected(AMBIENT);
-      expect(conflict).toMatchObject({ level: "ambient", summary: SUMMARY });
+      const { ws, service, conflict } = await detected();
+      expect(conflict).toMatchObject({ quiet: false, summary: SUMMARY });
       const [note, ...more] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       expect(more).toEqual([]);
       expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: jbarnes-1 (Tim Belanger) Grow retry.`);
@@ -140,62 +137,42 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(service.pendingNotes("codex-session", ws.repo, new Set(), "codex")[0]!.conflict!.text).toBe(`your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry — ${SUMMARY}`);
       expect(takeNotes(service, "session", ws.repo)).toHaveLength(1);
       expect(takeNotes(service, "session", ws.repo)).toEqual([]);
-      expect(footer(ws, "footer")).toEqual({ conflicts: 1, decide: null, summary: { id: conflict.id, text: SUMMARY } });
+      expect(footer(ws, "footer")).toEqual({ conflicts: 1, summary: { id: conflict.id, text: SUMMARY } });
     });
 
-    it("a checkpoint: the agent's card, the person's line asking them to decide, and the status line", async () => {
-      const { ws, service, conflict } = await detected(CHECKPOINT);
-      expect(conflict).toMatchObject({ level: "checkpoint" });
-      expect(service.pendingNotes("s", ws.repo, new Set(), "claude-code")).toEqual([
-        expect.objectContaining({
-          content: expect.stringContaining(`◆ RERAIL · conflict #${conflict.shortId}`),
-          conflict: { id: conflict.id, text: "decide: retry.ts · function retry (jbarnes-1)" },
-        }),
-      ]);
-      expect(footer(ws, "f")).toMatchObject({ decide: { id: conflict.id, title: conflict.title } });
-    });
-
-    it("stops before an edit to a contested file", async () => {
-      const migration = "db/migrations/users.sql";
-      const { ws } = await overlap(migration, 60);
-      const service = ws.service();
-      await service.setEnabled(ws.repo, true);
-      expect(await service.detectAfterEdit(ws.repo, "budget-session")).toBe(true);
-      expect(open((await service.status(ws.repo)).conflicts)[0]).toMatchObject({ level: "stop" });
-      const [stop] = service.stopNotes("stop-session", ws.repo, { toolName: "Edit", input: { file_path: join(ws.repo, migration) } }, true, new Set(), "claude-code");
-      expect(stop!.content).toContain("Rerail asked the user before this edit");
-      expect(stop!.conflict!.ask).toContain(`Rerail: ${migration} is contested with jbarnes-1 (Tim Belanger)`);
+    it("a quiet conflict, only in docs, reaches neither the agent, the person's line nor the status line", async () => {
+      const { ws, service, conflict } = await detected("docs/retry.md");
+      expect(conflict).toMatchObject({ quiet: true, status: "open" });
+      expect(service.pendingNotes("session", ws.repo, new Set(), "claude-code")).toEqual([]);
+      expect(footer(ws, "footer")).toBeUndefined();
     });
   });
 
   describe("the command hook", () => {
-    it("gets the conflict on stdin for detected, level-changed and closed, never in its arguments", async () => {
-      const { ws, theirs } = await overlap(FILE, AMBIENT);
+    it("gets the conflict on stdin for detected and closed, never in its arguments", async () => {
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
       await service.settled();
-      commit(theirs, { [FILE]: grown("retry", CHECKPOINT) }, "Grow retry further");
-      expect(open((await service.scan(ws.repo)).conflicts)[0]).toMatchObject({ id: conflict!.id, level: "checkpoint" });
-      await service.settled();
       await service.dismissConflict(ws.repo, conflict!.id);
       await service.settled();
 
       const calls = hook.calls();
-      expect(calls.map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["level-changed", conflict!.id], ["closed", conflict!.id]]);
+      expect(calls.map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["closed", conflict!.id]]);
       for (const call of calls) {
         expect(call.argv).toEqual([hook.command[2]]);
         expect(call.cwd).toBe(ws.repo);
         expect(call.stdin).toMatchObject({ version: 1, event: call.event, conflict: { id: conflict!.id }, checkout: { path: ws.repo, branch: "mine", base: "main" }, session: null });
       }
-      expect(calls[2]!.stdin).toMatchObject({ conflict: { status: "dismissed" } });
+      expect(calls[1]!.stdin).toMatchObject({ conflict: { status: "dismissed" } });
       expect((await service.status(ws.repo)).conflicts[0]!.hook).toMatchObject({ event: "closed", ok: true, error: null });
     });
 
     it("hears closed when the overlap goes away, and names the session whose boundary ran the pass", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -209,7 +186,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     });
 
     it("adds its note to the agent's note, and its status to the status line", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -230,7 +207,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
      */
     async function editSession(mode: "answer" | "held"): Promise<{ ws: Workspace; service: MergeAssistRuntime; runtime: RerailRuntime; hook: HookScript; sessionId: string; edit: () => Promise<AdapterDelivery[]> }> {
       const ws = await workspace({ files: { [FILE]: body("retry") } });
-      commit(ws.worktree("jbarnes-1"), { [FILE]: grown("retry", AMBIENT) }, "Grow retry");
+      commit(ws.worktree("jbarnes-1"), { [FILE]: changed("retry") }, "Grow retry");
       const hook = hookScript(ws, mode);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -290,7 +267,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     });
 
     it("stops a command still running when Merge Assist stops: its process group gets SIGTERM, then SIGKILL", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws, "hang");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -304,7 +281,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     });
 
     it("gives a Codex person's line the hook's status as it is when the note is handed over", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -326,7 +303,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     });
 
     it("answers within its timeout and grace though a process it left behind holds its output", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws, "orphan");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -349,7 +326,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       ["garbage", 10, /^its output is not JSON/u],
     ] as const) {
       it(`records a command that ${mode === "fail" ? "exits non-zero" : mode === "hang" ? "times out" : "answers with output that is not JSON"}, and delivers as without it`, async () => {
-        const { ws } = await overlap(FILE, AMBIENT);
+        const { ws } = await overlap(FILE);
         const hook = hookScript(ws, mode);
         const service = ws.service();
         await service.setEnabled(ws.repo, true);
@@ -367,7 +344,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
 
   describe("the order of a conflict's events", () => {
     it("hands a command hook a dismissal right after a scan only once it has answered detected", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
+      const { ws } = await overlap(FILE);
       const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -397,7 +374,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     }
 
     it("keeps its id and its dismissal when main gains lines above it and both sides merge main, and the hook hears nothing", async () => {
-      const { ws, theirs } = await overlap(FILE, AMBIENT);
+      const { ws, theirs } = await overlap(FILE);
       const hook = hookScript(ws);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -416,23 +393,6 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.setEnabled(ws.repo, false);
       await service.setEnabled(ws.repo, true);
       expect(open((await service.scan(ws.repo)).conflicts)).toEqual([expect.objectContaining({ id: conflict!.id, theirs: expect.objectContaining({ location: `${FILE}:23` }) })]);
-    });
-  });
-
-  describe("the card", () => {
-    it("says what the conflict is, whom to talk to, and that it can be dismissed; only the person decides", async () => {
-      const { ws } = await overlap(FILE, CHECKPOINT);
-      const service = ws.service();
-      await service.setEnabled(ws.repo, true);
-      const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      const [card] = takeNotes(service, "session-1", ws.repo);
-      expect(card).toContain(`◆ RERAIL · conflict #${conflict!.shortId}: retry.ts · function retry`);
-      expect(card).toContain("  Theirs   \"Grow retry\"  (written by Tim Belanger · jbarnes-1)");
-      expect(card).toContain("  → Talk to Tim Belanger about it (jbarnes-1).");
-      expect(card).toContain("    Not a conflict? Dismiss it on the Merge Assist page of the dashboard.");
-      expect(card).toContain("Don't decide it yourself; only the user decides.");
-      // Handed once to the session: a later boundary carries it no more.
-      expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
     });
   });
 });

@@ -99,28 +99,29 @@ describe("a failed write's reason", () => {
 
 describe("conflicts", () => {
   const conflicts = [
-    conflict("logged-new", { level: "logged", detectedAt: at(1) }),
-    conflict("ambient-old", { detectedAt: at(60) }),
+    conflict("quiet-new", { quiet: true, detectedAt: at(1) }),
+    conflict("told-old", { detectedAt: at(60) }),
     dismissed("dismissed-1", at(2)),
-    conflict("stop", { level: "stop", detectedAt: at(90) }),
-    conflict("ambient-new", { detectedAt: at(5) }),
+    conflict("quiet-old", { quiet: true, detectedAt: at(90) }),
+    conflict("told-new", { detectedAt: at(5) }),
     dismissed("dismissed-2", at(20)),
   ];
 
-  it("lists open conflicts loudest first, each level newest first; dismissed ones as the status orders them", () => {
+  it("lists open conflicts not quiet first, each newest first; dismissed ones as the status orders them", () => {
     const sections = conflictSections(status({ conflicts }));
-    expect(sections.open.map(c => c.id)).toEqual(["stop", "ambient-new", "ambient-old", "logged-new"]);
+    expect(sections.open.map(c => c.id)).toEqual(["told-new", "told-old", "quiet-new", "quiet-old"]);
     expect(sections.dismissed.map(c => c.id)).toEqual(["dismissed-1", "dismissed-2"]);
   });
 
   it("drops a conflict being dismissed from the open list at once", () => {
-    const { open } = conflictSections(status({ conflicts }), new Set(["ambient-old"]));
-    expect(open.map(c => c.id)).toEqual(["stop", "ambient-new", "logged-new"]);
+    const { open } = conflictSections(status({ conflicts }), new Set(["told-old"]));
+    expect(open.map(c => c.id)).toEqual(["told-new", "quiet-new", "quiet-old"]);
   });
 
-  it("counts every open conflict in the sidebar, logged ones included, and none while off or being dismissed", () => {
-    expect(openConflictCount(status({ conflicts }))).toBe(4);
-    expect(openConflictCount(status({ conflicts }), new Set(["stop"]))).toBe(3);
+  it("counts the open conflicts that are not quiet in the sidebar, and none while off or being dismissed", () => {
+    expect(openConflictCount(status({ conflicts }))).toBe(2);
+    expect(openConflictCount(status({ conflicts }), new Set(["told-new"]))).toBe(1);
+    expect(openConflictCount(status({ conflicts }), new Set(["quiet-new"]))).toBe(2);
     expect(openConflictCount(status({ conflicts, enabled: false }))).toBe(0);
     expect(openConflictCount(null)).toBe(0);
   });

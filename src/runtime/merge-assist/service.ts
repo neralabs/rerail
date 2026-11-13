@@ -27,7 +27,7 @@ import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerCo
 import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict } from "./conflict-store.js";
 import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
-import { currentNotice, markNotesDelivered, pendingNotes, stopNotes, type ConflictNoteOptions, type EditCall, type PendingNote } from "./notes.js";
+import { currentNotice, markNotesDelivered, pendingNotes, type ConflictNoteOptions, type PendingNote } from "./notes.js";
 import { personName } from "./people.js";
 import { STATE_KEYS, deleteState, isoSeconds, readState, writeState } from "./state.js";
 
@@ -42,7 +42,7 @@ export class MergeAssistError extends Error {
   }
 }
 
-/** Who asks for a change: a person (dashboard, CLI), or a coding agent (MCP), which may only do what §6 allows. */
+/** Who asks for a change: a person (dashboard, CLI), or a coding agent (MCP), which may only read and scan. */
 export type MergeAssistActor = "person" | "agent";
 
 export interface MergeAssistService {
@@ -75,11 +75,6 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * line). Reads only.
    */
   pendingNotes(sessionId: string, checkoutPath: string, inFlight?: ReadonlySet<string>, host?: RerailHost): PendingNote[];
-  /**
-   * The stop notes for a tool call about to edit contested files, once per conflict and session; `asks` when the
-   * session's host can ask the person before the call. Reads only.
-   */
-  stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight?: ReadonlySet<string>, host?: RerailHost): PendingNote[];
   /** Record notes as handed to the session, once a delivery took them. */
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void;
   /**
@@ -93,8 +88,8 @@ export interface MergeAssistRuntime extends MergeAssistService {
   conflictNotice(checkoutPath: string, notice: ConflictNotice, host?: RerailHost): ConflictNotice;
   /**
    * The agent edited files in the checkout: find its in-flight conflicts again, at most once per
-   * {@link CONFLICT_DETECT_INTERVAL_MS} per checkout. `sessionId` is the session whose edit it was, whose stop budget a
-   * stop is granted from, on `host`. Resolves to whether it ran; the conflict hook's handlers run after, in the background.
+   * {@link CONFLICT_DETECT_INTERVAL_MS} per checkout. `sessionId` is the session whose edit it was, on `host`: the
+   * conflict hook hears it. Resolves to whether it ran; the conflict hook's handlers run after, in the background.
    */
   detectAfterEdit(checkoutPath: string, sessionId?: string | null, host?: RerailHost): Promise<boolean>;
   /**
@@ -276,7 +271,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 
   /**
    * Scan the checkout once at a time across processes; a request while one runs joins it here, or leaves it be elsewhere.
-   * `session` is the session that asked for it, if any: its stop budget is the one the detection draws on.
+   * `session` is the session that asked for it, if any: the conflict hook hears it.
    */
   #scanOnce(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null = null): Promise<void> {
     const path = checkout.checkoutPath;
@@ -331,9 +326,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
     const { pulls, problem } = await this.#openPulls(checkout, scan);
-    const detected = await detectConflicts({
-      database: this.#db, checkout, pulls, sessionId: session?.id ?? null, now: this.#now,
-    });
+    const detected = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...(problem === null ? [] : [problem]), ...detected.problems] };
@@ -439,10 +432,6 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return pendingNotes(this.#db, sessionId, checkoutPath, inFlight, {
       ...this.#noteOptions(host), awaiting: this.#hook.awaiting(checkoutPath),
     });
-  }
-
-  stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight: ReadonlySet<string> = new Set(), host?: RerailHost): PendingNote[] {
-    return stopNotes(this.#db, sessionId, checkoutPath, call, asks, inFlight, this.#noteOptions(host));
   }
 
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void {

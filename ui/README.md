@@ -10,7 +10,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `frame/` draws the frame: `topbar.js` the top bar (sidebar toggle, the wordmark, which opens Overview, repository
   pill and menu, status) and `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its
   rules are on, Created by you, Add rule packs, Create a rule, History by rule and by session, Merge Assist with how
-  many of its conflicts are open, Settings).
+  many of its conflicts are open and not quiet, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
   `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
   (`?filter=violations|in-progress` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict into
@@ -23,10 +23,10 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   and the review, `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
-  conflicts with work in flight: open ones as cards, loudest first, with Dismiss (not a conflict) as the one action,
-  then the dismissed ones folded with who dismissed each and when. It renders
-  other people's titles, summaries, hunks, names and links as text nodes only, and links a pull request only when
-  `safePeerUrl` accepts it.
+  conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
+  is quiet, with Dismiss (not a conflict) as the one action, then the dismissed ones folded with who dismissed each
+  and when. It renders other people's titles, summaries, hunks, names and links as text nodes only, and links a pull
+  request only when `safePeerUrl` accepts it.
 - `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
@@ -53,5 +53,4 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   tokens (titles, outcomes, the inset surface, the page background, shadows) are in one block at the top of
   `base.css`, each a Nera token or a mix of them; no colour literal appears elsewhere in the CSS.
 
-The browser specs in `e2e/` drive it over seeded scenarios (`e2e/README.md`); `test/ui/` unit-tests its pure modules,
-and renders the Merge Assist page over a small fake DOM (`test/ui/support/fake-dom.ts`).
+The browser specs in `e2e/` drive it over seeded scenarios (`e2e/README.md`); `test/ui/` unit-tests its pure modules.

@@ -80,18 +80,10 @@ export interface ClaudeOutputOptions {
 
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
- * shows it under the tool call, or at the turn's end), in the same output (`steerHookOutput`). At `PreToolUse`, a
- * Merge Assist stop that asks (`conflict.ask`) makes Claude Code ask the person before the call
- * (`permissionDecision: "ask"`).
+ * shows it under the tool call, or at the turn's end), in the same output (`steerHookOutput`).
  */
 export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
-  const output = steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
-  const ask = hook === "PreToolUse" ? deliveries.find(delivery => delivery.conflict?.ask !== undefined)?.conflict?.ask : undefined;
-  // In place: the output may carry the guidance receipt `prepareGuidanceOutput` keyed to it.
-  if (ask !== undefined && output.hookSpecificOutput !== undefined) {
-    output.hookSpecificOutput = { ...(output.hookSpecificOutput as Record<string, unknown>), permissionDecision: "ask", permissionDecisionReason: ask };
-  }
-  return output;
+  return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
 export async function handleClaudeEvent(

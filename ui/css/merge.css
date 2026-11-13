@@ -96,27 +96,16 @@
 .sn-item .n.due{align-self:center;min-width:20px;padding:0 6px;border-radius:var(--pill);background:var(--brand);color:var(--primary-foreground);font-weight:600;line-height:18px;text-align:center}
 .sn-item[aria-current="page"] .n.due{color:var(--primary-foreground);opacity:1}
 
-/* ---- conflict cards: level, both sides, size, the evidence, Dismiss; logged ones muted ---- */
+/* ---- conflict cards: both sides, the evidence, Dismiss; quiet ones muted ---- */
 .mcards{display:grid;gap:12px}
 .mcards[hidden]{display:none}
 .mcard{display:grid;gap:10px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);min-width:0}
-.mcard.ambient{border-left:3px solid var(--warning)}
-.mcard.checkpoint{border-left:3px solid var(--brand)}
-.mcard.stop{border-left:3px solid var(--danger-foreground)}
-.mcard.logged{background:var(--sheet-inset);box-shadow:none}
-.mcard.logged .mctitle,.mcard.logged .msum{color:var(--muted-foreground)}
+.mcard.quiet{background:var(--sheet-inset);box-shadow:none}
+.mcard.quiet .mctitle,.mcard.quiet .msum{color:var(--muted-foreground)}
 .mchead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
 .mctitle{margin:0;flex:1 1 220px;min-width:0;font-size:14px;font-weight:600;line-height:1.4;color:var(--foreground);overflow-wrap:anywhere}
 .mcage{font-size:12px;color:var(--muted-foreground)}
 .mshort{font:12px var(--font-mono);color:var(--muted-foreground)}
-.badge.mlvl.stop{background:var(--danger-subtle);color:var(--danger-foreground)}
-.badge.mlvl.checkpoint{background:var(--brand-subtle);color:var(--brand-foreground)}
-.badge.mlvl.ambient{background:var(--warning-subtle);color:var(--warning-foreground)}
-.badge.mqueued{background:var(--sheet-inset);color:var(--muted-foreground)}
-.mstate{margin:0;font-size:12px;color:var(--muted-foreground)}
-.msize{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px}
-.mreasons{display:flex;flex-wrap:wrap;gap:4px 12px;margin:0;padding:0;list-style:none;color:var(--foreground)}
-.mreasons li{overflow-wrap:anywhere}
 .mside.mine{border-color:var(--brand-border)}
 .msum{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere}
 .mhunk{margin:8px 0 0;padding:8px 10px;max-height:24em;overflow:auto;font:12px/1.45 var(--font-mono);background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg);white-space:pre-wrap;overflow-wrap:anywhere}
@@ -128,7 +117,7 @@
 .mwhy{margin:0;padding-left:18px;display:grid;gap:3px}
 .mwhy li{overflow-wrap:anywhere}
 .mwhy li::marker{color:var(--muted-foreground)}
-.mlogged{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-foreground)}
+.mquiet{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-foreground)}
 /* The conflict's line (what the other side is doing), a failed conflict hook, and who to talk to. */
 .msummary{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere;max-width:var(--measure)}
 .mhookfail{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:12.5px;line-height:1.5;color:var(--warning-foreground);overflow-wrap:anywhere}

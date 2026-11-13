@@ -1,9 +1,9 @@
 /**
  * The dashboard's browser-test scenarios: each builds a throwaway Rerail home, Git checkouts and database under one
  * folder, written through the product's own stores (checkout registry, set-up, attachments, settings, library,
- * session and audit stores), at instants before the seed clock ({@link SEED_NOW} unless the caller passes another).
- * Run by `seed-scenario.ts` in a process of its own: the stores that stamp rows with `Date.now()` (audits, steer
- * receipts) are given the seed clock there.
+ * session and audit stores, Merge Assist's service and conflict store), at instants before the seed clock
+ * ({@link SEED_NOW} unless the caller passes another). Run by `seed-scenario.ts` in a process of its own: the stores
+ * that stamp rows with `Date.now()` (audits, steer receipts) are given the seed clock there.
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type Conflict,
+  type ConflictSide,
   addAttachment,
   type AuditInput,
   type CheckoutContext,
@@ -36,7 +38,8 @@ import {
   approve,
   ruleSubject,
 } from "../../src/engine/index.js";
-import { setRepositoryStarted, SqliteSessionStore } from "../../src/runtime/index.js";
+import { createMergeAssistService, setRepositoryStarted, SqliteSessionStore } from "../../src/runtime/index.js";
+import { type StoredConflict, writeConflicts } from "../../src/runtime/merge-assist/conflict-store.js";
 import { DAY, HOUR, MINUTE, SEED_NOW, type ScenarioManifest, type ScenarioName, type ScenarioRepository } from "./scenario-manifest.js";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -370,6 +373,92 @@ interface RepositoryPlan {
   readonly changes: readonly Change[];
   readonly sessions: readonly SessionPlan[];
   readonly schedules: readonly RuleSchedule[];
+  /** Merge Assist turned on by a person, with the checkout's in-flight conflicts; off when absent. */
+  readonly mergeAssist?: MergeAssistPlan;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Merge Assist
+
+interface MergeAssistPlan {
+  /** When the person turned it on. */
+  readonly at: number;
+  /** The checkout's conflicts as a detection pass stores them, and the person's dismissals. */
+  readonly conflicts: readonly StoredConflict[];
+}
+
+/** Text from someone else's branch that runs, or turns bold, if a page builds it as markup. */
+const HOSTILE_TEXT = `<img src=x onerror="window.__rerailInjected=1"><b>bold</b>`;
+
+const isoAt = (at: number): string => new Date(at).toISOString().replace(/\.\d{3}Z$/u, "Z");
+
+function side(over: Partial<ConflictSide> & Pick<ConflictSide, "label" | "ref" | "author" | "summary">): ConflictSide {
+  return { sha: createHash("sha1").update(over.ref).digest("hex"), tip: null, url: null, location: null, hunk: null, ...over };
+}
+
+function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal" | "hook"> & Partial<Pick<Conflict, "dismissal">>, file: string): StoredConflict {
+  const dismissal = conflict.dismissal ?? null;
+  return {
+    conflict: { kind: "overlap", status: dismissal === null ? "open" : "dismissed", hook: null, ...conflict, dismissal },
+    files: [file],
+    anchor: createHash("sha256").update(conflict.question).digest("hex").slice(0, 16),
+  };
+}
+
+/**
+ * The storefront checkout's conflicts: an overlap with PR #398 in the cart total (their summary and hunk carry
+ * {@link HOSTILE_TEXT}), a quiet one in `package-lock.json` with a local branch, and one the person dismissed, whose
+ * title is {@link HOSTILE_TEXT}.
+ */
+function storefrontConflicts(now: number): StoredConflict[] {
+  const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
+  return [
+    storedConflict({
+      id: "conflict:src/cart/cart.ts#1-3:pr398", shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
+      title: "cart.ts · function total",
+      mine: {
+        ...mine, location: "src/cart/cart.ts:2",
+        hunk: "@@ -1,3 +1,3 @@\n export function total(prices: number[]): number {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return Math.round(prices.reduce((sum, price) => sum + price, 0));\n",
+      },
+      theirs: side({
+        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: "https://github.com/acme/storefront/pull/398",
+        tip: { at: isoAt(now - 4 * HOUR), pushed: true }, location: "src/cart/cart.ts:2",
+        hunk: `@@ -1,3 +1,3 @@\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum + price, 0); // ${HOSTILE_TEXT}\n`,
+      }),
+      evidence: ["Both change src/cart/cart.ts lines 1–3."],
+      detectedAt: isoAt(now - 3 * HOUR),
+      summary: "PR #398 (Tim) is changing function total",
+    }, "src/cart/cart.ts"),
+    storedConflict({
+      id: "conflict:package-lock.json#10-14:bump-react", shortId: "5d02b9", quiet: true, question: "package-lock.json#10-14",
+      title: "package-lock.json",
+      mine: { ...mine, summary: "edits package-lock.json", location: "package-lock.json:12" },
+      theirs: side({
+        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0",
+        tip: { at: isoAt(now - 2 * HOUR), pushed: false }, location: "package-lock.json:12",
+        hunk: "@@ -12 +12 @@\n-      \"version\": \"19.1.0\",\n+      \"version\": \"19.2.0\",\n",
+      }),
+      evidence: ["Both change package-lock.json lines 10–14."],
+      detectedAt: isoAt(now - HOUR),
+      summary: "jbarnes/bump-react (jbarnes) is changing package-lock.json",
+    }, "package-lock.json"),
+    storedConflict({
+      id: "conflict:src/checkout/payment.ts#1-3:pr391", shortId: "9e31f0", quiet: false, question: "src/checkout/payment.ts#1-3",
+      title: HOSTILE_TEXT,
+      mine: { ...mine, location: "src/checkout/payment.ts:2" },
+      theirs: side({ label: "PR #391", ref: "refs/pull/391/head", author: "Ana", summary: "Log payments", url: "https://github.com/acme/storefront/pull/391" }),
+      evidence: ["Both change src/checkout/payment.ts lines 1–3."],
+      detectedAt: isoAt(now - 5 * HOUR),
+      dismissal: { name: "tbelanger", at: isoAt(now - 2 * HOUR) },
+      summary: "PR #391 (Ana) is changing function pay",
+    }, "src/checkout/payment.ts"),
+  ];
+}
+
+/** Turns Merge Assist on in the checkout as a person does on its page, then stores its conflicts. */
+async function turnOnMergeAssist(db: RerailDatabase, checkoutPath: string, plan: MergeAssistPlan): Promise<void> {
+  await createMergeAssistService({ database: db, now: () => plan.at }).setEnabled(checkoutPath, true);
+  writeConflicts(db, checkoutPath, plan.conflicts, plan.at);
 }
 
 function setting(repositoryKey: string, targetId: string, on: boolean | null, mode: RuleMode | null): RuleSetting {
@@ -499,6 +588,17 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
         // Recorded by a session hook, never set up or started.
         { checkout: DOCS_SITE, recordedAt: dayAt(2, 16), changes: [], ...noSessions },
       ];
+    case "merge-assist":
+      return [
+        {
+          checkout: STOREFRONT,
+          recordedAt: now - 6 * HOUR,
+          changes: [{ at: now - 6 * HOUR, apply: setUpAndStart(["typescript"]) }],
+          ...noSessions,
+          mergeAssist: { at: now - 6 * HOUR, conflicts: storefrontConflicts(now) },
+        },
+        { checkout: BILLING, recordedAt: now - 6 * HOUR, changes: [{ at: now - 6 * HOUR, apply: setUpAndStart(["typescript"]) }], ...noSessions },
+      ];
   }
 }
 
@@ -509,7 +609,7 @@ function stateOf(db: RerailDatabase, checkout: CheckoutContext): ScenarioReposit
 }
 
 /** Seeds `scenario` under `folder` (created; must be empty or absent) as of `now`, and describes what it holds. */
-export function seedScenario(scenario: ScenarioName, folder: string, now: number = SEED_NOW): ScenarioManifest {
+export async function seedScenario(scenario: ScenarioName, folder: string, now: number = SEED_NOW): Promise<ScenarioManifest> {
   mkdirSync(folder, { recursive: true });
   const root = realpathSync(folder);
   const rerailHome = join(root, "home");
@@ -526,7 +626,8 @@ export function seedScenario(scenario: ScenarioName, folder: string, now: number
   const sessions = new SqliteSessionStore(databasePath);
   const audits = new SqliteAuditStore(databasePath);
   try {
-    const repositories = plansFor(scenario, catalog, now).map((plan): ScenarioRepository => {
+    const plans = plansFor(scenario, catalog, now);
+    const repositories = plans.map((plan): ScenarioRepository => {
       const checkout = createCheckout(reposRoot, plan.checkout, gitEnvironment);
       const recorded = recordCheckout(db, checkout, plan.recordedAt);
       const context: HistoryContext = {
@@ -553,6 +654,9 @@ export function seedScenario(scenario: ScenarioName, folder: string, now: number
         openSessionIds: plan.sessions.filter(session => session.endedAt === null).map(session => session.sessionId),
       };
     });
+    for (const [index, plan] of plans.entries()) {
+      if (plan.mergeAssist !== undefined) await turnOnMergeAssist(db, repositories[index]!.checkoutPath, plan.mergeAssist);
+    }
     const primary = repositories[0]!;
     return { scenario, now, root, rerailHome, userHome, databasePath, primary, sessionIds: primary.sessionIds, repositories };
   } finally {

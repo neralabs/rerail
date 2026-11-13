@@ -1,1 +1,1 @@
-In internal testing, off until you turn it on per repository: `rerail merge-assist` warns you and your coding agent when your work overlaps another branch or open pull request before either merges, more insistently as the overlap grows, and can run a command of yours on each conflict.
+In internal testing, off until you turn it on per repository: `rerail merge-assist` warns you and your coding agent when your work overlaps another branch or open pull request before either merges, and can run a command of yours on each conflict.

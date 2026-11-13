@@ -1,9 +1,8 @@
 /**
- * How conflicts reach the person (docs/merge-assist-v1-build.md §9.6): the person's settings for a repository (the
+ * How conflicts reach the person (docs/merge-assist-v1-build.md): the person's settings for a repository (the
  * conflict hook's command), kept with Merge Assist's state on this machine (`settings:<repository>`), never in a
  * committed file; a conflict's line; and the delivery handler, which hands every conflict event to the checkout's
- * sessions: the agent's note and checkpoint card, the person's line, the footer, and a stop before an edit to a
- * contested file.
+ * sessions: the agent's note, the person's line and the footer.
  */
 import { eq } from "drizzle-orm";
 import { DEFAULT_MERGE_ASSIST_SETTINGS, mergeAssistSettingsSchema, type Conflict, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
@@ -32,7 +31,7 @@ export function statusText(conflict: Conflict): string {
 }
 
 /**
- * The delivery handler: every event is something the checkout's sessions may have to hear (a note, a card, a line),
+ * The delivery handler: every event is something the checkout's sessions may have to hear (a note, a line),
  * so it offers them what is pending at their next boundary. What each takes is read when the session takes its notes
  * (`notes.ts`) and when the footer is drawn.
  */

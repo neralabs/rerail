@@ -30,35 +30,25 @@ export function safePeerUrl(url, { repositoryKey = "", repository = null } = {})
   return parsed.href;
 }
 
-/** The sidebar's count: every open conflict, logged ones included, as the Conflicts section counts them; 0 while off. */
+/** The sidebar's count: the open conflicts that are not quiet, as the agent is told of them; 0 while off. */
 export function openConflictCount(status, dismissing = new Set()) {
   if (status === null || status === undefined || !status.enabled) return 0;
-  return conflictSections(status, dismissing).open.length;
+  return conflictSections(status, dismissing).open.filter(conflict => !conflict.quiet).length;
 }
 
 /* ---------- conflicts ---------- */
 
-/** What each level did in the session, as a card says it beside its age. */
-export const LEVEL_TEXT = {
-  stop: "Asks you before an edit to these files",
-  checkpoint: "Your agent shows you a card to decide",
-  ambient: "Told your agent and you in the session",
-  logged: "Logged, no interruption",
-};
-/** A level's badge on its card. */
-export const LEVEL_BADGE = { stop: "Stop", checkpoint: "Checkpoint", ambient: "Ambient", logged: "Logged" };
-/** The open list's order: the loudest first. */
-const LEVEL_RANK = { stop: 0, checkpoint: 1, ambient: 2, logged: 3 };
-
-/** Why a queued conflict is quieter than its score calls for: today's checkpoints, or the session's one stop, are used. */
-export const QUEUED_TEXT = "Queued: over the interruption budget, so shown as ambient until it frees up";
+/** What an open conflict that is not quiet did in the session, as its card says it beside its age. */
+export const TOLD_TEXT = "Told your agent and you in the session";
+/** What a quiet conflict's card says: why it is quiet, and that the session never hears of it. */
+export const QUIET_TEXT = "Quiet: only lockfiles, changelogs, generated output or docs. Not told to your agent.";
 
 const newestFirst = field => (a, b) => (Date.parse(b[field]) || 0) - (Date.parse(a[field]) || 0);
 
 /**
  * The Conflicts section's lists from the status and the dismissals in flight (`dismissing`, conflict ids). `open`:
- * loudest first (stop, checkpoint, ambient, logged), each newest first; one being dismissed leaves at once and comes
- * back if the write fails. `dismissed`: as the status orders them.
+ * the ones not quiet first, each newest first; one being dismissed leaves at once and comes back if the write fails.
+ * `dismissed`: as the status orders them.
  */
 export function conflictSections(status, dismissing = new Set()) {
   const open = [], dismissed = [];
@@ -69,7 +59,7 @@ export function conflictSections(status, dismissing = new Set()) {
       dismissed.push(conflict);
     }
   }
-  open.sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level] || newestFirst("detectedAt")(a, b));
+  open.sort((a, b) => Number(a.quiet) - Number(b.quiet) || newestFirst("detectedAt")(a, b));
   return { open, dismissed };
 }
 

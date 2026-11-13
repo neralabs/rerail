@@ -218,19 +218,15 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
-  it("adds Merge Assist's segment: the newest conflict's summary with the others counted, or the decision waiting on the person, linked to its card", async () => {
+  it("adds Merge Assist's segment: the newest conflict's line with the others counted, linked to its card", async () => {
     const session = response.context!.session!;
     const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jbarnes) shares compiled matchers you clone" };
-    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, decide: null, summary } };
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, summary } };
     const overlaps = await read();
     expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone (+2)");
     expect(overlaps.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
-    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, decide: null, summary } };
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, summary } };
     expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone");
-    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, decide: { id: "conflict:overlap:abc:12345678", title: "where retries live: a long title that the footer has to cut short" }, summary } };
-    const decide = await read();
-    expect(decide.text).toBe("R E R A I L ● 3 rules · steered 2× · ◉ decide: where retries live: a long title that the foote…");
-    expect(decide.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
   });
 
   it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {

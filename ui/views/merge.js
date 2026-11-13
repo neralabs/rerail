@@ -2,11 +2,10 @@
  * Merge Assist (`#merge`) for the scoped checkout. Off: what turning it on does and what Rerail found (`gh`), then
  * Turn on Merge Assist. On: the status strip (branch and base, `gh`, the last scan and its problems, Scan now and Turn
  * off), the Settings fold (the conflict hook command and its timeout), then the Conflicts: open conflicts as
- * cards, loudest first (each with its level, short id, queued state, its summary, a failed conflict hook, both sides,
- * the dimmer's reasons as its size, the evidence, and who to talk it over with), logged ones muted, then the dismissed
- * ones folded with who dismissed each and when. A card's one action is Dismiss (not a conflict). What each shows comes
- * from `merge-model.js`. When the status cannot be read, the page says why and shows nothing to act on until a read
- * succeeds again.
+ * cards, the ones not quiet first (each with its short id, its summary, a failed conflict hook, both sides, the
+ * evidence, and who to talk it over with), quiet ones muted, then the dismissed ones folded with who dismissed each
+ * and when. A card's one action is Dismiss (not a conflict). What each shows comes from `merge-model.js`. When the
+ * status cannot be read, the page says why and shows nothing to act on until a read succeeds again.
  *
  * Conflict titles, summaries, hunks, authors, branch names and links are other people's text: every one is a text
  * node (`h()` children), never markup, and a pull request link is an `href` only when `safePeerUrl` accepts it.
@@ -20,7 +19,7 @@ import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import {
-  HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, LEVEL_BADGE, LEVEL_TEXT, QUEUED_TEXT,
+  HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, QUIET_TEXT, TOLD_TEXT,
   branchText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
   safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
   writeError,
@@ -235,25 +234,14 @@ function conflictNotes(conflict) {
   ];
 }
 
-/** What the dimmer measured: one plain sentence per signal, as the agent's card shows them. */
-function conflictSize(reasons) {
-  if (reasons.length === 0) return null;
-  return h("div.msize", null, h("span.k", null, "Size"), h("ul.mreasons", null, reasons.map(line => h("li", null, line))));
-}
-
 function conflictCard(conflict) {
-  const logged = conflict.level === "logged";
-  return h(`article.mcard.${conflict.level}`, null,
+  return h(conflict.quiet ? "article.mcard.quiet" : "article.mcard", null,
     h("div.mchead", null,
-      h(`span.badge.mlvl.${conflict.level}`, { title: LEVEL_TEXT[conflict.level] }, LEVEL_BADGE[conflict.level]),
-      conflict.queued ? h("span.badge.mqueued", { title: QUEUED_TEXT }, "Queued") : null,
       h("h3.mctitle", null, conflict.title),
       h("span.mshort", { title: `Name it in chat as #${conflict.shortId}` }, `#${conflict.shortId}`),
-      h("span.mcage", null, "Open for ", ageSlot(), logged ? null : [" · ", LEVEL_TEXT[conflict.level]])),
+      h("span.mcage", null, "Open for ", ageSlot(), conflict.quiet ? null : [" · ", TOLD_TEXT])),
     conflictNotes(conflict),
-    conflict.queued ? h("p.mstate", null, QUEUED_TEXT) : null,
     h("div.mvs", null, sideBox(conflict.mine, "mine"), sideBox(conflict.theirs, "theirs")),
-    conflictSize(conflict.reasons),
     whyConflict(conflict.evidence),
     talkTo(conflict.theirs),
     h("div.macts", null,
@@ -261,11 +249,11 @@ function conflictCard(conflict) {
         "data-act": "madismiss", "data-i": conflict.id,
         "aria-label": `Dismiss ${quoted(conflict.title)}: not a conflict`, title: "Not a conflict: Rerail stops raising it",
       }, "Dismiss"),
-      logged ? h("span.mlogged", null, icon("logged"), LEVEL_TEXT.logged) : null));
+      conflict.quiet ? h("span.mquiet", null, icon("logged"), QUIET_TEXT) : null));
 }
 
 /** What a card shows, for its key: a change rebuilds the card. Its age and Dismiss's state are patched. */
-const conflictContent = c => [c.level, c.queued, c.reasons, c.shortId, c.title, c.mine, c.theirs, c.evidence, c.summary, c.hook];
+const conflictContent = c => [c.quiet, c.shortId, c.title, c.mine, c.theirs, c.evidence, c.summary, c.hook];
 
 function syncCards(list, items) {
   syncChildren(list, items, c => `${c.id}\u0000${JSON.stringify(conflictContent(c))}`, conflictCard, (node, conflict) => {
@@ -348,7 +336,7 @@ function renderOff(status) {
       h("h3", null, "What turning it on does"),
       h("ul.mbul", null,
         h("li", null, "Rerail reads your other local branches, and open pull requests through ", h("code", null, "gh"), " with your sign-in, read-only."),
-        h("li", null, "You and your coding agent are told about each conflict, louder the more rework it risks. Rerail never picks a side, and never writes to your branches or to GitHub.")),
+        h("li", null, "You and your coding agent are told about each conflict, unless only lockfiles, changelogs, generated output or docs overlap. Rerail never picks a side, and never writes to your branches or to GitHub.")),
       h("h3", null, "What Rerail found"),
       h("ul.mchecks", null, checks.map(check => h(`li.${check.ok ? "mready" : "mnotready"}`, { "data-check": check.key },
         icon(check.ok ? "done" : "logged", 14),
@@ -428,7 +416,7 @@ function settingsForm(fields) {
     h("div.mfieldrow", null,
       h("label.k", { for: "ma-hook" }, "Conflict hook command"),
       field("input.mfield.mono", { id: "ma-hook", type: "text", placeholder: "[\"./scripts/on-conflict.sh\"]", "aria-describedby": "ma-hook-hint ma-settings-problem" }, fields.command),
-      h("p.mnote2", { id: "ma-hook-hint" }, "A JSON array: the program, then its arguments. Rerail runs it without a shell from the checkout’s root when a conflict is detected, gets louder, or closes, with the conflict as JSON on stdin. Empty for none.")),
+      h("p.mnote2", { id: "ma-hook-hint" }, "A JSON array: the program, then its arguments. Rerail runs it without a shell from the checkout’s root when a conflict is detected or closes, with the conflict as JSON on stdin. Empty for none.")),
     h("div.mfieldrow", null,
       h("label.k", { for: "ma-timeout" }, "Timeout in seconds"),
       field("input.mfield.mnum", { id: "ma-timeout", type: "number", min: 1, max: HOOK_TIMEOUT_MAX, step: 1, inputmode: "numeric", "aria-describedby": "ma-timeout-hint ma-settings-problem" }, fields.timeout),

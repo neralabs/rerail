@@ -1,5 +1,5 @@
 /**
- * Merge Assist's operations (docs/merge-assist-v1-build.md §5.3): the checkout's state and in-flight conflicts, a scan,
+ * Merge Assist's operations (docs/merge-assist-v1-build.md): the checkout's state and in-flight conflicts, a scan,
  * the settings, and dismissing a conflict. Each acts on one checkout, which the target names as every repository
  * operation's does. Changing the settings (on or off, the hook command) and dismissing a conflict are
  * people's; a coding agent may read and scan, in its own checkout only. The people-only guarantee holds for this
@@ -75,7 +75,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_get",
     method: "GET",
     path: "/api/merge-assist",
-    summary: internalTesting("Show Merge Assist for one checkout: whether it is on, the gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its level, reasons and summary). Reads only. Without a target an MCP call uses the calling agent's checkout."),
+    summary: internalTesting("Show Merge Assist for one checkout: whether it is on, the gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its summary, and whether it is quiet). Reads only. Without a target an MCP call uses the calling agent's checkout."),
     query: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

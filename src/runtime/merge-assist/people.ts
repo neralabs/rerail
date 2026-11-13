@@ -1,7 +1,4 @@
-/**
- * Who a person is as Merge Assist names them: on a conflict's side, as who dismissed it, and as whose interruption
- * budget the dimmer spends.
- */
+/** Who a person is as Merge Assist names them: on a conflict's side, and as who dismissed it. */
 import { userInfo } from "node:os";
 import { gitText } from "../../engine/git.js";
 
