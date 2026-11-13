@@ -577,6 +577,11 @@ database, the move tries again for up to 5 s. A daemon stopped partway goes on a
 finds nothing left to move with one read and takes no write lock. Once the move ends, the daemon runs one `VACUUM`,
 which gives the space it freed back to the disk.
 
+A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
+one may still be using the database: while an older Rerail has recorded an audit in the last 7 days, the daemon moves
+nothing, says in `daemon.log` until when it waits, and looks again then. A move that finds such an audit before its
+next batch stops there and waits the same way; the audits it has not reached keep their provenance in their row.
+
 `VACUUM` holds the database's write lock until it commits, which takes seconds on a large file, and the daemon's own
 writes wait for that lock on the thread that answers hooks. So the daemon runs `VACUUM` in a process of its own, once
 no process has written to the database for 2 s, and that process gives way to the daemon: when the daemon's thread
@@ -613,7 +618,10 @@ Storing each new audit's rule provenance once sets no floor, so coding agents on
 sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in its
 `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
 provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
-it, and the move leaves them there.
+it, and the move leaves them there. Since the move waits while an older Rerail records audits (above), one that keeps
+running beside the new version reads every audit recorded before the update in full. One started again after the move
+reads those empty, while `rerail.sqlite.pre-update`, the copy `rerail update` took before the update, holds each in
+full.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.

@@ -189,6 +189,21 @@ function timedWrite(database: Database.Database): { failure: string | undefined;
   }
 }
 
+/** An audit an older Rerail sharing the file records now, its provenance in its row; when it began. */
+function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[]): number {
+  const older = new Database(path);
+  try {
+    const now = Date.now();
+    older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", JSON.stringify(provenance), now, now + 1);
+    return now;
+  } finally {
+    older.close();
+  }
+}
+
+/** The start of the line a move writes while it waits for an older Rerail sharing the file. */
+const WAITS_FOR_OLDER = "moving the rule provenance of audits recorded before this Rerail's upgrade waits until";
+
 /**
  * A file with about 8 MB in use and 8 MB free, and a connection on it as the move's, which `vacuumGivingWay` runs on;
  * the VACUUMs of the processes it starts hold the write lock `holdMs` first, creating `held` (`slowVacuumNext`) as the
@@ -530,6 +545,89 @@ describe("audit rule provenance", () => {
       older.close();
     }
   });
+
+  it("moves nothing while an older Rerail sharing the file has recorded an audit within the window, so it reads every recorded audit's provenance, and moves once the window has passed", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app));
+    const recorded = written.map(({ auditId }) => auditId);
+    // This build upgrades the file; then an older Rerail sharing it records an audit, its provenance in its row.
+    openRerailDatabase(path).$client.close();
+    const at = recordAsOlder(path, "older-after", app);
+    const day = 24 * 3_600_000;
+
+    // Six days on, the move takes nothing: the older Rerail still reads each recorded audit's provenance in its row.
+    expect(await move(path, { clock: () => at + 6 * day })).toBe(0);
+    expect(provenanceTexts(readAsOlder(path, recorded))).toEqual(written.map(({ text }) => text));
+    expect(inlineAudits(path)).toBe(31);
+
+    // Eight days on, with no audit of an older Rerail for the week since, the move takes the recorded audits and leaves
+    // the older Rerail's own in its row, where both versions read it.
+    expect(await move(path, { clock: () => at + 8 * day })).toBe(30);
+    expect(provenanceTexts(readAsOlder(path, ["older-after"]))).toEqual([JSON.stringify(app)]);
+    expect(inlineAudits(path)).toBe(1);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("stops before its next batch once an older Rerail sharing the file records an audit, leaving the audits not yet moved where it reads them", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    openRerailDatabase(path).$client.close();
+    let pauses = 0;
+    const moved = await move(path, {
+      perBatch: 10,
+      // Before the second batch, an older Rerail records an audit.
+      pause: () => {
+        if ((pauses += 1) === 2) recordAsOlder(path, "older-during", provenanceOf("/home/dev/app", 20));
+        return Promise.resolve();
+      },
+    });
+
+    // The first batch moved 10; the move stopped there and ran no VACUUM.
+    expect(moved).toBe(10);
+    expect(pauses).toBe(2);
+    const older = provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)));
+    expect(older.slice(0, 10)).toEqual(written.slice(0, 10).map(() => "[]"));
+    expect(older.slice(10)).toEqual(written.slice(10).map(({ text }) => text));
+    expect(inlineAudits(path)).toBe(21);
+    expect(pageBytes(path).free).toBeGreaterThan(0);
+  });
+
+  it("waits on its calling thread, saying why and until when, while an older Rerail sharing the file records audits, then moves", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    writeInlineAudits(path, Array.from({ length: 30 }, () => app));
+    openRerailDatabase(path).$client.close();
+    recordAsOlder(path, "beside-1", app);
+    const stderr = spyOnStderr();
+    let second: number;
+    let logged = "";
+    try {
+      // A window of 3 s: the move waits until 3 s after the older Rerail's audit, and another audit 1.5 s in makes it
+      // wait again, until 3 s after that one.
+      const moving = moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 });
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      second = recordAsOlder(path, "beside-2", app);
+      expect(await moving).toBe(30);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+    }
+
+    const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
+    expect(waits).toHaveLength(2);
+    expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: a Rerail older than this one recorded an `
+      + `audit at ${new Date(second).toISOString()}`);
+    expect(waits[1]).toContain("The move starts once no older Rerail has recorded an audit for 3 s.");
+    // The older Rerail's two audits stay in their rows; the recorded ones moved, and the file gave the space back.
+    expect(inlineAudits(path)).toBe(2);
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
 
   it("sizes each batch from how long the one before held the write lock", async () => {
     /** How many audits each batch of a move of 30 moved, timed by `now`. */

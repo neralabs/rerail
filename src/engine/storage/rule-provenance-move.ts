@@ -10,6 +10,11 @@
  * the file, so in the daemon it runs in a process of its own and gives way whenever the daemon's thread waits for that
  * lock (`vacuum-giving-way.ts`). A move whose `VACUUM` a stop or a skip cut short leaves the free space in the file, and
  * a later run gives it back while it is more than `OWED_FREE_BYTES` (`shrinkOwed`).
+ *
+ * A Rerail older than the step reads an audit's provenance only from the audit's own row, so it reads `[]` for each
+ * audit the move took it from. The move therefore waits while such a Rerail may still be using the file: until
+ * `OLDER_WRITE_WINDOW_MS` has passed since the last audit one recorded after the step (`lastOlderWrite`), checked before
+ * the move starts and again before each batch.
  */
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, statfsSync, statSync } from "node:fs";
@@ -62,6 +67,16 @@ const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
  */
 const OWED_FREE_BYTES = 64_000_000;
 
+/**
+ * How long the move waits after a Rerail older than the step last recorded an audit in the file. Only such a Rerail
+ * writes an audit's provenance in the audit's own row once the step has run, and it reads it only there: an audit moved
+ * while it still runs beside this one reads `[]` in its `audits_list`, its support bundle and its remote sink. A week
+ * covers an agent host that runs an older Rerail on some days of the week only.
+ */
+export const OLDER_WRITE_WINDOW_MS = 7 * 24 * 3_600_000;
+
+const DAY_MS = 24 * 3_600_000;
+
 export interface RuleProvenanceMoveOptions {
   /** The most audits per write transaction. */
   readonly perBatch?: number;
@@ -79,14 +94,43 @@ export interface RuleProvenanceMoveOptions {
   readonly watch?: ThreadWatch;
   /** How long a `VACUUM` that gives way waits for a quiet file before stderr says so, once; tests pass their own. */
   readonly waitNotice?: number;
+  /** The time in epoch milliseconds, to which an older Rerail's last audit is compared; tests pass their own. */
+  readonly clock?: () => number;
+  /** How long after an older Rerail's last audit the move waits (`OLDER_WRITE_WINDOW_MS`); tests pass their own. */
+  readonly olderWindowMs?: number;
 }
 
-/** What the batches of one move take from its options. */
+/** What the batches of one move take from its options, and whether an older Rerail's audit stops them. */
 interface Batching {
   readonly most: number;
   readonly pause: () => Promise<void>;
   readonly now: () => number;
   readonly signal: AbortSignal | undefined;
+  readonly postponed: () => boolean;
+}
+
+/** How the move reads whether a Rerail older than the step still uses the file: its clock and its window. */
+interface OlderWrites {
+  readonly clock: () => number;
+  readonly windowMs: number;
+}
+
+/**
+ * What a file asks of the move: nothing; to move audits or give the space back; or to wait until `until`, since a
+ * Rerail older than the step recorded an audit at `at`, less than the window before.
+ */
+type MoveState =
+  | { readonly kind: "none" }
+  | { readonly kind: "move" }
+  | { readonly kind: "wait"; readonly at: number; readonly until: number };
+
+const NONE: MoveState = { kind: "none" };
+const MOVE: MoveState = { kind: "move" };
+
+/** What `moveRuleProvenancesInWorker` hands the thread it starts (`rule-provenance-move-worker.ts`). */
+export interface MoveWorkerData {
+  readonly path: string;
+  readonly olderWindowMs: number;
 }
 
 type Client = RerailDatabase["$client"];
@@ -98,29 +142,41 @@ type Free = <T>(step: () => T) => Promise<T>;
  * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, then, if it
  * moved any, or an earlier move's `VACUUM` was cut short (`shrinkOwed`), gives the space it freed back to the disk
  * (`giveBackFreedSpace`). Audits that an older Rerail sharing the file writes after that step keep theirs inline, where
- * both versions read it. A file that does not exist yet holds nothing to move, and the move does not create it. Resolves
- * to how many audits it moved.
+ * both versions read it, and while such a Rerail has recorded one within the window the move takes nothing, or stops
+ * before its next batch (`lastOlderWrite`). A file that does not exist yet holds nothing to move, and the move does not
+ * create it. Resolves to how many audits it moved.
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
-  const { signal } = options;
-  const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
-  const now = options.now ?? (() => performance.now());
-  const batching: Batching = { most: options.perBatch ?? MOVED_PER_BATCH, pause, now, signal };
-  if (!existsSync(path) || !workLeft(path)) return 0;
+  const older = olderWritesOf(options);
+  if (!existsSync(path) || moveState(path, older).kind !== "move") return 0;
   const database = openRerailDatabase(path);
   try {
     // From here SQLite reports another connection's lock at once, and `whenFree` waits for it between tries.
     database.$client.pragma("busy_timeout = 0");
-    const free: Free = step => whenFree(step, pause, signal);
     const upTo = stepAppliedAt(database);
     if (upTo === undefined) return 0;
-    const done = await moveInBatches(database, upTo, free, batching);
     const client = database.$client;
+    const batching = batchingOf(options, () => takes(client, upTo) && lastOlderWrite(client, upTo, older) !== undefined);
+    const free: Free = step => whenFree(step, batching.pause, options.signal);
+    const done = await moveInBatches(database, upTo, free, batching);
     if (shrinks(client, upTo, done)) await giveBackFreedSpace(client, path, free, vacuumFor(client, path, free, options));
     return done.moved;
   } finally {
     database.$client.close();
   }
+}
+
+/** The clock and window `options` give for an older Rerail's last audit, else the time now and `OLDER_WRITE_WINDOW_MS`. */
+function olderWritesOf(options: RuleProvenanceMoveOptions): OlderWrites {
+  return { clock: options.clock ?? (() => Date.now()), windowMs: options.olderWindowMs ?? OLDER_WRITE_WINDOW_MS };
+}
+
+/** How the batches of a move run, from `options` and `postponed`, which says when an older Rerail's audit stops them. */
+function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean): Batching {
+  const { signal } = options;
+  const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
+  const now = options.now ?? (() => performance.now());
+  return { most: options.perBatch ?? MOVED_PER_BATCH, pause, now, signal, postponed };
 }
 
 /**
@@ -150,22 +206,23 @@ function vacuumFor(client: Client, path: string, free: Free, options: RuleProven
 
 /**
  * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
- * none is left or `signal` stops it: how many it moved, and whether none is left. The first batch takes `FIRST_BATCH`
- * audits, and each later one as many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the
- * write lock about that long however loaded the machine and however large each audit's provenance.
+ * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is
+ * left. The first batch takes `FIRST_BATCH` audits, and each later one as many as the batch before moved in `BATCH_MS`
+ * (`nextBatchSize`), so a batch holds the write lock about that long however loaded the machine and however large each
+ * audit's provenance.
  */
 async function moveInBatches(
   database: RerailDatabase,
   upTo: number,
   free: Free,
-  { most, pause, now, signal }: Batching,
+  { most, pause, now, signal, postponed }: Batching,
 ): Promise<{ moved: number; ended: boolean }> {
   let moved = 0;
   let after = Number.MIN_SAFE_INTEGER;
   let size = Math.min(FIRST_BATCH, most);
   for (;;) {
     await pause();
-    if (signal?.aborted === true) return { moved, ended: false };
+    if (signal?.aborted === true || postponed()) return { moved, ended: false };
     let took = 0;
     const batch = await free(() => {
       const began = now();
@@ -199,10 +256,40 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * write lock the `VACUUM` holds, so the `VACUUM` gives way to them: the worker pings this thread while it runs, and ends
  * it once this thread stops answering (`watchThread`). `signal` stops the move before its next step, and a running
  * `VACUUM` at once. A file with nothing to move and no `VACUUM` owed, read on the calling thread, starts no thread.
+ *
+ * While a Rerail older than the step has recorded an audit within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS` unless a test
+ * passes its own), this thread starts no move: stderr says why and until when, it waits that long on a timer that holds
+ * nothing open, and reads the file again. A move such an audit stopped before its next batch waits the same way; one
+ * that ended with work left for any other reason goes on at the next start, as before.
  */
-export async function moveRuleProvenancesInWorker(path: string, signal?: AbortSignal): Promise<number> {
-  if (signal?.aborted === true || !existsSync(path) || !workLeft(path)) return 0;
-  const worker = moveWorker(path);
+export async function moveRuleProvenancesInWorker(
+  path: string,
+  signal?: AbortSignal,
+  { olderWindowMs = OLDER_WRITE_WINDOW_MS }: { readonly olderWindowMs?: number } = {},
+): Promise<number> {
+  const older: OlderWrites = { clock: () => Date.now(), windowMs: olderWindowMs };
+  const stateNow = (): MoveState => (signal?.aborted === true || !existsSync(path) ? NONE : moveState(path, older));
+  let moved = 0;
+  for (let state = stateNow(); state.kind !== "none";) {
+    if (state.kind === "wait") {
+      if (!(await olderGone(path, state, older.windowMs, signal))) return moved;
+      state = stateNow();
+      continue;
+    }
+    moved += await movedInWorker({ path, olderWindowMs }, signal);
+    state = waitsOrEnds(stateNow());
+  }
+  return moved;
+}
+
+/** The state after a move's thread ended: a wait for an older Rerail as it is, anything else the end of this run. */
+function waitsOrEnds(state: MoveState): MoveState {
+  return state.kind === "wait" ? state : NONE;
+}
+
+/** How many audits a move on a thread of its own moved, stopped before its next step once `signal` aborts. */
+async function movedInWorker(data: MoveWorkerData, signal: AbortSignal | undefined): Promise<number> {
+  const worker = moveWorker(data);
   const stop = (): void => worker.postMessage(MOVE_STOP);
   signal?.addEventListener("abort", stop, { once: true });
   try {
@@ -213,13 +300,40 @@ export async function moveRuleProvenancesInWorker(path: string, signal?: AbortSi
 }
 
 /**
+ * Says why the move waits and until when (`sayWaitsForOlder`), then waits until `wait.until`: false when `signal` ends
+ * the wait. The timer holds no process open.
+ */
+async function olderGone(
+  path: string,
+  wait: Extract<MoveState, { kind: "wait" }>,
+  windowMs: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  sayWaitsForOlder(path, wait, windowMs);
+  try {
+    await sleep(Math.max(0, wait.until - Date.now()), undefined, { signal, ref: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The line for a move that waits for a Rerail older than the step, with when it starts. */
+function sayWaitsForOlder(path: string, { at, until }: { at: number; until: number }, windowMs: number): void {
+  process.stderr.write(`rerail: ${path}: moving the rule provenance of audits recorded before this Rerail's upgrade waits `
+    + `until ${new Date(until).toISOString()}: a Rerail older than this one recorded an audit at ${new Date(at).toISOString()}, `
+    + "and it reads each audit's rule provenance only from that audit's own row. The move starts once no older Rerail "
+    + `has recorded an audit for ${duration(windowMs)}.\n`);
+}
+
+/**
  * The worker beside this module (`rule-provenance-move-worker.ts`): its JavaScript as the package ships it, or, where
  * this module runs from its TypeScript source as the tests run it, that source through `tsx`.
  */
-function moveWorker(path: string): Worker {
+function moveWorker(data: MoveWorkerData): Worker {
   const fromSource = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = new URL(`./rule-provenance-move-worker.${fromSource ? "ts" : "js"}`, import.meta.url);
-  return new Worker(entry, { workerData: path, ...(fromSource ? { execArgv: ["--import", "tsx"] } : {}) });
+  return new Worker(entry, { workerData: data, ...(fromSource ? { execArgv: ["--import", "tsx"] } : {}) });
 }
 
 /** How many audits `worker` moved, once it ends; what it threw, when it fails. Answers each of its pings meanwhile. */
@@ -297,22 +411,51 @@ function stepAppliedAt(database: RerailDatabase): number | undefined {
 const TAKEN = "started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'";
 
 /**
- * Whether the file holds an audit the move takes, or a `VACUUM` an earlier move did not finish (`shrinkOwed`), read on a
- * read-only connection: once the move and its `VACUUM` have ended, each later daemon start finds neither and opens no
- * writer, so it takes no write lock. A read-only open runs a pending step through a writable open first, as it does for
- * any reader.
+ * What the file asks of the move (`MoveState`), read on a read-only connection: once the move and its `VACUUM` have
+ * ended, each later daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a
+ * pending step through a writable open first, as it does for any reader.
  */
-function workLeft(path: string): boolean {
+function moveState(path: string, older: OlderWrites): MoveState {
   const database = openRerailDatabase(path, { readonly: true });
   try {
     const upTo = stepAppliedAt(database);
-    const client = database.$client;
-    return upTo !== undefined
-      && (client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined
-        || shrinkOwed(client, upTo));
+    return upTo === undefined ? NONE : stateAt(database.$client, upTo, older);
   } finally {
     database.$client.close();
   }
+}
+
+/**
+ * Nothing when no audit is left to take and no `VACUUM` is owed (`shrinkOwed`); a wait while audits are left to take and
+ * a Rerail older than the step recorded one within the window (`lastOlderWrite`); else the move. A `VACUUM` owed does
+ * not wait: it changes nothing an older Rerail reads.
+ */
+function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
+  if (!takes(client, upTo)) return shrinkOwed(client, upTo) ? MOVE : NONE;
+  const at = lastOlderWrite(client, upTo, older);
+  return at === undefined ? MOVE : { kind: "wait", at, until: at + older.windowMs };
+}
+
+/** Whether an audit the move takes is left. */
+function takes(client: Client, upTo: number): boolean {
+  return client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined;
+}
+
+/**
+ * When the last audit began that a Rerail older than the step recorded after it (`upTo`) and within `older.windowMs` of
+ * `older.clock()`; undefined when none did. Only such a Rerail writes an audit's provenance in the audit's own row once
+ * the step has run. The audits that began in the window come from `audits_session_started`, which holds each one's
+ * start, and only their rows are read, the latest first: a row that holds its provenance runs to hundreds of kilobytes
+ * with the start after it, so reading the start of every recorded audit from its row would read the whole history.
+ */
+function lastOlderWrite(client: Client, upTo: number, { clock, windowMs }: OlderWrites): number | undefined {
+  const began = client.prepare<[number], { row: number; at: number }>(
+    "SELECT rowid AS row, started_at AS at FROM audits INDEXED BY audits_session_started WHERE started_at > ?",
+  ).all(Math.max(upTo, clock() - windowMs));
+  const inline = client.prepare<[number], number>(
+    "SELECT 1 FROM audits WHERE rowid = ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'",
+  ).pluck();
+  return began.sort((one, other) => other.at - one.at).find(({ row }) => inline.get(row) !== undefined)?.at;
 }
 
 /**
@@ -444,8 +587,9 @@ function freeOfSize(client: Client, path: string): string {
     + `${megabytes(statSync(path).size)} free for new history,`);
 }
 
-/** `ms` in whole minutes from one minute up, else in seconds. */
+/** `ms` in whole days from two days up, in whole minutes from one minute up, else in seconds. */
 function duration(ms: number): string {
+  if (ms >= 2 * DAY_MS) return `${Math.round(ms / DAY_MS)} days`;
   return ms >= 60_000 ? `${Math.round(ms / 60_000)} minutes` : `${ms / 1_000} s`;
 }
 
