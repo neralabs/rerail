@@ -349,12 +349,15 @@ describe("gitBehindLauncher", () => {
     expect(gitExecutable().toLowerCase()).not.toMatch(/\\cmd\\git\.exe$/u);
   });
 
-  it.runIf(process.platform === "win32")("goes behind this machine's Git for Windows launcher to the build's own git.exe", ({ skip }) => {
-    // Git's exec path is `<Git>\<build>\libexec\git-core` whichever git.exe answers: a `PATH` that names the build's own
-    // `bin` before `cmd`, as Git Bash's does, finds the real Git without going behind any launcher.
-    const build = win32.dirname(win32.dirname(runGit(process.cwd(), ["--exec-path"]).stdout.trim()));
-    const machineLauncher = win32.join(win32.dirname(build), "cmd", "git.exe");
+  it.runIf(process.platform === "win32")("goes behind this machine's Git for Windows launcher to the git.exe the launcher itself runs", ({ skip }) => {
+    // Git's exec path is `<Git>\<build>\libexec\git-core`. The install comes from the Git Rerail runs, whichever `PATH`
+    // entry found it (Git Bash's names the build's own `bin` before `cmd`). The build comes from the launcher's own
+    // answer, so on an install that holds two builds Rerail must pick the one Git for Windows itself runs.
+    const execPath = (program: string) => execFileSync(program, ["--exec-path"], { encoding: "utf8" }).trim();
+    const install = win32.dirname(win32.dirname(win32.dirname(execPath(gitExecutable()))));
+    const machineLauncher = win32.join(install, "cmd", "git.exe");
     skip(!existsSync(machineLauncher), "this machine's Git is not a Git for Windows install");
+    const build = win32.dirname(win32.dirname(execPath(machineLauncher)));
     expect(gitBehindLauncher(machineLauncher)).toBe(win32.join(build, "bin", "git.exe"));
   });
 });
