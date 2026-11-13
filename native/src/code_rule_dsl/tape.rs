@@ -25,35 +25,17 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes.
-pub(super) const TAPE_FORMAT_VERSION: u32 = 11;
-const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
-/// The image header: magic, language, the three column widths, version, source length and
-/// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
-/// table's bytes.
-const HEADER_BYTES: usize = 56 + 5 * 8;
-/// Each column starts at this alignment from the image's start (format 11), so a reader of the
-/// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
-pub(super) const COLUMN_ALIGN: usize = 16;
-
-/// `length` rounded up to `COLUMN_ALIGN`.
-const fn padded(length: usize) -> usize {
-    length.div_ceil(COLUMN_ALIGN) * COLUMN_ALIGN
-}
-/// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
-/// its last descendant's (for a tree where a node ends before its last descendant starts).
-pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
-/// A code's flags.
-const CODE_EXTRA: u8 = 1;
-const CODE_ERROR: u8 = 2;
-const CODE_MISSING: u8 = 4;
-const KIND_LIMIT: usize = 1024;
-const FIELD_LIMIT: usize = 64;
-const SENTINEL: u16 = u16::MAX;
+pub(super) const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
+/// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer,
+/// and an image is one byte string however it was made.
+use rerail_tape_format::{CODE_ERROR, CODE_EXTRA, CODE_MISSING, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, padded};
+pub(super) use rerail_tape_format::COLUMN_ALIGN;
+pub(in crate::code_rule_dsl) use rerail_tape_format::TAIL_FROM_START;
 const NONE: u32 = u32::MAX;
 const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
-const ERROR_CODE: u16 = 0;
+use rerail_tape_format::ERROR_CODE;
 
 // P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
 #[allow(dead_code)]

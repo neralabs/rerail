@@ -3212,6 +3212,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "rusqlite",
@@ -3302,6 +3303,7 @@ dependencies = [
 name = "rerail-rr-syntax"
 version = "0.1.0"
 dependencies = [
+ "rerail-tape-format",
  "serde_json",
 ]
 
@@ -3325,6 +3327,13 @@ dependencies = [
  "tempfile",
  "tikv-jemalloc-sys",
  "zstd",
+]
+
+[[package]]
+name = "rerail-tape-format"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
 ]
 
 [[package]]

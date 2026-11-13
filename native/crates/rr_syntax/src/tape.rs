@@ -331,36 +331,51 @@ impl Node {
     }
 }
 
-/// A row of a `.rr` tape, as the parsers write it: a node's kind and field, its bytes, the rows
-/// in its subtree (its own counted), its parent's row (`NO_PARENT` for the root), and 1 for an
-/// extra (a comment). In preorder. The lean parser writes these rows as it parses; the compiled
-/// parser's tier 2 writes the same 24 bytes (`rerail_compiler::native_cpu_stream::NodeRow`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Row {
-    pub kind: u16,
-    pub field: u16,
-    pub start: u32,
-    pub end: u32,
-    pub size: u32,
-    pub parent: u32,
-    pub extra: u8,
-    pub pad: [u8; 3],
+/// A node's key in the tape's code table (`rerail_tape_format::Writer`): kind and field, ERROR's
+/// as the engine writes it (`ERROR_CODE` and the error flag), a comment's with the extra flag.
+#[inline(always)]
+pub fn code(kind: u16, field: u16, extra: bool) -> u32 {
+    use rerail_tape_format::{CODE_ERROR, CODE_EXTRA, ERROR_CODE};
+    if kind == ERROR {
+        u32::from(ERROR_CODE) | u32::from(CODE_ERROR) << 16
+    } else {
+        u32::from(kind | field << 10) | u32::from(u8::from(extra) * CODE_EXTRA) << 16
+    }
 }
 
-/// The root's parent in a row.
-pub const NO_PARENT: u32 = u32::MAX;
+/// A key's kind and field (`code`).
+pub fn kind_field(key: u32) -> (u16, u16) {
+    if key >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0 { (ERROR, 0) } else { ((key & 0x3ff) as u16, (key >> 10 & 0x3f) as u16) }
+}
 
-/// The reference parser's nodes (`crate::tape`) as rows: each node's size from the last node
-/// back. For comparing with the parsers that write rows.
-pub fn rows(nodes: &[Node]) -> Vec<Row> {
-    let mut rows: Vec<Row> = nodes.iter().map(|n| Row { kind: n.kind, field: n.field, start: n.start, end: n.end, size: 1, parent: n.parent.unwrap_or(NO_PARENT), extra: u8::from(n.extra), pad: [0; 3] }).collect();
-    for (i, n) in nodes.iter().enumerate().rev() {
-        if let Some(p) = n.parent {
-            rows[p as usize].size += rows[i].size;
+/// The engine's tape of `nodes` (this parser's, in preorder) over `src`: its bytes, as the
+/// engine encodes a `.rr` file (`code_rule_dsl::tape`). Each node given to the writer in order and
+/// closed where the next is not inside it. The lean parser's tape is checked against it.
+pub fn image(nodes: &[Node], src: &str) -> Vec<u8> {
+    use rerail_tape_format::{Redo, Widths, Writer};
+    let mut widths = Widths::guess(src.len());
+    loop {
+        let mut w = Writer::new(rerail_tape_format::RR_TAG, widths, nodes.len());
+        let mut open: Vec<(usize, u32)> = Vec::new();
+        for (i, n) in nodes.iter().enumerate() {
+            while let Some(&(o, end)) = open.last() {
+                if n.parent == Some(o as u32) {
+                    break;
+                }
+                w.close(o, end);
+                open.pop();
+            }
+            w.push(code(n.kind, n.field, n.extra), n.start);
+            open.push((i, n.end));
+        }
+        while let Some((o, end)) = open.pop() {
+            w.close(o, end);
+        }
+        match w.finish(src.as_bytes()) {
+            Ok(bytes) => return bytes,
+            Err(Redo(x)) => widths = x,
         }
     }
-    rows
 }
 
 /// `tree` in preorder, each comment of `comments` a child of the innermost node whose span holds it, at its place in
