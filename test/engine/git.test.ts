@@ -342,18 +342,21 @@ describe("Git reads and their time limit", () => {
     expect(endProcessTree).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async ({ skip }) => {
-    skip(process.platform === "win32", "On Windows Git prints the whole listing and exits before the read's first look after the stall, so the read answers it whole");
+  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
-    // About 300 KB of paths, more than the output pipe holds on Linux: Git waits for the event loop to read before it
-    // prints the rest, so it is still printing after the stall.
-    const names = Array.from({ length: 3_000 }, (_, index) => `${"x".repeat(96)}${String(index).padStart(4, "0")}.py`);
-    await Promise.all(names.map(name => writeFile(join(root, name), "")));
+    const printing = Promise.withResolvers<void>();
+    // In Git's place, a program that prints a path every 20 ms until it is ended, as a Git listing a large checkout does.
+    vi.mocked(execFile).mockImplementationOnce((_git, args, options, callback) => {
+      const script = "setInterval(() => process.stdout.write('a.py\\0'), 20)";
+      const child = actualChildProcess.execFile(process.execPath, ["-e", script, "--", ...(args ?? [])], options, callback);
+      child.stdout?.once("data", () => printing.resolve());
+      return child;
+    });
     const read = gitModifiedOrUntrackedPaths(root);
+    await printing.promise;
     clockAhead(10_000);
-    // The read's first look after the stall finds it past the limit on the clock, with output still coming: it ends
-    // there, as a timer of the time limit ended it, and a walk asks the listing once more off its path.
-    stallSoon(1_500);
+    // The read's next look finds it past the limit on the clock, with output still coming: it ends there, as a timer of
+    // the time limit ended it, and a walk asks the listing once more off its path.
     await expect(read).resolves.toBeUndefined();
   }, 30_000);
 });
