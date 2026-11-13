@@ -391,3 +391,27 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     assert!(other.atoms.pending(), "made in another arena: pending as usual");
     assert_eq!(r.end().len(), 0);
 }
+
+/// Decision 0160: ids given out here while another process stored atoms past this one's end are not the store's.
+/// The write that finds them is refused, nothing of this process's is written after, and it reads the store no more.
+#[test]
+fn atoms_another_process_stored_past_this_ones_end_are_a_divergence() {
+    let path = path("diverged");
+    let store = ContentStore::open(&path).unwrap();
+    store.intern_atoms(&["a"]).unwrap();
+    store.flush_atoms().unwrap();
+    assert_eq!(store.intern_atoms(&["b"]).unwrap(), [2]);
+    // Another process stores its own atom 2 (as one taking no lease would).
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))", [])
+        .unwrap();
+    let flushed = store.flush_atoms();
+    assert!(flushed.as_ref().is_err_and(|e| e.to_string().contains(super::DIVERGED_TEXT)), "{flushed:?}");
+    let handle = store.atoms_handle();
+    assert!(handle.diverged());
+    assert_eq!(segments(&path), [(0, 1), (1, 1), (2, 1)], "this process's `b` is not written over the other's `z`");
+    assert!(handle.ready_for_run().is_err(), "a diverged process reads the store no more");
+    drop(store);
+    assert_eq!(segments(&path), [(0, 1), (1, 1), (2, 1)], "nor at its close");
+}

@@ -291,8 +291,15 @@ pub struct Atoms {
     sorted: Mutex<Vec<Sym>>,
     /// Segments this process appended, their atoms and their bytes (the profile's `atoms` line).
     written: Mutex<(u64, u64, u64)>,
-    /// A run holds the lease from before its first wave to its end (`ready_for_run`), unless another process asks.
-    kept: AtomicBool,
+    /// Runs under way in this process (`ready_for_run` to `run_over`): while one is, and every stored atom is held
+    /// (`complete`), ids are given out without the lease (provisional, decision 0160).
+    runs: std::sync::atomic::AtomicUsize,
+    /// Where this process's last appended segment ended (`write_pending`): the database's end there is its own, not
+    /// another process's.
+    wrote: std::sync::atomic::AtomicUsize,
+    /// Another process stored atoms while this one's were provisional (decision 0160): this process's ids are not the
+    /// store's past `base`, so it writes no more and reads the store no more.
+    diverged: AtomicBool,
     /// Every stored atom is held in this process, and the lease has been held since that was seen: a string not in
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
@@ -386,6 +393,19 @@ impl Drop for Reserved {
         }
     }
 }
+
+/// Arenas of this process that diverged from their store's (decision 0160).
+static DIVERGED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
+/// lease is taken as before (decision 0049).
+fn lease_free() -> bool {
+    static FREE: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"));
+    *FREE
+}
+
+/// A diverged arena's error (decision 0160): a write behind the run that meets it is dropped, as a cache's miss.
+pub const DIVERGED_TEXT: &str = "this process's atoms diverged from the store's (decision 0160)";
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
@@ -497,7 +517,9 @@ impl Atoms {
             flushed: Mutex::new(HashMap::new()),
             sorted: Mutex::new(Vec::new()),
             written: Mutex::new((0, 0, 0)),
-            kept: AtomicBool::new(false),
+            runs: std::sync::atomic::AtomicUsize::new(0),
+            wrote: std::sync::atomic::AtomicUsize::new(0),
+            diverged: AtomicBool::new(false),
             complete: AtomicBool::new(false),
             flush_queued: AtomicBool::new(false),
         }
@@ -613,6 +635,9 @@ impl Atoms {
                 // SAFETY: called by SQLite on this connection's thread, under its mutex.
                 let state = unsafe { ffi::sqlite3_txn_state(handle as *mut ffi::sqlite3, c"main".as_ptr()) };
                 if state == ffi::SQLITE_TXN_WRITE {
+                    if held.diverged() {
+                        return true;
+                    }
                     eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)");
                     if std::env::var_os("RERAIL_ATOMS_BACKTRACE").is_some() {
                         eprintln!("{}", std::backtrace::Backtrace::force_capture());
@@ -639,6 +664,27 @@ impl Atoms {
 
     pub fn len(&self) -> usize {
         self.state.read().atoms.len()
+    }
+
+    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom is held, so a
+    /// string not in memory is new to this process, and its id is checked against the store's when it is written.
+    fn provisional(&self) -> bool {
+        lease_free() && self.runs.load(Ordering::Acquire) > 0 && self.complete.load(Ordering::Acquire)
+    }
+
+    /// Whether this process's atoms diverged from the store's (decision 0160).
+    pub fn diverged(&self) -> bool {
+        self.diverged.load(Ordering::Acquire)
+    }
+
+    fn diverge(&self, end: usize, base: usize, pending: usize) -> StoreError {
+        if !self.diverged.swap(true, Ordering::AcqRel) {
+            DIVERGED.fetch_add(1, Ordering::Relaxed);
+            eprintln!(
+                "rerail: atoms: another process stored atoms {base}..{end} while this one held {pending} provisional (decision 0160): this process's later writes to the store are dropped, and it reads the store no more"
+            );
+        }
+        StoreError::Invalid(DIVERGED_TEXT.to_owned())
     }
 
     /// Segments this process appended so far: (segments, atoms, bytes), and the atoms pending now.
@@ -695,6 +741,10 @@ impl Atoms {
         if let Some(atom) = self.state.read().atoms.get(value) {
             return Ok(Some(atom));
         }
+        // Every stored atom is held: a string not in memory is not stored, as far as this run is concerned.
+        if self.provisional() {
+            return Ok(None);
+        }
         if !self.leased.load(Ordering::Acquire) {
             self.catch_up()?;
         }
@@ -731,6 +781,24 @@ impl Atoms {
                 return Ok(found);
             }
         }
+        // Inside a run, with every stored atom held: new ids are provisional, given out without the lease and checked
+        // against the store's as they are written (decision 0160). Nothing is read.
+        if self.provisional() {
+            return Ok(self.give(values));
+        }
+        // Outside the waves: what this process does not hold may be stored, found in the database first (decision
+        // 0111), and the rest is provisional too. No lease (decision 0160).
+        if lease_free() {
+            let missing: Vec<&str> = {
+                let state = self.state.read();
+                values.iter().copied().filter(|value| state.atoms.get(value).is_none()).collect()
+            };
+            if !missing.is_empty() {
+                self.catch_up_free()?;
+                self.find(&missing)?;
+            }
+            return Ok(self.give(values));
+        }
         // The lease is held while ids are given out, so a flush on another thread cannot give it
         // back between the check and the new ids.
         let mut lease = self.lease.lock();
@@ -743,6 +811,13 @@ impl Atoms {
         if !missing.is_empty() {
             self.find(&missing)?;
         }
+        let ids = self.give(values);
+        drop(lease);
+        Ok(ids)
+    }
+
+    /// The ids of `values`, new ones pending from this process's end.
+    fn give(&self, values: &[&str]) -> Vec<Sym> {
         let mut state = self.state.write();
         let before = state.atoms.len() as Sym;
         let ids: Vec<Sym> = values.iter().map(|value| state.atoms.intern(value)).collect();
@@ -761,7 +836,7 @@ impl Atoms {
                 }
             }
         });
-        Ok(ids)
+        ids
     }
 
     /// The atom of `value`, given out (pending) under the lease if it is new.
@@ -809,9 +884,17 @@ impl Atoms {
         self.read_end()
     }
 
+    /// Without the lease (decision 0160): learns where the database's ids end, outside the waves.
+    fn catch_up_free(&self) -> StoreResult<()> {
+        if self.provisional() {
+            return Ok(());
+        }
+        self.read_end()
+    }
+
     /// Learns where the database's ids end, unless this process holds the lease (then it knows).
     fn catch_up(&self) -> StoreResult<()> {
-        if self.leased.load(Ordering::Acquire) {
+        if self.leased.load(Ordering::Acquire) || self.provisional() {
             return Ok(());
         }
         // Under the lease's mutex: no thread of this process gives out ids while it reads.
@@ -849,6 +932,11 @@ impl Atoms {
         else {
             return Ok(());
         };
+        // Provisional ids pending here (decision 0160) and another process's stored past them: diverged.
+        let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
+        if end > base && pending > 0 && end != self.wrote.load(Ordering::Acquire) {
+            return Err(self.diverge(end, base, pending));
+        }
         self.state.write().atoms.advance(end)
     }
 
@@ -858,7 +946,7 @@ impl Atoms {
         if self.path.is_none() || values.is_empty() {
             return Ok(());
         }
-        if self.complete.load(Ordering::Acquire) && self.leased.load(Ordering::Acquire) {
+        if self.complete.load(Ordering::Acquire) && (self.leased.load(Ordering::Acquire) || self.provisional()) {
             return Ok(());
         }
         if !self.keyed()? {
@@ -977,9 +1065,23 @@ impl Atoms {
             .unwrap_or(0);
         let (from, ends, bytes, mut keys, upto) = {
             let state = self.state.read();
-            let (end, len) = (end as usize, state.atoms.len());
-            if end < state.atoms.base() {
-                return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", state.atoms.base())));
+            let (end, len, base) = (end as usize, state.atoms.len(), state.atoms.base());
+            if self.diverged() {
+                return Err(self.diverge(end, base, len - base));
+            }
+            if end < base {
+                return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", base)));
+            }
+            // Past this process's end: its own segment, committed on another connection (`wrote`), or another
+            // process's. Another's with none pending here moves this process's end; with some pending, the ids given
+            // out here are another's strings in the store (decision 0160).
+            if end > base && end != self.wrote.load(Ordering::Acquire) {
+                if len > base {
+                    return Err(self.diverge(end, base, len - base));
+                }
+                drop(state);
+                self.state.write().atoms.advance(end)?;
+                return Ok(end);
             }
             if end >= len {
                 return Ok(end);
@@ -1005,6 +1107,7 @@ impl Atoms {
             }
             connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([upto as i64])?;
         }
+        self.wrote.store(upto, Ordering::Release);
         // Counted when written; a transaction that then rolls back still counts.
         let mut written = self.written.lock();
         *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
@@ -1028,7 +1131,7 @@ impl Atoms {
         if state.atoms.pending().0 == 0 {
             state.since = None;
             // A run keeps the lease to its end (`ready_for_run`), unless another process waits for it.
-            if (!self.kept.load(Ordering::Acquire) || self.wanted()) && lease.take().is_some() {
+            if (self.runs.load(Ordering::Acquire) == 0 || self.wanted()) && lease.take().is_some() {
                 self.leased.store(false, Ordering::Release);
                 self.complete.store(false, Ordering::Release);
             }
@@ -1042,10 +1145,31 @@ impl Atoms {
         if self.path.is_none() {
             return Ok(true);
         }
-        {
+        if self.diverged() {
+            return Err(StoreError::Invalid(format!("{DIVERGED_TEXT}: it reads the store no more")));
+        }
+        // The outermost run reads where the database's ids end, once, before its first wave; no lease is taken
+        // (decision 0160: the run's new ids are provisional). A nested run is inside it and reads nothing.
+        if !lease_free() {
             let mut lease = self.lease.lock();
             self.acquire(&mut lease)?;
-            self.kept.store(true, Ordering::Release);
+            self.runs.fetch_add(1, Ordering::AcqRel);
+        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) {
+            let _lease = self.lease.lock();
+            let path = self.path.clone();
+            let end = self.with_reader(|connection| {
+                database_end(connection).map_err(|error| StoreError::Corrupt(format!("{}: reading atom segments: {error}", path.as_deref().unwrap_or(Path::new("")).display())))
+            })?;
+            if let Some(end) = end {
+                let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
+                if end > base && end != self.wrote.load(Ordering::Acquire) && pending > 0 {
+                    self.run_over();
+                    return Err(self.diverge(end, base, pending));
+                }
+                if pending == 0 {
+                    self.state.write().atoms.advance(end)?;
+                }
+            }
         }
         let held = || {
             let state = self.state.read();
@@ -1067,13 +1191,13 @@ impl Atoms {
 
     /// A run's end: the lease is given back with its next commit, as before the run.
     pub fn run_over(&self) {
-        self.kept.store(false, Ordering::Release);
+        let _ = self.runs.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run
     /// (`ready_for_run`): the store's writer flushes then (`queue_atoms_flush`), and no wave writes (decision 0104).
     pub fn due(&self) -> bool {
-        !self.kept.load(Ordering::Acquire) && self.due_now()
+        self.runs.load(Ordering::Acquire) == 0 && self.due_now()
     }
 
     pub(super) fn due_now(&self) -> bool {
@@ -1204,7 +1328,7 @@ impl Drop for Atoms {
     /// symbols closing). Atoms never written are lost, as in a crash; nothing durable names them.
     fn drop(&mut self) {
         let Some(path) = &self.path else { return };
-        if !self.pending() || !path.exists() {
+        if !self.pending() || !path.exists() || self.diverged() {
             return;
         }
         let flushed = Connection::open(path).map_err(StoreError::from).and_then(|connection| {

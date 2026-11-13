@@ -537,8 +537,11 @@ fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>,
             }
         }
     }
+    // A process whose atoms diverged from the store's (decision 0160) drops its writes: the store lacks them, as a
+    // cache that missed them.
     if let Err(e) = outcome
         && s.error.is_none()
+        && !e.to_string().contains(super::atoms::DIVERGED_TEXT)
     {
         s.error = Some(e.to_string());
     }
