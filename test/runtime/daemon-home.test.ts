@@ -90,13 +90,19 @@ describe("the daemons of a Rerail home", () => {
 
   const daemonControl = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
 
-  /** A process of its own, as every hook is, that finds no daemon: on `go` it runs the real autostart and exits. */
+  /**
+   * A process of its own, as every hook is: on `go` it looks for the daemon and, finding none, runs the real autostart,
+   * as a hook does (`hook-host.ts`), then exits. A hook that comes after the daemon is up finds it and starts nothing.
+   */
   function hookFindingNoDaemon(): { ready: Promise<void>; go: () => void; exited: Promise<unknown> } {
     const child = spawn(process.execPath, [
       "--import", "tsx", "--input-type=module", "-e",
-      `const { autostartDaemon } = await import(${JSON.stringify(daemonControl)});
+      `const { autostartDaemon, lookupDaemon } = await import(${JSON.stringify(daemonControl)});
        process.stdout.write("ready\\n");
-       process.stdin.once("data", () => { autostartDaemon(); process.exit(0); });`,
+       process.stdin.once("data", async () => {
+         if ((await lookupDaemon(process.env.RERAIL_HOME)).status === "absent") autostartDaemon();
+         process.exit(0);
+       });`,
     ], { cwd: packageRoot, env: { ...env, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
     others.push(child);
     const exited = once(child, "exit");
