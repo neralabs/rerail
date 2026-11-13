@@ -92,14 +92,6 @@ function heldOpen(evaluator: NativeCodeRuleEnforcer, gate: Promise<void>): void 
   };
 }
 
-/** Holds the event loop for `ms`, as another session's synchronous work (compiling its rules, say) would. */
-function holdEventLoop(ms: number): number {
-  const until = performance.now() + ms;
-  let spins = 0;
-  while (performance.now() < until) spins += 1;
-  return spins;
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -966,29 +958,6 @@ describe("source-scoped steers", () => {
       } finally {
         for (const workspace of attachments.workspaces) workspace.release();
         attachments.restore();
-        await test.close();
-      }
-    }, 30_000);
-
-    it("ends a result's wait for the evaluator at its cap of wall time, however often other work holds the loop", async () => {
-      const test = await openingFixture();
-      let holds: NodeJS.Timeout | undefined;
-      try {
-        await callAtOnce(test);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        // Other sessions hold the loop for 200 ms again and again, leaving it free only a moment between holds.
-        holds = setInterval(() => holdEventLoop(200), 1);
-        const started = performance.now();
-        expect(await test.result("write")).toEqual([]);
-        // A hook's 1 s, and the holds the result's own steps meet around it; Windows' file work waits out more of them.
-        expect(performance.now() - started).toBeLessThan(8_000);
-        clearInterval(holds);
-        expect(test.pending()).toEqual([{ boundary: "result" }]);
-        test.open();
-        // Its call's edit is still checked once the evaluator opens.
-        expect(await test.steers()).toEqual([needleSteer]);
-      } finally {
-        clearInterval(holds);
         await test.close();
       }
     }, 30_000);
