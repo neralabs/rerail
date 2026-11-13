@@ -222,7 +222,7 @@ A session's code rules open when it starts, and again whenever it reopens. The r
 
 - A prompt or a tool call does not wait for the rules. Rerail reads the files a tool call names before the tool runs, and checks its edit against them once the rules are open.
 - A tool result or a turn end that comes while the rules open waits for them: up to 1 second in Claude Code, Codex and Cursor, up to 10 seconds in OMP and Pi. A tool result's wait for its edit's check, and an OMP or Pi turn end's, then takes only what is left of that time.
-- Past that wait, the step goes on without code rules, and so does every result and turn end after it until the rules are open. The dashboard timeline says code rules were not yet running at those steps. The edits of those tool calls are still checked once the rules open, and their steers come at the next step.
+- Past that wait, the step goes on without code rules, and so does every result and turn end after it until the rules are open. The dashboard timeline says code rules were not yet running at those steps. The edits of those tool calls are still checked once the rules open, those of calls made before a daemon restart too, and their steers come at the next step.
 - OMP's footer shows ` · indexing` while the rules open, only if that takes over half a second.
 
 The daemon closes a session that sends nothing for 30 minutes, and frees a checkout's compiled rules 15 minutes after

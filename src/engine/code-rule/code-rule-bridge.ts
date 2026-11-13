@@ -129,9 +129,17 @@ interface PendingEdit {
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
 /**
- * A tool call made while the evaluator opened (`deferCall`): what the files it names held before the tool ran, and,
- * once its result came, whether the tool failed.
+ * A tool call made while the evaluator opened (`deferCall`), or left unresolved by the session's previous runtime
+ * (`deferRestored`): what the files it names held before the tool ran, and, once its result came, whether the tool
+ * failed.
  */
+/** A tool call the session's ledger keeps as begun and unresolved: its tool, the paths it names and their preimages. */
+export interface RestoredCall {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly paths: readonly string[];
+  readonly preimages?: Readonly<Record<string, Preimage>>;
+}
 interface DeferredCall extends PendingEdit {
   readonly toolName: string;
   result: { readonly failed: boolean } | undefined;
@@ -957,6 +965,24 @@ export class CodeRuleBridge {
     // No await from this check to the call's place in `#deferred`: the open begins all of them in one step.
     if (this.#discovery === undefined || this.#discovery.cancelled) this.#deferred.set(toolCallId, { toolName, paths, preimages, result: undefined });
     else await this.begin(toolCallId, toolName, input, Object.fromEntries(this.#acceptedPreimages(preimages)));
+  }
+
+  /**
+   * The calls the session's previous runtime began and left unresolved, as its ledger keeps them, with what their files
+   * held before they ran, for a workspace not yet open: each is taken as `deferCall` takes a call, its window open from
+   * now. The open begins them in the step that publishes the workspace, and one whose result comes while the evaluator
+   * still opens is checked against those preimages once it has (`finishDeferred`), as it would have been at its result.
+   */
+  async deferRestored(calls: readonly RestoredCall[]): Promise<void> {
+    // Taken before the clock is read, so a result that comes meanwhile finds its call; that call's window has ended.
+    const taken = calls.map(({ toolCallId, toolName, paths, preimages }) => {
+      const call: DeferredCall = { toolName, paths, preimages: new Map(Object.entries(preimages ?? {})), result: undefined };
+      this.#deferred.set(toolCallId, call);
+      return { toolCallId, call };
+    });
+    if (taken.length === 0) return;
+    const now = await filesystemClock();
+    for (const { toolCallId, call } of taken) if (call.result === undefined) this.#unwatched.begin(toolCallId, now);
   }
 
   /**

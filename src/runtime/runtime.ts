@@ -1754,8 +1754,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Opens a published session's evaluator behind the event that opened the session, so the host's session start never
    * waits for it; a code-rule boundary that comes meanwhile waits for it within a bound (`#codeRuleWorkspaceNow`), and
    * the content store attaches behind the open evaluator (`NativeCodeRuleEnforcer.openWorkspace`). The calls a previous
-   * runtime left unresolved are begun again before any new boundary sees the bridge, and the repository audit starts
-   * once it is open. An evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
+   * runtime left unresolved are begun again before any new boundary sees the bridge, and those whose result came
+   * meanwhile are checked then; the repository audit starts once it is open. An evaluator that cannot open is recorded
+   * as a failed audit; the session goes on without code rules.
    */
   async #openCodeRuleWorkspace(
     state: RuntimeSessionState,
@@ -1768,16 +1769,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let opened = false;
     try {
       const openStartedAt = performance.now();
+      // Begun as the evaluator opens, with what the ledger says their files held, so one whose result comes while it
+      // still opens is checked once it has (`CodeRuleBridge.deferRestored`).
+      await bridge.deferRestored(unresolvedCodeRuleCalls(ledger));
       await bridge.openWorkspace(sessionId);
       this.#timingLog?.(`rerail: code-rule evaluator of session ${sessionId} opened in ${Math.round(performance.now() - openStartedAt)} ms\n`);
       opened = true;
-      for (const call of unresolvedCodeRuleCalls(ledger)) {
-        if (state.closed) break;
-        // A result that arrived while the evaluator opened went on without code rules: its call is not begun late, or
-        // the bridge would hold it pending, and skip its paths in every later shell-write walk, for the session's life.
-        if (!state.pendingCodeRuleCalls.some(pending => pending.id === call.toolCallId)) continue;
-        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
-      }
     } catch (error) {
       delete state.codeRuleBridge;
       const release = this.#lateRelease();
