@@ -1,0 +1,24 @@
+{
+  "format": "rerail.language/v1",
+  "id": "java",
+  "status": "supported",
+  "family": "java",
+  "dialects": [
+    {
+      "label": "java",
+      "variant": "Java",
+      "suffixes": [".java"],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Java",
+      "tapeTag": 13
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

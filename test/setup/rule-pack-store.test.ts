@@ -197,12 +197,14 @@ function copiesStore(home: string, ranges: Record<string, string>): PackStore & 
   };
 }
 
+/** The core range Rerail's own packs declare: it fits this core, whatever its version. */
+const FITS = ">=0.1.0-0";
 const VALID = fixturesPath("packs", "valid");
 
 describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts the installed version back as npm recorded it when the one named installs but its core range leaves it out, and says why", async () => {
     const home = temporaryHome();
-    const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
+    const store = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
 
     const problem = await installPackVersions([typescriptAt("9.0.0")], store);
@@ -224,7 +226,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("installs nothing when every pack named is installed at that version", async () => {
     const home = temporaryHome();
-    const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const store = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], store);
 
     expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
@@ -233,7 +235,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("puts everything back when the pack named loads but pushes an installed pack out", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     // A pack listing typescript's rules under an id that sorts first: the catalog loads it, and leaves typescript out.
     const rival = join(home, "rival");
@@ -261,7 +263,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("says what failed and where to look when putting a pack back fails, rather than throwing", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = {
       ...copies,
@@ -278,7 +280,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("says nothing was changed when npm fails and leaves the packs as they were, putting nothing back", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = { ...copies, install: async () => { throw new Error("npm error code ENOTFOUND\nnpm error network request failed"); } };
 
@@ -289,7 +291,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("puts the packs back when npm fails partway through, having changed one", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.1.2": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "0.1.2": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     // npm wrote the new version, then ran out of disk before it finished.
     const store: PackStore = {
@@ -309,12 +311,12 @@ describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.2.0": ">=0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     expect(await addPackSpecs(["@neralabs/rerail-pack-typescript@0.1.1"], copies)).toEqual({ installed: [typescriptAt("0.1.1")] });
 
-    const added = await addPackSpecs(["@neralabs/rerail-pack-typescript@0.2.0"], copies);
+    const added = await addPackSpecs(["@neralabs/rerail-pack-typescript@9.0.0"], copies);
 
-    expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.2\.0 cannot be used: .*>=0\.2\.0.*\. Nothing was changed\.$/u) });
+    expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u) });
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
   });
 
@@ -366,12 +368,12 @@ describe("packsLeftOutByCore", () => {
   // A real pack install and three catalog reads: over 4 s on a loaded CI shard, near vitest's 5 s default.
   it("names an installed pack the new core leaves out that the previous one loaded, with why, and nothing else", async () => {
     const home = temporaryHome();
-    await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
+    await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <9.0.0" }));
 
-    expect(packsLeftOutByCore(home, "0.2.0", "0.1.9")).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.1\.1: .*0\.2\.0/u)]);
+    expect(packsLeftOutByCore(home, "9.0.5", "8.9.9")).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.1\.1: .*9\.0\.5/u)]);
     // Already left out before the change, or still fitting after it: not this change's to name.
-    expect(packsLeftOutByCore(home, "0.2.1", "0.2.0")).toEqual([]);
-    expect(packsLeftOutByCore(home, "0.1.9", "0.1.8")).toEqual([]);
+    expect(packsLeftOutByCore(home, "9.0.6", "9.0.5")).toEqual([]);
+    expect(packsLeftOutByCore(home, "8.9.9", "8.9.8")).toEqual([]);
   }, 30_000);
 });
 

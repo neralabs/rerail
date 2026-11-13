@@ -442,14 +442,14 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
 
   it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {
     const setup = await fixture();
-    // `rerail update` has made 0.2.0 active; this run is the older package a coding agent's session loaded.
+    // `rerail update rollback` has made 0.0.9 active, older than any pack fits; this run is the newer package a coding agent's session loaded.
     const current = join(process.env.RERAIL_HOME!, "current");
     mkdirSync(current, { recursive: true });
-    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.2.0" }));
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.9" }));
     try {
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
-      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.2\.0/u);
+      expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.0\.9/u);
       expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
     } finally {
       await rm(current, { recursive: true, force: true });

@@ -10,6 +10,7 @@
 mod arguments;
 mod calls;
 mod format_args;
+mod java;
 #[cfg(test)]
 mod kit;
 mod rust;
@@ -23,6 +24,7 @@ pub(crate) use super::with_adapter;
 pub(crate) use arguments::{ArgumentFeature, ArgumentRules};
 pub(crate) use calls::{CallFeature, CallRules};
 pub(crate) use format_args::{FormatArgFeature, FormatArgRules};
+pub(crate) use java::Java;
 pub(crate) use rust::Rust;
 pub(crate) use scope::{ScopeFeature, ScopeRules};
 pub(crate) use sql::Sql;
