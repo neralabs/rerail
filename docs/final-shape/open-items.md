@@ -4727,3 +4727,13 @@ shape. What is wanted:
 **Closure:** a `.rr` directive on a written rule shapes its plan and every derived form's (a test where it changes
 a maintained form's order, and EXPLAIN shows it); the profile reports a directive that saves nothing; the planner
 takes no cross product priced from a default size (a guard test).
+
+## O149. Answered world facts over held program facts have no test of their own
+
+The merge audit of 2026-11-13 (`docs/merging.md`) found that c19a0c146 dropped one case of 2911f61c5: a relation
+that the native engine already holds (its program facts) when the world's answers for it come. `setfix::retain`
+replaces a held relation, so the facts were lost. 42cab80c9 joins the held rows to the answers first. The cone and
+corpus tests pass with it, but none makes this case.
+
+**Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
+stratum above it, which sees both the facts and the answers.
