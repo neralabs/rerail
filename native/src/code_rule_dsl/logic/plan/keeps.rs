@@ -235,7 +235,7 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         if reads.is_empty() {
             continue;
         }
-        let Some(copies) = reads.iter().map(|&(ri, i)| unfold(&prog.rules[ri], i, rules, 0).map(|c| c.len())).sum::<Option<usize>>() else {
+        let Some(copies) = reads.iter().map(|&(ri, i)| copies(&prog.rules[ri], i, rules)).sum::<Option<usize>>() else {
             if prog.qualified(rel, "inline") {
                 refused_inline.push(format!("{rel}: a negated read is not a negation of plain literals"));
             } else if only.is_some() {
@@ -381,7 +381,7 @@ fn price_all(
             continue;
         }
         let Some(reads) = readers.get(rel) else { continue };
-        let Some(copies) = reads.iter().map(|&(ri, i)| unfold(&prog.rules[ri], i, rules, 0).map(|c| c.len())).sum::<Option<usize>>() else { continue };
+        let Some(copies) = reads.iter().map(|&(ri, i)| copies(&prog.rules[ri], i, rules)).sum::<Option<usize>>() else { continue };
         if copies > COPIES {
             continue;
         }
@@ -757,7 +757,45 @@ fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<
         }
         return Some(out);
     }
-    // A negation: each rule's negation, a set of alternatives (one literal each); the copies are their product.
+    let alternatives = negated(read, defs)?;
+    let mut copies: Vec<Vec<Literal>> = vec![Vec::new()];
+    for alts in alternatives {
+        copies = copies.into_iter().flat_map(|c| alts.iter().map(move |a| {
+            let mut c = c.clone();
+            c.push(a.clone());
+            c
+        })).collect();
+        if copies.len() > COPIES * 4 {
+            return None;
+        }
+    }
+    Some(copies.into_iter().map(|lits| {
+        let mut copy = reader.clone();
+        copy.body.splice(at..=at, lits);
+        copy
+    }).collect())
+}
+
+/// How many copies `unfold` makes of the read at `at`, made or `None` where it makes none: a positive read one per
+/// rule, a negated one the product of its rules' alternatives.
+fn copies(reader: &Rule, at: usize, defs: &[&Rule]) -> Option<usize> {
+    let Literal::Atom(read) = &reader.body[at] else { return None };
+    if !read.neg {
+        return Some(defs.len());
+    }
+    let mut n = 1usize;
+    for alts in negated(read, defs)? {
+        n *= alts.len();
+        if n > COPIES * 4 {
+            return None;
+        }
+    }
+    Some(n)
+}
+
+/// A negated read's rules, each negated: a set of alternatives (one literal each), whose product is the copies.
+/// `None` where a rule's negation is no negation of plain literals.
+fn negated(read: &Atom, defs: &[&Rule]) -> Option<Vec<Vec<Literal>>> {
     let mut alternatives: Vec<Vec<Literal>> = Vec::new();
     let read_vars = read.vars();
     for def in defs {
@@ -814,22 +852,7 @@ fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<
             }
         }
     }
-    let mut copies: Vec<Vec<Literal>> = vec![Vec::new()];
-    for alts in alternatives {
-        copies = copies.into_iter().flat_map(|c| alts.iter().map(move |a| {
-            let mut c = c.clone();
-            c.push(a.clone());
-            c
-        })).collect();
-        if copies.len() > COPIES * 4 {
-            return None;
-        }
-    }
-    Some(copies.into_iter().map(|lits| {
-        let mut copy = reader.clone();
-        copy.body.splice(at..=at, lits);
-        copy
-    }).collect())
+    Some(alternatives)
 }
 
 /// The comparison that holds where `op` does not.
@@ -1145,10 +1168,10 @@ fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f
 
 /// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
-    let was = super::explaining(true);
-    let got = model.plan_rule_explained(prog, &rule.head, &rule.body, first);
-    super::explaining(was);
-    let ((order, _, out), Some(x)) = got.ok()? else { return None };
+    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &rule.head, &rule.body, first).ok()?;
+    if step_rows.len() != order.len() {
+        return None;
+    }
     let key = super::obs_rule(&rule.head, &rule.body);
     OBSERVED.with(|o| {
         let o = o.borrow();
@@ -1159,10 +1182,10 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
         };
         let mut bound = BTreeSet::new();
         let (mut rows, mut work, mut before) = (1.0f64, 0.0f64, 1.0f64);
-        for (i, (s, st)) in order.iter().zip(&x.steps).enumerate() {
-            let estimated = if before > 0.0 { st.rows / before } else { 1.0 };
-            before = st.rows;
-            let factor = if i == 0 { st.rows } else { pattern(&s.lit, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
+        for (i, (s, &st_rows)) in order.iter().zip(&step_rows).enumerate() {
+            let estimated = if before > 0.0 { st_rows / before } else { 1.0 };
+            before = st_rows;
+            let factor = if i == 0 { st_rows } else { pattern(&s.lit, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
             work += rows + out;
             rows = out;
@@ -1275,6 +1298,18 @@ fn restore(model: &mut Model, saved: Saved) {
 /// small, and their estimates planned three quarters of the programs' rules.
 fn bounds(prog: &Program, model: &Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, (f64, Vec<f64>)> {
     let mut out: BTreeMap<String, (f64, Vec<f64>)> = BTreeMap::new();
+    // Each input's distinct values by column, read from the statistics once: at most its rows, its rows where a
+    // column is not counted. An input with no rows counted is not here.
+    let mut counted: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    for a in prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)) {
+        let rel = a.rel.as_str();
+        if counted.contains_key(rel) || rules_of.contains_key(rel) || prog.facts.contains_key(rel) {
+            continue;
+        }
+        let Some(&n) = model.stats.card.get(rel) else { continue };
+        let cols = (0..a.args.len()).map(|c| model.ndv.get(&(rel.to_owned(), c)).map_or(n, |d| d.min(n))).collect();
+        counted.insert(rel, cols);
+    }
     for scc in sccs {
         let recursive = scc.len() > 1 || scc.iter().any(|rel| rules_of.get(rel.as_str()).into_iter().flatten().any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel.as_str() == rel)));
         for rel in scc {
@@ -1295,11 +1330,7 @@ fn bounds(prog: &Program, model: &Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, 
                 match out.get(a.rel.as_str()) {
                     Some((_, cols)) => cols.get(c).copied().unwrap_or(f64::INFINITY),
                     None if rules_of.contains_key(a.rel.as_str()) || prog.facts.contains_key(a.rel.as_str()) => f64::INFINITY,
-                    None => match (model.stats.card.get(a.rel.as_str()), model.ndv.get(&(a.rel.to_string(), c))) {
-                        (Some(n), Some(d)) => d.min(*n),
-                        (Some(n), None) => *n,
-                        _ => f64::INFINITY,
-                    },
+                    None => counted.get(a.rel.as_str()).and_then(|cols| cols.get(c)).copied().unwrap_or(f64::INFINITY),
                 }
             };
             let width = rules.first().map_or(0, |r| r.head.args.len());
@@ -1467,6 +1498,32 @@ pub mod tests {
         let reader = rule("o(n) :- a(t), c(t, n).");
         let twice = rule("c(n, n) :- a(n).");
         assert_eq!(unfold(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
+    }
+
+    /// The copies a read unfolds into are counted without making them (`copies`): what `unfold` makes, or `None`
+    /// where it refuses. Each was made, every rule cloned and its variables renamed, up to three times a reader only
+    /// to be counted (13% of `keeps::choose`).
+    #[test]
+    fn a_reads_copies_are_counted_as_unfold_makes_them() {
+        let cases = [
+            ("o(x) :- a(x), r(x).", vec!["r(z) :- b(z, w), a(w).", "r(z) :- a(z)."]),
+            ("o(x) :- a(x), !r(x).", vec!["r(z) :- b(z, w)."]),
+            ("o(x) :- a(x), !r(x).", vec!["r(z) :- a(z), z != 3.", "r(z) :- b(z, z)."]),
+            ("o(x) :- a(x), !r(x).", vec!["r(z) :- b(z, w), a(w)."]),
+            ("o(x) :- a(x), !r(x).", vec!["r(z) :- b(z, w), b(w, w)."]),
+            ("o(x) :- a(x), !r(x).", vec!["r(z) :- a(z), z != 1, z != 2, z != 3, z != 4, z != 5, z != 6.", "r(z) :- a(z), z != 7, z != 8, z != 9, z != 10, z != 11, z != 12."]),
+            ("o(n) :- a(t), c(t, n).", vec!["c(n, n) :- a(n)."]),
+        ];
+        for (reader, defs) in cases {
+            let reader = rule(reader);
+            let defs: Vec<Rule> = defs.into_iter().map(rule).collect();
+            let defs: Vec<&Rule> = defs.iter().collect();
+            let at = reader.body.len() - 1;
+            assert_eq!(copies(&reader, at, &defs), unfold(&reader, at, &defs, 0).map(|c| c.len()), "{reader}");
+        }
+        // Not an atom: no copies.
+        let reader = rule("o(x) :- a(x), x != 3.");
+        assert_eq!(copies(&reader, 1, &[]), None);
     }
 
     /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join

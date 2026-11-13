@@ -58,9 +58,30 @@ findings. Plans: 6,213 → 3,407 rules for 434 candidates (was 2,445). `keeps::c
 thread. What remains is mostly searches of long bodies upstream of the remaining candidates (7 or more joins:
 about 0.36 s of `estimate`'s 0.55 s).
 
+## What the remaining estimates cost, cut (2026-11-13)
+
+A profile of three batch runs (1,279 samples in `choose`, mapped to source lines) found most of what was left was
+overhead around the estimates, not the estimates. Each of these is exact: over the whole batch, each new path was
+checked against the old one at every call (a temporary switch), and none differed.
+
+| What | Share of `choose` | Now |
+|---|---|---|
+| The step-by-step EXPLAIN record, made for calibration's step rows: every unplaced join priced again, strings | 14.5% | `Model::plan_rule_step_rows`: the rows alone |
+| 0137's cross-product guard: three statistics maps read by name for each pair of joins at each candidate | 12.4% | `unfounded_cross` over masks, the joins with no size found once per search |
+| Reader copies made (rules cloned, variables renamed) only to be counted, up to three times a reader | ~13% | `copies` counts them; `negated` is the analysis both share |
+| Filter readiness kept in a hash map by (filter, variables) | ~8% | `Readiness`: a table per filter by its own variables' pattern |
+| `bounds` reading a column's distinct values with a string made for each read | part of 4.4% | each input's columns read once |
+
+dl1 batch: 148.8 → 143.3 G instructions, the same 48 findings (load 56: cycles and wall time do not compare).
+`choose`: 8.4% → 5.5% of the main thread (5.4%, 5.6% in two runs). O125 step 07 equals a full run. What is
+left is the cost model and the search itself.
+
 ## Tests
 
 - `keeps::tests::a_relation_is_bounded_by_its_inputs_counts`: head variables, constants, an atom product, a
   comparison, an `ast` match (unbounded; written as a failing test first), a recursion.
 - `keeps::tests::a_candidate_bounded_small_is_stored_unplanned`: the planner estimates `r` over `SMALL` and it
   would be inlined (checked with the bound off), and it is stored.
+- `plan::search_tests::the_cross_product_guard_is_its_definition_over_masks`,
+  `a_plans_step_rows_are_its_explain_records`, `a_filters_readiness_is_kept_by_its_own_variables`, and
+  `keeps::tests::a_reads_copies_are_counted_as_unfold_makes_them`: each written before its change, failing.

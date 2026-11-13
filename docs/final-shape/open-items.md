@@ -4829,7 +4829,7 @@ instructions, 53.2 G cycles, 13.8 s CPU (last measured 163.2 G). Shares of the m
 
 | | share | earlier |
 |---|---|---|
-| `keeps::choose` (plan searches for its calibrated rows) | 12.6% (8.7% after 0159) | under 1.5% |
+| `keeps::choose` (plan searches for its calibrated rows) | 12.6% (5.5% after 0159) | under 1.5% |
 | `merge_to_fixpoint` (`simplify::merge_identical`) | 12.3% | new: the duplicate merge pass (0058) |
 | `hiding::hide` (O-combine-hiding-single) | 4.4% | 7.5%, 8.3% |
 | `bridge::facts` → `run_typed` (O-batch-typing-once) | 4.0%, 3.6% | 15%, 13.5% |
@@ -4854,6 +4854,11 @@ planner put over `SMALL` though its inputs allow fewer rows. Left: searches of l
 joins, about 0.36 s of 0.55 s). Tried and dropped: greedy orders for rows, the bound as rows, plans shared
 across programs (0159). `a_relation_is_bounded_by_its_inputs_counts`,
 `a_candidate_bounded_small_is_stored_unplanned`.
+
+Then the overhead around the estimates (0159, "What the remaining estimates cost"): the EXPLAIN record made for
+calibration's step rows, 0137's guard reading statistics by name per pair of joins, reader copies made only to be
+counted, filter readiness in a hash map. dl1: 148.8 → 143.3 G instructions, the same findings; `choose` 8.4% →
+5.5% of the main thread. Left: the cost model and the search.
 
 **A closed connection's cached inputs (fixed 2026-11-13).** In the logic crate's own tests,
 `repeated_native_consumers_fold_each_demanded_bag_once` failed after
