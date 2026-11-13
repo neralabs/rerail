@@ -577,3 +577,6 @@ export const BIOME_RULES: Readonly<Record<string, readonly BiomeRuleDeclaration[
   "suspicious/useStaticResponseMethods": [[false, []]],
   "suspicious/useStrictMode": [[false, []]],
 };
+
+/** The upstream version the table comes from. */
+export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = { biome: "2.5.15" };

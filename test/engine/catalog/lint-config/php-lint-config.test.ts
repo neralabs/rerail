@@ -139,7 +139,7 @@ describe("phpstanReader", () => {
     expect(verdicts[RETURN_TYPE]?.decision).toEqual({ on: false, explicit: true, because: "phpstan.neon: ignoreErrors identifier missingType.return" });
     expect(verdicts[SPRINTF]).toEqual({
       decision: { on: true, explicit: false, because: "phpstan.neon: level 6" },
-      folders: [{ folder: "src/Legacy", on: false, because: "phpstan.neon: ignoreErrors identifier argument.sprintf in path src/Legacy" }],
+      folders: [{ folder: "src/Legacy", on: false, explicit: true, because: "phpstan.neon: ignoreErrors identifier argument.sprintf in path src/Legacy" }],
       notes: [`${SPRINTF}: phpstan.neon: ignoreErrors identifier argument.sprintf ignores it in "src/one.php", which is not a folder of the repository; Rerail sets rules for whole folders only.`],
     });
     expect(verdicts[IF_FALSE]).toEqual({
@@ -163,7 +163,7 @@ describe("phpstanReader", () => {
       `${RETURN_TYPE}: phpstan-baseline.neon: ignoreErrors identifier missingType.return ignores only a count of its errors, so it does not turn the rule off.`,
       `${RETURN_TYPE}: phpstan-baseline.neon: ignoreErrors identifier missingType.return ignores it in "src/a.php", which is not a folder of the repository; Rerail sets rules for whole folders only.`,
     ]);
-    expect(verdicts[RANDOM_INT]?.folders).toEqual([{ folder: "src", on: false, because: "build/phpstan-level.neon: ignoreErrors identifier argument.type in path src" }]);
+    expect(verdicts[RANDOM_INT]?.folders).toEqual([{ folder: "src", on: false, explicit: true, because: "build/phpstan-level.neon: ignoreErrors identifier argument.type in path src" }]);
   });
 
   it("drops the included ignores that ignoreErrors! replaces", async () => {
@@ -176,12 +176,20 @@ describe("phpstanReader", () => {
     expect(verdicts[RANDOM_INT]?.decision).toMatchObject({ on: false, explicit: true });
   });
 
-  it("reads the level of a level config PHPStan ships, and reads past bleeding edge", async () => {
-    const root = await repository({ "phpstan.neon": "includes:\n\t- vendor/phpstan/phpstan/conf/config.level4.neon\n\t- phar://phpstan.phar/conf/bleedingEdge.neon\n" });
+  it("reads the level of a level config the phar ships, and reads past bleeding edge", async () => {
+    const root = await repository({ "phpstan.neon": "includes:\n\t- phar://phpstan.phar/conf/config.level4.neon\n\t- vendor/phpstan/phpstan/conf/bleedingEdge.neon\n\t- '%rootDir%/conf/bleedingEdge.neon'\n" });
     const { verdicts, notes } = read(phpstanReader, root, [IF_FALSE, RANDOM_INT]);
     expect(notes).toEqual([]);
-    expect(verdicts[IF_FALSE]?.decision).toEqual({ on: true, explicit: false, because: "phpstan.neon: includes vendor/phpstan/phpstan/conf/config.level4.neon" });
+    expect(verdicts[IF_FALSE]?.decision).toEqual({ on: true, explicit: false, because: "phpstan.neon: includes phar://phpstan.phar/conf/config.level4.neon" });
     expect(verdicts[RANDOM_INT]?.decision).toMatchObject({ on: false, explicit: false });
+  });
+
+  it("does not take a level config through the Composer package, which has none", async () => {
+    const root = await repository({ "phpstan.neon": "includes:\n\t- '%rootDir%/conf/config.level4.neon'\n" });
+    expect(read(phpstanReader, root, [IF_FALSE]).verdicts[IF_FALSE]?.decision).toEqual({
+      on: "unknown",
+      because: "phpstan.neon's include \"%rootDir%/conf/config.level4.neon\", which Rerail does not read, may register or ignore it",
+    });
   });
 
   it("leaves the pack's values where an extension it includes may decide, keeping what the config ignores", async () => {
@@ -251,7 +259,7 @@ describe("phpstanReader", () => {
     const ignore = "phpstan.neon: ignoreErrors identifier argument.sprintf";
     expect(read(phpstanReader, root, [SPRINTF]).verdicts[SPRINTF]).toEqual({
       decision: { on: true, explicit: false, because: "phpstan.neon: level 6" },
-      folders: [{ folder: "src/Legacy", on: false, because: `${ignore} in path src/Legacy` }],
+      folders: [{ folder: "src/Legacy", on: false, explicit: true, because: `${ignore} in path src/Legacy` }],
       notes: others.map(path => `${SPRINTF}: ${ignore} ignores it in ${JSON.stringify(path)}, which is not a folder of the repository; Rerail sets rules for whole folders only.`),
     });
   });
@@ -297,13 +305,13 @@ describe("phpstanReader", () => {
   });
 
   it.each([
-    ["a level and the level config of the same level", "includes:\n\t- vendor/phpstan/phpstan/conf/config.level4.neon\nparameters:\n\tlevel: 4\n", { on: true, explicit: false, because: "phpstan.neon: level 4" }],
+    ["a level and the level config of the same level", "includes:\n\t- phar://phpstan.phar/conf/config.level4.neon\nparameters:\n\tlevel: 4\n", { on: true, explicit: false, because: "phpstan.neon: level 4" }],
     [
       "a level and the level config of another",
-      "includes:\n\t- vendor/phpstan/phpstan/conf/config.level4.neon\nparameters:\n\tlevel: 5\n",
-      { on: "unknown", because: "phpstan.neon sets level 5 and phpstan.neon: includes vendor/phpstan/phpstan/conf/config.level4.neon" },
+      "includes:\n\t- phar://phpstan.phar/conf/config.level4.neon\nparameters:\n\tlevel: 5\n",
+      { on: "unknown", because: "phpstan.neon sets level 5 and phpstan.neon: includes phar://phpstan.phar/conf/config.level4.neon" },
     ],
-    ["the max level config through %rootDir%", "includes:\n\t- '%rootDir%/conf/config.levelmax.neon'\n", { on: true, explicit: false, because: "phpstan.neon: includes %rootDir%/conf/config.levelmax.neon" }],
+    ["the max level config", "includes:\n\t- phar://phpstan.phar/conf/config.levelmax.neon\n", { on: true, explicit: false, because: "phpstan.neon: includes phar://phpstan.phar/conf/config.levelmax.neon" }],
     [
       "a custom ruleset and no level",
       "parameters:\n\tcustomRulesetUsed: true\n",
@@ -311,6 +319,60 @@ describe("phpstanReader", () => {
     ],
   ])("decides by the level of %s", async (_, text, decision) => {
     expect(read(phpstanReader, await repository({ "phpstan.neon": text }), [IF_FALSE]).verdicts[IF_FALSE]?.decision).toEqual(decision);
+  });
+
+  it("turns on a port whose own rule class rules: or a tagged service registers, whatever the level", async () => {
+    const root = await repository({
+      "phpstan.neon": [
+        "parameters:",
+        "\tlevel: 0",
+        "rules:",
+        "\t- \\phpstan\\rules\\functions\\MissingFunctionReturnTypehintRule",
+        "\t- 1",
+        "services:",
+        "\t-",
+        "\t\tfactory: PHPStan\\Rules\\Comparison\\IfConstantConditionRule",
+        "\t\ttags: {phpstan.rules.rule: true}",
+        "\t- PHPStan\\Rules\\Functions\\RandomIntParametersRule",
+      ].join("\n"),
+    });
+    const { verdicts, notes } = read(phpstanReader, root, [RETURN_TYPE, IF_FALSE, SPRINTF, RANDOM_INT]);
+    expect(verdicts[RETURN_TYPE]?.decision).toEqual({ on: true, explicit: true, because: "phpstan.neon: rules \\phpstan\\rules\\functions\\MissingFunctionReturnTypehintRule" });
+    expect(verdicts[IF_FALSE]?.decision).toEqual({ on: true, explicit: true, because: "phpstan.neon: services tagged phpstan.rules.rule PHPStan\\Rules\\Comparison\\IfConstantConditionRule" });
+    expect(verdicts[SPRINTF]?.decision).toEqual({ on: true, explicit: false, because: "phpstan.neon: level 0" });
+    expect(verdicts[RANDOM_INT]?.decision).toEqual({
+      on: "unknown",
+      because: "phpstan.neon: rules \\phpstan\\rules\\functions\\MissingFunctionReturnTypehintRule registers a rule Rerail does not read, which may report argument.type",
+    });
+    const every = "registers a rule at every level, so the PHPStan rules Rerail ports that the level leaves off keep the pack's values unless it is the port's own rule.";
+    expect(notes).toEqual([
+      `phpstan.neon: rules \\phpstan\\rules\\functions\\MissingFunctionReturnTypehintRule ${every}`,
+      `phpstan.neon: rules a rule ${every}`,
+      `phpstan.neon: services tagged phpstan.rules.rule PHPStan\\Rules\\Comparison\\IfConstantConditionRule ${every}`,
+    ]);
+  });
+
+  it("leaves the pack's value for a port the level leaves off where a conditional or unnamed rule may report it", async () => {
+    const root = await repository({
+      "phpstan.neon": [
+        "parameters:",
+        "\tcustomRulesetUsed: true",
+        "services:",
+        "\t-",
+        "\t\tclass: Acme\\Rule()",
+        "\t\ttags: [phpstan.rules.rule]",
+        "conditionalTags:",
+        "\tPHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule:",
+        "\t\tphpstan.rules.rule: %featureToggles.example%",
+      ].join("\n"),
+    });
+    const { verdicts } = read(phpstanReader, root, [RETURN_TYPE]);
+    expect(verdicts[RETURN_TYPE]?.decision).toEqual({ on: "unknown", because: "the config is a custom ruleset (customRulesetUsed), whose rules Rerail does not read" });
+    const level = await repository({ "phpstan.neon": "parameters:\n\tlevel: 1\nconditionalTags:\n\tPHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule:\n\t\tphpstan.rules.rule: %featureToggles.example%\n\t- {phpstan.rules.rule: true}\n" });
+    expect(read(phpstanReader, level, [RETURN_TYPE]).verdicts[RETURN_TYPE]?.decision).toEqual({
+      on: "unknown",
+      because: "phpstan.neon: conditionalTags PHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule a rule registers a rule Rerail does not read, which may report missingType.return",
+    });
   });
 
   it("leaves the pack's value for a port of an identifier whose level Rerail does not know", async () => {
@@ -371,8 +433,8 @@ describe("psalmReader", () => {
     expect(read(psalmReader, root, [FORBIDDEN]).verdicts[FORBIDDEN]).toEqual({
       decision: { on: true, explicit: true, because: "psalm.xml: <ForbiddenCode/>" },
       folders: [
-        { folder: "src/Legacy", on: false, because: "psalm.xml: <ForbiddenCode> <errorLevel type=\"suppress\"> <directory name=\"src/Legacy\"/>" },
-        { folder: "tests", on: true, because: "psalm.xml: <ForbiddenCode> <errorLevel type=\"error\"> <directory name=\"tests\"/>" },
+        { folder: "src/Legacy", on: false, explicit: true, because: "psalm.xml: <ForbiddenCode> <errorLevel type=\"suppress\"> <directory name=\"src/Legacy\"/>" },
+        { folder: "tests", on: true, explicit: true, because: "psalm.xml: <ForbiddenCode> <errorLevel type=\"error\"> <directory name=\"tests\"/>" },
       ],
       notes: [`${FORBIDDEN}: psalm.xml: <ForbiddenCode> <errorLevel type="suppress"> covers <file name="src/one.php"/>, which is not a folder of the repository; Rerail sets rules for whole folders only.`],
     });
@@ -447,6 +509,7 @@ const LOWER_CASE = "phpcs-generic-php-lower-case-constant";
 const BACKTICK = "phpcs-generic-php-backtick-operator";
 const EMPTY = "phpcs-generic-code-analysis-empty-statement";
 const SILENCED = "phpcs-generic-php-no-silenced-errors";
+const SIZE = "phpcs-squiz-php-disallow-size-functions-in-loops";
 
 /** A ruleset with `body`. */
 const ruleset = (body: string): string => `<?xml version="1.0"?>\n<ruleset name="Project">\n${body}\n</ruleset>\n`;
@@ -499,7 +562,7 @@ describe("phpcsReader", () => {
     expect(verdicts[BACKTICK]?.decision).toEqual({ on: true, explicit: true, because: "phpcs.xml: <rule ref=\"Generic.PHP.BacktickOperator.Found\">" });
   });
 
-  it("turns a rule off in the folders its exclude patterns leave out, noting other patterns", async () => {
+  it("turns a rule off in the folders its exclude patterns leave out, noting the files they also match elsewhere and other patterns", async () => {
     const root = await repository({
       "phpcs.xml": ruleset([
         "<rule ref=\"Squiz.PHP.Eval\">",
@@ -508,19 +571,74 @@ describe("phpcsReader", () => {
         "  <exclude-pattern>*.inc</exclude-pattern>",
         "</rule>",
       ].join("\n")),
+      "src/Legacy/a.php": "<?php\n",
+      "tests/a.php": "<?php\n",
+      "lib/src/Legacy/a.php": "<?php\n",
+      "lib/tests/a.php": "<?php\n",
+      "lib/tests/b.php": "<?php\n",
+      "lib/tests/notes.md": "",
+      "src/tests/a.php": "<?php\n",
+      "src/tests/b.php": "<?php\n",
+    });
+    const rule = "phpcs.xml: <rule ref=\"Squiz.PHP.Eval\">";
+    expect(read(phpcsReader, root, [EVAL]).verdicts[EVAL]).toEqual({
+      decision: { on: true, explicit: true, because: rule },
+      folders: [
+        { folder: "src/Legacy", on: false, explicit: true, because: `${rule}<exclude-pattern>src/Legacy/*</exclude-pattern>` },
+        { folder: "tests", on: false, explicit: true, because: `${rule}<exclude-pattern>*/tests/*</exclude-pattern>` },
+      ],
+      notes: [
+        `${EVAL}: ${rule}<exclude-pattern>src/Legacy/*</exclude-pattern> also matches lib/src/Legacy/a.php outside src/Legacy; Rerail sets rules for whole folders only, so the rule stays on there.`,
+        `${EVAL}: ${rule}<exclude-pattern>*/tests/*</exclude-pattern> also matches lib/tests/a.php, lib/tests/b.php, src/tests/a.php and 1 more outside tests; Rerail sets rules for whole folders only, so the rule stays on there.`,
+        `${EVAL}: ${rule}<exclude-pattern>*.inc</exclude-pattern> leaves out files that are not one folder of the repository; Rerail sets rules for whole folders only.`,
+      ],
+    });
+  });
+
+  it("turns every rule off in the folders a ruleset's own exclude patterns and the ignore argument leave out", async () => {
+    const root = await repository({
+      "phpcs.xml": ruleset("<exclude-pattern>src/Legacy/*</exclude-pattern>\n<exclude-pattern phpcbf-only=\"true\">tests/*</exclude-pattern>\n<arg name=\"ignore\" value=\"build/*, ,generated\\,old/*\"/>\n<rule ref=\"./base.xml\"/>"),
+      "base.xml": ruleset("<exclude-pattern>docs/*</exclude-pattern>\n<rule ref=\"Squiz.PHP.Eval\"/>"),
       "src/Legacy/": "",
+      "build/": "",
+      "docs/": "",
       "tests/": "",
     });
     expect(read(phpcsReader, root, [EVAL]).verdicts[EVAL]).toEqual({
-      decision: { on: true, explicit: true, because: "phpcs.xml: <rule ref=\"Squiz.PHP.Eval\">" },
+      decision: { on: true, explicit: true, because: "phpcs.xml: <rule ref=\"./base.xml\">: base.xml: <rule ref=\"Squiz.PHP.Eval\">" },
       folders: [
-        { folder: "src/Legacy", on: false, because: "phpcs.xml: <rule ref=\"Squiz.PHP.Eval\"><exclude-pattern>src/Legacy/*</exclude-pattern>" },
-        { folder: "tests", on: false, because: "phpcs.xml: <rule ref=\"Squiz.PHP.Eval\"><exclude-pattern>*/tests/*</exclude-pattern>" },
+        { folder: "src/Legacy", on: false, explicit: true, because: "phpcs.xml: <exclude-pattern>src/Legacy/*</exclude-pattern>" },
+        { folder: "docs", on: false, explicit: true, because: "base.xml: <exclude-pattern>docs/*</exclude-pattern>" },
+        { folder: "build", on: false, explicit: true, because: "phpcs.xml: <arg name=\"ignore\" value=\"build/*, ,generated\\,old/*\"/>" },
       ],
-      notes: [
-        `${EVAL}: phpcs.xml: <rule ref="Squiz.PHP.Eval"><exclude-pattern>*/tests/*</exclude-pattern> also leaves out folders named tests below the root; the rule stays on there.`,
-        `${EVAL}: phpcs.xml: <rule ref="Squiz.PHP.Eval"><exclude-pattern>*.inc</exclude-pattern> leaves out files that are not one folder of the repository; Rerail sets rules for whole folders only.`,
-      ],
+      notes: [`${EVAL}: phpcs.xml: <arg name="ignore" value="build/*, ,generated\\,old/*"/> leaves out files that are not one folder of the repository; Rerail sets rules for whole folders only.`],
+    });
+  });
+
+  it("reads a ref that is a file at the root as a ruleset, whatever its name, as PHP_CodeSniffer checks for a file first", async () => {
+    const root = await repository({
+      ".phpcs.xml": ruleset("<rule ref=\"phpcs.xml.dist\"/>\n<rule ref=\"Acme.Rules\"/>\n<rule ref=\"./build/base.xml\"/>"),
+      "phpcs.xml.dist": ruleset("<rule ref=\"Squiz.PHP.Eval\"/>"),
+      "Acme.Rules": ruleset("<rule ref=\"Generic.PHP.BacktickOperator\"/>"),
+      "build/base.xml": ruleset("<rule ref=\"./near.xml\"/>\n<rule ref=\"far.xml\"/>\n<rule ref=\"./root.xml\"/>\n<rule ref=\"build\"/>\n<rule ref=\"Sniffs\"/>"),
+      "build/near.xml": ruleset("<rule ref=\"Generic.PHP.NoSilencedErrors\"/>"),
+      "far.xml": ruleset("<rule ref=\"Generic.PHP.LowerCaseConstant\"/>"),
+      "build/far.xml": ruleset("<rule ref=\"Generic.CodeAnalysis.EmptyStatement\"/>"),
+      "root.xml": ruleset("<rule ref=\"Squiz.PHP.DisallowSizeFunctionsInLoops\"/>"),
+      "build/ruleset.xml": ruleset(""),
+      "Sniffs/": "",
+    });
+    const { verdicts, notes } = read(phpcsReader, root, [EVAL, BACKTICK, SILENCED, LOWER_CASE, EMPTY, SIZE]);
+    expect(notes).toEqual(["build/base.xml: \"Sniffs\" is not read (it is a folder of sniffs, which Rerail never runs), so the PHP_CodeSniffer rules Rerail ports that only a standard turns on keep the pack's values."]);
+    expect(verdicts[EVAL]?.decision).toEqual({ on: true, explicit: true, because: ".phpcs.xml: <rule ref=\"phpcs.xml.dist\">: phpcs.xml.dist: <rule ref=\"Squiz.PHP.Eval\">" });
+    expect(verdicts[BACKTICK]?.decision).toMatchObject({ on: true, explicit: true });
+    expect(verdicts[SILENCED]?.decision).toMatchObject({ on: true, explicit: true });
+    expect(verdicts[LOWER_CASE]?.decision).toMatchObject({ on: true, explicit: true });
+    expect(verdicts[EMPTY]?.decision).toEqual({ on: "unknown", because: "build/base.xml: <rule ref=\"Sniffs\"> (it is a folder of sniffs, which Rerail never runs) is not read and may include it" });
+    expect(verdicts[SIZE]?.decision).toEqual({
+      on: true,
+      explicit: true,
+      because: ".phpcs.xml: <rule ref=\"./build/base.xml\">: build/base.xml: <rule ref=\"./root.xml\">: root.xml: <rule ref=\"Squiz.PHP.DisallowSizeFunctionsInLoops\">",
     });
   });
 
@@ -564,12 +682,14 @@ describe("phpcsReader", () => {
       ["./Sniffs/MySniff.php", "it is a sniff, which Rerail never runs"],
       ["./missing.xml", "it does not exist"],
       ["./standard", "it is not a regular file of at most 1 MiB in the repository"],
+      ["constructor", "it is a coding standard PHP_CodeSniffer does not ship, which Rerail does not read"],
       ["./broken.xml", "not XML Rerail reads: </ruleset> closes <rule> (line 1)"],
       ["./other.xml", "its root element is not <ruleset>"],
     ];
     const root = await repository({
       "phpcs.xml": ruleset([...unread.map(([ref]) => ref), "."].map(ref => `<rule ref="${ref}"/>`).join("\n")),
       "standard/ruleset.xml/": "",
+      "Sniffs/MySniff.php": "<?php\n",
       "broken.xml": "<ruleset><rule></ruleset>",
       "other.xml": "<psalm/>",
       "ruleset.xml": ruleset("<rule ref=\"Generic.PHP.NoSilencedErrors\"/>"),
@@ -586,22 +706,26 @@ describe("phpcsReader", () => {
     expect(notes).toEqual(["phpcs.xml: \"./phpcs.xml\" is not read (rulesets are followed 8 deep), so the PHP_CodeSniffer rules Rerail ports that only a standard turns on keep the pack's values."]);
   });
 
-  it("skips a rule without a ref and an exclude without a name, and notes the include patterns and properties it does not map", async () => {
+  it("skips a rule without a ref and an exclude without a name, leaves the pack's value under an include pattern, and notes properties it does not map", async () => {
     const { verdicts, notes } = read(phpcsReader, await repository({
       "phpcs.xml": ruleset([
+        "<exclude-pattern>src/Legacy/*</exclude-pattern>",
         "<rule><severity>0</severity></rule>",
-        "<rule ref=\"Squiz.PHP\"><exclude/><exclude name=\"Squiz.PHP.Eval.Discouraged\"/></rule>",
-        "<rule ref=\"Generic.PHP.LowerCaseConstant\"><include-pattern>src/*</include-pattern><properties><property name=\"a\" value=\"b\"/></properties></rule>",
+        "<rule ref=\"Squiz.PHP\"><exclude/><exclude name=\"Squiz.PHP.Eval.Discouraged\"/><include-pattern>src/*</include-pattern></rule>",
+        "<rule ref=\"Generic.PHP.LowerCaseConstant\"><include-pattern>src/*</include-pattern><exclude-pattern>src/Old/*</exclude-pattern><properties><property name=\"a\" value=\"b\"/></properties></rule>",
       ].join("\n")),
+      "src/Legacy/": "",
+      "src/Old/": "",
     }), [EVAL, LOWER_CASE]);
     expect(notes).toEqual([]);
-    expect(verdicts[EVAL]).toEqual({ decision: { on: false, explicit: true, because: "phpcs.xml: <rule ref=\"Squiz.PHP\"><exclude name=\"Squiz.PHP.Eval.Discouraged\"/>" } });
+    expect(verdicts[EVAL]).toEqual({
+      decision: { on: false, explicit: true, because: "phpcs.xml: <rule ref=\"Squiz.PHP\"><exclude name=\"Squiz.PHP.Eval.Discouraged\"/>" },
+      folders: [{ folder: "src/Legacy", on: false, explicit: true, because: "phpcs.xml: <exclude-pattern>src/Legacy/*</exclude-pattern>" }],
+    });
     expect(verdicts[LOWER_CASE]).toEqual({
-      decision: { on: true, explicit: true, because: "phpcs.xml: <rule ref=\"Generic.PHP.LowerCaseConstant\">" },
-      notes: [
-        `${LOWER_CASE}: phpcs.xml: <rule ref="Generic.PHP.LowerCaseConstant"><include-pattern>src/*</include-pattern> limits it to some files; it is not limited.`,
-        `${LOWER_CASE}: the properties of phpcs.xml: <rule ref="Generic.PHP.LowerCaseConstant"> are not mapped; it keeps its default options.`,
-      ],
+      decision: { on: "unknown", because: "phpcs.xml: <rule ref=\"Generic.PHP.LowerCaseConstant\"><include-pattern>src/*</include-pattern> limits it to the files it matches; Rerail sets rules for whole folders only" },
+      folders: [{ folder: "src/Legacy", on: false, explicit: true, because: "phpcs.xml: <exclude-pattern>src/Legacy/*</exclude-pattern>" }],
+      notes: [`${LOWER_CASE}: the properties of phpcs.xml: <rule ref="Generic.PHP.LowerCaseConstant"> are not mapped; it keeps its default options.`],
     });
   });
 

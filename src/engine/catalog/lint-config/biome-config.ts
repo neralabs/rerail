@@ -1,23 +1,31 @@
 /**
- * Biome's config at a repository root, read as data as Biome 2.5.15 reads it (never run), for the ports that honour
+ * Biome's configs in a repository, read as data as Biome 2.5.15 reads them (never run), for the ports that honour
  * `biome-ignore` comments: their `lint/<group>/<rule>` names.
  *
- * Biome takes the first of `biome.json`, `biome.jsonc`, `.biome.json`, `.biome.jsonc` in a folder. Its `linter`
+ * Biome takes the first of `biome.json`, `biome.jsonc`, `.biome.json`, `.biome.jsonc` at the root. Its `linter`
  * section decides which rules run: `enabled`, `rules` (a preset, `recommended`, groups set to a severity or listing
  * rules) and `domains`; `extends` merges other config files under it and `overrides` merges more `linter` sections
- * over it for the files they include. Which rules a preset or a domain holds comes from Biome's own rule metadata
- * (`biome-rules.generated.ts`). What the config takes and Rerail cannot read (a package in `extends`, a file outside
- * the repository, a root config above the repository) leaves the rules it may set at the pack's values.
+ * over it for the files they include, whole folders or (`**`) every file. Which rules a preset or a domain holds comes
+ * from Biome's own rule metadata (`biome-rules.generated.ts`); a domain's recommended rules also turn on for the
+ * dependencies of a `package.json`, which Rerail does not read, so they keep the pack's values in a repository with
+ * one. A folder below the root holding a `biome.json` or `biome.jsonc` (`"root": false`) is linted by that config:
+ * alone, or over the root's with `"extends": "//"`, whose overrides it then matches from its own folder; a nested root
+ * config makes Biome refuse to run, and Rerail reads nothing. What a config takes and Rerail cannot read (a package in
+ * `extends`, a file outside the repository, a root config above the repository) leaves the rules it may set at the
+ * pack's values.
  */
 import { posix } from "node:path";
 import { BIOME_DOMAINS, BIOME_RULES, type BiomeRuleDeclaration } from "./generated/biome-rules.generated.js";
 import { folderOfGlob } from "./eslint-flat-config.js";
+import { repositoryFiles } from "./repository-files.js";
 import { LintConfigFormatError, parseJsonc, readFormat } from "./formats/lint-config-formats.js";
 import {
   NOT_A_FILE,
   readRootFile,
   type FileRead,
   type FolderDecision,
+  inFolder,
+  settlesAlike,
   type LinterConfig,
   type LinterNote,
   type LinterReader,
@@ -28,6 +36,8 @@ import {
 
 /** Biome's config file names in the order it looks for them in a folder (`ConfigName` in crates/biome_fs/src/fs.rs l.24-25). */
 const BIOME_FILES = ["biome.json", "biome.jsonc", ".biome.json", ".biome.jsonc"];
+/** The config file names Biome 2.5.15 takes in a folder below the root, in the order it looks for them. */
+const NESTED_FILES = ["biome.json", "biome.jsonc"];
 /** A rule's or a group's severity (`RulePlainConfiguration`, crates/biome_configuration/src/analyzer/mod.rs l.287-298). */
 const LEVELS = ["off", "on", "info", "warn", "error"];
 /** A `preset` (`PresetConfig`, crates/biome_configuration/src/analyzer/presets.rs). */
@@ -91,7 +101,7 @@ interface LinterLayer {
   readonly domains: ReadonlyMap<string, Fact<DomainValue>>;
 }
 
-/** An override's `linter` section, for the whole folders its `includes` name. */
+/** An override's `linter` section, for the whole folders its `includes` name (`""`: every file), from the folder of the config it is in. */
 interface FolderOverride {
   readonly folders: readonly string[];
   readonly layer: LinterLayer;
@@ -100,6 +110,8 @@ interface FolderOverride {
 /** One config file as read: whether it is a root config, what it extends, its `linter` and its overrides. */
 interface ConfigFile {
   readonly root: boolean;
+  /** `extends: "//"`: a nested config that merges over the root config. */
+  readonly extendsRoot: boolean;
   readonly extends: readonly string[];
   readonly linter: LinterLayer | undefined;
   readonly overrides: readonly FolderOverride[];
@@ -190,11 +202,14 @@ function linterLayer(value: unknown, file: string, path: string): LinterLayer {
   };
 }
 
-/** An override's `includes` as whole folders; undefined when one is not `<folder>/**`. */
+/** The globs Biome matches every file with: an override for them is for the whole folder of its config. */
+const EVERY_FILE = new Set(["**", "**/*"]);
+
+/** An override's `includes` as whole folders (`""`: every file); undefined when one is not `<folder>/**` or `**`. */
 function overrideFolders(includes: unknown, where: string): string[] | undefined {
   if (includes === undefined) return undefined;
   if (!Array.isArray(includes) || !includes.every(glob => typeof glob === "string")) fail(where, "is not a list of globs");
-  const folders = includes.map(folderOfGlob);
+  const folders = includes.map(glob => (EVERY_FILE.has(glob) ? "" : folderOfGlob(glob)));
   return folders.length > 0 && folders.every(folder => folder !== undefined) ? folders as string[] : undefined;
 }
 
@@ -206,7 +221,7 @@ function folderOverride(value: unknown, file: string, index: number, notes: Lint
   const layer = linterLayer(override.linter, file, `${path}.linter`);
   const folders = overrideFolders(override.includes, `${path}.includes`);
   if (folders !== undefined) return [{ folders, layer }];
-  notes.push({ linter: "biome", text: `${file}: ${path} is not read: its includes ${JSON.stringify(override.includes ?? [])} are not whole folders (<folder>/**).` });
+  notes.push({ linter: "biome", text: `${file}: ${path} is not read: its includes ${JSON.stringify(override.includes ?? [])} are not whole folders (<folder>/** or **).` });
   return [];
 }
 
@@ -229,6 +244,7 @@ function configFile(config: Record<string, unknown>, file: string, notes: Linter
   }
   return {
     root,
+    extendsRoot: extended.root,
     extends: extended.list,
     linter: config.linter === undefined ? undefined : linterLayer(config.linter, file, "linter"),
     overrides: overrides.flatMap((override: unknown, index) => folderOverride(override, file, index, notes)),
@@ -260,26 +276,30 @@ function configOf(name: string, read: FileRead, notes: LinterNote[]): ConfigFile
 }
 
 /**
- * A file in `extends`, relative to the root; undefined for a package or a file outside the repository. A relative
- * entry (`is_relative_specifier`, crates/biome_resolver/src/lib.rs l.865-867) is a path; any other is first tried as a
- * path from the working directory (`with_assume_relative`), taken here as the root, then as a package.
+ * A file in `extends` of a config in folder `base`, relative to the root; undefined for a package or a file outside the
+ * repository. A relative entry (`is_relative_specifier`, crates/biome_resolver/src/lib.rs l.865-867) is a path from
+ * the config's folder; any other is, in the root config, first tried as a path from the working directory
+ * (`with_assume_relative`), taken here as the root, then as a package, and in a nested config a package (Biome 2.5.15
+ * resolves no other there).
  */
-function extendedPath(root: string, entry: string): string | undefined {
-  const path = posix.normalize(entry);
+function extendedPath(root: string, base: string, entry: string): string | undefined {
+  const relative = /^\.\.?(?:\/|$)/u.test(entry);
+  if (!relative && base !== "") return undefined;
+  const path = posix.normalize(posix.join(base, entry));
   if (/^(?:\/|\.\.(?:\/|$))/u.test(path)) return undefined;
-  return /^\.\.?(?:\/|$)/u.test(entry) || readRootFile(root, path).present ? path : undefined;
+  return relative || readRootFile(root, path).present ? path : undefined;
 }
 
 /** The `linter` of a config file that has none: Biome's defaults. */
 const NO_LINTER: LinterLayer = { domains: new Map() };
 
-/** What `extends` of `file` merges under it, in order: each config's `linter` (not its own `extends`, which Biome does not follow), or `UNREAD`. */
-function extendedLayers(root: string, file: string, config: ConfigFile, notes: LinterNote[]): { layers: (LinterLayer | Unread)[]; overrides: FolderOverride[]; unread: string | undefined } {
+/** What `extends` of `file`, in folder `base`, merges under it, in order: each config's `linter` (not its own `extends`, which Biome does not follow), or `UNREAD`. */
+function extendedLayers(root: string, base: string, file: string, config: ConfigFile, notes: LinterNote[]): { layers: (LinterLayer | Unread)[]; overrides: FolderOverride[]; unread: string | undefined } {
   const layers: (LinterLayer | Unread)[] = [];
   const overrides: FolderOverride[] = [];
   let unread: string | undefined;
   for (const entry of config.extends) {
-    const path = extendedPath(root, entry);
+    const path = extendedPath(root, base, entry);
     if (path === undefined) notes.push({ linter: "biome", text: `${file}: extends ${JSON.stringify(entry)} is not read: it is a package or a file outside the repository; the rules it may set keep the pack's values.` });
     const extended = path === undefined ? undefined : configOf(path, readRootFile(root, path), notes);
     if (extended === undefined) unread = `${file} extends ${JSON.stringify(entry)}, which Rerail does not read`;
@@ -387,10 +407,11 @@ interface Effect {
   readonly options?: boolean;
 }
 
-/** What reading a config for a verdict needs: the file Biome takes, and why some of it is not known. */
+/** What reading a config for a verdict needs: the file Biome takes, why some of it is not known, and whether the repository has a `package.json`. */
 interface Context {
   readonly file: string;
   readonly unread: string;
+  readonly manifests: boolean;
 }
 
 const unsure = (context: Context): Effect[] => [
@@ -493,10 +514,11 @@ function recommendedEnabled(folded: Folded): boolean | Unread {
 
 /**
  * A recommended rule of a domain the config does not set turns on when the nearest `package.json` depends on one of
- * the domain's packages (`ManifestVisitor`, file_handlers/mod.rs l.2002-2063): Rerail does not tell, so it may.
+ * the domain's packages (`ManifestVisitor`, file_handlers/mod.rs l.2002-2063): Rerail does not tell, so it may, in a
+ * repository with a `package.json`.
  */
 function manifestEffects(folded: Folded, rule: BiomeRule, context: Context): Effect[] {
-  if (rule.nursery || recommendedEnabled(folded) === false) return [];
+  if (rule.nursery || !context.manifests || recommendedEnabled(folded) === false) return [];
   const domains = rule.declarations.flatMap(([recommended, ruleDomains]) => (recommended ? ruleDomains : []));
   const open = domains.find(domain => domainValue(folded, domain) === undefined);
   if (open === undefined) return [];
@@ -549,39 +571,105 @@ function nameDecision(layers: readonly (LinterLayer | Unread)[], name: string, c
   return rule === undefined ? { on: "unknown", because: `${name} is not a Biome 2.5.15 lint rule` } : ruleDecision(layers, rule, context);
 }
 
-/** Biome's config read at the root, ready to give verdicts. */
-interface BiomeView {
+/**
+ * The config Biome lints a folder by (`""`: the root's, for every file outside the others): what it merges, in order,
+ * and its overrides, by folders relative to the root.
+ */
+interface ReadScope {
+  readonly folder: string;
   readonly context: Context;
   readonly layers: readonly (LinterLayer | Unread)[];
   readonly overrides: readonly FolderOverride[];
 }
 
-/** Per whole folder an override is for, the port's state there when it differs from every file's: the overrides for it or a folder holding it apply, in order. */
-function folderDecisions(view: BiomeView, names: readonly string[], whole: PortDecision): FolderDecision[] {
-  const folders = [...new Set(view.overrides.flatMap(override => override.folders))].sort();
-  return folders.flatMap(folder => {
-    const applying = view.overrides.filter(override => override.folders.some(holder => folder === holder || folder.startsWith(`${holder}/`)));
-    const layers = [...view.layers, ...applying.map(override => override.layer)];
-    const decision = portDecision(names.map(name => nameDecision(layers, name, view.context)));
-    if (decision.on === "unknown" || decision.on === whole.on) return [];
-    return [{ folder, on: decision.on, because: decision.because }];
-  });
+/** A folder's config, or why Rerail cannot tell it. */
+type BiomeScope = ReadScope | { readonly folder: string; readonly unknown: string };
+
+const within = (path: string, folder: string): boolean => folder === "" || path === folder || path.startsWith(`${folder}/`);
+
+/** `override`, from a config in `folder`, with its folders relative to the root. */
+const rebased = (override: FolderOverride, folder: string): FolderOverride =>
+  ({ ...override, folders: override.folders.map(path => [folder, path].filter(part => part !== "").join("/")) });
+
+/** The port's decision in `folder` of `scope`: its config, then its overrides for `folder` or a folder holding it, in order. */
+function scopeDecision(scope: BiomeScope, folder: string, names: readonly string[]): PortDecision {
+  if ("unknown" in scope) return { on: "unknown", because: scope.unknown };
+  const applying = scope.overrides.filter(override => override.folders.some(holder => within(folder, holder)));
+  const layers = [...scope.layers, ...applying.map(override => override.layer)];
+  return portDecision(names.map(name => nameDecision(layers, name, scope.context)));
 }
 
-/** The verdicts of Biome's config as `view` holds it. */
-function biomeVerdicts(view: BiomeView): LinterConfig {
+/**
+ * Per folder a nested config or an override is for, the port's state there where it differs from the nearest folder
+ * holding it (or, in none, from every file's): the deepest config holding the folder decides it.
+ */
+function folderDecisions(scopes: readonly BiomeScope[], names: readonly string[], whole: PortDecision): FolderDecision[] {
+  const folders = scopes.flatMap(scope => [scope.folder, ...("unknown" in scope ? [] : scope.overrides.flatMap(override => override.folders))]);
+  const decided: FolderDecision[] = [];
+  // Sorted, a folder comes after every folder holding it.
+  for (const folder of [...new Set(folders)].filter(path => path !== "").sort()) {
+    const scope = scopes.filter(candidate => within(folder, candidate.folder)).at(-1)!;
+    const decision = scopeDecision(scope, folder, names);
+    const holder = decided.findLast(known => within(folder, known.folder)) ?? whole;
+    if (!settlesAlike(decision, holder)) decided.push(inFolder(folder, decision));
+  }
+  return decided;
+}
+
+/** The verdicts of Biome's configs, the root's first and nested ones after the folders holding them. */
+function biomeVerdicts(scopes: readonly BiomeScope[]): LinterConfig {
   return {
     verdict(port: Port): PortVerdict | undefined {
       const names = port.suppress.biome;
       if (names.length === 0) return undefined;
-      const decision = portDecision(names.map(name => nameDecision(view.layers, name, view.context)));
-      const folders = folderDecisions(view, names, decision);
+      const decision = scopeDecision(scopes[0]!, "", names);
+      const folders = folderDecisions(scopes, names, decision);
       return { decision, ...folders.length > 0 ? { folders } : {} };
     },
   };
 }
 
-/** Biome's config `file` at `root`, as `read` holds it, and what it extends, read as Biome merges them. */
+/** The scope of config `config`, file `file` in `folder`, and what it extends, read as Biome merges them. */
+function scopeOf(root: string, folder: string, file: string, config: ConfigFile, manifests: boolean, notes: LinterNote[]): ReadScope {
+  const extended = extendedLayers(root, folder, file, config, notes);
+  return {
+    folder,
+    context: { file, unread: extended.unread ?? `${file} takes a config Rerail does not read`, manifests },
+    layers: [...extended.layers, config.linter ?? NO_LINTER],
+    overrides: [...extended.overrides, ...config.overrides].map(override => rebased(override, folder)),
+  };
+}
+
+/**
+ * The nested config `file` (`root: false`): by itself, or with `extends: "//"` over the root's, whose overrides it
+ * matches from its own folder (Biome 2.5.15); `"refused"` (with a note) for a root config, with which Biome runs nothing.
+ */
+function nestedScope(root: string, file: string, rootScope: ReadScope, notes: LinterNote[]): BiomeScope | "refused" {
+  const folder = posix.dirname(file);
+  const config = configOf(file, readRootFile(root, file), notes);
+  if (config === undefined) return { folder, unknown: `${file} is not read` };
+  if (config.root) {
+    notes.push({ linter: "biome", text: `${file} is not read: it is a root config below the root's, which Biome 2.5.15 refuses, so it runs no rule.` });
+    return "refused";
+  }
+  if (!config.extendsRoot) return scopeOf(root, folder, file, config, rootScope.context.manifests, notes);
+  return {
+    folder,
+    context: { ...rootScope.context, file },
+    layers: [...rootScope.layers, config.linter ?? NO_LINTER],
+    overrides: [...rootScope.overrides, ...config.overrides].map(override => rebased(override, folder)),
+  };
+}
+
+/** Biome's nested configs: in each folder below the root, its `biome.json` or else its `biome.jsonc` (Biome 2.5.15 takes no `.biome.json` there). */
+function nestedFiles(files: readonly string[]): string[] {
+  const nested = files.filter(path => path.includes("/") && NESTED_FILES.includes(posix.basename(path)));
+  return [...Map.groupBy(nested, path => posix.dirname(path)).values()]
+    .map(found => found.sort((left, right) => NESTED_FILES.indexOf(posix.basename(left)) - NESTED_FILES.indexOf(posix.basename(right)))[0]!)
+    .sort();
+}
+
+/** Biome's config `file` at `root`, as `read` holds it, the nested configs below it, and what each extends, read as Biome merges them. */
 function readBiomeConfig(root: string, file: string, read: FileRead, notes: LinterNote[]): LinterConfig | undefined {
   const config = configOf(file, read, notes);
   if (config === undefined) return undefined;
@@ -590,12 +678,10 @@ function readBiomeConfig(root: string, file: string, read: FileRead, notes: Lint
     const because = `${file} is not Biome's root config`;
     return { verdict: port => (port.suppress.biome.length === 0 ? undefined : { decision: { on: "unknown", because } }) };
   }
-  const extended = extendedLayers(root, file, config, notes);
-  return biomeVerdicts({
-    context: { file, unread: extended.unread ?? `${file} takes a config Rerail does not read` },
-    layers: [...extended.layers, config.linter ?? NO_LINTER],
-    overrides: [...extended.overrides, ...config.overrides],
-  });
+  const files = repositoryFiles(root);
+  const rootScope = scopeOf(root, "", file, config, files.some(path => posix.basename(path) === "package.json"), notes);
+  const nested = nestedFiles(files).map(path => nestedScope(root, path, rootScope, notes));
+  return nested.includes("refused") ? undefined : biomeVerdicts([rootScope, ...nested as BiomeScope[]]);
 }
 
 /** Biome's config, read as Biome 2.5.15 reads it at the repository root: the first of its config files there. */

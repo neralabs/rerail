@@ -1,0 +1,192 @@
+{
+ "cases": [
+  {
+   "name": "flat-scaffold-js-recommended",
+   "probes": ["src/index.js"],
+   "files": { "eslint.config.mjs": "import js from \"@eslint/js\";\nimport globals from \"globals\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([\n  { files: [\"**/*.{js,mjs,cjs}\"], plugins: { js }, extends: [\"js/recommended\"], languageOptions: { globals: globals.browser } },\n]);\n" }
+  },
+  {
+   "name": "flat-extends-js-recommended-then-off",
+   "probes": ["src/index.js"],
+   "files": { "eslint.config.mjs": "import js from \"@eslint/js\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([\n  { plugins: { js }, extends: [\"js/recommended\"], rules: { \"no-unused-vars\": \"off\", \"no-console\": \"error\" } },\n]);\n" }
+  },
+  {
+   "name": "flat-extends-js-all-as-named",
+   "probes": ["src/index.js"],
+   "files": { "eslint.config.mjs": "import javascript from \"@eslint/js\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([{ plugins: { javascript }, extends: [\"javascript/all\"] }]);\n" }
+  },
+  {
+   "name": "flat-extends-ts-recommended-alias",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([\n  { plugins: { ts: tseslint.plugin }, extends: [\"ts/recommended\"], rules: { \"ts/no-explicit-any\": \"off\" } },\n]);\n" }
+  },
+  {
+   "name": "flat-extends-unicorn-recommended",
+   "probes": ["src/index.js"],
+   "files": { "eslint.config.mjs": "import unicorn from \"eslint-plugin-unicorn\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([{ plugins: { unicorn }, extends: [\"unicorn/recommended\"] }]);\n" }
+  },
+  {
+   "name": "flat-extends-vue-flat-recommended",
+   "probes": ["src/App.vue"],
+   "files": { "eslint.config.mjs": "import vue from \"eslint-plugin-vue\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([{ plugins: { vue }, extends: [\"vue/flat/recommended\"] }]);\n" }
+  },
+  {
+   "name": "flat-extends-unrecognised-string",
+   "probes": ["src/index.js"],
+   "unknown": { "*": ["*"] },
+   "known": ["no-debugger"],
+   "files": {
+    "local-plugin.mjs": "export default { configs: { recommended: { rules: { \"no-console\": \"error\" } } } };\n",
+    "eslint.config.mjs": "import local from \"./local-plugin.mjs\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([\n  { plugins: { local }, extends: [\"local/recommended\"] },\n  { rules: { \"no-debugger\": \"error\" } },\n]);\n"
+   }
+  },
+  {
+   "name": "flat-plugin-alias-ts",
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\n\nexport default [\n  { files: [\"**/*.ts\"], languageOptions: { parser: tseslint.parser }, plugins: { ts: tseslint.plugin }, rules: { \"ts/no-explicit-any\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-named-import",
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import { plugin, parser } from \"typescript-eslint\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  { languageOptions: { parser }, plugins: { tsx: plugin }, rules: { \"tsx/no-explicit-any\": [\"error\", { \"ignoreRestArgs\": true }], \"tsx/ban-ts-comment\": \"warn\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-scoped",
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tsPlugin from \"@typescript-eslint/eslint-plugin\";\nimport tsParser from \"@typescript-eslint/parser\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  { languageOptions: { parser: tsParser }, plugins: { \"@ts\": tsPlugin }, rules: { \"@ts/no-explicit-any\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-bound-elsewhere",
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  { languageOptions: { parser: tseslint.parser }, plugins: { ts: tseslint.plugin } },\n  { rules: { \"ts/no-explicit-any\": \"error\", \"ts/no-empty-function\": \"warn\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-off-preset-on",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\n\nexport default [\n  ...tseslint.configs.recommended,\n  { plugins: { ts: tseslint.plugin }, rules: { \"ts/no-explicit-any\": \"off\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-on-canonical-off",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\n\nexport default [\n  ...tseslint.configs.recommended,\n  { rules: { \"@typescript-eslint/no-explicit-any\": \"off\", \"@typescript-eslint/ban-ts-comment\": \"off\" } },\n  { plugins: { ts: tseslint.plugin }, rules: { \"ts/no-explicit-any\": \"warn\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-folder",
+   "probes": ["src/a.ts", "scripts/b.ts"],
+   "files": { "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  { languageOptions: { parser: tseslint.parser }, plugins: { ts: tseslint.plugin }, rules: { \"ts/no-explicit-any\": \"error\" } },\n  { files: [\"scripts/**\"], rules: { \"ts/no-explicit-any\": \"off\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-alias-react",
+   "probes": ["src/App.jsx"],
+   "files": { "eslint.config.mjs": "import reactPlugin from \"eslint-plugin-react\";\nimport hooks from \"eslint-plugin-react-hooks\";\n\nexport default [\n  { files: [\"**/*.jsx\"] },\n  { plugins: { r: reactPlugin, h: hooks }, rules: { \"r/no-danger\": \"error\", \"h/rules-of-hooks\": \"error\", \"react/jsx-key\": \"off\" } },\n];\n" }
+  },
+  {
+   "name": "flat-plugin-unresolved-local",
+   "probes": ["src/a.ts"],
+   "unknown": { "*": ["@typescript-eslint/no-explicit-any"] },
+   "files": {
+    "local-plugin.mjs": "export { plugin as default } from \"typescript-eslint\";\n",
+    "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\nimport local from \"./local-plugin.mjs\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  { languageOptions: { parser: tseslint.parser }, plugins: { local }, rules: { \"local/no-explicit-any\": \"error\", \"local/ban-ts-comment\": \"off\" } },\n];\n"
+   }
+  },
+  {
+   "name": "flat-plugin-unresolved-off-preset-on",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["src/a.ts"],
+   "files": {
+    "local-plugin.mjs": "export { plugin as default } from \"typescript-eslint\";\n",
+    "eslint.config.mjs": "import tseslint from \"typescript-eslint\";\nimport local from \"./local-plugin.mjs\";\n\nexport default [\n  ...tseslint.configs.recommended,\n  { plugins: { local }, rules: { \"local/no-explicit-any\": \"off\" } },\n];\n"
+   }
+  },
+  {
+   "name": "flat-plugin-bound-in-unread-element",
+   "probes": ["src/a.ts"],
+   "unknown": { "*": ["*"] },
+   "known": ["no-debugger"],
+   "files": {
+    "shared.mjs": "import tseslint from \"typescript-eslint\";\nexport default [{ languageOptions: { parser: tseslint.parser }, plugins: { ts: tseslint.plugin } }];\n",
+    "eslint.config.mjs": "import shared from \"./shared.mjs\";\n\nexport default [\n  { files: [\"**/*.ts\"] },\n  ...shared,\n  { rules: { \"ts/no-explicit-any\": \"error\", \"no-debugger\": \"error\" } },\n];\n"
+   }
+  },
+  {
+   "name": "flat-tseslint-config-strict",
+   "why": "typescript-eslint's eslint-recommended turns no-var and prefer-spread on for TypeScript files only: off in eslint.config.mjs, a file the ports also run on",
+   "unknown": { "*": ["no-var", "prefer-spread"] },
+   "probes": ["src/a.ts", "src/b.js"],
+   "files": { "eslint.config.mjs": "import js from \"@eslint/js\";\nimport tseslint from \"typescript-eslint\";\n\nexport default tseslint.config(\n  js.configs.recommended,\n  ...tseslint.configs.strict,\n  { rules: { \"@typescript-eslint/no-non-null-assertion\": \"off\", \"no-console\": [\"warn\", { \"allow\": [\"error\"] }] } },\n);\n" }
+  },
+  {
+   "name": "flat-define-config-ts-recommended-objects",
+   "probes": ["src/a.ts"],
+   "files": { "eslint.config.ts": "import js from \"@eslint/js\";\nimport tseslint from \"typescript-eslint\";\nimport { defineConfig } from \"eslint/config\";\n\nexport default defineConfig([\n  { extends: [js.configs.recommended, tseslint.configs.recommended], rules: { \"@typescript-eslint/no-unused-vars\": \"off\" } },\n]);\n" }
+  },
+  {
+   "name": "flat-react-presets",
+   "probes": ["src/App.jsx"],
+   "files": { "eslint.config.mjs": "import react from \"eslint-plugin-react\";\nimport reactHooks from \"eslint-plugin-react-hooks\";\n\nexport default [\n  { files: [\"**/*.jsx\"] },\n  react.configs.flat.recommended,\n  reactHooks.configs.flat.recommended,\n  { settings: { react: { version: \"19.0\" } }, rules: { \"react/prop-types\": \"off\" } },\n];\n" }
+  },
+  {
+   "name": "flat-folders",
+   "probes": ["src/a.js", "scripts/b.js", "scripts/deep/c.js"],
+   "files": { "eslint.config.mjs": "export default [\n  { rules: { \"no-console\": \"error\", \"eqeqeq\": \"error\" } },\n  { files: [\"scripts/**\"], rules: { \"no-console\": \"off\" } },\n  { files: [\"scripts/deep/**\"], rules: { \"no-console\": \"warn\", \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-unresolved-value",
+   "probes": ["src/a.js"],
+   "unknown": { "*": ["no-console"] },
+   "files": { "eslint.config.mjs": "export default [\n  { rules: { \"no-console\": process.env.RERAIL_ORACLE_UNSET ? \"error\" : \"off\", \"no-debugger\": \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-unresolved-value-on",
+   "probes": ["src/a.js"],
+   "unknown": { "*": ["no-console"] },
+   "files": { "eslint.config.mjs": "export default [\n  { rules: { \"no-console\": process.env.RERAIL_ORACLE_UNSET ? \"off\" : \"error\" } },\n];\n" }
+  },
+  {
+   "name": "flat-not-data",
+   "probes": ["src/a.js"],
+   "unknown": { "*": ["*"] },
+   "files": { "eslint.config.mjs": "const levels = [\"off\", \"error\"];\nexport default [{ rules: { \"no-console\": levels.at(-1) } }].map(config => config);\n" }
+  },
+  {
+   "name": "flat-nested-config",
+   "probes": ["src/a.js", "packages/app/b.js"],
+   "unknown": { "packages/app/b.js": ["*"] },
+   "files": {
+    "eslint.config.mjs": "export default [{ rules: { \"no-console\": \"error\" } }];\n",
+    "packages/app/eslint.config.mjs": "export default [{ rules: { \"no-debugger\": \"error\" } }];\n"
+   }
+  },
+  {
+   "name": "eslintrc-presets-and-overrides",
+   "probes": ["src/a.ts", "test/b.ts"],
+   "files": { ".eslintrc.json": "{\n  \"root\": true,\n  \"parser\": \"@typescript-eslint/parser\",\n  \"plugins\": [\"@typescript-eslint\"],\n  \"extends\": [\"eslint:recommended\", \"plugin:@typescript-eslint/recommended\"],\n  \"rules\": { \"no-console\": \"error\", \"@typescript-eslint/no-explicit-any\": \"off\" },\n  \"overrides\": [{ \"files\": [\"test/**\"], \"rules\": { \"no-console\": \"off\", \"@typescript-eslint/no-explicit-any\": \"warn\" } }]\n}\n" }
+  },
+  {
+   "name": "eslintrc-react",
+   "probes": ["src/App.jsx"],
+   "files": { ".eslintrc.json": "{\n  \"root\": true,\n  \"parserOptions\": { \"ecmaVersion\": 2022, \"sourceType\": \"module\", \"ecmaFeatures\": { \"jsx\": true } },\n  \"extends\": [\"plugin:react/recommended\", \"plugin:react-hooks/recommended\"],\n  \"settings\": { \"react\": { \"version\": \"19.0\" } },\n  \"rules\": { \"react/react-in-jsx-scope\": \"OFF\" }\n}\n" }
+  },
+  {
+   "name": "eslintrc-nested",
+   "probes": ["src/a.js", "packages/app/b.js"],
+   "unknown": { "packages/app/b.js": ["*"] },
+   "files": {
+    ".eslintrc.json": "{ \"root\": true, \"rules\": { \"no-console\": \"error\", \"no-debugger\": \"error\" } }\n",
+    "packages/app/.eslintrc.json": "{ \"rules\": { \"no-console\": \"off\" } }\n"
+   }
+  },
+  {
+   "name": "eslintrc-package-json",
+   "probes": ["src/a.js"],
+   "files": { "package.json": "{ \"name\": \"probe\", \"private\": true, \"eslintConfig\": { \"root\": true, \"extends\": \"eslint:recommended\", \"rules\": { \"no-unused-vars\": 0 } } }\n" }
+  }
+ ]
+}

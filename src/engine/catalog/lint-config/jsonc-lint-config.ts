@@ -4,18 +4,18 @@
  */
 import { z } from "zod";
 import { parseJsonc, readFormat } from "./formats/lint-config-formats.js";
-import { NOT_A_FILE, readRootFile, type LintConfigLinter, type LinterNote } from "./linter-config.js";
+import { NOT_A_FILE, type LintConfigLinter, type LinterNote } from "./linter-config.js";
 
 /** A JSON object; arrays and `null` are not. Zod leaves out `__proto__` keys. */
 export const jsonObject = z.record(z.string(), z.unknown());
 export const configFile = z.looseObject({ rules: z.unknown().optional(), overrides: z.unknown().optional() });
 export type ConfigFile = z.infer<typeof configFile>;
 
-/** A JSONC config file at the root as an object; undefined (with a note when present) otherwise. */
-export function jsoncFile(root: string, name: string, linter: LintConfigLinter, notes: LinterNote[]): ConfigFile | undefined {
-  const read = readRootFile(root, name);
-  if (!read.present) return undefined;
-  const { text } = read;
+/**
+ * The JSONC config file `name`, present at the root with text `text` (undefined: not a regular file Rerail reads), as
+ * an object; undefined (with a note) otherwise.
+ */
+export function jsoncFile(name: string, text: string | undefined, linter: LintConfigLinter, notes: LinterNote[]): ConfigFile | undefined {
   if (text === undefined) {
     notes.push({ linter, text: `${name} is not read: ${NOT_A_FILE}` });
     return undefined;

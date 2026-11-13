@@ -56,6 +56,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `host/constraint-code-rules/` | — | constraint examples (`test/engine/code-rule/code-rule-dsl-constraints.test.ts`) |
 | `host/database/` | — | the database schema at the migration baseline (`test/engine/storage/database-baseline.test.ts`) |
 | `host/hook-payloads/` | — | hook payloads a real coding agent session sent on stdin, one file per agent version, with ids, paths and text made neutral and every field's JSON type kept (`test/hosts/claude/claude-hook-payloads.test.ts`) |
+| `host/lint-config/` | — | what each pinned linter itself runs under configs set-up reads (ESLint 10.11.0, oxlint 1.88.0, Biome 2.5.15, Ruff 0.16.9, Bandit 1.9.4, SQLFluff 4.4.0, Clippy 0.1.99, PHPStan 2.2.16, Psalm 6.19.1, PHP_CodeSniffer 4.0.4), one corpus and its recorded output per linter, with the generator that records it offline (`test/engine/catalog/lint-config/*-oracle.test.ts`) |
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
 | `host/session-enforcement/` | — | golden output of each coding agent in the session enforcement design's scenes: hook JSON, session notes, the OMP steer renderer and the footer (`test/hosts/*/session-enforcement.golden.test.ts`, `test/hosts/omp/steer-renderer.test.ts`, `test/presentation/footer-golden.test.ts`); review a change with design |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |

@@ -42,6 +42,9 @@ function port(ruleId: string): Port {
   return found;
 }
 
+/** A `[package]` table, so Cargo takes the manifest. */
+const PACKAGE = "[package]\nname = \"demo\"\n\n";
+
 const NEEDLESS_ELSE = "clippy-needless-else"; // style
 const UNNESTED_OR = "clippy-unnested-or-patterns"; // pedantic
 const ELSE_IF = "clippy-else-if-without-else"; // restriction
@@ -88,25 +91,25 @@ describe("clippyReader", () => {
   });
 
   it("applies flags in Cargo's order: by priority, then by name in reverse, a later flag winning", async () => {
-    const prioritised = await read({ "Cargo.toml": "[lints.clippy]\nstyle = { level = \"allow\", priority = -1 }\nneedless_else = \"warn\"\n" });
+    const prioritised = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nstyle = { level = \"allow\", priority = -1 }\nneedless_else = \"warn\"\n" });
     expect(prioritised.decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"warn\"" });
     // At one priority, names sort in reverse: `all` comes after `needless_else` and wins; `style` comes before it.
-    const unprioritised = await read({ "Cargo.toml": "[lints.clippy]\nneedless_else = \"allow\"\nall = \"warn\"\n" });
+    const unprioritised = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless_else = \"allow\"\nall = \"warn\"\n" });
     expect(unprioritised.decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] all = \"warn\"" });
-    const style = await read({ "Cargo.toml": "[lints.clippy]\nneedless_else = \"allow\"\nstyle = \"warn\"\n" });
+    const style = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless_else = \"allow\"\nstyle = \"warn\"\n" });
     expect(style.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = \"allow\"" });
-    const later = await read({ "Cargo.toml": "[lints.clippy]\nall = { level = \"deny\", priority = 2 }\nstyle = { level = \"allow\", priority = 1 }\n" });
+    const later = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nall = { level = \"deny\", priority = 2 }\nstyle = { level = \"allow\", priority = 1 }\n" });
     expect(later.decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] all = { level = \"deny\", priority = 2 }" });
   });
 
   it("keeps a forbidden lint on whatever comes after", async () => {
-    const { decision } = await read({ "Cargo.toml": "[lints.clippy]\nneedless_else = { level = \"forbid\", priority = -5 }\nstyle = \"allow\"\n" });
+    const { decision } = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless_else = { level = \"forbid\", priority = -5 }\nstyle = \"allow\"\n" });
     expect(decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] needless_else = { level = \"forbid\", priority = -5 }" });
   });
 
   it("reads a level written as a table, with or without a priority, and a lint written with dashes", async () => {
     const { decision } = await read({
-      "Cargo.toml": "[lints.clippy]\nneedless-else = { level = \"deny\" }\npedantic = { level = \"warn\", priority = +1_0, msrv = \"1.70\" }\nrestriction = { level = \"allow\", priority = -128 }\n",
+      "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless-else = { level = \"deny\" }\npedantic = { level = \"warn\", priority = +1_0, msrv = \"1.70\" }\nrestriction = { level = \"allow\", priority = -128 }\n",
     });
     expect(decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] needless-else = { level = \"deny\" }" });
     expect(decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] pedantic = { level = \"warn\", priority = 10 }" });
@@ -114,7 +117,7 @@ describe("clippyReader", () => {
   });
 
   /** A `Cargo.toml` allowing `style` at priority 1, then setting `needless_else` to warn at priority `written`. */
-  const prioritised = (written: string): string => `[lints.clippy]\nstyle = { level = "allow", priority = 1 }\nneedless_else = { level = "warn", priority = ${written} }\n`;
+  const prioritised = (written: string): string => `${PACKAGE}[lints.clippy]\nstyle = { level = "allow", priority = 1 }\nneedless_else = { level = "warn", priority = ${written} }\n`;
 
   it.each<[string, number]>([
     ["0", 0], ["+0", 0], ["-0", 0], ["-1", -1], ["-128", -128], ["0x0", 0], ["0b0", 0],
@@ -144,15 +147,15 @@ describe("clippyReader", () => {
   });
 
   it("does not take a rustc lint for the Clippy lint written alike", async () => {
-    const { decision } = await read({ "Cargo.toml": "[lints.rust]\nstyle = \"deny\"\n\n[lints.clippy]\nstyle = \"allow\"\n" });
+    const { decision } = await read({ "Cargo.toml": PACKAGE + "[lints.rust]\nstyle = \"deny\"\n\n[lints.clippy]\nstyle = \"allow\"\n" });
     expect(decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.clippy] style = \"allow\"" });
   });
 
   it("decides a lint in a Clippy group Rerail does not know only by what the config sets", async () => {
     const ungrouped: Port = { ...CORRECTNESS, ruleId: "clippy-made-up", suppress: { ...CORRECTNESS.suppress, clippy: ["clippy::made_up", "clippy::all", "warnings"] } };
-    const unset = await read({ "Cargo.toml": "[lints.clippy]\nunwrap_used = \"deny\"\n" });
+    const unset = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nunwrap_used = \"deny\"\n" });
     expect(unset.decision(ungrouped)).toEqual({ on: "unknown", because: "Rerail does not know which Clippy group it is in, so not its default level" });
-    const set = await read({ "Cargo.toml": "[lints.clippy]\nall = \"deny\"\n" });
+    const set = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nall = \"deny\"\n" });
     expect(set.decision(ungrouped)).toEqual({ on: true, explicit: true, because: "Cargo.toml [lints.clippy] all = \"deny\"" });
   });
 
@@ -177,28 +180,59 @@ describe("clippyReader", () => {
   });
 
   it("turns off a lint left at warn when warnings are allowed, and keeps a deny-level one on", async () => {
-    const allowed = await read({ "Cargo.toml": "[lints.rust]\nwarnings = \"allow\"\n" });
+    const allowed = await read({ "Cargo.toml": PACKAGE + "[lints.rust]\nwarnings = \"allow\"\n" });
     expect(allowed.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.rust] warnings = \"allow\"" });
     expect(allowed.decision(CORRECTNESS)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::correctness)" });
     expect(allowed.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [lints.rust] does not turn it on" });
-    const denied = await read({ "Cargo.toml": "[lints.rust]\nwarnings = \"deny\"\n" });
+    const denied = await read({ "Cargo.toml": PACKAGE + "[lints.rust]\nwarnings = \"deny\"\n" });
     expect(denied.decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::style)" });
   });
 
-  it("reads the workspace's lints a package takes, and a workspace's for its members", async () => {
+  it("reads the workspace's lints a package takes, and not those it does not take", async () => {
     const taken = await read({
       "Cargo.toml": "[package]\nname = \"demo\"\n\n[lints]\nworkspace = true\n\n[workspace.lints.clippy]\npedantic = { level = \"warn\", priority = -1 }\n",
     });
     expect(taken.decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: "Cargo.toml [workspace.lints.clippy] pedantic = { level = \"warn\", priority = -1 }" });
     expect(taken.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [workspace.lints.clippy] does not turn it on" });
-    const members = await read({ "Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.lints.clippy]\nneedless_else = \"allow\"\n" });
-    expect(members.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [workspace.lints.clippy] needless_else = \"allow\"" });
-    expect(members.notes).toEqual(["Cargo.toml: workspace members' own [lints] tables are not read; Cargo.toml [workspace.lints.clippy] is read for every file."]);
+    // The root package does not take [workspace.lints] unless it says so; nor does a virtual root's folder.
+    const untaken = await read({ "Cargo.toml": `${PACKAGE}[workspace]\n\n[workspace.lints.clippy]\nneedless_else = "allow"\n` });
+    expect(untaken.config).toBeUndefined();
+  });
+
+  it("decides each member's folder by its own lints, or the workspace's when it takes them (Cargo's opt-in)", async () => {
+    const { config, notes } = await read({
+      "Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.lints.clippy]\nneedless_else = \"allow\"\n",
+      "crates/a/Cargo.toml": "[package]\nname = \"a\"\n\n[lints]\nworkspace = true\n",
+      "crates/b/Cargo.toml": "[package]\nname = \"b\"\n\n[lints.clippy]\npedantic = \"warn\"\n",
+      "crates/c/Cargo.toml": "[package]\nname = \"c\"\n",
+      "crates/d/Cargo.toml": "[package]\nname = \"d\"\n\n[lints]\nworkspace = false\n",
+    });
+    expect(config?.verdict(port(NEEDLESS_ELSE), ruleCatalog)).toEqual({
+      folders: [
+        { folder: "crates/a", on: false, explicit: true, because: "Cargo.toml [workspace.lints.clippy] needless_else = \"allow\"" },
+        { folder: "crates/b", on: true, explicit: false, because: "Clippy's default (clippy::style)" },
+        { folder: "crates/c", on: true, explicit: false, because: "Clippy's default (clippy::style)" },
+        { folder: "crates/d", on: "unknown", because: "crates/d/Cargo.toml is not read: [lints] workspace is not true, the only value Cargo takes" },
+      ],
+    });
+    expect(config?.verdict(port(UNNESTED_OR), ruleCatalog)?.folders?.slice(0, 3)).toEqual([
+      { folder: "crates/a", on: false, explicit: false, because: "Cargo.toml [workspace.lints.clippy] does not turn it on" },
+      { folder: "crates/b", on: true, explicit: true, because: "crates/b/Cargo.toml [lints.clippy] pedantic = \"warn\"" },
+      { folder: "crates/c", on: false, explicit: false, because: "Clippy's default (clippy::pedantic)" },
+    ]);
+    expect(notes).toEqual(["crates/d/Cargo.toml is not read: [lints] workspace is not true, the only value Cargo takes; Clippy's lints there stay as the pack has them."]);
+  });
+
+  it("leaves every folder to the pack when a member glob at the root is not expanded", async () => {
+    const { config } = await read({ "Cargo.toml": `${PACKAGE}[lints.clippy]\nneedless_else = "allow"\n\n[workspace]\nmembers = ["**"]\n` });
+    expect(config?.verdict(port(NEEDLESS_ELSE), ruleCatalog)).toEqual({
+      decision: { on: "unknown", because: "Cargo.toml [workspace] members \"**\" is not expanded: Rerail expands *, ? and [...] in a folder's name only" },
+    });
   });
 
   it("applies a crate root's lint attributes after Cargo's flags", async () => {
     const { decision } = await read({
-      "Cargo.toml": "[lints.clippy]\npedantic = \"warn\"\n",
+      "Cargo.toml": PACKAGE + "[lints.clippy]\npedantic = \"warn\"\n",
       "src/lib.rs": "#!/usr/bin/env run-cargo-script\n//! The crate.\n/* A note. */\n#![cfg_attr(clippy, allow(clippy::unnested_or_patterns, reason = \"style\"))]\n#![deny(\n  clippy::restriction,\n)]\n\n#[derive(Debug)]\npub struct S;\n#![allow(clippy::double_parens)]\n",
     });
     expect(decision(UNNESTED_OR)).toEqual({
@@ -226,7 +260,7 @@ describe("clippyReader", () => {
   });
 
   it("gives no verdict on a port that is not Clippy's", async () => {
-    const { config } = await read({ "Cargo.toml": "[lints.clippy]\nall = \"deny\"\n" });
+    const { config } = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nall = \"deny\"\n" });
     expect(config?.verdict({ ...CORRECTNESS, suppress: { ...CORRECTNESS.suppress, clippy: [] } }, ruleCatalog)).toBeUndefined();
   });
 
@@ -247,10 +281,17 @@ describe("clippyReader", () => {
     ["workspace = false", "[lints]\nworkspace = false\n", "[lints] workspace is not true, the only value Cargo takes"],
     ["workspace as a string", "[lints]\nworkspace = \"true\"\n[workspace.lints.clippy]\nall = \"warn\"\n", "[lints] workspace is not true, the only value Cargo takes"],
     ["workspace = true with no workspace lints", "[lints]\nworkspace = true\n", "[lints] takes workspace = true, but there is no [workspace.lints]"],
-    ["broken TOML", "[lints.clippy\n", "line 1: a table header is not closed"],
+    ["[workspace.lints] that is not a table", "[workspace]\nlints = 1\n", "[workspace.lints] is not a table"],
+    ["members that are not a list of strings", "[workspace]\nmembers = \"crates/*\"\n", "[workspace] members is not a list of strings"],
+    ["broken TOML", "[lints.clippy\n", "line 4: a table header is not closed"],
   ])("refuses a Cargo.toml with %s, saying why", async (_, text, why) => {
-    const { config, notes } = await read({ "Cargo.toml": text });
+    const { config, notes } = await read({ "Cargo.toml": PACKAGE + text });
     expect({ config, notes }).toEqual({ config: undefined, notes: [`Cargo.toml is not read: ${why}.`] });
+  });
+
+  it("refuses a Cargo.toml with neither [package] nor [workspace], as Cargo does", async () => {
+    const { config, notes } = await read({ "Cargo.toml": "[lints.clippy]\nall = \"deny\"\n" });
+    expect({ config, notes }).toEqual({ config: undefined, notes: ["Cargo.toml is not read: it has neither [package] nor [workspace], which Cargo refuses."] });
   });
 
   it("refuses a Cargo.toml or crate root that is not a regular file in the repository", async context => {
@@ -268,13 +309,13 @@ describe("clippyReader", () => {
   });
 
   it("leaves what a crate root it cannot parse may set unknown", async () => {
-    const { decision, notes } = await read({ "Cargo.toml": "[lints.clippy]\npedantic = \"warn\"\n", "src/lib.rs": "#![allow(clippy::pedantic\n" });
+    const { decision, notes } = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\npedantic = \"warn\"\n", "src/lib.rs": "#![allow(clippy::pedantic\n" });
     expect(decision(UNNESTED_OR)).toEqual({ on: "unknown", because: "src/lib.rs is not read and may set it" });
     expect(notes).toEqual(["src/lib.rs: its lint attributes are not read: line 2: a ( is not closed."]);
   });
 
   it("notes the files beside Cargo.toml that may also set lints", async () => {
-    const { notes } = await read({ "Cargo.toml": "[lints.clippy]\nall = \"deny\"\n", ".cargo/config.toml": "[build]\nrustflags = [\"-Dwarnings\"]\n", "clippy.toml": "msrv = \"1.70\"\n" });
+    const { notes } = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nall = \"deny\"\n", ".cargo/config.toml": "[build]\nrustflags = [\"-Dwarnings\"]\n", "clippy.toml": "msrv = \"1.70\"\n" });
     expect(notes).toEqual([
       ".cargo/config.toml is not read: rustflags it sets may turn Clippy's lints on or off.",
       "clippy.toml is not read: Rerail does not map Clippy's lint options onto rules' options.",

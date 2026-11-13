@@ -142,26 +142,95 @@ describe("banditReader", () => {
     ]);
   });
 
-  it("turns every test off in the whole folders excluded, and notes other excludes", async () => {
+  it("turns every test off in each folder whose Python files an exclude skips, matched as bandit -r . forms paths, and notes the rest", async () => {
     const root = await repository({
-      ".bandit": "[bandit]\nexclude = ./tests,/docs/,*/migrations/*,../shared\n",
-      "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\"vendor/**\"]\n",
+      ".bandit": "[bandit]\nexclude = ./tests,scripts,/docs/,*/migrations/*,../shared\n",
+      "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\"third_party/**\", \"build\", \"./src/*.py\"]\n",
+      "tests/test_app.py": "",
+      "scripts/run.py": "",
+      "docs/conf.py": "",
+      "migrations/0001.py": "",
+      "app/migrations/0002.py": "",
+      "third_party/lib.py": "",
+      "lib/build_tools.py": "",
+      "lib/app.py": "",
+      "src/app.py": "",
     });
     const result = read(root, MD5)!;
+    // Folders outermost first, each depth by name.
     expect(result.verdicts[0]!.folders).toEqual([
-      { folder: "tests", on: false, because: ".bandit: \"./tests\" in exclude" },
-      { folder: "docs", on: false, because: ".bandit: \"/docs/\" in exclude" },
-      { folder: "vendor", on: false, because: "pyproject.toml [tool.bandit]: \"vendor/**\" in exclude_dirs" },
+      // `/docs/` is in `./docs/conf.py`, unless `/docs` is a folder on the machine Bandit runs on.
+      { folder: "docs", on: "unknown", because: ".bandit: \"/docs/\" in exclude" },
+      { folder: "migrations", on: false, explicit: true, because: ".bandit: \"*/migrations/*\" in exclude" },
+      { folder: "src", on: false, explicit: true, because: "pyproject.toml [tool.bandit]: \"./src/*.py\" in exclude_dirs" },
+      // `.bandit`'s `exclude = ./tests`: a folder at the root, so `./tests/*`, which `./tests/test_app.py` matches.
+      { folder: "tests", on: false, explicit: true, because: ".bandit: \"./tests\" in exclude" },
+      { folder: "app/migrations", on: false, explicit: true, because: ".bandit: \"*/migrations/*\" in exclude" },
     ]);
     expect(result.notes).toEqual([
-      ".bandit: \"*/migrations/*\" in exclude is not read: Rerail sets rules for whole folders only, so the tests Bandit skips there stay on.",
-      ".bandit: \"../shared\" in exclude is not read: Rerail sets rules for whole folders only, so the tests Bandit skips there stay on.",
+      ".bandit: \"scripts\" in exclude skips no Python file: bandit -r . matches it against paths such as ./src/app.py, so the tests stay on.",
+      ".bandit: \"../shared\" in exclude skips no Python file: bandit -r . matches it against paths such as ./src/app.py, so the tests stay on.",
+      "pyproject.toml [tool.bandit]: \"third_party/**\" in exclude_dirs skips no Python file: bandit -r . matches it against paths such as ./src/app.py, so the tests stay on.",
+      "pyproject.toml [tool.bandit]: \"build\" in exclude_dirs: Bandit skips lib/build_tools.py, which Rerail cannot set rules for alone (it sets them for whole folders), so the tests stay on there.",
     ]);
     expect(settleVerdicts(ports.get(MD5)!, result.verdicts as PortVerdict[], [])).toEqual([
+      { ruleId: MD5, folder: "migrations", on: false, config: null, explicit: true, because: ".bandit: \"*/migrations/*\" in exclude" },
+      { ruleId: MD5, folder: "src", on: false, config: null, explicit: true, because: "pyproject.toml [tool.bandit]: \"./src/*.py\" in exclude_dirs" },
       { ruleId: MD5, folder: "tests", on: false, config: null, explicit: true, because: ".bandit: \"./tests\" in exclude" },
-      { ruleId: MD5, folder: "docs", on: false, config: null, explicit: true, because: ".bandit: \"/docs/\" in exclude" },
-      { ruleId: MD5, folder: "vendor", on: false, config: null, explicit: true, because: "pyproject.toml [tool.bandit]: \"vendor/**\" in exclude_dirs" },
+      { ruleId: MD5, folder: "app/migrations", on: false, config: null, explicit: true, because: ".bandit: \"*/migrations/*\" in exclude" },
     ]);
+  });
+
+  it("turns every test off for every file where an exclude skips them all, as an empty entry or `.` does", async () => {
+    const empty = await repository({ ".bandit": "[bandit]\nexclude = ./scripts,\n", "src/app.py": "" });
+    expect(decisions(empty, MD5)).toEqual([{ on: false, explicit: true, because: ".bandit: \"\" in exclude" }]);
+    const dot = await repository({ "pyproject.toml": "[tool.bandit]\nexclude_dirs = [\".\"]\nskips = [\"B303\"]\n", "app.py": "" });
+    expect(decisions(dot, MD5, ASSERT)).toEqual([
+      { on: false, explicit: true, because: "pyproject.toml [tool.bandit]: \"B303\" in skips" },
+      { on: false, explicit: true, because: "pyproject.toml [tool.bandit]: \".\" in exclude_dirs" },
+    ]);
+  });
+
+  it("leaves every file to the pack where an exclude outside the repository may skip them all, and names a few files of many", async () => {
+    // `/` is in every path Bandit forms, unless it is a folder there (it is, on POSIX), when it becomes `/*`.
+    const slash = await repository({ ".bandit": "[bandit]\nexclude = /\n", "app.py": "" });
+    expect(decisions(slash, MD5)).toEqual([{ on: "unknown", because: ".bandit: \"/\" in exclude" }]);
+    const many = await repository({ ".bandit": "[bandit]\nexclude = util\n", "a/util1.py": "", "a/util2.py": "", "b/util3.py": "", "b/util4.py": "", "b/app.py": "" });
+    expect(read(many, MD5)!.notes).toEqual([
+      ".bandit: \"util\" in exclude: Bandit skips a/util1.py, a/util2.py, b/util3.py and 1 more, which Rerail cannot set rules for alone (it sets them for whole folders), so the tests stay on there.",
+    ]);
+  });
+
+  it("applies Bandit's default excludes where .bandit sets none, noting the files they skip", async () => {
+    const root = await repository({ ".bandit": "[bandit]\nexclude =\n", "tools/CVSimport.py": "", "app.py": "" });
+    expect(read(root, MD5)!.notes).toEqual([
+      "Bandit's default exclude \"CVS\": Bandit skips tools/CVSimport.py, which Rerail cannot set rules for alone (it sets them for whole folders), so the tests stay on there.",
+    ]);
+    const withoutIni = await repository({ "pyproject.toml": "[tool.bandit]\nskips = []\n", ".tox/py/x.py": "", "a.eggs/b.py": "" });
+    expect(read(withoutIni, MD5)!.verdicts[0]!.folders).toEqual([{ folder: "a.eggs", on: false, explicit: true, because: "Bandit's default exclude \".eggs\"" }]);
+  });
+
+  it("reads the one .bandit Bandit finds wherever it is, and nothing where it finds two", async () => {
+    const nested = await repository({ "src/.bandit": "[bandit]\nskips = B303\n", "src/app.py": "" });
+    expect(decisions(nested, MD5)).toEqual([{ on: false, explicit: true, because: "src/.bandit: \"B303\" in skips" }]);
+    const two = await repository({ ".bandit": "[bandit]\nskips = B303\n", "src/.bandit": "[bandit]\nskips = B101\n" });
+    expect(read(two, MD5)).toEqual({
+      verdicts: [{ decision: { on: "unknown", because: ".bandit, src/.bandit are not read" }, folders: [] }],
+      notes: [".bandit, src/.bandit are not read: bandit -r . stops with an error when it finds more than one .bandit."],
+    });
+  });
+
+  it("leaves the pack's values where include limits the files Bandit scans", async () => {
+    const limited = await repository({ "pyproject.toml": "[tool.bandit]\ninclude = [\"src/*.py\"]\nskips = [\"B101\"]\n" });
+    expect(read(limited, MD5, ASSERT)).toEqual({
+      verdicts: [
+        { decision: { on: "unknown", because: "pyproject.toml [tool.bandit]: include [\"src/*.py\"] limits the files Bandit scans, which Rerail does not read" }, folders: [] },
+        { decision: { on: false, explicit: true, because: "pyproject.toml [tool.bandit]: \"B101\" in skips" }, folders: [] },
+      ],
+      notes: ["pyproject.toml [tool.bandit]: include [\"src/*.py\"] limits the files Bandit scans, which Rerail does not read."],
+    });
+    const every = await repository({ "pyproject.toml": "[tool.bandit]\ninclude = [\"*.py\", \"*.pyw\"]\n" });
+    expect(decisions(every, MD5)).toEqual([{ on: true, explicit: false, because: "pyproject.toml [tool.bandit]: no tests set, so Bandit runs every test" }]);
   });
 
   it("leaves the pack's values where a config Bandit takes is not read, keeping the skips it can read", async () => {

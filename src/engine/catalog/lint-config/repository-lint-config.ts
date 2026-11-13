@@ -7,12 +7,19 @@
 import type { RuleCatalog } from "../repository-model.js";
 import { portsOf, portsLinter, settleVerdicts, type LinterNote, type PortVerdict, type RepositoryLintConfig } from "./linter-config.js";
 import { LINTER_READERS } from "./linter-readers.js";
+import { withRepositoryFiles } from "./repository-files.js";
 
 /**
  * Settings for the rules of packs `packIds` (in `ruleCatalog`) from the lint configs at `root`, with notes on what could
- * not be used. Notes about a linter none of these rules ports are left out.
+ * not be used. Notes about a linter none of these rules ports are left out. The readers share one listing of the
+ * repository's files, for the nested configs they look for.
  */
 export function readRepositoryLintConfig(root: string, ruleCatalog: RuleCatalog, packIds: readonly string[]): RepositoryLintConfig {
+  return withRepositoryFiles(() => settleRepository(root, ruleCatalog, packIds));
+}
+
+/** {@link readRepositoryLintConfig} inside the shared file listing. */
+function settleRepository(root: string, ruleCatalog: RuleCatalog, packIds: readonly string[]): RepositoryLintConfig {
   const ports = portsOf(ruleCatalog, packIds);
   const fileNotes: LinterNote[] = [];
   const configs = LINTER_READERS.flatMap(reader => {

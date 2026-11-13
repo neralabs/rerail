@@ -185,15 +185,52 @@ describe("sqlfluffReader", () => {
   });
 
   it.each([
-    ["true", true, "true"],
-    ["1_0", true, "1_0"],
-    ["0", false, "0"],
-    // TOML strings are not coerced: any non-empty one is true to Python.
-    ["\"False\"", true, "\"False\""],
-    ["\"\"", false, "\"\""],
-  ])("reads force_enable = %s in pyproject.toml's quoted rule table as Python does", async (value, on, shown) => {
+    ["true", true],
+    ["1", true],
+    ["0x1", true],
+    ["0", false],
+    ["false", false],
+    // Only True, False, 1 and 0 pass SQLFluff's check: on anything else, a TOML string or another number included, it stops.
+    ["1_0", "unknown"],
+    ["\"False\"", "unknown"],
+    ["\"\"", "unknown"],
+    ["inf", "unknown"],
+  ])("reads force_enable = %s in pyproject.toml's quoted rule table as SQLFluff does", async (value, on) => {
     const root = await repository({ "pyproject.toml": `[tool.sqlfluff.rules."postgres.excessive_locks"]\nforce_enable = ${value}\n` });
-    expect(decisions(root, LOCKS)).toEqual([{ on, explicit: true, because: `pyproject.toml [tool.sqlfluff.rules."postgres.excessive_locks"]: force_enable = ${shown}` }]);
+    const where = `pyproject.toml [tool.sqlfluff.rules."postgres.excessive_locks"]: force_enable = ${value}`;
+    const because = on === "unknown" ? `${where}: SQLFluff stops with an error where it selects the rule, as force_enable must be True or False` : where;
+    expect(decisions(root, LOCKS, IS_NULL)).toEqual([
+      on === "unknown" ? { on, because } : { on, explicit: true, because },
+      on === "unknown" ? { on, because } : { on: true, explicit: false, because: "pyproject.toml: no rules set, so SQLFluff runs every rule" },
+    ]);
+  });
+
+  it.each([
+    ["True", true],
+    ["1.0", true],
+    ["-0", false],
+    ["None", false],
+    ["yes", "unknown"],
+    ["2", "unknown"],
+    ["nan", "unknown"],
+  ])("reads force_enable = %s in .sqlfluff as configparser and coerce_value do", async (value, on) => {
+    const root = await repository({ ".sqlfluff": `[sqlfluff:rules:postgres.excessive_locks]\nforce_enable = ${value}\n` });
+    const where = `.sqlfluff [sqlfluff:rules:postgres.excessive_locks]: force_enable = ${value}`;
+    expect(decisions(root, LOCKS)).toEqual([
+      on === "unknown" ? { on, because: `${where}: SQLFluff stops with an error where it selects the rule, as force_enable must be True or False` } : { on, explicit: true, because: where },
+    ]);
+  });
+
+  it("leaves the pack's values where rules is a value SQLFluff stops on, and reads false ones as unset", async () => {
+    const number = await repository({ ".sqlfluff": "[sqlfluff]\nrules = 1\nexclude_rules = CV05\n" });
+    expect(decisions(number, IS_NULL, COALESCE)).toEqual([
+      { on: false, explicit: true, because: ".sqlfluff: \"CV05\" in exclude_rules" },
+      { on: "unknown", because: ".sqlfluff: SQLFluff stops with an error on rules = 1, which is not a list" },
+    ]);
+    const word = await repository({ ".sqlfluff": "[sqlfluff]\nrules = TRUE\n" });
+    expect(decisions(word, IS_NULL)).toEqual([{ on: "unknown", because: ".sqlfluff: SQLFluff stops with an error on rules = TRUE, which is not a list" }]);
+    const unset = await repository({ ".sqlfluff": "[sqlfluff]\nrules = 0.0\nexclude_rules = none\n" });
+    expect(decisions(unset, IS_NULL)).toEqual([{ on: true, explicit: false, because: ".sqlfluff: no rules set, so SQLFluff runs every rule" }]);
   });
 
   it("leaves the pack's values where a file SQLFluff reads is not read, as far as it may change them", async () => {
@@ -226,6 +263,90 @@ describe("sqlfluffReader", () => {
     });
     const folder = await repository({ ".sqlfluff/x": "" });
     expect(read(folder, IS_NULL)).toEqual({ decisions: [{ on: "unknown", because: ".sqlfluff is not read" }], notes: [`.sqlfluff is not read: ${NOT_A_FILE}`] });
+  });
+
+  it("decides each folder holding a config by the configs from the root down to it", async () => {
+    const root = await repository({
+      ".sqlfluff": "[sqlfluff]\nrules = AL04,CV05\n",
+      "models/.sqlfluff": "[sqlfluff]\nexclude_rules = CV05\n",
+      "models/staging/setup.cfg": "[sqlfluff]\nrules = CV02\n",
+      "models/staging/x.sql": "select 1\n",
+      "other/setup.cfg": "[metadata]\nname = x\n",
+    });
+    expect(sqlfluffReader.read(root, [])!.verdict(ports.get(IS_NULL)!, ruleCatalog)).toEqual({
+      decision: { on: true, explicit: true, because: ".sqlfluff: \"CV05\" in rules" },
+      folders: [
+        { folder: "models", on: false, explicit: true, because: "models/.sqlfluff: \"CV05\" in exclude_rules" },
+        { folder: "models/staging", on: false, explicit: true, because: "models/.sqlfluff: \"CV05\" in exclude_rules" },
+      ],
+    });
+    // A config only below the root: SQLFluff's defaults for every other file.
+    const nestedOnly = await repository({ "models/.sqlfluff": "[sqlfluff]\nrules = CV05\n" });
+    expect(sqlfluffReader.read(nestedOnly, [])!.verdict(ports.get(COALESCE)!, ruleCatalog)).toEqual({
+      decision: { on: true, explicit: false, because: "SQLFluff's defaults: no rules set, so SQLFluff runs every rule" },
+      folders: [{ folder: "models", on: false, explicit: false, because: "models/.sqlfluff: rules does not select it" }],
+    });
+  });
+
+  it("turns every rule off in the folders SQLFluff ignores by literal path, noting files and leaving other patterns' folders to the pack", async () => {
+    const root = await repository({
+      ".sqlfluffignore": "# built\n\n/generated/\nlegacy.sql\nseeds  \n",
+      ".sqlfluff": "[sqlfluff]\nignore_paths = models/staging\n",
+      "generated/a.sql": "",
+      "seeds/b.sql": "",
+      "dbt/seeds/c.sql": "",
+      "models/staging/d.sql": "",
+      "models/staging/.sqlfluff": "[sqlfluff]\nrules = AL04\n",
+      "other/legacy.sql": "",
+      "macros/.sqlfluffignore": "*.tmp.sql\n",
+      "macros/e.sql": "",
+    });
+    const notes: LinterNote[] = [];
+    expect(sqlfluffReader.read(root, notes)!.verdict(ports.get(IS_NULL)!, ruleCatalog)).toEqual({
+      decision: { on: true, explicit: false, because: ".sqlfluff: no rules set, so SQLFluff runs every rule" },
+      folders: [
+        { folder: "generated", on: false, explicit: true, because: ".sqlfluffignore: \"/generated/\"" },
+        { folder: "dbt/seeds", on: false, explicit: true, because: ".sqlfluffignore: \"seeds  \"" },
+        { folder: "seeds", on: false, explicit: true, because: ".sqlfluffignore: \"seeds  \"" },
+        { folder: "macros", on: "unknown", because: "macros/.sqlfluffignore is not read" },
+        { folder: "models/staging", on: false, explicit: true, because: ".sqlfluff: ignore_paths: \"models/staging\"" },
+      ],
+    });
+    expect(notes.map(note => note.text)).toEqual([
+      "macros/.sqlfluffignore is not read: \"*.tmp.sql\" names no path literally, and Rerail reads only those. The rules keep the pack's values where it applies.",
+      ".sqlfluffignore: SQLFluff ignores other/legacy.sql, which Rerail cannot set rules for alone (it sets them for whole folders), so the rules stay on there.",
+    ]);
+  });
+
+  it("leaves every file to the pack where an ignore spec at the root is not read, or a .sqlfluff SQLFluff reads everywhere", async () => {
+    const negation = await repository({ ".sqlfluffignore": "models/\n!models/staging/\n" });
+    expect(read(negation, IS_NULL)!.decisions).toEqual([{ on: "unknown", because: ".sqlfluffignore is not read" }]);
+    const folder = await repository({ ".sqlfluffignore/x": "" });
+    expect(read(folder, IS_NULL)).toEqual({
+      decisions: [{ on: "unknown", because: ".sqlfluffignore is not read" }],
+      notes: [`.sqlfluffignore is not read: ${NOT_A_FILE} The rules keep the pack's values where it applies.`],
+    });
+    const nested = await repository({ ".sqlfluff": "[sqlfluff]\nrules = CV05\n", "models/.sqlfluff": "[sqlfluff]\nrules = A\nrules = B\n" });
+    expect(sqlfluffReader.read(nested, [])!.verdict(ports.get(IS_NULL)!, ruleCatalog)).toEqual({ decision: { on: "unknown", because: "models/.sqlfluff is not read" }, folders: [] });
+  });
+
+  it.each([
+    ["[sqlfluff]\nignore_paths = 0\n", ".sqlfluff"],
+    ["[sqlfluff]\nignore_paths =\n", ".sqlfluff"],
+    ["[tool.sqlfluff.core]\nignore_paths = []\n", "pyproject.toml"],
+  ])("reads %j as ignoring nothing, as discovery does", async (text, name) => {
+    const root = await repository({ [name]: text, "models/a.sql": "" });
+    expect(sqlfluffReader.read(root, [])!.verdict(ports.get(IS_NULL)!, ruleCatalog)!.folders).toEqual([]);
+  });
+
+  it("reads pyproject.toml's ignore_paths as a comma-separated string, refusing other values", async () => {
+    const text = await repository({ "pyproject.toml": "[tool.sqlfluff.core]\nignore_paths = \"models,seeds\"\n", "models/a.sql": "", "seeds/b.sql": "" });
+    expect(sqlfluffReader.read(text, [])!.verdict(ports.get(IS_NULL)!, ruleCatalog)!.folders).toEqual([
+      { folder: "models", on: false, explicit: true, because: "pyproject.toml: ignore_paths: \"models\"" },
+      { folder: "seeds", on: false, explicit: true, because: "pyproject.toml: ignore_paths: \"seeds\"" },
+    ]);
+    const number = await repository({ "pyproject.toml": "[tool.sqlfluff.core]\nignore_paths = 1\n" });
+    expect(read(number, IS_NULL)!.notes).toEqual(["pyproject.toml is not read: ignore_paths in [tool.sqlfluff.core] is not a string or a list of strings."]);
   });
 
   it("gives no verdict on a port without a SQLFluff reference", async () => {

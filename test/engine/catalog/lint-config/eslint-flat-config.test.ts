@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { presetScope, readEslintFlatConfig, type FlatConfigEntry, type FlatConfigScope } from "../../../../src/engine/catalog/lint-config/eslint-flat-config.js";
+import { presetScope, readEslintFlatConfig, type FilePatterns, type FlatConfigEntry, type FlatConfigScope } from "../../../../src/engine/catalog/lint-config/eslint-flat-config.js";
 import { readFormat } from "../../../../src/engine/catalog/lint-config/formats/lint-config-formats.js";
 
 const ALL: FlatConfigScope = { kind: "all" };
-const TS_FILES = "[\"**/*.ts\",\"**/*.tsx\",\"**/*.mts\",\"**/*.cts\"]";
+const TS_GLOBS = ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"];
+const TS_FILES = JSON.stringify(TS_GLOBS);
+/** The files `files` less `ignores` match, as one group of globs. */
+const globs = (files: string[], ignores: string[] = []): FilePatterns => ({ files: [files], ignores });
 
 /** What the reader makes of `text` as file `name`: what it reads, or why it refuses the file. */
 const outcome = (text: string, name = "eslint.config.js") => readFormat(() => readEslintFlatConfig(text, name));
@@ -156,7 +159,7 @@ describe("readEslintFlatConfig: config elements", () => {
 
   it("reads an object spread into a config object, and refuses a value of its own it cannot spread there", () => {
     expect(entriesOf("const base = { files: [\"src/**\"] };\nexport default [{ ...base, ...{ name: \"strict\" }, rules: { \"no-console\": \"off\" } }];"))
-      .toEqual([read("no-console", "off", { kind: "folders", folders: ["src"], files: "[\"src/**\"]" })]);
+      .toEqual([read("no-console", "off", { kind: "folders", folders: ["src"], files: "[\"src/**\"]", patterns: globs(["src/**"]) })]);
     expect(refusal("const list = [\"a\"];\nexport default [{ ...list, rules: {} }];")).toBe("Rerail cannot read list as data");
   });
 
@@ -168,6 +171,7 @@ describe("readEslintFlatConfig: config elements", () => {
         entries: [{ ...read("no-console", "off"), shadowedBy: "{ ...shared, rules: { eqeqeq: \"error\" } }" }],
         unread: ["{ ...shared, rules: { eqeqeq: \"error\" } }"],
         notes: ["the rules of { ...shared, rules: { eqeqeq: \"error\" } } are not read: Rerail does not run code to find them."],
+        namespaces: new Map(),
       },
     });
   });
@@ -178,26 +182,33 @@ describe("readEslintFlatConfig: config elements", () => {
 });
 
 describe("readEslintFlatConfig: where an entry applies", () => {
-  const some = (files: string): FlatConfigScope => ({ kind: "some", files });
+  const some = (files: string, patterns?: FilePatterns): FlatConfigScope => ({ kind: "some", files, ...(patterns === undefined ? {} : { patterns }) });
   it.each([
-    ["a folder glob with ./", "files: [\"./src/**\"]", { kind: "folders", folders: ["src"], files: "[\"./src/**\"]" }],
-    ["a folder's files glob", "files: [\"src/**/*\", \"lib/**\"]", { kind: "folders", folders: ["src", "lib"], files: "[\"src/**/*\", \"lib/**\"]" }],
-    ["a folder outside the repository", "files: [\"../x/**\"]", some("[\"../x/**\"]")],
-    ["a folder through a dot segment", "files: [\"src/./x/**\"]", some("[\"src/./x/**\"]")],
-    ["a pattern that is not a folder's", "files: [\"src/*.ts\"]", some("[\"src/*.ts\"]")],
+    ["a folder glob with ./", "files: [\"./src/**\"]", { kind: "folders", folders: ["src"], files: "[\"./src/**\"]", patterns: globs(["./src/**"]) }],
+    ["a folder's files glob", "files: [\"src/**/*\", \"lib/**\"]", { kind: "folders", folders: ["src", "lib"], files: "[\"src/**/*\", \"lib/**\"]", patterns: globs(["src/**/*", "lib/**"]) }],
+    ["a folder outside the repository", "files: [\"../x/**\"]", some("[\"../x/**\"]", globs(["../x/**"]))],
+    ["a folder through a dot segment", "files: [\"src/./x/**\"]", some("[\"src/./x/**\"]", globs(["src/./x/**"]))],
+    ["a pattern that is not a folder's", "files: [\"src/*.ts\"]", some("[\"src/*.ts\"]", globs(["src/*.ts"]))],
     ["a nested pattern list", "files: [\"src/**\", [\"lib/**\"]]", some("[\"src/**\", [\"lib/**\"]]")],
-    ["no patterns", "files: []", some("[]")],
+    ["a negated pattern", "files: [\"src/**\", \"!src/gen/**\"]", some("[\"src/**\", \"!src/gen/**\"]")],
+    ["no patterns", "files: []", some("[]", globs([]))],
     ["a string", "files: \"src/**\"", some("\"src/**\"")],
     ["patterns it cannot read", "files: shared.files", some("shared.files")],
-    ["ignores and no files", "ignores: [\"dist/**\"]", some("some files")],
+    ["ignores and no files", "ignores: [\"dist/**\"]", some("some files", globs(["**/*"], ["dist/**"]))],
+    ["ignores it cannot read", "files: [\"src/**\"], ignores: shared.ignores", some("[\"src/**\"]")],
     ["a base path", "basePath: \"packages/a\", files: [\"src/**\"]", some("[\"src/**\"]")],
   ])("reads %s", (_, properties, scope) => {
     const text = `import shared from "shared-config";\nexport default [{ ${properties}, rules: { "no-console": "off" } }];`;
     expect(entriesOf(text)).toEqual([read("no-console", "off", scope as FlatConfigScope)]);
   });
 
-  it("reads an entry an extends of an object for some files holds as for some files, which it does not map", () => {
+  it("reads an entry an extends of an object for some files holds as for the files both hold, which it does not map onto folders", () => {
     const text = "export default [{ files: [\"src/**\"], extends: [{ files: [\"src/a/**\"], rules: { \"no-console\": \"off\" } }] }];";
+    expect(entriesOf(text)).toEqual([read("no-console", "off", some("[\"src/a/**\"]", { files: [["src/**"], ["src/a/**"]], ignores: [] }))]);
+  });
+
+  it("reads an entry an extends of an object holds for files it cannot read as for some files", () => {
+    const text = "export default [{ files: [\"src/**\", [\"lib/**\"]], extends: [{ files: [\"src/a/**\"], rules: { \"no-console\": \"off\" } }] }];";
     expect(entriesOf(text)).toEqual([read("no-console", "off", some("[\"src/a/**\"]"))]);
   });
 });
@@ -230,7 +241,7 @@ describe("readEslintFlatConfig: shared configs", () => {
     expect(summary(entriesOf(namespace, "eslint.config.mts"), "no-var")).toEqual({
       count: 46,
       presets: ["tseslint.configs.recommended"],
-      scopes: [JSON.stringify({ kind: "some", files: TS_FILES }), JSON.stringify(ALL)],
+      scopes: [JSON.stringify({ kind: "some", files: TS_FILES, patterns: globs(TS_GLOBS) }), JSON.stringify(ALL)],
       value: { ok: true, value: "error" },
     });
     const named = "import { configs, parser, plugin } from \"typescript-eslint\";\nimport { other } from \"typescript-eslint\";\nexport default [...configs.recommended, parser, other.configs.recommended];";
@@ -243,7 +254,7 @@ describe("readEslintFlatConfig: shared configs", () => {
     expect(summary(entriesOf(text, "eslint.config.mts"), "getter-return")).toEqual({
       count: 23,
       presets: ["tseslint.configs.eslintRecommended"],
-      scopes: [JSON.stringify({ kind: "some", files: TS_FILES })],
+      scopes: [JSON.stringify({ kind: "some", files: TS_FILES, patterns: globs(TS_GLOBS) })],
       value: { ok: true, value: "off" },
     });
   });
@@ -251,7 +262,77 @@ describe("readEslintFlatConfig: shared configs", () => {
   it("reads a shared config for its own files in an extends of an object for some files as for both", () => {
     const text = "import tseslint from \"typescript-eslint\";\nexport default [{ files: [\"src/**\"], extends: [tseslint.configs.eslintRecommended] }];";
     expect(summary(entriesOf(text, "eslint.config.mts"), "getter-return").scopes)
-      .toEqual([JSON.stringify({ kind: "some", files: `["src/**"] and ${TS_FILES}` })]);
+      .toEqual([JSON.stringify({ kind: "some", files: `["src/**"] and ${TS_FILES}`, patterns: { files: [["src/**"], TS_GLOBS], ignores: [] } })]);
+  });
+});
+
+describe("readEslintFlatConfig: plugins and string extends", () => {
+  const read = (text: string) => outcome(text, "eslint.config.mjs");
+  const keysOf = (text: string): string[] => [...new Set(entriesOf(text, "eslint.config.mjs")?.map(entry => entry.key))];
+  const IMPORTS = [
+    "import js from \"@eslint/js\";",
+    "import tseslint from \"typescript-eslint\";",
+    "import react from \"eslint-plugin-react\";",
+    "import local from \"./local-plugin.mjs\";",
+    "import shared from \"shared-config\";",
+    "import { defineConfig } from \"eslint/config\";",
+  ].join("\n");
+
+  it("binds each namespace of plugins to the namespace its recognised plugin's rules are named under, and others to none", () => {
+    const text = `${IMPORTS}\nexport default [{ plugins: { ts: tseslint.plugin, js, "@typescript-eslint": tseslint.plugin, local, r: react } }, { plugins: { r: react } }];`;
+    expect(read(text)).toMatchObject({
+      ok: true,
+      value: { namespaces: new Map([["ts", "@typescript-eslint"], ["js", "js"], ["@typescript-eslint", "@typescript-eslint"], ["local", undefined], ["r", "react"]]) },
+    });
+  });
+
+  it("binds a namespace two objects bind to different plugins to none", () => {
+    const text = `${IMPORTS}\nexport default [{ plugins: { p: tseslint.plugin } }, { plugins: { p: react } }, { plugins: { q: local } }, { plugins: { q: react } }];`;
+    expect(read(text)).toMatchObject({ ok: true, value: { namespaces: new Map([["p", undefined], ["q", undefined]]) } });
+  });
+
+  it("binds a namespace to none for a member of a recognised module that is no plugin", () => {
+    const text = "import tseslint, { parser } from \"typescript-eslint\";\nimport { other } from \"typescript-eslint\";\nexport default [{ plugins: { a: tseslint.parser, b: parser, c: other, d: { rules: {} }, e: undefined } }];";
+    expect(read(text)).toMatchObject({ ok: true, value: { namespaces: new Map([["a", undefined], ["b", undefined], ["c", undefined], ["d", undefined], ["e", undefined]]) } });
+  });
+
+  it.each([
+    ["plugins it cannot read", "{ plugins: shared.plugins }", "shared.plugins"],
+    ["plugins spread from what it cannot read", "{ plugins: { ...shared.plugins, js } }", "...shared.plugins"],
+  ])("names %s as what may bind any namespace", (_, element, unread) => {
+    expect(read(`${IMPORTS}\nexport default [${element}];`)).toMatchObject({ ok: true, value: { pluginsUnread: unread } });
+  });
+
+  it("reads a string extends through the plugin the object binds, as defineConfig finds its config", () => {
+    const scaffold = `${IMPORTS}\nexport default defineConfig([{ files: ["**/*.js"], plugins: { js }, extends: ["js/recommended"] }]);`;
+    expect(entriesOf(scaffold, "eslint.config.mjs")).toHaveLength(64);
+    expect(entriesOf(scaffold, "eslint.config.mjs")?.[0]).toMatchObject({ preset: "\"js/recommended\"", scope: { kind: "some", patterns: globs(["**/*.js"]) } });
+  });
+
+  it("renames a string extends' rules to the namespace the object binds a plugin with its own namespace under", () => {
+    const renamed = keysOf(`${IMPORTS}\nexport default defineConfig([{ plugins: { ts: tseslint.plugin }, extends: ["ts/recommended"] }]);`);
+    expect(renamed).toContain("ts/no-explicit-any");
+    expect(renamed).toContain("no-var");
+    expect(renamed.some(key => key.startsWith("@typescript-eslint/"))).toBe(false);
+    const own = keysOf(`${IMPORTS}\nexport default defineConfig([{ plugins: { "@typescript-eslint": tseslint.plugin }, extends: ["@typescript-eslint/strict"] }]);`);
+    expect(own).toContain("@typescript-eslint/no-explicit-any");
+  });
+
+  it("reads config objects and arrays in extends as elements", () => {
+    expect(keysOf(`${IMPORTS}\nexport default defineConfig([{ extends: [js.configs.recommended, ...[{ rules: { eqeqeq: "error" } }]] }]);`)).toContain("eqeqeq");
+    expect(read(`${IMPORTS}\nexport default defineConfig([{ extends: shared.configs }]);`)).toMatchObject({ ok: true, value: { unread: ["shared.configs"] } });
+  });
+
+  it.each([
+    ["a namespace the object does not bind", "{ extends: [\"js/recommended\"] }", "\"js/recommended\""],
+    ["a plugin it does not recognise", "{ plugins: { local }, extends: [\"local/recommended\"] }", "\"local/recommended\""],
+    ["a config the plugin does not have", "{ plugins: { js }, extends: [\"js/missing\"] }", "\"js/missing\""],
+    ["an eslintrc config with no flat one", "{ plugins: { react }, extends: [\"react/recommended\"] }", "\"react/recommended\""],
+    ["a name with no namespace", "{ plugins: { js }, extends: [\"recommended\"] }", "\"recommended\""],
+    ["a scoped namespace of two parts", "{ plugins: { \"@ts/x\": tseslint.plugin }, extends: [\"@ts/x/missing\"] }", "\"@ts/x/missing\""],
+  ])("names a string extends of %s as not read, and what it may replace", (_, element, unread) => {
+    const text = `${IMPORTS}\nexport default defineConfig([{ rules: { eqeqeq: "error" } }, ${element}]);`;
+    expect(read(text)).toMatchObject({ ok: true, value: { entries: [{ key: "eqeqeq", shadowedBy: unread }], unread: [unread] } });
   });
 });
 
@@ -259,10 +340,11 @@ describe("presetScope", () => {
   const folders: FlatConfigScope = { kind: "folders", folders: ["app"], files: "[\"app/**\"]" };
   it.each([
     ["an entry for every file keeps the element's scope", { rules: {} }, folders, folders],
-    ["an entry's folder files are its folders", { files: ["src/**"], rules: {} }, ALL, { kind: "folders", folders: ["src"], files: "[\"src/**\"]" }],
-    ["an entry's ignores alone narrow it to some files", { ignores: ["dist/**"], rules: {} }, ALL, { kind: "some", files: "some files" }],
-    ["an entry's ignores keep its folder files from mapping onto folders", { files: ["src/**"], ignores: ["src/gen/**"], rules: {} }, ALL, { kind: "some", files: "[\"src/**\"]" }],
+    ["an entry's folder files are its folders", { files: ["src/**"], rules: {} }, ALL, { kind: "folders", folders: ["src"], files: "[\"src/**\"]", patterns: globs(["src/**"]) }],
+    ["an entry's ignores alone narrow it to some files", { ignores: ["dist/**"], rules: {} }, ALL, { kind: "some", files: "some files", patterns: globs(["**/*"], ["dist/**"]) }],
+    ["an entry's ignores keep its folder files from mapping onto folders", { files: ["src/**"], ignores: ["src/gen/**"], rules: {} }, ALL, { kind: "some", files: "[\"src/**\"]", patterns: globs(["src/**"], ["src/gen/**"]) }],
     ["an entry's ignores in an element for some files narrow both", { ignores: ["dist/**"], rules: {} }, folders, { kind: "some", files: "[\"app/**\"] and some files" }],
+    ["an entry's ignores in an element for files it reads narrow both", { ignores: ["dist/**"], rules: {} }, { ...folders, patterns: globs(["app/**"]) }, { kind: "some", files: "[\"app/**\"] and some files", patterns: { files: [["app/**"], ["**/*"]], ignores: ["dist/**"] } }],
   ])("%s", (_, entry, scope, expected) => {
     expect(presetScope(entry, scope)).toEqual(expected);
   });

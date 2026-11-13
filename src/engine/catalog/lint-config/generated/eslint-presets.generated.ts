@@ -73,6 +73,10 @@ const FLAT: readonly (readonly [string, readonly number[]])[] = [
   ["[\"@next/eslint-plugin-next\",\"configs\",\"core-web-vitals\"]", [2]],
   ["[\"@next/eslint-plugin-next\",\"configs\",\"recommended\",\"rules\"]", [3]],
   ["[\"@next/eslint-plugin-next\",\"configs\",\"recommended\"]", [3]],
+  ["[\"@next/eslint-plugin-next\",\"default\",\"configs\",\"core-web-vitals\",\"rules\"]", [2]],
+  ["[\"@next/eslint-plugin-next\",\"default\",\"configs\",\"core-web-vitals\"]", [2]],
+  ["[\"@next/eslint-plugin-next\",\"default\",\"configs\",\"recommended\",\"rules\"]", [3]],
+  ["[\"@next/eslint-plugin-next\",\"default\",\"configs\",\"recommended\"]", [3]],
   ["[\"@typescript-eslint/eslint-plugin\",\"configs\",\"flat/all\"]", [4, 5]],
   ["[\"@typescript-eslint/eslint-plugin\",\"configs\",\"flat/base\"]", []],
   ["[\"@typescript-eslint/eslint-plugin\",\"configs\",\"flat/disable-type-checked\",\"rules\"]", [6]],
@@ -153,6 +157,21 @@ const FLAT: readonly (readonly [string, readonly number[]])[] = [
   ["[\"typescript-eslint\",\"configs\",\"stylistic\"]", [4, 16]],
   ["[\"typescript-eslint\",\"configs\",\"stylisticTypeChecked\"]", [4, 15]],
   ["[\"typescript-eslint\",\"configs\",\"stylisticTypeCheckedOnly\"]", [4, 14]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/all\"]", [4, 5]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/base\"]", []],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/disable-type-checked\",\"rules\"]", [6]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/disable-type-checked\"]", [6]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/eslint-recommended\",\"rules\"]", [7]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/eslint-recommended\"]", [4]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/recommended-type-checked-only\"]", [4, 8]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/recommended-type-checked\"]", [4, 9]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/recommended\"]", [4, 10]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/strict-type-checked-only\"]", [4, 11]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/strict-type-checked\"]", [4, 12]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/strict\"]", [4, 13]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/stylistic-type-checked-only\"]", [4, 14]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/stylistic-type-checked\"]", [4, 15]],
+  ["[\"typescript-eslint\",\"plugin\",\"configs\",\"flat/stylistic\"]", [4, 16]],
 ];
 
 /** An eslintrc `extends` name (`eslint:recommended`, `plugin:react/recommended`) with its entries' indexes in order. */
@@ -242,3 +261,40 @@ export const ESLINT_FLAT_PRESETS = presets(FLAT);
 export const ESLINTRC_PRESETS = presets(ESLINTRC);
 /** Per module, the named exports that are its default export's member of the same name (`import { configs } from "typescript-eslint"`). */
 export const ESLINT_PRESET_NAMED_EXPORTS: ReadonlyMap<string, readonly string[]> = new Map([["typescript-eslint",["__esModule","config","configs","extensions","globs","parser","plugin"]],["@typescript-eslint/eslint-plugin",[]],["eslint-plugin-react",[]],["eslint-plugin-react-hooks",["configs","meta","rules"]],["eslint-plugin-unicorn",[]],["eslint-plugin-n",[]],["@next/eslint-plugin-next",["__esModule"]],["eslint-config-next",[]],["eslint-config-next/core-web-vitals",[]],["eslint-config-next/typescript",[]],["eslint-plugin-vue",[]],["@vitest/eslint-plugin",[]]]);
+
+/** A plugin object a flat config binds in `plugins`: the namespace its rules are named under (none: it has no rules), and its `meta.namespace`. */
+export interface EslintPlugin {
+  readonly namespace: string | undefined;
+  readonly meta: string | undefined;
+}
+
+/**
+ * The plugin objects, by `JSON.stringify([module, ...memberPath])` of the module's default export. Its flat configs
+ * are the presets at `[...that, "configs", <name>]`.
+ */
+export const ESLINT_PLUGINS: ReadonlyMap<string, EslintPlugin> = new Map([
+  ["[\"@eslint/js\"]", { namespace: undefined, meta: undefined }],
+  ["[\"@next/eslint-plugin-next\",\"default\"]", { namespace: "@next/next", meta: undefined }],
+  ["[\"@next/eslint-plugin-next\"]", { namespace: "@next/next", meta: undefined }],
+  ["[\"@typescript-eslint/eslint-plugin\"]", { namespace: "@typescript-eslint", meta: "@typescript-eslint" }],
+  ["[\"@vitest/eslint-plugin\"]", { namespace: "vitest", meta: undefined }],
+  ["[\"eslint-plugin-n\"]", { namespace: "n", meta: undefined }],
+  ["[\"eslint-plugin-react-hooks\"]", { namespace: "react-hooks", meta: undefined }],
+  ["[\"eslint-plugin-react\"]", { namespace: "react", meta: undefined }],
+  ["[\"eslint-plugin-unicorn\"]", { namespace: "unicorn", meta: undefined }],
+  ["[\"eslint-plugin-vue\"]", { namespace: "vue", meta: undefined }],
+  ["[\"typescript-eslint\",\"plugin\"]", { namespace: "@typescript-eslint", meta: "@typescript-eslint" }],
+]);
+
+/** The upstream versions the table comes from, by the gated tool-pack (`<pack>/<tool>`) that pins each. */
+export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = {
+  "javascript/eslint": "10.11.0",
+  "javascript/eslint-plugin-unicorn": "76.0.0",
+  "next/eslint-plugin-next": "16.3.8",
+  "node/eslint-plugin-n": "18.4.1",
+  "react/eslint-plugin-react": "7.37.5",
+  "react/eslint-plugin-react-hooks": "7.1.1",
+  "typescript/eslint-plugin-vitest": "1.6.27",
+  "typescript/typescript-eslint": "8.70.1",
+  "vue/eslint-plugin-vue": "10.11.1"
+};

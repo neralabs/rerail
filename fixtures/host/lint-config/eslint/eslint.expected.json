@@ -1,0 +1,99 @@
+{
+ "flat-scaffold-js-recommended": {
+  "src/index.js": "no-case-declarations no-compare-neg-zero no-cond-assign no-debugger no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-obj-calls no-octal no-prototype-builtins no-redeclare no-self-assign no-setter-return no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-with require-yield use-isnan valid-typeof"
+ },
+ "flat-extends-js-recommended-then-off": {
+  "src/index.js": "no-case-declarations no-compare-neg-zero no-cond-assign no-console no-debugger no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-obj-calls no-octal no-prototype-builtins no-redeclare no-self-assign no-setter-return no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-with require-yield use-isnan valid-typeof"
+ },
+ "flat-extends-js-all-as-named": {
+  "src/index.js": "accessor-pairs arrow-body-style capitalized-comments class-methods-use-this curly default-case default-case-last default-param-last dot-notation eqeqeq func-name-matching func-style grouped-accessor-pairs guard-for-in id-length max-classes-per-file max-depth max-nested-callbacks max-params max-statements no-alert no-array-constructor no-await-in-loop no-bitwise no-caller no-case-declarations no-compare-neg-zero no-cond-assign no-console no-continue no-debugger no-delete-var no-div-regex no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-duplicate-imports no-empty no-empty-function no-empty-pattern no-empty-static-block no-eq-null no-eval no-extend-native no-extra-bind no-extra-label no-implied-eval no-inline-comments no-irregular-whitespace no-iterator no-labels no-lonely-if no-loss-of-precision no-magic-numbers no-multi-assign no-multi-str no-negated-condition no-nested-ternary no-new no-new-func no-new-wrappers no-nonoctal-decimal-escape no-obj-calls no-object-constructor no-octal no-octal-escape no-plusplus no-proto no-prototype-builtins no-redeclare no-return-assign no-script-url no-self-assign no-self-compare no-sequences no-setter-return no-sparse-arrays no-template-curly-in-string no-ternary no-unexpected-multiline no-unneeded-ternary no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-expressions no-unused-labels no-unused-private-class-members no-useless-call no-useless-catch no-useless-computed-key no-useless-concat no-useless-constructor no-useless-rename no-var no-void no-warning-comments no-with one-var operator-assignment prefer-destructuring prefer-exponentiation-operator prefer-numeric-literals prefer-object-has-own prefer-spread prefer-template radix require-await require-yield sort-imports sort-keys sort-vars strict symbol-description use-isnan valid-typeof vars-on-top yoda"
+ },
+ "flat-extends-ts-recommended-alias": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-var prefer-spread"
+ },
+ "flat-extends-unicorn-recommended": {
+  "src/index.js": "unicorn/no-null unicorn/prefer-node-protocol"
+ },
+ "flat-extends-vue-flat-recommended": {
+  "src/App.vue": "vue/attribute-hyphenation vue/no-async-in-computed-properties vue/no-child-content vue/no-deprecated-v-on-native-modifier vue/no-dupe-keys vue/no-duplicate-attributes vue/no-export-in-script-setup vue/no-mutating-props vue/no-ref-as-operand vue/no-side-effects-in-computed-properties vue/no-template-shadow vue/no-unused-vars vue/no-use-v-if-with-v-for vue/no-v-html vue/no-v-text-v-html-on-component vue/no-watch-after-await vue/require-v-for-key vue/require-valid-default-prop vue/return-in-computed-property vue/v-on-event-hyphenation vue/valid-v-for"
+ },
+ "flat-extends-unrecognised-string": {
+  "src/index.js": "no-console no-debugger"
+ },
+ "flat-plugin-alias-ts": {
+  "src/a.ts": "@typescript-eslint/no-explicit-any"
+ },
+ "flat-plugin-alias-named-import": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-explicit-any"
+ },
+ "flat-plugin-alias-scoped": {
+  "src/a.ts": "@typescript-eslint/no-explicit-any"
+ },
+ "flat-plugin-alias-bound-elsewhere": {
+  "src/a.ts": "@typescript-eslint/no-empty-function @typescript-eslint/no-explicit-any"
+ },
+ "flat-plugin-alias-off-preset-on": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-var prefer-spread"
+ },
+ "flat-plugin-alias-on-canonical-off": {
+  "src/a.ts": "@typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-var prefer-spread"
+ },
+ "flat-plugin-alias-folder": {
+  "src/a.ts": "@typescript-eslint/no-explicit-any",
+  "scripts/b.ts": ""
+ },
+ "flat-plugin-alias-react": {
+  "src/App.jsx": "react-hooks/rules-of-hooks react/no-danger"
+ },
+ "flat-plugin-unresolved-local": {
+  "src/a.ts": "@typescript-eslint/no-explicit-any"
+ },
+ "flat-plugin-unresolved-off-preset-on": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-var prefer-spread"
+ },
+ "flat-plugin-bound-in-unread-element": {
+  "src/a.ts": "@typescript-eslint/no-explicit-any no-debugger"
+ },
+ "flat-tseslint-config-strict": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-dynamic-delete @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-extraneous-class @typescript-eslint/no-invalid-void-type @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-nullish-coalescing @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-useless-constructor @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-literal-enum-member @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference @typescript-eslint/unified-signatures no-case-declarations no-compare-neg-zero no-cond-assign no-console no-debugger no-delete-var no-dupe-else-if no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-octal no-prototype-builtins no-self-assign no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-var prefer-spread require-yield use-isnan valid-typeof",
+  "src/b.js": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-dynamic-delete @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-extraneous-class @typescript-eslint/no-invalid-void-type @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-nullish-coalescing @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-useless-constructor @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-literal-enum-member @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference @typescript-eslint/unified-signatures no-case-declarations no-compare-neg-zero no-cond-assign no-console no-debugger no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-obj-calls no-octal no-prototype-builtins no-redeclare no-self-assign no-setter-return no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-with require-yield use-isnan valid-typeof"
+ },
+ "flat-define-config-ts-recommended-objects": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-case-declarations no-compare-neg-zero no-cond-assign no-debugger no-delete-var no-dupe-else-if no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-octal no-prototype-builtins no-self-assign no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-var prefer-spread require-yield use-isnan valid-typeof"
+ },
+ "flat-react-presets": {
+  "src/App.jsx": "react-hooks/error-boundaries react-hooks/exhaustive-deps react-hooks/globals react-hooks/immutability react-hooks/purity react-hooks/refs react-hooks/rules-of-hooks react-hooks/set-state-in-effect react-hooks/set-state-in-render react-hooks/static-components react/jsx-key react/jsx-no-comment-textnodes react/jsx-no-duplicate-props react/jsx-no-target-blank react/jsx-no-undef react/no-children-prop react/no-danger-with-children react/no-deprecated react/no-direct-mutation-state react/no-find-dom-node react/no-is-mounted react/no-render-return-value react/no-string-refs react/no-unescaped-entities react/no-unknown-property"
+ },
+ "flat-folders": {
+  "src/a.js": "eqeqeq no-console",
+  "scripts/b.js": "eqeqeq",
+  "scripts/deep/c.js": "eqeqeq no-console no-debugger"
+ },
+ "flat-unresolved-value": {
+  "src/a.js": "no-debugger"
+ },
+ "flat-unresolved-value-on": {
+  "src/a.js": "no-console"
+ },
+ "flat-not-data": {
+  "src/a.js": "no-console"
+ },
+ "flat-nested-config": {
+  "src/a.js": "no-console",
+  "packages/app/b.js": "no-debugger"
+ },
+ "eslintrc-presets-and-overrides": {
+  "src/a.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-case-declarations no-compare-neg-zero no-cond-assign no-console no-debugger no-delete-var no-dupe-else-if no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-octal no-prototype-builtins no-self-assign no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-var prefer-spread require-yield use-isnan valid-typeof",
+  "test/b.ts": "@typescript-eslint/ban-ts-comment @typescript-eslint/no-array-constructor @typescript-eslint/no-duplicate-enum-values @typescript-eslint/no-empty-object-type @typescript-eslint/no-explicit-any @typescript-eslint/no-extra-non-null-assertion @typescript-eslint/no-misused-new @typescript-eslint/no-namespace @typescript-eslint/no-non-null-asserted-optional-chain @typescript-eslint/no-require-imports @typescript-eslint/no-this-alias @typescript-eslint/no-unnecessary-type-constraint @typescript-eslint/no-unsafe-declaration-merging @typescript-eslint/no-unsafe-function-type @typescript-eslint/no-unused-expressions @typescript-eslint/no-unused-vars @typescript-eslint/no-wrapper-object-types @typescript-eslint/prefer-as-const @typescript-eslint/prefer-namespace-keyword @typescript-eslint/triple-slash-reference no-case-declarations no-compare-neg-zero no-cond-assign no-debugger no-delete-var no-dupe-else-if no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-octal no-prototype-builtins no-self-assign no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-var prefer-spread require-yield use-isnan valid-typeof"
+ },
+ "eslintrc-react": {
+  "src/App.jsx": "react-hooks/error-boundaries react-hooks/exhaustive-deps react-hooks/globals react-hooks/immutability react-hooks/purity react-hooks/refs react-hooks/rules-of-hooks react-hooks/set-state-in-effect react-hooks/set-state-in-render react-hooks/static-components react/jsx-key react/jsx-no-comment-textnodes react/jsx-no-duplicate-props react/jsx-no-target-blank react/jsx-no-undef react/no-children-prop react/no-danger-with-children react/no-deprecated react/no-direct-mutation-state react/no-find-dom-node react/no-is-mounted react/no-render-return-value react/no-string-refs react/no-unescaped-entities react/no-unknown-property"
+ },
+ "eslintrc-nested": {
+  "src/a.js": "no-console no-debugger",
+  "packages/app/b.js": "no-debugger"
+ },
+ "eslintrc-package-json": {
+  "src/a.js": "no-case-declarations no-compare-neg-zero no-cond-assign no-debugger no-delete-var no-dupe-class-members no-dupe-else-if no-dupe-keys no-duplicate-case no-empty no-empty-pattern no-empty-static-block no-irregular-whitespace no-loss-of-precision no-nonoctal-decimal-escape no-obj-calls no-octal no-prototype-builtins no-redeclare no-self-assign no-setter-return no-sparse-arrays no-unexpected-multiline no-unsafe-finally no-unsafe-negation no-unsafe-optional-chaining no-unused-labels no-unused-private-class-members no-useless-catch no-with require-yield use-isnan valid-typeof"
+ }
+}

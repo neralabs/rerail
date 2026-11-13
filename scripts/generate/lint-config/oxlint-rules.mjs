@@ -39,5 +39,8 @@ export const OXLINT_RULES: Readonly<Record<string, Readonly<Record<string, reado
 
 /** The rules (\`<plugin>/<name>\`) oxlint runs only with type information (\`--type-aware\`). */
 export const OXLINT_TYPE_AWARE: ReadonlySet<string> = new Set(${JSON.stringify(typeAware, undefined, 1)});
+
+/** The upstream version the table comes from. */
+export const UPSTREAM_VERSIONS: Readonly<Record<string, string>> = { oxlint: ${JSON.stringify(PIN)} };
 `;
 writeFileSync(join(import.meta.dirname, "../../../src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts"), text);

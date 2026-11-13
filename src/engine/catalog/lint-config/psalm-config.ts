@@ -1,6 +1,7 @@
 /**
- * Psalm's `psalm.xml` at the repository root, read as data (`xml-format.ts`) for the php pack's Psalm ports, as
- * Psalm 6.19.1 reads it (vimeo/psalm@e2ca442, the release `packs/php/conformance.json` names).
+ * Psalm's config at the repository root (`psalm.xml`, else `psalm.xml.dist`, else `psalm.dist.xml`), read as data
+ * (`xml-format.ts`) for the php pack's Psalm ports, as Psalm 6.19.1 reads it (vimeo/psalm@e2ca442, the release
+ * `packs/php/conformance.json` names).
  *
  * Psalm reports every issue, at a level: an error, or info, which fails nothing and is shown only with `--show-info`
  * (off unless passed; `Psalm::initShowInfo`, src/Psalm/Internal/Cli/Psalm.php l.491-496). With no handler for an
@@ -26,8 +27,8 @@ import {
 import { isRepositoryFolder, repositoryPath } from "./repository-paths.js";
 import { parseXml, xmlChildren, type XmlElement } from "./formats/xml-format.js";
 
-/** The config files Psalm looks for, in its order (`Config::DEFAULT_FILE_NAMES`, src/Psalm/Config.php l.142-145). */
-const PSALM_FILES = ["psalm.xml", "psalm.xml.dist"];
+/** The config files Psalm looks for, in its order (`Config::DEFAULT_FILE_NAMES`, src/Psalm/Config.php l.142-146); it uses the first present. */
+const PSALM_FILES = ["psalm.xml", "psalm.xml.dist", "psalm.dist.xml"];
 /** The level Psalm runs at when `errorLevel` is absent (src/Psalm/Config.php l.1168-1180). */
 const DEFAULT_LEVEL = 2;
 /** An `errorLevel` Psalm takes (src/Psalm/Config.php l.1171). */
@@ -155,7 +156,7 @@ function filterFolders(port: Port, handler: PsalmHandler, notes: string[]): Fold
     const because = `${handler.because.replace(/\/>$/u, ">")} <errorLevel type="${filter.type}">`;
     for (const unread of filter.unread) notes.push(`${port.ruleId}: ${because} covers ${unread}, which is not a folder of the repository; Rerail sets rules for whole folders only.`);
     const covered = (folder: string): boolean => decided.some(earlier => folder === earlier.folder || folder.startsWith(`${earlier.folder}/`));
-    decided.push(...filter.folders.filter(folder => !covered(folder)).map(folder => ({ folder, on: filter.type === "error", because: `${because} <directory name="${folder}"/>` })));
+    decided.push(...filter.folders.filter(folder => !covered(folder)).map(folder => ({ folder, on: filter.type === "error", explicit: true, because: `${because} <directory name="${folder}"/>` })));
   }
   return decided;
 }

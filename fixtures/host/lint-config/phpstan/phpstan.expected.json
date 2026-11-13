@@ -1,0 +1,1068 @@
+{
+ "tool": "PHPStan 2.2.16",
+ "probe": "function probe_return() { return 1; }\nfunction probe_sprintf(): string { return sprintf('%s %s', 'a'); }\nfunction probe_sscanf(): mixed { return sscanf('a b', '%s %s', $x); }\n/** @return array<string, int> */ function probe_keys(): array { return ['a' => 1, 'a' => 2]; }\nfunction probe_if(): void { $x = 0; if ($x) { echo 1; } }\nfunction probe_random(): int { return random_int(10, 1); }\n",
+ "cases": [
+  {
+   "name": "level-0",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 0\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ]
+   }
+  },
+  {
+   "name": "level-3",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 3\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey"
+    ]
+   }
+  },
+  {
+   "name": "level-4",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 4\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "level-5-string",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: '5'\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "level-6",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 6\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "level-max",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: max\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "file-neon-dist",
+   "files": {
+    "phpstan.neon.dist": "parameters:\n\tlevel: 6\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "file-dot-neon",
+   "files": {
+    ".phpstan.neon": "parameters:\n\tlevel: 6\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "file-dist-neon",
+   "files": {
+    "phpstan.dist.neon": "parameters:\n\tlevel: 6\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "file-dot-dist-neon",
+   "files": {
+    ".phpstan.dist.neon": "parameters:\n\tlevel: 6\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "file-first-wins",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 6\n",
+    "phpstan.neon.dist": "parameters:\n\tlevel: 0\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "level-config",
+   "files": {
+    "phpstan.neon": "includes:\n\t- phar://phpstan.phar/conf/config.level4.neon\n\t- phar://phpstan.phar/conf/bleedingEdge.neon\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "level-config-and-level",
+   "files": {
+    "phpstan.neon": "includes:\n\t- phar://phpstan.phar/conf/config.level4.neon\nparameters:\n\tlevel: 5\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "level-config-max",
+   "files": {
+    "phpstan.neon": "includes:\n\t- phar://phpstan.phar/conf/config.levelmax.neon\n\t- '%rootDir%/conf/bleedingEdge.neon'\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "level-config-root-dir",
+   "files": {
+    "phpstan.neon": "includes:\n\t- '%rootDir%/conf/config.level4.neon'\n"
+   },
+   "error": "File '/private/tmp/phpo/phpstan-2.2.16/vendor/phpstan/phpstan/conf/config.level4.neon' is missing or is not readable."
+  },
+  {
+   "name": "no-level",
+   "files": {
+    "phpstan.neon": "parameters:\n\tpaths: [src]\n"
+   },
+   "error": "No rules detected"
+  },
+  {
+   "name": "custom-ruleset",
+   "files": {
+    "phpstan.neon": "parameters:\n\tcustomRulesetUsed: true\n"
+   },
+   "reported": {
+    "probe.php": [],
+    "lib/src/Legacy/probe.php": [],
+    "src/Legacy/probe.php": [],
+    "src/probe.php": [],
+    "tests/probe.php": []
+   }
+  },
+  {
+   "name": "custom-ruleset-rules",
+   "files": {
+    "phpstan.neon": "parameters:\n\tcustomRulesetUsed: true\nrules:\n\t- PHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule\n"
+   },
+   "reported": {
+    "probe.php": [
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "rules-own-class",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 0\nrules:\n\t- PHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "rules-other-class",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 4\nrules:\n\t- PHPStan\\Rules\\Methods\\MissingMethodReturnTypehintRule\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "services-tagged",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 0\nservices:\n\t-\n\t\tclass: \\PHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule\n\t\ttags: [phpstan.rules.rule]\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "services-untagged",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 5\nservices:\n\t- PHPStan\\Rules\\Functions\\MissingFunctionReturnTypehintRule\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "ignore-identifier",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 6\n\tignoreErrors:\n\t\t- identifier: missingType.return\n\t\t- identifiers: [argument.sprintf, if.alwaysFalse]\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ],
+    "src/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ],
+    "tests/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ]
+   }
+  },
+  {
+   "name": "ignore-folder",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 6\n\treportUnmatchedIgnoredErrors: false\n\tignoreErrors:\n\t\t-\n\t\t\tidentifier: argument.sprintf\n\t\t\tpaths: [src/Legacy, src/probe.php]\n\t\t-\n\t\t\tidentifier: argument.type\n\t\t\tpath: '%currentWorkingDirectory%/src'\n\t\t-\n\t\t\tidentifier: array.duplicateKey\n\t\t\tpath: '*/Legacy/*'\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sscanf",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "ignore-partial",
+   "files": {
+    "phpstan.neon": "parameters:\n\tlevel: 6\n\treportUnmatchedIgnoredErrors: false\n\tignoreErrors:\n\t\t-\n\t\t\tidentifier: if.alwaysFalse\n\t\t\tmessage: '#^If condition#'\n\t\t-\n\t\t\tidentifier: missingType.return\n\t\t\tcount: 1\n\t\t\tpath: probe.php\n\t\t- '#^Call to sprintf#'\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "include-repository-file",
+   "files": {
+    "phpstan.neon": "includes:\n\t- build/base.neon\nparameters:\n\tlevel: 6\n",
+    "build/base.neon": "parameters:\n\tlevel: 2\n\treportUnmatchedIgnoredErrors: false\n\tignoreErrors:\n\t\t- identifier: argument.type\n\t\t  path: ../src\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  },
+  {
+   "name": "include-level-only",
+   "files": {
+    "phpstan.neon": "includes:\n\t- build/base.neon\n",
+    "build/base.neon": "parameters:\n\tlevel: 5\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "argument.type",
+     "array.duplicateKey",
+     "if.alwaysFalse"
+    ]
+   }
+  },
+  {
+   "name": "ignore-errors-replaced",
+   "files": {
+    "phpstan.neon": "includes:\n\t- base.neon\nparameters:\n\tlevel: 6\n\tignoreErrors!:\n\t\t- identifier: argument.type\n",
+    "base.neon": "parameters:\n\tignoreErrors:\n\t\t- identifier: missingType.return\n"
+   },
+   "reported": {
+    "probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "lib/src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/Legacy/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "src/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ],
+    "tests/probe.php": [
+     "argument.sprintf",
+     "argument.sscanf",
+     "array.duplicateKey",
+     "if.alwaysFalse",
+     "missingType.return"
+    ]
+   }
+  }
+ ]
+}
