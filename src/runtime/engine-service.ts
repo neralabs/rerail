@@ -1,6 +1,6 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server, type ServerResponse } from "node:http";
-import { connect } from "node:net";
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { connect, type Socket } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -22,6 +22,10 @@ import { SessionLanes } from "./session-lanes.js";
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
   readonly socketPath: string;
+  /**
+   * Stops taking connections, answers every request whose body has arrived (running each one's event, queued ones too),
+   * then closes the runtimes. A request that stalls before it has all arrived is cut off ({@link cutStalledRequests}).
+   */
   close(): Promise<void>;
   ingest(
     event: AdapterEvent,
@@ -205,8 +209,6 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /** Set once the service starts closing: an event still waiting in its session's lane is then not run. */
-  closing: boolean;
   /** The runtimes no session uses, each with the timer that closes it. */
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
@@ -285,7 +287,6 @@ async function routeEngineEvent(
   clearTimeout(state.idle.get(runtimeKey));
   state.idle.delete(runtimeKey);
   const execution = state.lanes.run(lane, () => {
-    if (state.closing) throw new Error(`The Rerail engine service is closing, so event ${event.eventId} was not run`);
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
@@ -411,6 +412,34 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   void disposal.then(() => state.pending.delete(disposal));
 }
 
+/** How long a request that has not all arrived may send nothing while the service closes before it is cut off. */
+const STALLED_REQUEST_MS = 1_000;
+
+/**
+ * While the service closes, cuts off each connection whose request has not all arrived (or carries no request yet) once
+ * it has sent nothing for `STALLED_REQUEST_MS`, and every idle one. A hook writes its whole request at once, so one
+ * still arriving has stalled, and waiting for it would hold the close for the request's 30 s timeout. A request whose
+ * body has arrived is never cut: its event runs and its hook gets the answer. Each look runs after the event loop has
+ * read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came in time.
+ * Returns the function that stops the looks.
+ */
+function cutStalledRequests(server: Server, connections: ReadonlyMap<Socket, IncomingMessage | undefined>): () => void {
+  let seen = new Map<Socket, number>();
+  const look = (): void => {
+    server.closeIdleConnections();
+    const now = new Map<Socket, number>();
+    for (const [socket, request] of connections) {
+      if (request?.complete === true) continue;
+      if (seen.get(socket) === socket.bytesRead) socket.destroy();
+      else now.set(socket, socket.bytesRead);
+    }
+    seen = now;
+  };
+  look();
+  const looks = setInterval(() => setImmediate(look), STALLED_REQUEST_MS);
+  return () => clearInterval(looks);
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
@@ -528,10 +557,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
-    closing: false,
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
+  /** Each open connection, with the request it carries once that request's headers have arrived. */
+  const connections = new Map<Socket, IncomingMessage | undefined>();
   const server = createServer(async (incoming, response) => {
+    connections.set(incoming.socket, incoming);
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
       answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
@@ -574,20 +605,27 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     closeIdleSessions: sweepIdleSessions,
     async close() {
       clearInterval(idleSweep);
-      // A hook still waiting for its answer is cut off, and an event still waiting in its session's lane is not run:
-      // waiting for them, up to each request's 30 s timeout, would keep a busy daemon alive past the 10 s that
-      // `rerail daemon stop` gives it before a kill. An event already running finishes, so its writes complete.
-      routing.closing = true;
+      // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
+      // the ones waiting behind a running event too. The close ends once the last of those connections has: its server
+      // takes no new ones, and a request that stalls is cut off.
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      server.closeAllConnections();
-      await closed.promise;
-      for (const timer of routing.idle.values()) clearTimeout(timer);
-      routing.idle.clear();
-      await Promise.allSettled(routing.pending);
+      const stopLooking = cutStalledRequests(server, connections);
+      try {
+        await closed.promise;
+        for (const timer of routing.idle.values()) clearTimeout(timer);
+        routing.idle.clear();
+        await Promise.allSettled(routing.pending);
+      } finally {
+        stopLooking();
+      }
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     },
   };
+  server.on("connection", (socket: Socket) => {
+    connections.set(socket, undefined);
+    socket.once("close", () => connections.delete(socket));
+  });
   server.requestTimeout = 30_000;
   // Never keeps the process alive; `closeIdleSessions` reports its own failures.
   const idleSweep = setInterval(() => void sweepIdleSessions(), IDLE_SWEEP_MS);

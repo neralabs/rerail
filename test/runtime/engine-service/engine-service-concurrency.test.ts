@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../../src/engine/index.js";
-import { ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
+import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { SqliteSessionReader } from "../../../src/runtime/session-store.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { testEmbedder } from "../../support/hook-events.js";
@@ -89,68 +89,136 @@ describe("engine service session concurrency", () => {
     }
   });
 
-  it("cuts off the requests it has not answered when it closes, and runs no event still waiting in a session's lane", async () => {
+  it("answers the hook of the event it is running when it closes", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
-    const socketPath = testEngineEndpoint(root);
-    const databasePath = join(root, "rerail.sqlite");
-    startTestRepository(root, databasePath);
-    const ending = Promise.withResolvers<void>();
-    const gate = Promise.withResolvers<void>();
-    const service = await startEngineService({
-      socketPath,
-      storageRoot: join(root, "state"),
-      databasePath,
-      embedder: testEmbedder,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-        // The session's end waits here, holding its lane.
-        close: async () => {
-          ending.resolve();
-          await gate.promise;
-        },
-      }),
-    });
-    await service.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "busy", cwd: root } });
-    // An event still running, two waiting behind it in the session's lane, and a hook whose request has not all
-    // arrived: what a busy daemon holds when `rerail daemon stop` asks it to close.
-    const end = service.ingest({ kind: "session-end", eventId: "end", sessionId: "busy" });
-    await ending.promise;
-    const waiting = [
-      service.ingest({ kind: "session-start", eventId: "restart", session: { host: "claude-code", sessionId: "busy", cwd: root } }),
-      service.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "busy", text: "continue" }),
-    ];
-    for (const event of waiting) event.catch(() => undefined);
-    const partial = connect(socketPath);
-    partial.on("error", () => undefined);
-    await once(partial, "connect");
-    partial.write("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
-    const cutOff = once(partial, "close").then(() => "cut off");
-    let closing: Promise<void> | undefined;
+    const held = await holdingService(root);
     try {
-      // The server takes the connection in before the close begins.
+      const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      // A stop or a restart that arrives while the end runs.
+      const closing = held.service.close();
       await sleep(100);
-      closing = service.close();
-      // The close ends the connection at once, while the running event still waits; before, it waited for the
-      // request's 30 s timeout.
-      expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
-    } finally {
-      partial.destroy();
-      gate.resolve();
+      held.release();
       await closing;
-    }
-    await expect(end).resolves.toEqual([]);
-    for (const event of waiting) await expect(event).rejects.toThrow(/closing/u);
-    const store = new SqliteSessionReader(databasePath);
-    try {
-      const recorded = store.events("busy").map(event => event.eventId);
-      expect(recorded).toEqual(expect.arrayContaining(["start", "end"]));
-      expect(recorded).not.toContain("restart");
-      expect(recorded).not.toContain("prompt");
+      // The block or steer in that answer reaches the agent only if the hook gets it.
+      expect(await end).toBe("answered");
+      expect(recorded(held.databasePath)).toContain("end");
     } finally {
-      store.close();
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
+  it("runs, records and answers the events waiting behind the running one when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      const restart = outcome(ingestEngineEvent(held.engine, { kind: "session-start", eventId: "restart", session: busySession(root) }));
+      // The server takes the waiting hook's request in before the close begins.
+      await sleep(250);
+      const closing = held.service.close();
+      await sleep(100);
+      held.release();
+      await closing;
+      expect({ end: await end, restart: await restart }).toEqual({ end: "answered", restart: "answered" });
+      expect(recorded(held.databasePath)).toEqual(expect.arrayContaining(["start", "end", "restart"]));
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
+  it("cuts off a request that stalls before it has all arrived when it closes, and still runs the events waiting", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      // An event still running, two waiting behind it in the session's lane, and a request that sent part of its body
+      // and then nothing: what a busy daemon can hold when a stop asks it to close.
+      const end = outcome(held.service.ingest({ kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      const waiting = [
+        outcome(held.service.ingest({ kind: "session-start", eventId: "restart", session: busySession(root) })),
+        outcome(held.service.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "busy", text: "continue" })),
+      ];
+      const partial = connect(held.engine.socketPath);
+      partial.on("error", () => undefined);
+      await once(partial, "connect");
+      partial.write("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
+      const cutOff = once(partial, "close").then(() => "cut off");
+      // The server takes the connection in before the close begins.
+      await sleep(250);
+      const closing = held.service.close();
+      try {
+        // The close cuts the stalled request off while the running event still waits; before, it waited out the
+        // request's 30 s timeout, past the 10 s `rerail daemon stop` gives before its kill.
+        expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
+      } finally {
+        partial.destroy();
+        held.release();
+        await closing;
+      }
+      expect([await end, ...await Promise.all(waiting)]).toEqual(["answered", "answered", "answered"]);
+      expect(recorded(held.databasePath)).toEqual(expect.arrayContaining(["start", "end", "restart", "prompt"]));
+    } finally {
+      held.release();
       await removeFolder(root);
     }
   }, 20_000);
 });
+
+function busySession(root: string): { host: "claude-code"; sessionId: string; cwd: string } {
+  return { host: "claude-code", sessionId: "busy", cwd: root };
+}
+
+/**
+ * An engine service with the session `busy` started, whose end waits in the auditor's close until `release`, holding
+ * that session's lane: what a busy daemon is running when a stop or a restart closes it. `ending` resolves once the end
+ * runs.
+ */
+async function holdingService(root: string): Promise<{
+  service: EngineService;
+  engine: { socketPath: string };
+  databasePath: string;
+  ending: Promise<void>;
+  release: () => void;
+}> {
+  const socketPath = testEngineEndpoint(root);
+  const databasePath = join(root, "rerail.sqlite");
+  startTestRepository(root, databasePath);
+  const ending = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const service = await startEngineService({
+    socketPath,
+    storageRoot: join(root, "state"),
+    databasePath,
+    embedder: testEmbedder,
+    createAuditor: () => ({
+      openWorkspace: async () => undefined,
+      acceptsPath: () => true,
+      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+      close: async () => {
+        ending.resolve();
+        await gate.promise;
+      },
+    }),
+  });
+  await service.ingest({ kind: "session-start", eventId: "start", session: busySession(root) });
+  return { service, engine: { socketPath }, databasePath, ending: ending.promise, release: () => gate.resolve() };
+}
+
+/** The ids of the events the store at `databasePath` recorded for the session `busy`. */
+function recorded(databasePath: string): string[] {
+  const store = new SqliteSessionReader(databasePath);
+  try {
+    return store.events("busy").map(event => event.eventId);
+  } finally {
+    store.close();
+  }
+}
+
+/** How a hook's request ended: `answered`, or the error it got instead of an answer. */
+async function outcome(request: Promise<readonly AdapterDelivery[]>): Promise<string> {
+  return await request.then(() => "answered", (error: unknown) => `error: ${error instanceof Error ? error.message : String(error)}`);
+}
