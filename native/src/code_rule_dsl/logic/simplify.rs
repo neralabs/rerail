@@ -2651,3 +2651,35 @@ pub mod tests {
         assert!(text.iter().any(|r| r.starts_with("many(") && r.contains("count")), "{text:?}");
     }
 }
+
+#[cfg(test)]
+mod external_request_tests {
+    use super::*;
+    fn program() -> Program {
+        let mut p = Program::default();
+        let columns = vec![("path".into(), "sym".into())];
+        p.inputs.push("paths".into());
+        p.decls.insert("paths".into(), columns.clone());
+        for rel in ["rr_dir_req", "rr_dir_meta_req"] {
+            p.decls.insert(rel.into(), columns.clone());
+            let atom = |r: &str| Atom { rel: r.into(), args: vec![Term::Var("path".into())], neg: false, gated: false };
+            p.rules.push(Rule { head: atom(rel), body: vec![Literal::Atom(atom("paths"))] });
+        }
+        p
+    }
+    #[test]
+    fn equal_request_keys_keep_distinct_external_handlers_before_registration() {
+        let p = program();
+        assert!(p.answers.is_empty());
+        assert!(!identical_classes(&p).iter().any(|class| class.contains(&"rr_dir_req".to_owned()) && class.contains(&"rr_dir_meta_req".to_owned())),
+            "equal keys ask for different answer schemas, so their handler names must survive");
+    }
+    #[test]
+    fn simplification_keeps_implicit_external_request_consumers() {
+        let mut p = program();
+        simplify(&mut p);
+        for request in ["rr_dir_req", "rr_dir_meta_req"] {
+            assert!(p.rules.iter().any(|r| r.head.rel == request), "external producer {request} was dropped");
+        }
+    }
+}
