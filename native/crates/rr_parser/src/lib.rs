@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/21-named-only.bitlex");
+const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/22-test-blocks.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rr`
@@ -128,12 +128,12 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
 /// refuses, from the engine's parser (`logic::rr::tape`) in the same columns.
 pub fn tape(src: &str) -> Columns {
-    compiled_tape(src).unwrap_or_else(|| engine_columns(&rr::tape(src)))
+    compiled_tape(src).unwrap_or_else(|| engine_columns(&rr::engine_tape(src)))
 }
 
 /// The compiled grammar's node table, or `None` where it refuses the file (or did not compile).
-/// Every column is the compiled code's: kinds, fields, spans and sizes from tier 2's words,
-/// parents and extra flags from its final pass.
+/// Every column is the compiled code's, each row written by tier 2's words as it stands at the
+/// end: no pass after the parse.
 pub fn compiled_tape(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
@@ -173,7 +173,7 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
         Ok((_, run)) => {
             let mut i = 0;
             for file in files {
-                out.push(rerail_metal::tier2_on::columns_on(&c.parser, &run, i).unwrap_or_else(|_| engine_columns(&rr::tape(file))));
+                out.push(rerail_metal::tier2_on::columns_on(&c.parser, &run, i).unwrap_or_else(|_| engine_columns(&rr::engine_tape(file))));
                 i += 1;
             }
             true
@@ -223,7 +223,7 @@ pub mod tests {
         let nested = |n: usize| format!(".decl r(x: number)\nr(x) :- x = {}1{}.\n", "(".repeat(n), ")".repeat(n));
         let c = crate::compiled().expect("compiles");
         let shallow = nested(100);
-        assert_eq!(c.parser.columns(shallow.as_bytes()).ok(), Some(crate::engine_columns(&crate::rr::tape(&shallow))), "100 deep parses as the engine's");
+        assert_eq!(c.parser.columns(shallow.as_bytes()).ok(), Some(crate::engine_columns(&crate::rr::engine_tape(&shallow))), "100 deep parses as the engine's");
         let deep = nested(3_000);
         assert!(c.parser.columns(deep.as_bytes()).is_err(), "3,000 deep: refused");
         // (The engine's parser, recursive too, runs off a test thread's stack at that depth.)
@@ -245,7 +245,7 @@ pub mod tests {
         // A ratchet, as the machine's (`the_state_machine_shares_its_rules`): lower it as the
         // compiler improves. Keywords are the switches' targets (`ByteSwitch::words`): 13,119
         // words before, when each state tested each keyword with a `SPAN`, a `WORD` and jumps.
-        // A third are still jumps (`GOTO`).
+        // A third are still jumps (`GOTO`). A rule file's tests (step 22) raised it from 371 states and 8,860 words.
         assert!(c.program.switches.iter().any(|s| !s.words.is_empty()), "the switches name keywords");
         // Its words in order, by the verifier: out of order, refused.
         let mut bad = c.program.clone();
@@ -254,22 +254,46 @@ pub mod tests {
         assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // A call of a nested choice with a field is a call where it can be (the field set where it
+        // returns): the choice's level switches on its first token itself, as the lean parser's
+        // function does, so more states and arms (371 and 3,068 before). Each rule keeps its own
+        // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
+        // a term's rest (`more`) is a call: fewer states and arms. A callee that begins with a
+        // mark or a merge is called too, at its start (375 states, 3,064 arms, 5,385 words before).
+        // With a rule file's tests in the grammar (0130, More-ergonomic) on these calls: 413 states,
+        // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348). With
+        // Parser-generators' tier 2 merged (token marks from the records, 0129; tier 1's checks at
+        // the token, 0133): 3,932 words, the states and arms the same.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3932, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
         assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
-        // A jump from one rule into another, not a call's: refused.
-        let mut bad = c.program.clone();
-        let (from, into) = (usize::from(rules[1]), rules[2]);
-        let goto = (0..bad.words.len()).find(|&pc| pc >= from && rerail_compiler::program::split(bad.words[pc]).0 == rerail_compiler::program::GOTO && rerail_compiler::program::split(bad.words[pc - 1]).0 != rerail_compiler::program::PUSH).expect("a rule's own jump");
-        bad.words[goto] = rerail_compiler::program::word(rerail_compiler::program::GOTO, 0, into);
-        assert!(stream::validate_rules(&bad).is_err(), "a jump across rules");
+        // The calls open counted by the machine's stack, as the lean parser's: no `RETURN` runs
+        // with no call open, and no `ACCEPT` within one, so neither is checked.
+        assert!(rerail_compiler::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
+        // A jump from one rule into another, not a call's: refused, into a later rule or an
+        // earlier one. A function is entered by calls alone, as the lean parser's methods are.
+        use rerail_compiler::program::{GOTO, PUSH, split, word};
+        let own_jump = |p: &rerail_compiler::program::Words, from: usize| (from..p.words.len()).find(|&pc| split(p.words[pc]).0 == GOTO && split(p.words[pc - 1]).0 != PUSH).expect("a rule's own jump");
+        // Every call enters its callee's function at its one entry, the rule's first place, as
+        // a lean parser's method is entered at its top: a flag the call runs with is its
+        // `PUSH`'s, a mark its caller's state keeps for it.
+        let firsts: std::collections::HashSet<u16> = rules.iter().copied().collect();
+        let w = &c.program.words;
+        let mid: Vec<usize> = (1..w.len()).filter(|&pc| split(w[pc - 1]).0 == PUSH && split(w[pc]).0 == GOTO && !firsts.contains(&split(w[pc]).2)).collect();
+        assert!(mid.is_empty(), "calls into the middle of a function: {mid:?}");
+        for (from, into) in [(rules[1], rules[2]), (rules[2], rules[1] + 2)] {
+            let mut bad = c.program.clone();
+            let goto = own_jump(&bad, usize::from(from));
+            bad.words[goto] = word(GOTO, 0, into);
+            assert!(stream::validate_rules(&bad).is_err(), "a jump across rules, into {into}");
+        }
         // The machine: no rules. Each shape writes the engine's tape on the samples.
         let m = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         assert!(m.program.rules.is_empty());
         for (i, s) in crate::SAMPLES.iter().enumerate() {
-            let engine = Some(crate::engine_columns(&crate::rr::tape(s)));
+            let engine = Some(crate::engine_columns(&crate::rr::engine_tape(s)));
             assert_eq!(c.parser.columns(s.as_bytes()).ok(), engine, "sample {i}, as rules");
             assert_eq!(m.parser.columns(s.as_bytes()).ok(), engine, "sample {i}, as one machine");
         }
@@ -282,16 +306,76 @@ pub mod tests {
             "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n",
             "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
             ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".",
+            // A rule file's tests (decision 0130): a fixture set, and a test that uses it.
+            ".fixtures app\n    .fixture \"a.py\" ```\n        x = 1\n        ```\n.end\n.test t exactly uses app, b\n    #include \"c.rr\"\n    seen(1).\n    r(x) :- seen(x).\n    .given seen\n    .expect B101 at \"a.py\":1\n    .expect no r(_)\n.end\nr(x) :- s(x).\n",
+            // `exactly` and `uses` as names; a block's statements end at `. end`.
+            ".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end",
         ];
         for src in parsed {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
-            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src:?}");
+            // The lean parser writes the same rows.
         }
+        // 127 deep, the most (tier 2's count, `COUNT`), is taken; 128 deep is not.
+        let most = format!(".policy {{\"a\": {}{}}}", "[".repeat(126), "]".repeat(126));
+        assert!(super::compiled_tape(&most).is_some(), "127 deep is taken");
+        assert_eq!(super::tape(&most), super::engine_columns(&super::rr::engine_tape(&most)));
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
-        for src in ["r(x) :- x ~ ````a````.", deep.as_str(), "r(x) :- ."] {
+        let refused = [
+            "r(x) :- x ~ ````a````.",
+            deep.as_str(),
+            "r(x) :- .",
+            // Blocks do not nest; a `.end` outside one; a block with no `.end`.
+            ".test a\n.test b\n.end\n.end",
+            ".fixtures a\n.test b\n.end\n.end",
+            ".end",
+            "r(x).\n.end",
+            ".test a\nr(x).",
+        ];
+        for src in refused {
             assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
-            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src:?}");
         }
+    }
+
+    /// The rule files that carry tests (decision 0130): the grammar takes each, and its tape is the engine's.
+    #[test]
+    fn rule_files_with_tests_are_the_engines() {
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        for src in [
+            include_str!("../../../../docs/rule-syntax/packs/python/bandit-b101-assert-used.rr"),
+            include_str!("../../../../docs/rule-syntax/spikes/rr-tests/print-calls.rr"),
+        ] {
+            assert!(src.contains(".test "));
+            let engine = super::engine_columns(&super::rr::engine_tape(src));
+            assert!(super::compiled_tape(src).is_some(), "the grammar refuses a rule file with tests");
+            assert_eq!(super::tape(src), engine);
+            assert_eq!(machine.parser.columns(src.as_bytes()).ok(), Some(engine), "as one machine");
+        }
+    }
+
+    /// Tier 2 writes the table as it stands at the end (`rust_stream::node_words`): a wrap
+    /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
+    /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
+    /// wraps over large operands and inside them, and comments among them, as the engine's.
+    /// A reread that meets a dropped node's place refuses, as the interpreter, which keeps the
+    /// dropped row there, and the reference do.
+    #[test]
+    fn the_table_is_written_in_place() {
+        let parsed = [
+            "r(x) :- x = a - b - c - d.",
+            "r(x) :- x = (a + b) * (c - d) - e / f.",
+            "r(x) :- x = a /* c */ - b // d\n - c.",
+            "r(x) :- x = f(a - b, c) - g(d) + 1, y <= x + 2.",
+            "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
+        ];
+        for src in parsed {
+            assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src:?}");
+        }
+        let src = "r(n) :- n = min (a, b) : { s(a, b) }.";
+        assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
+        assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src:?}");
     }
 
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
@@ -299,6 +383,8 @@ pub mod tests {
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
     /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
+    /// A rule file's tests (step 22, decision 0130) raised it to 271 and 2,621: a block's statements are a level of
+    /// their own, which shares the setting with the root.
     /// Of the state machine (`Shape::Machine`); the product's shape, a function a rule, has its
     /// own (`tier2_is_a_function_a_grammar_rule`).
     #[test]
@@ -306,8 +392,8 @@ pub mod tests {
         let c = super::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 266, "{states} states");
-        assert!(arms <= 2590, "{arms} arms");
+        assert!(states <= 271, "{states} states");
+        assert!(arms <= 2621, "{arms} arms");
     }
 
     /// The parse path is the compiled code's: the host functions around the two compiled calls
@@ -358,6 +444,7 @@ pub mod tests {
             ("lib.rs", "fn metal_tapes("),
             ("../../compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
             ("../../compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+            ("../../compiler/src/native_cpu_block.rs", "fn run(&mut self, entry: Entry)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
         let loops_allowed = ["for file in files", "for entry in &program.entries"];
@@ -445,10 +532,11 @@ pub mod tests {
         let mut taken = [0usize; 2];
         let mut differ = Vec::new();
         for (i, f) in files.iter().enumerate() {
-            let engine = crate::engine_columns(&crate::rr::tape(f));
+            let engine = crate::engine_columns(&crate::rr::engine_tape(f));
             for (k, c) in [rules, &machine].into_iter().enumerate() {
                 if let Ok(t) = c.parser.columns(f.as_bytes()) {
                     taken[k] += 1;
+                    // The engine's, and the lean parser's rows byte for byte.
                     if t != engine {
                         differ.push((i, k));
                     }
@@ -458,6 +546,36 @@ pub mod tests {
         eprintln!("{} files: rules take {}, one machine {}", files.len(), taken[0], taken[1]);
         assert_eq!(differ, Vec::new(), "(file, shape) whose tape is not the engine's");
         assert_eq!(taken[0], taken[1], "the shapes take the same files");
+    }
+
+    /// The engine's bytes over the corpus, against the lean parser's: the interpreter's tape
+    /// (`stream::image`), and the JIT's node table through the tape's writer (a bridge while
+    /// tier 2 writes its rows; decision 0140).
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn corpus_images_are_the_lean_tapes() {
+        use rerail_tape_format::{CODE_EXTRA, RR_TAG, key, preorder_image};
+        let files = corpus();
+        let c = crate::compiled().expect("compiles");
+        let extras = &c.program.readings.extras;
+        let (mut taken, mut jit, mut interp) = (0, Vec::new(), Vec::new());
+        for (i, f) in files.iter().enumerate() {
+            let Ok(cols) = c.parser.columns(f.as_bytes()) else { continue };
+            taken += 1;
+            let lean = crate::rr::lean::tape(f);
+            let rows: Vec<_> = cols.rows.iter().map(|r| (key(r.kind, r.field, r.extra * CODE_EXTRA), r.start, r.end, r.size)).collect();
+            if preorder_image(RR_TAG, f.as_bytes(), &rows) != lean {
+                jit.push(i);
+            }
+            let run = c.program.block_programs[0].run(f.as_bytes());
+            let same = rerail_compiler::stream::run(&c.program, f.as_bytes(), &run).is_ok_and(|n| rerail_compiler::stream::image(&n, extras, RR_TAG, f.as_bytes()) == lean);
+            if !same {
+                interp.push(i);
+            }
+        }
+        eprintln!("{} files, {taken} taken", files.len());
+        assert_eq!(jit, Vec::<usize>::new(), "files whose JIT image is not the lean tape");
+        assert_eq!(interp, Vec::<usize>::new(), "files whose interpreter image is not the lean tape");
     }
 
     /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.
@@ -857,7 +975,7 @@ pub mod tests {
             b.call(&p.tier1);
         }
         let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
-        let nodes: usize = ours.iter().map(|f| super::rr::tape(f).len()).sum();
+        let nodes: usize = ours.iter().map(|f| super::rr::engine_tape(f).len()).sum();
         let retired = rerail_compiler::native_cpu_codegen::retired;
         // tier 1, tier 2, the Rust parser, the lean parser's lexer, the lean parser whole, the
         // lean parser's first lexer (a byte at a time)
@@ -875,7 +993,7 @@ pub mod tests {
             let (t2, (i2, c2)) = (thread_cpu(), retired());
             let mut n = 0;
             for f in &ours {
-                n += super::rr::tape(f).len();
+                n += super::rr::engine_tape(f).len();
             }
             std::hint::black_box(n);
             let (t3, (i3, c3)) = (thread_cpu(), retired());
@@ -948,6 +1066,99 @@ pub mod tests {
     /// --ignored`). `RR_FORM`: `lean` (the lean parser whole, by default), `lexer` (its lexer),
     /// `tier1` or `tier2` (the compiled grammar's, on buffers made before). Build as
     /// `rr_against_rust` says.
+    /// Where tier 2's work goes, by opcode: each word's runs over the corpus (the interpreter's,
+    /// `run_seen`) times its machine code in its rule's function (`word_bytes`, every path of
+    /// it: an upper bound), and the runs alone. The functions the words call are not in it.
+    #[test]
+    #[ignore = "a measurement: run by hand"]
+    fn tier2_work_by_opcode() {
+        use rerail_compiler::program::split;
+        let c = crate::compiled().expect("compiles");
+        let program = &c.program;
+        let bytes = &c.parser.tier2.word_bytes;
+        let mut runs = vec![0u64; program.words.len()];
+        let mut tokens = 0u64;
+        for src in corpus() {
+            let run = program.block_programs[0].run(src.as_bytes());
+            tokens += run.codes.len() as u64;
+            let _ = rerail_compiler::stream::run_seen(program, src.as_bytes(), &run, &mut |pc| runs[pc] += 1);
+        }
+        let mut by: std::collections::BTreeMap<(u8, u8), (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, mode, _) = split(program.words[pc]);
+            let e = by.entry((op, if op == rerail_compiler::program::MARK { 0 } else { mode })).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run, by their ways: distinct targets but the refusal and the end.
+        let mut ways: std::collections::BTreeMap<usize, (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, _, t) = split(program.words[pc]);
+            if op != rerail_compiler::program::SWITCH {
+                continue;
+            }
+            let s = &program.switches[usize::from(t)];
+            let mut d: Vec<u16> = s.targets.iter().chain(s.words.iter().map(|w| &w.1)).copied().filter(|&x| x != rerail_compiler::stream_ir::REFUSE && x != s.end).collect();
+            d.sort_unstable();
+            d.dedup();
+            let e = ways.entry(d.len()).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run most: each kind's target (by the records' kinds), and the words'.
+        let kinds = &program.block_programs[0].records.as_ref().expect("records").kinds;
+        let mut top: Vec<(u64, usize)> = runs.iter().enumerate().filter(|&(pc, _)| split(program.words[pc]).0 == rerail_compiler::program::SWITCH).map(|(pc, &n)| (n, pc)).collect();
+        top.sort_unstable_by(|a, b| b.cmp(a));
+        for &(n, pc) in top.iter().take(6) {
+            let s = &program.switches[usize::from(split(program.words[pc]).2)];
+            let mut by_kind: std::collections::BTreeMap<u8, u16> = Default::default();
+            for (b, &t) in s.targets.iter().enumerate() {
+                by_kind.insert(kinds[b], t);
+            }
+            let show = |t: u16| if t == rerail_compiler::stream_ir::REFUSE { "R".to_string() } else if t == s.end { "E".to_string() } else { format!("@{t}") };
+            let line: Vec<String> = by_kind.iter().map(|(k, &t)| format!("{k}:{}", show(t))).collect();
+            let words: Vec<String> = s.words.iter().map(|&(w, t)| format!("s{w}:{}", show(t))).collect();
+            eprintln!("  switch @{pc} runs {:.2} a token, {} bytes: {} | words {}", n as f64 / tokens as f64, bytes[pc], line.join(" "), words.join(" "));
+        }
+        for (w, (n, ins)) in &ways {
+            eprintln!("  switches of {w} ways: runs {:.2} a token, at most {:.1} instructions a run", *n as f64 / tokens as f64, *ins as f64 / (*n).max(1) as f64);
+        }
+        let mut rows: Vec<_> = by.into_iter().collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
+        eprintln!("{tokens} tokens");
+        for ((op, mode), (n, ins)) in rows.iter().take(25) {
+            eprintln!("  op {op:#04x} m={mode:<3} runs {:>6.2} a token, instructions (at most) {:>6.1} a token", *n as f64 / tokens as f64, *ins as f64 / tokens as f64);
+        }
+    }
+
+    /// A token mark (decision 0129), `no_value`: an aggregate's word, then `(`, `)`, `:`, with
+    /// comments between or none, is refused by every shape and the interpreter; with a value,
+    /// taken, as the engine's tape.
+    #[test]
+    fn token_marks_refuse_and_take() {
+        let c = crate::compiled().expect("compiles");
+        // Each token mark's bit in the record is its first word's alone: no mask read.
+        let alone = c.block.records.as_ref().expect("records").marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
+        assert_eq!(alone, c.program.token_marks.len(), "the token marks' bits by their words");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
+        let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
+        for (agg, taken) in [("max j", true), ("max (j)", true), ("max ()", false), ("min /* c */ ( /* d */ )", false), ("join ()", false), ("count", true)] {
+            let src = rule(agg);
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), taken, "{agg}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.columns(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(taken, "{agg}: taken");
+                        assert_eq!(t, crate::engine_columns(&crate::rr::engine_tape(&src)), "{agg}: the engine's tape");
+                    }
+                    Err(_) => assert!(!taken, "{agg}: refused"),
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "a profile's load: run by hand"]
     fn rr_profile_loop() {
@@ -966,6 +1177,10 @@ pub mod tests {
             // Each word's Cranelift instructions as lowered, a line a place.
             let insts: String = p.tier2.word_insts.iter().map(|n| format!("{n}\n")).collect();
             std::fs::write(format!("{dir}/tier2.insts"), insts).expect("writes");
+            let bytes: String = p.tier2.word_bytes.iter().map(|n| format!("{n}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.bytes"), bytes).expect("writes");
+            let ranges: String = p.tier2.word_ranges.iter().map(|(pc, a, b)| format!("{pc} {a} {b}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.ranges"), ranges).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
         let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
@@ -1227,7 +1442,7 @@ pub mod tests {
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let mb = refs.iter().map(|b| b.len()).sum::<usize>() as f64 / 1e6;
         let want: Vec<_> = files.iter().map(|f| super::tape(f)).collect();
-        let tokens: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
+        let tokens: usize = files.iter().map(|f| super::rr::engine_tape(f).len()).sum();
         // (CPU, wall) a pass of `f`, its last pass's tables checked.
         let time = |warm: usize, f: &mut dyn FnMut() -> Option<Vec<super::Columns>>| {
             let w = std::time::Instant::now();
@@ -1326,7 +1541,7 @@ pub mod tests {
         // The reader once over the corpus (the batch repeats it): its rate is the same.
         if n == 1 {
         let reader = time(1, &mut || {
-            let n: usize = files.iter().map(|f| super::rr::tape(f).len()).sum();
+            let n: usize = files.iter().map(|f| super::rr::engine_tape(f).len()).sum();
             std::hint::black_box(n);
             None
         });
@@ -1384,7 +1599,7 @@ pub mod tests {
             (cpu() - t) / REPEAT as u32
         };
         let compiled = run(&|s| super::compiled_tape(s).map_or(0, |t| t.len()));
-        let engine = run(&|s| super::rr::tape(s).len());
+        let engine = run(&|s| super::rr::engine_tape(s).len());
         let mb = bytes as f64 / 1e6;
         let load = std::process::Command::new("uptime").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
         eprintln!("{} files, {:.2} MB, {ours} parsed by the grammar; compile {compile:.2?} CPU", files.len(), mb);

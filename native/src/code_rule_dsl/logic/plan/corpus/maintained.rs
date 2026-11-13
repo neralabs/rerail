@@ -46,11 +46,14 @@ pub(in crate::code_rule_dsl) fn run(
     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("maintained/{name}"));
     let digests: HashMap<String, u64> = inputs.iter().map(|(rel, _, d, _)| (rel.clone(), *d)).collect();
     let sources: Vec<(String, Arc<dyn Source>)> = inputs.iter().map(|(r, s, ..)| (r.clone(), Arc::clone(s))).collect();
+    // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
+    let no_locations = retain::Locations::new();
     let s = span("cut and rewrite");
-    let cut = retain::cut(kept.as_ref(), key, &prog.program, &digests)?;
+    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(&prog.program).map_err(|e| super::Error::Plan(e.to_string()))?;
+    let cut = retain::cut(kept.as_ref(), key, &prog.program, &sccs, &digests)?;
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {
-        k.load(store, &cut, &prog.program)?;
+        k.load(store, &cut, &prog.program, &no_locations, false)?;
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
@@ -60,12 +63,12 @@ pub(in crate::code_rule_dsl) fn run(
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&prog.program, rel))?;
+        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&prog.program, &no_locations, rel))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };
-    let mut maintained = maintain::rewrite(&cut, kept.as_ref(), prog, &mut given)?;
-    let derived = cut.derived(&prog.program)?;
+    let mut maintained = maintain::rewrite(&cut, kept.as_ref(), prog, &sccs, &mut given)?;
+    let derived = cut.derived(&sccs)?;
     {
         let program = &mut maintained.program.program;
         if maintain::levels_wanted() {

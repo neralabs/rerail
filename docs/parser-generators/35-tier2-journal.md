@@ -1,0 +1,161 @@
+# Tier 2's code shape: a journal
+
+## Intro
+
+Tier 2 is the `.rr` parser compiled from the Bitlex grammar,
+a function a grammar rule, lowered through Cranelift.
+The aim is the code the lean Rust parser (`rr_syntax/src/lean.rs`) compiles to:
+the same structure, within a margin.
+Each step is judged by the machine code against rustc's,
+not by the benchmark, which is reported alongside.
+
+This page keeps three things:
+
+- **The best to date**: the structure tier 2 has now, and its numbers.
+- **Tried and dropped**: each approach measured and not kept,
+  with what the code showed, and what could make it worth trying again.
+- **The journal**: each step, in order, with its numbers and its commit.
+
+Pages 33 and 34 explain each step at length.
+
+How the numbers are taken:
+
+- Machine instructions, functions, stack reloads and compares
+  come from tier 2's code for `.rr`, disassembled.
+- A stack reload is a load from `[sp]` that is not an epilogue's restore.
+- The benchmark is tier 2 and the lean parser over the 1,360 corpus files:
+  instructions and cycles, on a shared machine (its load is noted).
+
+## The best to date
+
+Tier 2 at `9a017c9b9`: the best in shape and in the benchmark.
+(`fa23bf4e5` has fewer machine instructions, 22,226,
+but functions entered at many places, as the lean parser's are not.)
+
+| | Tier 2 | Lean parser |
+|---|---|---|
+| Machine instructions | 23,758 | 10,008 |
+| Functions for rules | 55 | 45 |
+| Entries | 55 | 45 |
+| Words | 5,271 | |
+| A rule call | `mov`, `bl`, `cbnz` | `mov`, `bl`, a load |
+| Stores | 755 | |
+| Compares | 2,810 | 1,198 |
+| Benchmark, instructions | 312.6M | 356.4M |
+| Benchmark, cycles | 61.8M (load 16) | 68.4M |
+
+The next gap, measured (page 34): two checks made in every state are 31% of the code.
+Comments are tested and taken in each state (4,076 instructions),
+where the lean parser takes them in its token step;
+the `no_value` mark is tested in each state (1,924),
+where the lean parser looks for it at an aggregate's `(` alone.
+
+Its structure:
+
+- **A function a grammar rule**, and a call a `PUSH`, as the lean parser's methods.
+- **`ctx` in a register of its own** (Cranelift's pinned register, x21) for the whole run,
+  as rustc keeps `self`. No call passes it.
+- **The state in `ctx`**, read and written where used, as `self`'s fields.
+  Nothing is held in a register across a call.
+  Within a function, a pass forwards fields along straight-line code.
+- **Words as calls**: `TOKEN`, `LEAF` and the node words are functions
+  every place calls, one body each. Only the main loop is inlined.
+- **Words that behave the same are one word**, within a rule.
+  Each rule keeps its own code, as each of the lean parser's methods does,
+  so a function is entered by calls alone, at its top.
+  The verifier refuses any jump across rules that is not a call.
+- **A field on a called choice is set where the call returns**,
+  as `self.product()?; self.field(Field::Right)`,
+  on the node the call made if it has none.
+- **A term's rest is a call** (`more` is `[more1]`), as the lean parser's `self.term()`.
+- **Every call enters at the callee's start**: a merging callee too (the caller's extras pending),
+  a marked one (the caller keeps the mark for it), and a flag the call runs with is on its `PUSH`.
+- **One exit a function**, one epilogue, as rustc's.
+- **A rule's result**: 0 for every return, the run's end with its top bit flipped:
+  one `cbnz` a call.
+  A callee takes its caller's token at `RETURN m=0` (every call returns to one `TOKEN`, alike),
+  so every return lands on the caller's switch.
+  Where that does not hold, a call of a place with one way tests once, else twice.
+- **The calls open are the machine stack's**, as the lean parser's.
+  No `RETURN` runs with no call open, and no `ACCEPT` within one (proved, not checked).
+  The depth is one stack check where each rule function is entered.
+  `TOKEN`'s room for the nodes returns write is bounded by the stack's depth
+  over the smallest compiled frame.
+  Where the proofs fail, the calls are counted in `ctx` as before.
+- **The word and flags are callee-saved**: a function whose own words change them
+  gives back the values it was entered with at its one exit.
+- **The stream's end is a token kind of its own**, so a switch tests it in its compare tree.
+- **Switches are compare trees**, as rustc compiles `match`: no jump table.
+  As LLVM lowers a switch: a default target, a tree over the other cases with known ranges,
+  a test at each leaf, and bit tests for cases of up to three targets within 64 values.
+- **A keyword's leaf takes its kind from the token's word** (`WORD_KIND`),
+  the keywords' strings numbered in kind order: one add, as `Kind::DotDecl + (d - W_DECL)`.
+  Keyword arms that differed only in the kind are one. A keyword's `REMEMBER` does the same.
+
+## Tried and dropped
+
+Each line gives what the machine code showed, and what could change the verdict.
+
+| Approach | What it showed | Worth trying again when |
+|---|---|---|
+| A jump table on the token's kind | Tier 2 from 146M to 258M cycles: the indirect branch mispredicts | Never as a table; rustc does not make one either |
+| Jumps resolved in the lowering, before Cranelift | Larger code (594,132 bytes, from 590,312), 500M instructions from 484M | Cranelift stops folding jump-only blocks itself |
+| The state as SSA values through each function | 691M to 908M instructions: each call stores and reloads them, joins spill them | Functions are small enough that joins do not spill |
+| Ten state fields held in registers through a function | 706 KB of code, 525M instructions: stack and a return area at calls | Fewer fields live at once |
+| Four fields passed to calls and given back | 21,725 stack accesses: they spill between blocks of large functions | Functions are small, or the allocator has no cliff |
+| The ahead-of-time Rust's state as locals copied at calls; hot fields local; the pointers behind a read-only `&P` | 406.0M, 370.9M, 351.6M instructions against 316.2M with all of it behind `&mut S`: copies and saved registers at about a call a token | Calls are far rarer than tokens |
+| A callee taking its caller's token at `RETURN m=0` | `ctx` kept on the stack in many functions: 1,780 stack accesses, 49,440 instructions | Retried with `ctx` pinned: no spill, kept (`2b46b2e8b`) |
+| Shared code as tail calls, `ctx` an argument | Nothing saved: an epilogue (six `ldp`s and an `add`) at each of 587 places | Epilogues get cheaper (fewer callee-saved registers) |
+| Shared code as calls, `ctx` an argument | `ctx` reloaded at each use in the largest functions: 5,700 stack loads | Solved by pinning `ctx` |
+| The calls open as an argument, with shared code | One value given to every call: split twice, then reloaded at each use (1,148 loads) | The count is needed by fewer calls, or not at all |
+| The calls open in the entry index's high bits | The optimizer rebuilt it from the argument, which spilled instead (1,674 loads) | As above |
+| The calls open as a passed field, given back with the result | Wrong tapes (no file matched), more stack stores (929) | Never debugged: may be worth fixing |
+| A helper function for each set of rules sharing code | 84 functions, not 56, and 1,700 more instructions; three loop values spilled | Helpers are small and called from few places |
+| Tail calls into shared code, `ctx` pinned | An epilogue at each of 198 places: 785 restores, against 170 | Epilogues get cheaper |
+| The word → kind map over strings in first-use order | A 40-leaf compare tree in the leaf (kinds scattered over the strings) | Never: the strings are numbered in kind order now |
+| Words shared across rules: a rule jumps into an earlier rule's code, a call of its function | Functions of up to 21 entries, each call picking its entry by a compare tree; 346.1M instructions | Never as entries: a shared piece is a function of its own, if anything |
+| Shared across rules only where the shared code is large (over 8 words) | 94 entries: product's and term's loops, copied by the grammar's `more`, still shared | Superseded: `more` is a call now, and each rule keeps its own code |
+| One tail-call block a function gone to, the index its argument | The index constants folded into values live through the function, and spilled | Each place's own block is built; no reason to go back |
+
+## The journal
+
+Numbers are tier 2's for `.rr`. Each step's commit is listed.
+
+| Step | Commit | Machine instructions | Benchmark instructions (cycles) |
+|---|---|---|---|
+| A function a grammar rule (page 33) | | 148,533 | 484.2M |
+| Keywords in the switch | | (530,772 bytes) | 481.3M |
+| The code laid out as the lean parser's | `d7f414abb` | 135,201 | 497.5M (105M) |
+| Calls as the lean parser's: `ctx` as self, results 0 or 1 | `ca98b7188` | 159,283 | 441.0M (87.6M) |
+| The tape and the state as the lean parser's | `bbbb03696` | 100,134 | 351.7M (71.2M) |
+| The state as locals | `0d43c099e` | 91,391 | 347.8M (76.5M) |
+| A token taken for good | `cc1e0660e` | 87,152 | 339.0M (74.3M) |
+| Words as calls | `fded73721` | 43,654 | 354.2M (72.3M) |
+| A rule that returns one way gives back 0 | `1a876e2a3` | 42,786 | |
+| The calls open as an argument; the end a kind | `43e3f975d` | 41,084 | |
+| Callees shared across rules | `8fea9d7b8` | 38,750 | 335.1M (63.9M) |
+| `ctx` in a register of its own | `1fa44aff2` | 36,258 | |
+| Code shared from the middle of rules; the count back in `ctx` | `de6f313fb` | 31,702 | 361.0M (76.5M) |
+| The machine's stack counts the calls | `2b46b2e8b` | 28,962 | 350.4M (74.7M) |
+| The word and flags callee-saved | `2b46b2e8b` | 27,433 | |
+| One way by the place a call enters | `2b46b2e8b` | 27,314 | |
+| The callee takes its caller's token: one `cbnz` a call | `2b46b2e8b` | 26,575 | 331.1M (64.0M) |
+| Switches with a default target and known ranges | `73aed4adc` | 26,092 | |
+| A keyword's leaf kind from the token's word | `cebf1c631` | 24,828 | |
+| Switch cases as bit tests | `cebf1c631` | 24,375 | 330.9M (cycles not taken: load 58) |
+| A field on a called choice set where it returns: 171 entries | `fa23bf4e5` | 22,226 | 346.1M (67.4M) |
+| Short tails each rule's own; a keyword's `REMEMBER` by its word: 94 entries | `6be997744` | 22,258 | |
+| One entry a function: each rule's own code, a term's rest a call: 60 entries | `f5357a7df` | 23,981 | 315.7M (70.7M) |
+| Every call at its callee's start (merge, mark, flag on `PUSH`): 55 entries | `9a017c9b9` | 23,758 | 312.6M (61.8M) |
+| The same IR through LLVM, ahead of time (`clif_rust`; a measurement, not a step) | | 22,375 | 276.6M (55.3M) |
+| Tier 1 too through LLVM; the whole parse against the lean parser, by where it goes (page 34) | | | 276.6M (54.4M) |
+| Comments in the token step: 5,271 words to 3,341, 322 comment tests to 40 (page 34) | | 17,460 | 311.3M (60.7M) |
+| A mark refused only on its token's bytes: 320 mark tests to 193 (page 34) | | 17,278 | 307.1M (58.4M) |
+| Tier 1's checks at the token: a count of tokens (`COUNT`) and local checks (`CHECK`), tier 1's 606 operations to 452 (page 34) | `5da312927` | | 328.7M (57.2M; load 15) |
+| Tier 2 ahead of time as structured Rust from the native IR (`rust_stream`, decision 0135; AOT, not the JIT) | `403a5050f` | | AOT 307.0M (54.3M) |
+| A local check word-parallel in the JIT: no loop over bits | `72629b5ea` | | 330.4M (58.4M) |
+| The tape written directly: parents and extras with each row, wraps in place, no pass at `ACCEPT` (decision 0136) | `8a1762be0` | | 248.3M (41.0M; load 11); AOT 224.8M (36.4M) |
+| The lean parser writes the tape's rows too (sizes at its closes): its whole parse 356.5M to 362.4M (69.3M), the baseline from here | | | 248.3M (41.1M) |
+| **Correction (2026-11-13, decision 0140).** The two rows above did not write the tape: the engine's tape is the v9np image's bytes, and these wrote a node table (`NodeRow`, `tape::Row`). The lean parser now writes the image's bytes (`rerail_tape_format::Writer`), the engine's own encoder's byte for byte; tier 2 still writes the node table | | | |
+| The lean parser's tape writer: code ids at commit points, not renumbered at edits; every column one capacity. Its whole parse 1,326.0M to 550.6M (106.9M); 362.4M was the node table's (decision 0140) | | | 248.6M (42.2M); AOT 224.9M (37.2M) |
+| The writer's column stores: the widths a type (`Narrow`), the hot path inlined, one check a push and a close, the commit over local slices. The lean whole parse 550.6M to 425.6M (96.2M); the writer is 49 instructions a node over keys and starts (decision 0140, "Why the column stores were slow") | | | |

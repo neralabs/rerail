@@ -27,12 +27,14 @@ pub mod aggregation;
 pub mod dfs_first;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
+/// The reach index (decision 0119): a transitive closure as one bitmap per start.
+pub mod reach;
 pub mod match_all;
 /// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 pub mod extension;
-pub use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
+pub use setfix::{flush_symbols, wave0_changes, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
 pub use setfix::scope as setfix_scope;
 pub use setfix::symbol_text;
@@ -42,7 +44,7 @@ pub mod component {
     pub use super::setfix::spec;
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
-    pub use super::setfix::{InRel, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
+    pub use super::setfix::{InRel, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, hold_source, held_source, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

@@ -58,6 +58,9 @@ fn compile() -> Result<Compiled, String> {
 /// did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
 pub mod tape;
+// The engine's JSON parser: simdjson, its tape written straight from its structural index (0134).
+#[cfg(not(target_family = "wasm"))]
+pub mod simdjson;
 
 pub fn columns(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()

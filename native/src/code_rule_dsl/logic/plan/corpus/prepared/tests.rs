@@ -77,6 +77,20 @@
         unsplit.remove("prepared_split");
         let again = super::prepared_of(&unsplit, dialect).unwrap();
         assert_eq!(format!("{:?}", again.split.cross), format!("{:?}", prepared.split.cross), "the split, made again");
+        // The split's two parts are not stored: each is a part of the lowered program's rules, made from it again.
+        let programs: std::collections::BTreeSet<&str> = facts.get("program").into_iter().flatten().filter_map(|r| match &r[0] {
+            crate::code_rule_dsl::logic::front::Value::Str(p) => Some(p.as_str()),
+            crate::code_rule_dsl::logic::front::Value::Int(_) => None,
+        }).collect();
+        assert_eq!(programs, ["front", "lowered"].into_iter().collect(), "the programs stored");
+        // Read in place off the stored bytes (`program_facts::decode_view`), as a lookup reads it, in two parts: the same.
+        let (first, second): (crate::code_rule_dsl::logic::program_facts::Facts, crate::code_rule_dsl::logic::program_facts::Facts) = facts.clone().into_iter().partition(|(rel, _)| rel.as_str() < "m");
+        let bytes = [crate::code_rule_dsl::logic::program_facts::encode(&first), crate::code_rule_dsl::logic::program_facts::encode(&second)];
+        let in_place = super::prepared_of_encoded(&bytes, dialect).unwrap();
+        assert_eq!(format!("{:?}", in_place.prog), format!("{:?}", prepared.prog), "the front program, read in place");
+        assert_eq!(format!("{:?}", in_place.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program, read in place");
+        assert_eq!(format!("{:?}", in_place.split.local), format!("{:?}", prepared.split.local), "the split's local program, read in place");
+        assert_eq!(format!("{:?}", in_place.split.cross), format!("{:?}", prepared.split.cross), "the split's cross-file program, read in place");
         let document = crate::code_rule_dsl::logic::program_facts::document(&facts, &super::schema()).unwrap();
         let read = crate::code_rule_dsl::logic::program_facts::document_facts(&document).unwrap();
         assert_eq!(read, facts, "the document's tape gives the facts written");

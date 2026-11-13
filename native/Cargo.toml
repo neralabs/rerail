@@ -73,6 +73,7 @@ cranelift-codegen = "=0.125.4"
 # Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
+rerail-tape-format = { path = "crates/tape_format" }
 # The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
 rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
@@ -98,6 +99,8 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
+# The reach index (decision 0119): each start's closure as a compressed bitmap.
+roaring = "=0.11.5"
 regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
@@ -183,6 +186,8 @@ rerail-metal = { path = "crates/metal" }
 rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 
 [dev-dependencies]
+# JSON's parser, measured directly (`tape::tests::json_parse_costs`).
+rerail-simdjson = { path = "crates/simdjson" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.

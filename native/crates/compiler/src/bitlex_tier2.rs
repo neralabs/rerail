@@ -14,7 +14,8 @@
 //!   its node and returns to switch on the token again.
 
 use crate::grammar::{Act, ArmRow, StateRow};
-use crate::stream_ir::{ByteSwitch, REFUSE};
+use crate::program::{MARK_KEEP, push_flag};
+use crate::stream_ir::{ByteSwitch, REFUSE, WORD_KIND};
 use std::collections::HashMap;
 
 /// A set of bytes, bit `b` for byte `b`.
@@ -70,7 +71,7 @@ enum Arg {
     Return(u16),
     /// A state's `SWITCH`: a call's way into its callee's start (`ArmRow::call`), to switch on
     /// the token the caller has, where the caller's state has tested each mark the callee's does
-    /// (`Emit::mark_tests`).
+    /// (`Emit::tests_of`).
     Again(u16),
     /// A state's entry past its `TOKEN`: a call's way into its callee's start, where the
     /// callee's level tests a mark its caller's does not (`Arg::Again`).
@@ -112,6 +113,9 @@ pub struct Lowered {
     pub rules: Vec<u16>,
     /// The marks of one word: (order, string), rising (`Words::mark_words`).
     pub mark_words: Vec<(u8, u16)>,
+    /// The token marks (`Mark::tokens`), rising by order: each element's offset, its kinds'
+    /// names and its words (strings). The kinds become the records' (`Words::token_marks`).
+    pub token_marks: Vec<(u8, Vec<(i8, Vec<String>, Vec<u16>)>)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
@@ -126,6 +130,11 @@ pub struct Mark {
     /// It holds only at a token whose text is this word (`Words::mark_words`): its mask is the
     /// rest of it.
     pub word: Option<Vec<u8>>,
+    /// The bytes a token it holds at can begin with (`bitlex_prove::never` of its mask and the
+    /// other rows' starts).
+    pub first: ByteSet,
+    /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
+    pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
 }
 
 struct Emit<'a> {
@@ -135,6 +144,15 @@ struct Emit<'a> {
     marks: &'a [Mark],
     /// The mask of any mark at a token (`TOKEN m=1+k`), when there are marks.
     any_mark: Option<u16>,
+    /// The extras taken in the token step (`TOKEN_EXTRAS`): every `TOKEN` but the root's first,
+    /// where an extra opens the root (`grammar::with_extras`).
+    token_extras: bool,
+    whole: bool,
+    /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
+    counts: Vec<(Vec<u16>, Vec<u16>)>,
+    /// The local checks (`CHECK`): each one's token kinds, and the mark whose refusing states
+    /// alone check it.
+    checks: Vec<(Vec<u16>, Option<u16>)>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -156,10 +174,17 @@ struct Emit<'a> {
     /// Each state's entry after a mark (`Arg::Marked`): its entry, but for a nested state that
     /// takes no token.
     marked: Vec<u16>,
+    /// Each state's mark tests (`tests_of`), and whether every call into it may enter it at its
+    /// `SWITCH` (`at_switch`): found once, before the states are laid out.
+    tests_of: Vec<Vec<usize>>,
+    at_switch: Vec<bool>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), u16>,
     /// The marks of one word, by order: their strings (`Lowered::mark_words`).
     mark_words: std::collections::BTreeMap<u8, u16>,
+    /// Each keyword's leaf kind, by its string (`Words::word_kinds`): a leaf of a keyword's
+    /// own kind takes it from the token's word, so keywords' arms differing only in it are one.
+    word_kinds: std::collections::BTreeMap<u16, u16>,
     /// Where the state being lowered goes on a token none of its arms takes: its level's end
     /// (the caller then switches on the token), or `REFUSE`.
     default: u16,
@@ -187,12 +212,21 @@ impl Emit<'_> {
     /// A call's `PUSH`, and with a function a rule (`by_rules`), its `GOTO` to the words after
     /// it, which are its callee's: they run in its frame (its flags, its word, its own calls).
     /// `callee`: the state whose rule that is.
-    fn call(&mut self, ret: u16, callee: u16) {
-        self.push("PUSH", 0, Arg::Return(ret));
+    /// `flags`: the arm's flags (`flags_of`), `i` the call's: with a function a rule, one flag
+    /// the call runs with is its `PUSH`'s (`push_flag`), as a parameter, so the callee is entered
+    /// at its one entry; else they are the first words after it.
+    fn call(&mut self, ret: u16, callee: u16, flags: &[(u8, u16, bool)], i: usize) {
+        let mine: Vec<(u16, bool)> = flags.iter().filter(|f| usize::from(f.0) == i).map(|f| (f.1, f.2)).collect();
+        let on_push = self.by_rules && mine.len() == 1;
+        let mode = if on_push { push_flag(mine[0].0, mine[0].1) } else { 0 };
+        self.push("PUSH", mode, Arg::Return(ret));
         if self.by_rules {
             let next = self.pc() + 1;
             self.push("GOTO", 0, Arg::Pc(next));
             self.rule = self.states[usize::from(callee)].rule;
+        }
+        if !on_push {
+            self.flags_of(flags, i);
         }
     }
 
@@ -212,6 +246,29 @@ impl Emit<'_> {
         }
     }
 
+    /// The string of the one keyword whose kind `kind` is, where only a token of that word has
+    /// it (no row's own kind): a leaf of the kind then takes it from the token's word, as the
+    /// lean parser's `Kind::DotDecl + (d - W_DECL)`.
+    fn word_kind(&mut self, kind: u16) -> Option<u16> {
+        if self.rows.iter().any(|r| r.kind == kind) {
+            return None;
+        }
+        let mut words = self.rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).filter(|&&(_, k)| k == kind).map(|(w, _)| w.clone());
+        let w = words.next()?;
+        if words.any(|x| x != w) {
+            return None;
+        }
+        Some(self.string(&w))
+    }
+
+    /// A call's field, set on the node it made where it returns to state `st`
+    /// (`StateRow::returned_field`): on the node made last at the level, where it has none.
+    fn returned_field(&mut self, st: &StateRow) {
+        if st.returned_field != 0 {
+            self.push("NODE_FIELD", 4, Arg::Field(st.returned_field));
+        }
+    }
+
     /// An arm's code: its token's end, its test, acts, push and jump.
     fn arm(&mut self, arm: usize, span: Span, pre: Pre) -> u16 {
         if let Some(&pc) = self.arm_code.get(&(arm, span, pre.clone())) {
@@ -228,6 +285,23 @@ impl Emit<'_> {
             _ if self.arms[arm].call => {}
             Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
             Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
+        }
+        // A token a count counts, taken here: once a token, as only an arm takes one.
+        if !self.arms[arm].call {
+            let token = self.arms[arm].token;
+            for i in 0..self.counts.len() {
+                if self.counts[i].0.contains(&token) {
+                    self.push("COUNT", 0, Arg::Num(i as u16));
+                } else if self.counts[i].1.contains(&token) {
+                    self.push("COUNT", 1, Arg::Num(i as u16));
+                }
+            }
+            let refuses = &self.states[usize::from(self.arms[arm].from)].refuses;
+            for i in 0..self.checks.len() {
+                if self.checks[i].0.contains(&token) && self.checks[i].1.is_none_or(|m| refuses.contains(&m)) {
+                    self.push("CHECK", 0, Arg::Num(i as u16));
+                }
+            }
         }
         match &pre {
             Pre::None => {}
@@ -303,7 +377,15 @@ impl Emit<'_> {
                     (supers, field)
                 }
                 Act::Leaf { field, supers, kind } => {
-                    self.push("LEAF", 0, Arg::Kind(if kind != 0 { kind } else { token }));
+                    let kind = if kind != 0 { kind } else { token };
+                    let kind = match self.word_kind(kind) {
+                        Some(s) => {
+                            self.word_kinds.insert(s, kind);
+                            WORD_KIND
+                        }
+                        None => kind,
+                    };
+                    self.push("LEAF", 0, Arg::Kind(kind));
                     (supers, field)
                 }
                 Act::Extra => {
@@ -391,8 +473,7 @@ impl Emit<'_> {
             (Some((&p, outer)), Some(c)) if ends_at_once => {
                 for (i, &o) in outer.iter().enumerate() {
                     let callee = outer.get(i + 1).copied().unwrap_or(p);
-                    self.call(o, callee);
-                    self.flags_of(&flags, i);
+                    self.call(o, callee, &flags, i);
                 }
                 for _ in 0..c + u8::from(st.own) {
                     self.push("CLOSE", 1, Arg::None);
@@ -402,15 +483,25 @@ impl Emit<'_> {
             _ => {
                 for (i, &p) in ret.iter().enumerate() {
                     let callee = ret.get(i + 1).copied().unwrap_or(to);
-                    self.call(p, callee);
-                    self.flags_of(&flags, i);
+                    self.call(p, callee, &flags, i);
                 }
                 if let Some(k) = remember {
+                    // A keyword's: its kind from the token's word, as a keyword's leaf's.
+                    let k = match self.word_kind(k) {
+                        Some(s) => {
+                            self.word_kinds.insert(s, k);
+                            WORD_KIND
+                        }
+                        None => k,
+                    };
                     self.push("REMEMBER", 0, Arg::Kind(k));
                 }
                 let marked = self.marks.iter().any(|m| m.kind == token);
-                let from = usize::from(self.arms[arm].from);
-                let again = if self.mark_tests(usize::from(to)).iter().all(|k| self.mark_tests(from).contains(k)) { Arg::Again(to) } else { Arg::Past(to) };
+                // One way into a callee, as a function has one entry: its `SWITCH` where every
+                // call's caller has tested each mark it tests and none is on a mark; else past
+                // its `TOKEN`, where it tests its marks (a mark its caller tested and did not
+                // take, it passes; one the caller took to call it, it takes).
+                let again = if self.enters_at_switch(usize::from(to)) { Arg::Again(to) } else { Arg::Past(to) };
                 self.push("GOTO", 0, if self.arms[arm].call { again } else if marked { Arg::Marked(to) } else { Arg::State(to) });
             }
         }
@@ -639,7 +730,9 @@ impl Emit<'_> {
             }
             let m = &self.marks[k];
             // Its order, and 32 when the end has it.
-            self.push("MARK", k as u8 | if m.end { 32 } else { 0 }, Arg::Num(m.mask));
+            // An arm that calls: the mark kept, for the callee, which tests it again and takes it.
+            let keep = arm.is_some_and(|a| self.arms[a].call);
+            self.push("MARK", k as u8 | if m.end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
             match arm {
                 Some(a) => {
                     mark_arms.push((self.pc(), a));
@@ -650,18 +743,11 @@ impl Emit<'_> {
         }
     }
 
-    /// The marks state `s` tests after its `TOKEN`, in order (`state`): each it takes, and each
-    /// not hidden or that its level refuses.
-    fn mark_tests(&self, s: usize) -> Vec<usize> {
-        let st = &self.states[s];
-        (0..self.marks.len())
-            .filter(|&k| {
-                let m = &self.marks[k];
-                let takes = self.arms.iter().any(|a| usize::from(a.from) == s && a.token == m.kind);
-                takes || !m.hidden || st.refuses.contains(&m.kind)
-            })
-            .collect()
+    /// Whether every call into state `s` may enter it at its `SWITCH` (`Arg::Again`).
+    fn enters_at_switch(&self, s: usize) -> bool {
+        self.at_switch[s]
     }
+
 
     fn state(&mut self, s: usize) -> Result<(), String> {
         let st = self.states[s].clone();
@@ -677,6 +763,7 @@ impl Emit<'_> {
             // taken (`m=0`).
             let marks: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
             let after_mark = self.arms.iter().any(|a| usize::from(a.to) == s && !a.call && marks.contains(&a.token));
+            self.returned_field(&st);
             for mode in [1, 0].into_iter().take(1 + usize::from(after_mark)) {
                 if mode == 0 {
                     self.marked[s] = self.pc();
@@ -692,7 +779,10 @@ impl Emit<'_> {
         }
         // `m=1+k`: mask `k` holds where any mark does; `TOKEN` sets the marks live there (and
         // at the stream's end) and none elsewhere, so a state's mark tests fail on a register.
-        self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1), Arg::Num(STARTS));
+        let extras = if self.token_extras && (s != 0 || self.whole) { crate::program::TOKEN_EXTRAS } else { 0 };
+        self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1) | extras, Arg::Num(STARTS));
+        // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
+        self.returned_field(&st);
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
         // hidden that it does not take, and each its level refuses, a test that refuses.
         let tests: Vec<(usize, Option<usize>)> = (0..self.marks.len())
@@ -702,6 +792,15 @@ impl Emit<'_> {
                 (arm.is_some() || !m.hidden || st.refuses.contains(&m.kind)).then_some((k, arm))
             })
             .collect();
+        // A refusal tested on its token's bytes only (`Mark::first`), in the switch's arms for
+        // them, as the lean parser looks for a mark where it reads its token: where every test
+        // after it refuses too (refusals commute; a jump to a mark's arm must stay after it), and
+        // not a mark the end has (the switch's end is not a byte's).
+        let moved: Vec<usize> = (0..tests.len())
+            .filter(|&i| tests[i..].iter().all(|&(_, a)| a.is_none()) && !self.marks[tests[i].0].end)
+            .map(|i| tests[i].0)
+            .collect();
+        let tests: Vec<(usize, Option<usize>)> = tests.into_iter().filter(|(k, _)| !moved.contains(k)).collect();
         let mut mark_arms = Vec::new();
         self.mark_tests_here(&tests, &mut mark_arms);
         let t = self.switches.len();
@@ -793,6 +892,37 @@ impl Emit<'_> {
             let pc = self.by_words(t, b, cs)?;
             self.switches[t].targets[usize::from(b)] = pc;
         }
+        // The moved refusals: each target of a byte one of them can begin a token with gets
+        // them first, once a target and set of marks.
+        if !moved.is_empty() {
+            let mut made: HashMap<(u16, Vec<usize>), u16> = HashMap::new();
+            let mut wrap = |e: &mut Self, b: u8, old: u16| -> u16 {
+                let these: Vec<usize> = moved.iter().copied().filter(|&k| has(&e.marks[k].first, b)).collect();
+                if old == REFUSE || these.is_empty() {
+                    return old;
+                }
+                if let Some(&pc) = made.get(&(old, these.clone())) {
+                    return pc;
+                }
+                let at = e.pc();
+                let tests: Vec<(usize, Option<usize>)> = these.iter().map(|&k| (k, None)).collect();
+                e.mark_tests_here(&tests, &mut Vec::new());
+                e.push("GOTO", 0, Arg::Pc(old));
+                made.insert((old, these), at);
+                at
+            };
+            for b in 0..=255u8 {
+                let old = self.switches[t].targets[usize::from(b)];
+                let new = wrap(self, b, old);
+                self.switches[t].targets[usize::from(b)] = new;
+            }
+            for i in 0..self.switches[t].words.len() {
+                let (w, old) = self.switches[t].words[i];
+                let b = self.strings[usize::from(w)][0];
+                let new = wrap(self, b, old);
+                self.switches[t].words[i].1 = new;
+            }
+        }
         // The marks' arms: their acts, no bytes taken (the next state switches on this token).
         for (jump, a) in mark_arms {
             let to = self.body(a);
@@ -815,8 +945,27 @@ pub const LASTS: u16 = 0;
 ///
 /// `rules`: a function a rule (`grammar::build_shaped`). The words are laid out rule by rule,
 /// each rule's first place in `Lowered::rules`, and words are shared within a rule only.
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool) -> Result<Lowered, String> {
+/// The marks each state tests after its `TOKEN`, in order: each it takes, and each not hidden
+/// or that its level refuses.
+fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usize>> {
+    let mut takes: Vec<Vec<u16>> = vec![Vec::new(); states.len()];
+    for a in arms {
+        takes[usize::from(a.from)].push(a.token);
+    }
+    states
+        .iter()
+        .enumerate()
+        .map(|(s, st)| (0..marks.len()).filter(|&k| takes[s].contains(&marks[k].kind) || !marks[k].hidden || st.refuses.contains(&marks[k].kind)).collect())
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
+        counts: counts.to_vec(),
+        checks: checks.to_vec(),
+        token_extras,
+        whole,
         rule_of: Vec::new(),
         rule: 0,
         by_rules: rules,
@@ -836,9 +985,47 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         entry: vec![0; states.len()],
         switch_at: vec![REFUSE; states.len()],
         marked: vec![0; states.len()],
+        tests_of: tests_of(states, arms, marks),
+        at_switch: Vec::new(),
         arm_code: HashMap::new(),
         mark_words: Default::default(),
+        word_kinds: Default::default(),
     };
+    // Every call into a state enters at its `SWITCH` where its caller has tested each mark it
+    // tests and the call is on no mark; else past its `TOKEN`, where it tests its marks.
+    e.at_switch = vec![true; states.len()];
+    for a in arms.iter().filter(|a| a.call) {
+        let (to, from) = (usize::from(a.to), usize::from(a.from));
+        if marks.iter().any(|m| m.kind == a.token) || !e.tests_of[to].iter().all(|k| e.tests_of[from].contains(k)) {
+            e.at_switch[to] = false;
+        }
+    }
+    // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
+    // words: a keyword's leaf kind is then its word plus a constant over each run of kinds
+    // (`word_kind`), one add, not a compare tree.
+    let mut keywords: Vec<(u16, Vec<u8>)> = rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).map(|(w, k)| (*k, w.clone())).collect();
+    keywords.sort();
+    for (_, w) in &keywords {
+        e.string(w);
+    }
+    // The token marks' words, and their elements by offset.
+    let mut token_marks = Vec::new();
+    for (k, m) in marks.iter().enumerate() {
+        let Some((before, seq)) = &m.tokens else { continue };
+        let mut elems = Vec::new();
+        let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
+        for (offset, choices) in at {
+            let (mut kinds, mut words) = (Vec::new(), Vec::new());
+            for c in choices {
+                match c {
+                    ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                    ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                }
+            }
+            elems.push((offset, kinds, words));
+        }
+        token_marks.push((k as u8, elems));
+    }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
     }
@@ -862,8 +1049,9 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
         e.rule = st.rule;
         let at = e.pc();
-        let any = e.any_mark.map_or(0, |k| k as u8 + 1);
+        let any = e.any_mark.map_or(0, |k| k as u8 + 1) | if e.token_extras { crate::program::TOKEN_EXTRAS } else { 0 };
         e.push("TOKEN", any, Arg::Num(STARTS));
+        e.returned_field(st);
         let t = e.switches.len();
         e.push("SWITCH", 0, Arg::Table(t as u16));
         let end = e.pc();
@@ -923,6 +1111,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     let mark_words: Vec<(u8, u16)> = e.mark_words.iter().map(|(&k, &s)| (k, s)).collect();
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
+    let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
+    crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);
     for (pc, (op, mode, arg)) in e.words.iter().enumerate() {
         let _ = write!(text, "  {pc:04} {op}");
@@ -944,7 +1134,10 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         };
         text.push('\n');
     }
-    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words })
+    if let Some(at) = std::env::var_os("RR_LOWERED_TEXT") {
+        let _ = std::fs::write(at, &text);
+    }
+    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words, token_marks })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's
@@ -952,8 +1145,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
 ///
 /// - a place a jump reaches that only jumps on is passed: every target goes to where the jumps
 ///   end, within its rule;
-/// - a jump to a lone `STOP`, or within a rule to a `RETURN`, is that word (not after a `MARK`
-///   or `ROW`, whose way is a `GOTO` or `STOP`);
+/// - a jump to a lone `STOP` or a `RETURN` (in any rule: the same return) is that word (not
+///   after a `MARK` or `ROW`, whose way is a `GOTO` or `STOP`);
 /// - a run of words entered by one jump alone is placed after that jump, and a jump to the
 ///   next place goes.
 ///
@@ -1022,7 +1215,7 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: &[
         let (op, mode, arg) = words[usize::from(t)];
         let copy = match op {
             "STOP" => true,
-            "RETURN" => rule(usize::from(t)) == rule(pc) && !after_mark,
+            "RETURN" => !after_mark,
             _ => false,
         };
         if copy {
@@ -1201,48 +1394,59 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
 /// becomes a `GOTO` to it, and words nothing reaches go. The places of a state a call returns to
 /// stay whole (`TOKEN`, its `MARK`s and their ways, `SWITCH`: `stream::validate`'s shape).
 ///
-/// `rules`: each word's rule (a function a rule): words of two rules are never alike. The
-/// kept words' rules come back with them.
+/// `rules`: each word's rule (a function a rule). Words are alike within a rule alone, so each
+/// rule keeps its own code, as each of the lean parser's methods does, and a function is
+/// entered by calls alone (`stream::validate_rules`). A call's landing stays its caller's (the
+/// call returns into its own function). The kept words' rules come back with them.
 fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: Option<&[u16]>) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
     let n = words.len();
     const NONE: u32 = u32::MAX;
     let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
     // The first partition: operation, mode, operand (a switch's offset too), and the rule.
-    let mut class: Vec<u32> = {
-        let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16, Vec<u16>), u32> = HashMap::new();
-        words
-            .iter()
-            .enumerate()
-            .map(|(pc, &(op, mode, arg))| {
-                // A switch's offset and the words it names (their targets are its ways).
-                let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
-                let next = ids.len() as u32;
-                let rule = rules.map_or(0, |r| r[pc]);
-                *ids.entry((op, mode, operand_key(arg), offset, rule, named)).or_insert(next)
-            })
-            .collect()
-    };
-    let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
-    loop {
-        let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
-        let next: Vec<u32> = (0..n)
-            .map(|pc| {
-                let (targets, by_place) = ways(words, switches, pc);
-                let mut key = Vec::with_capacity(1 + targets.len() + by_place);
-                key.push(class[pc]);
-                key.extend(targets.iter().map(|&t| class_of(&class, t)));
-                key.extend((1..=by_place).map(|d| if pc + d < n { class[pc + d] } else { NONE }));
-                let id = ids.len() as u32;
-                *ids.entry(key).or_insert(id)
-            })
-            .collect();
-        let refined = ids.len();
-        class = next;
-        if refined == count {
-            break;
+    let is_call = |pc: usize| pc > 0 && words[pc].0 == "GOTO" && words[pc - 1].0 == "PUSH";
+    let partition = |by_rule: bool| -> (Vec<u32>, usize) {
+        let mut class: Vec<u32> = {
+            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>, u16), u32> = HashMap::new();
+            words
+                .iter()
+                .enumerate()
+                .map(|(pc, &(op, mode, arg))| {
+                    // A switch's offset and the words it names (their targets are its ways).
+                    let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
+                    let next = ids.len() as u32;
+                    // A call's `GOTO` is never another `GOTO`'s kind: it goes to its callee.
+                    let op = if is_call(pc) { "GOTO (a call's)" } else { op };
+                    let rule = if by_rule { rules.map_or(0, |r| r[pc]) } else { 0 };
+                    *ids.entry((op, mode, operand_key(arg), offset, named, rule)).or_insert(next)
+                })
+                .collect()
+        };
+        let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
+        loop {
+            let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
+            let next: Vec<u32> = (0..n)
+                .map(|pc| {
+                    let (targets, by_place) = ways(words, switches, pc);
+                    let mut key = Vec::with_capacity(1 + targets.len() + by_place);
+                    key.push(class[pc]);
+                    key.extend(targets.iter().map(|&t| class_of(&class, t)));
+                    key.extend((1..=by_place).map(|d| if pc + d < n { class[pc + d] } else { NONE }));
+                    let id = ids.len() as u32;
+                    *ids.entry(key).or_insert(id)
+                })
+                .collect();
+            let refined = ids.len();
+            class = next;
+            if refined == count {
+                break;
+            }
+            count = refined;
         }
-        count = refined;
-    }
+        (class, count)
+    };
+    // A rule's words are its own, as each of the lean parser's methods is: no rule goes into
+    // another's code, so each function has one entry.
+    let (class, count) = partition(rules.is_some());
     let mut rep = vec![usize::MAX; count];
     for pc in (0..n).rev() {
         rep[class[pc] as usize] = pc;
@@ -1276,7 +1480,9 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         if op == "PUSH" {
             let Arg::Pc(p) = arg else { continue };
             let (p, r) = (usize::from(p), rep[class[usize::from(p)] as usize]);
-            let to = if r + 1 < n && p + 1 < n && class[r + 1] == class[p + 1] { r } else { p };
+            // In the caller's rule: the call returns into its own function.
+            let same_rule = rules.is_none_or(|q| q[r] == q[pc]);
+            let to = if same_rule && r + 1 < n && p + 1 < n && class[r + 1] == class[p + 1] { r } else { p };
             landing[pc] = to as u16;
             todo.push((to, true));
             todo.push((to + 1, false));
@@ -1287,11 +1493,14 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                 }
             }
         }
-        // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH`, after
-        // a `MARK` its way, then the next `MARK` or the `SWITCH`.
+        // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH` (past
+        // a call's field, `NODE_FIELD m=4`), after a `MARK` its way, then the next `MARK` or the
+        // `SWITCH`; after a `PUSH` its call's `GOTO` (only a `PUSH` reaches it, so it goes to its
+        // callee as a call).
+        let field_after_token = op == "NODE_FIELD" && words[pc].1 == 4 && pc > 0 && words[pc - 1].0 == "TOKEN";
         for d in 1..=by_place {
             if pc + d < n {
-                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2));
+                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2) | ("PUSH", 1)) || (field_after_token && d == 1);
                 todo.push((pc + d, whole));
             }
         }

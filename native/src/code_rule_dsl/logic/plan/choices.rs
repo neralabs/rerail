@@ -73,7 +73,7 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
     let Program {
         decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
-        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again,
+        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, shapes,
     } = prog;
     let rules_digest = super::super::derived::digest(|d| {
         let mut rules_of = |rules: &[super::super::front::Rule]| {
@@ -96,7 +96,7 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     let _ = std::fmt::Write::write_fmt(
         &mut hash,
         format_args!(
-            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}"
+            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}\0{together:?}\0{shapes:?}"
         ),
     );
     hash.0.finalize().into()
@@ -119,7 +119,7 @@ const KEPT_PROGRAMS: usize = 16;
 thread_local! {
     /// The durable side of this thread's corpus run, while it holds `Durable`: the tape cache's store and the
     /// prepared program's key, which names the source the entries live under.
-    static DURABLE: std::cell::RefCell<Option<(ContentStore, [u8; 32], HashMap<String, Chosen>)>> = const { std::cell::RefCell::new(None) };
+    static DURABLE: std::cell::RefCell<Option<(ContentStore, [u8; 32], HashMap<String, Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
@@ -169,7 +169,9 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     if let Some(c) = kept().lock().expect("the kept choices").get(key) {
         return holds(c.nodes, nodes).then(|| c.clone());
     }
-    let found = DURABLE.with(|d| d.borrow().as_ref()?.2.get(&path(key)).cloned())?;
+    // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
+    // 0.07 s of an edit's).
+    let found = DURABLE.with(|d| d.borrow().as_ref()?.2.get(&path(key)).and_then(|entry| decode_chosen(entry)))?;
     keep(*key, found.clone());
     holds(found.nodes, nodes).then_some(found)
 }
@@ -230,9 +232,10 @@ const REWRITTEN: &str = "rr_chosen_rewritten";
 
 /// Every program's choices kept under `prepared`, by entry path: one read of the store (the source's pin is the
 /// manifest's, `named`).
-fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Chosen>> {
+/// Every entry kept under `prepared`, by path, as stored: each is decoded when looked up (`lookup`).
+fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Vec<u8>>> {
     let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(HashMap::new()) };
-    Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().filter_map(|(path, entry)| Some((path, decode_chosen(&entry)?))).collect())
+    Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().collect())
 }
 
 /// The kept plans' schema, apart from the choices' so neither reads the other's entries.
@@ -271,7 +274,9 @@ fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>]) -
 }
 
 fn decode_chosen(entry: &[u8]) -> Option<Chosen> {
-    let Ok(facts) = program_facts::decode(entry) else { return None };
+    // Read in place (`decode_view`): the rewritten program off the encoding's rows, the rest copied out (small).
+    let Ok(view) = program_facts::decode_view(entry) else { return None };
+    let facts = view.owned(|r| [SCALE, INLINED, DEMANDED, REWRITTEN].contains(&r));
     let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(Vec::as_slice) {
         Some([Value::Int(n)]) => *n as f64,
         _ => return None,
@@ -290,7 +295,7 @@ fn decode_chosen(entry: &[u8]) -> Option<Chosen> {
         rows.into_iter().map(|(_, s)| s).collect()
     };
     let program = if facts.contains_key(REWRITTEN) {
-        match program_facts::program(&facts, P) {
+        match program_facts::Grouped::of_views(std::slice::from_ref(&view)).program(P) {
             Ok(p) => Some(Arc::new(p)),
             Err(_) => return None,
         }

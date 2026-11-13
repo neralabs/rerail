@@ -24,7 +24,7 @@ pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::Name;
 pub mod cycles;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -564,6 +564,12 @@ fn order_nodes(prog: &mut Program) {
     if KEEP_NODE_COMPARISONS.get() {
         return;
     }
+    // A measurement, never a mode to run in: comparisons of the node ids themselves, which an edit leaves alone outside
+    // the granules it touches but which are not in preorder. What a stable order key could save at most.
+    if std::env::var_os("RERAIL_ORDER_RAW").is_some() {
+        crate::code_rule_dsl::logic::profile::decision("node comparisons (RERAIL_ORDER_RAW)", || "node ids compared as they are, not by node_order: a measurement only".into());
+        return;
+    }
     let decls = prog.decls.clone();
     let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
         for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], Vec::as_slice)) {
@@ -707,18 +713,21 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 /// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) `match_all` and
 /// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub fn declared(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
-        let mut read = rule.body.iter().filter_map(|l| match l {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-            _ => None,
-        });
-        // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
-        // them: declared there.
-        if let Some(a) = read.find(|a| {
-            !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
-        }) {
-            return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
-        }
+    prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
+}
+
+/// `declared` for one rule: every relation it reads is declared in `prog`.
+pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
+    let mut read = rule.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+        _ => None,
+    });
+    // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
+    // them: declared there.
+    if let Some(a) = read.find(|a| {
+        !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
+    }) {
+        return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
     }
     Ok(())
 }
@@ -821,8 +830,41 @@ fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String
             edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || agg) && !a.gated));
         }
     }
-    let sccs = tarjan(&derived, &edges);
+    let sccs = together(&derived, &edges, &prog.together);
     (sccs, edges, aggs)
+}
+
+/// The sets of `prog.together` that are not each one component as `strata` makes them (`together`, below).
+pub fn apart(prog: &Program) -> Vec<usize> {
+    let (sccs, _, _) = components(prog);
+    (0..prog.together.len()).filter(|&i| {
+        let t = &prog.together[i];
+        !sccs.iter().any(|s| s == t)
+    }).collect()
+}
+
+/// The components, each set of `together` one of them (decision 0101 §3): its relations joined in a ring for the
+/// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
+/// member and reading another) is left apart.
+fn together(derived: &BTreeSet<String>, edges: &Edges, sets: &[BTreeSet<String>]) -> Vec<BTreeSet<String>> {
+    let mut sets: Vec<Vec<&String>> = sets.iter().map(|t| t.iter().filter(|r| derived.contains(*r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
+    loop {
+        if sets.is_empty() {
+            return tarjan(derived, edges);
+        }
+        let mut ring = edges.clone();
+        for t in &sets {
+            for (i, r) in t.iter().enumerate() {
+                ring.entry((*r).clone()).or_default().insert((t[(i + 1) % t.len()].clone(), false));
+            }
+        }
+        let sccs = tarjan(derived, &ring);
+        let n = sets.len();
+        sets.retain(|t| sccs.iter().find(|s| s.contains(t[0])).is_some_and(|s| s.len() == t.len()));
+        if sets.len() == n {
+            return sccs;
+        }
+    }
 }
 
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.

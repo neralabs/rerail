@@ -15,6 +15,9 @@
 //!   least `RERAIL_STREAM_FLOOR` seconds (100 µs).
 //! - **Waiting.** [`Stream::wait`] runs the awaited job itself if no worker has claimed it, else helps the pool
 //!   ([`crate::exec::help_once`]) until the job ends.
+//! - **Waking.** A waiter with nothing to run sleeps until one of the stream's jobs ends ([`Stream::pause`]), at most
+//!   a bounded nap: woken by the job's end, not by polling (a nap of up to 1 ms after each ended job was 0.5 s of an
+//!   edit's run on the critical path).
 //! - **No nesting.** A job never runs inside another on one thread: a job that waits (on a device batch) and helps
 //!   the pool may take a stream worker, which then claims nothing, since the outer job may hold what the inner
 //!   needs (a lock).
@@ -26,7 +29,7 @@ use crate::exec::{Executor, help_once, on_pool, threads, cores_slowdown};
 use crate::lanes::Lane;
 use crate::score::{Item, Scoreboard, Ticket};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 type Slot<R> = Arc<Mutex<Option<std::thread::Result<R>>>>;
@@ -58,6 +61,9 @@ struct State<'s> {
     workers: AtomicUsize,
     peak: AtomicUsize,
     running: AtomicUsize,
+    /// Jobs ended so far, and the waiters' wake-up when one does (`Stream::pause`).
+    ended: Mutex<u64>,
+    wake: Condvar,
 }
 
 impl<'s> State<'s> {
@@ -82,6 +88,8 @@ impl<'s> State<'s> {
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.board.finish(j.ticket, true);
         if caller { &self.by_caller } else { &self.by_workers }.fetch_add(1, Ordering::Relaxed);
+        *self.ended.lock().unwrap_or_else(|p| p.into_inner()) += 1;
+        self.wake.notify_all();
     }
 
     /// The floor: a worker's measured start latency, four times over, and at least the prior.
@@ -173,6 +181,7 @@ impl<'s> Stream<'s, '_> {
         let st = &self.state;
         let mut nap = 20e-6f64;
         loop {
+            let seen = self.ended();
             if let Some(r) = h.slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 return r.map_err(|_| format!("host stream {}: a job panicked", st.name));
             }
@@ -185,9 +194,22 @@ impl<'s> Stream<'s, '_> {
                 nap = 20e-6;
                 continue;
             }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+            self.pause(seen, nap);
             nap = (nap * 2.0).min(1e-3);
         }
+    }
+
+    /// How many of the stream's jobs have ended: read before a waiter looks for work, and given to [`Stream::pause`].
+    pub fn ended(&self) -> u64 {
+        *self.state.ended.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Sleeps until a job ends after `seen` was read ([`Stream::ended`]), or `nap` seconds pass: a job that ended
+    /// since is not slept through. Bounded, so work woken by something else (the pool's other jobs) is still found.
+    pub fn pause(&self, seen: u64, nap: f64) {
+        let st = &self.state;
+        let ended = st.ended.lock().unwrap_or_else(|p| p.into_inner());
+        let _ = st.wake.wait_timeout_while(ended, std::time::Duration::from_secs_f64(nap), |n| *n == seen);
     }
 
     /// Whether `h`'s job ended (its result is waiting for [`Stream::wait`]).
@@ -233,6 +255,8 @@ impl Executor {
                 workers: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 running: AtomicUsize::new(0),
+                ended: Mutex::new(0),
+                wake: Condvar::new(),
             });
             let stream = Stream { scope, state: Arc::clone(&state) };
             let r = f(&stream);

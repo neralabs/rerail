@@ -77,6 +77,11 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_div", &[Number, Number], Number),
     ("rr_max", &[Number, Number], Number),
     ("rr_min", &[Number, Number], Number),
+    // `.rr`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
+    // atom, so the path is a number here. `-2 - (path << 32 | line)`, `unset` (-1) for a line outside `0 .. 2^32`.
+    ("rr_place", &[Number, Number], Number),
+    ("rr_place_path", &[Number], Number),
+    ("rr_place_line", &[Number], Number),
     // Characters, as SQLite's `length` counts a text's.
     ("rr_strlen", &[Text], Number),
     // SQLite's string functions, as the data-layer programs' SQL stages read them (decision 0107): positions from 1,
@@ -126,7 +131,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
 /// `rr_` name (`@add`, `@strlen`, …).
 pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
-        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" => signature(&format!("rr_{f}")),
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" | "place" | "place_path" | "place_line" => signature(&format!("rr_{f}")),
         _ => signature(f),
     }
 }
@@ -258,6 +263,13 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
         "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "rr_place" => {
+            let (p, l) = (numbers[0], numbers[1]);
+            let place = (0..1i64 << 32).contains(&l).then(|| p.checked_mul(1 << 32).and_then(|x| x.checked_add(l)).and_then(|x| (-2i64).checked_sub(x))).flatten();
+            return Value::Integer(place.unwrap_or(-1));
+        }
+        "rr_place_path" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n / (1 << 32))),
+        "rr_place_line" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n - n / (1 << 32) * (1 << 32))),
         "rr_strlen" | "sql_length" => return Value::Integer(t(0).chars().count() as i64),
         "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
         "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),

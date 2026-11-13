@@ -1692,6 +1692,12 @@ pub(crate) mod logic {
     #[path = "native"]
     pub mod native {
         pub use rerail_logic::code_rule_dsl::logic::native::*;
+        #[path = "reach"]
+        pub mod reach {
+            pub use rerail_logic::code_rule_dsl::logic::native::reach::*;
+            #[cfg(test)]
+            pub mod tests;
+        }
         #[path = "setfix"]
         pub mod setfix {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
@@ -1965,6 +1971,7 @@ pub(crate) mod logic {
         }
         #[cfg(test)]
         pub mod tests;
+        pub mod testing;
         #[allow(unused_imports)]
         use rerail_rr_syntax::syntax;
         #[allow(unused_imports)]
@@ -4563,6 +4570,16 @@ impl CodeRuleDslRuntime {
         serde_json::to_string(&response).map_err(json_error)
     }
 
+    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// calls it for a `.rr` file.
+    #[napi(catch_unwind)]
+    pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
+        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        serde_json::to_string(&report).map_err(json::json_error)
+    }
+
     #[napi(catch_unwind)]
     pub fn compile(
         source: String,
@@ -4970,7 +4987,9 @@ pub(crate) fn install_languages() {
             parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
         }
         if cfg!(feature = "lang-json") {
-            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::tape::Bitlex));
+            // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            #[cfg(not(target_family = "wasm"))]
+            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::simdjson::Simdjson));
         }
         tape::install_parsers(parsers);
     }

@@ -189,10 +189,30 @@ pub mod wave {
         DONE.with_borrow_mut(|d| tickets.iter().map(|t| d.remove(t).ok_or_else(|| format!("launch {t} has not run: its wave was not flushed"))).collect())
     }
 
-    /// This thread's waves flushed and the launches they held, so far.
+    /// This thread's waves flushed and the launches they held, so far: a job's own waves are credited to the run's
+    /// thread when the job is taken back (`credit`), so a level's launches a job ran count as the run's.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn flushed() -> (u64, u64) {
         FLUSHED.get()
+    }
+
+    /// This thread's count so far, before a job runs (`since`).
+    pub fn flushed_now() -> (u64, u64) {
+        FLUSHED.get()
+    }
+
+    /// The waves this thread flushed, and their launches, since `before` (`flushed_now`), taken off this thread's
+    /// count: a job moves them to the thread that takes it back (`credit`), which may be this one.
+    pub fn since(before: (u64, u64)) -> (u64, u64) {
+        let (w, l) = FLUSHED.get();
+        FLUSHED.set(before);
+        (w - before.0, l - before.1)
+    }
+
+    /// Adds a job's waves (`since`, on the job's thread) to this thread's: the run's thread, taking the job back.
+    pub fn credit(waves: (u64, u64)) {
+        let (w, l) = FLUSHED.get();
+        FLUSHED.set((w + waves.0, l + waves.1));
     }
 }
 

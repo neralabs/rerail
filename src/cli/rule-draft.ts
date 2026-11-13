@@ -23,6 +23,7 @@ import {
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
+  type NativeRrTestResult,
   RESULT_PAGE_BYTES,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
@@ -993,16 +994,16 @@ function ruleDraftHelp(): string {
   return [
     "Usage:",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rr> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "",
     "rules show prints a rule as a draft: one of yours, or a By Rerail rule from an installed pack.",
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository, in the folders rules add would add it at, and says where rules add would",
     "refuse the draft. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json), which has no",
-    "cases. rules add stores the rule in your library and adds it to the repository. A draft that keeps a By Rerail",
-    "rule's id is stored as your copy of it, added where the original is; approving the copy turns the original off",
-    "there.",
+    "cases, and a .rr rule file, whose own tests (.test ... .end) it runs. rules add stores the rule in your library and",
+    "adds it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the",
+    "original is; approving the copy turns the original off there.",
     "",
     "A draft is one JSON file:",
     "  {",
@@ -1107,7 +1108,32 @@ async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr:
   return 0;
 }
 
+/**
+ * The tests a `.rr` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
+ * one line a test, and each failed expectation under it.
+ */
+export function testRrFile(file: string): NativeRrTestResult[] {
+  const binding = loadNativeBinding();
+  return JSON.parse(binding.CodeRuleDslRuntime.testRr(JSON.stringify([resolve(file)]), null)) as NativeRrTestResult[];
+}
+
+export function formatRrTestReport(results: readonly NativeRrTestResult[]): string {
+  const lines: string[] = [];
+  for (const result of results) {
+    lines.push(`${result.status === "pass" ? "pass" : "FAIL"} ${result.test} (line ${result.line})`);
+    for (const failure of result.failures) lines.push(`    ${failure}`);
+  }
+  const failed = results.filter(result => result.status === "fail").length;
+  lines.push(results.length === 0 ? "no tests" : `${results.length - failed} passed, ${failed} failed`);
+  return lines.join("\n");
+}
+
 async function runTest(file: string, repo: string, json: boolean, stdout: CommandOutput): Promise<number> {
+  if (file.endsWith(".rr")) {
+    const results = testRrFile(file);
+    stdout.write(`${json ? JSON.stringify(results) : formatRrTestReport(results)}\n`);
+    return results.every(result => result.status === "pass") ? 0 : 1;
+  }
   const report = await testRuleDraftFile(file, repo);
   stdout.write(`${json ? JSON.stringify(report) : formatRuleDraftReport(report)}\n`);
   return report.ok ? 0 : 1;

@@ -651,7 +651,7 @@ impl BlockProgram {
                 && !self.totals.is_empty()
                 && crate::records::WordTable::new(&r.words).is_ok()
                 && r.marks.len() <= crate::records::MARKS
-                && r.marks.iter().all(|&(o, w)| usize::from(o) < self.outputs.len() && usize::from(w) <= r.words.len())
+                && r.marks.iter().all(|&(o, w)| (usize::from(o) < self.outputs.len() || (o == crate::records::WORD_ALONE && w != 0)) && usize::from(w) <= r.words.len())
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !records {
             return Err(Error::InvalidTarget(0));

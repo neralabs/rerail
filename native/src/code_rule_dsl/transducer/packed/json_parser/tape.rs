@@ -1,5 +1,5 @@
 //! A JSON file's tape from the Bitlex parser's node table (`json_parser::Columns`), node for node tree-sitter-json's.
-//! The engine registers `Bitlex` as JSON's tree parser (`tape::TreeParser`): a file it refuses goes to tree-sitter.
+//! `Bitlex` is a `tape::TreeParser`, though not the engine's: JSON is read with simdjson (`json_parser::simdjson`, 0134).
 use super::{Columns, NO_PARENT};
 use crate::code_rule_dsl::tape::{
     ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, Pending, TapeImage, TemplateError, TreeParser, checked,
@@ -25,10 +25,6 @@ impl TreeParser for Bitlex {
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
         let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
         Some(encode_columns(grammar, source, &columns, &budget).map(FileImage::single).map_err(TemplateError::Encode))
-    }
-
-    fn stands_in_for_tree_sitter(&self) -> bool {
-        true
     }
 }
 

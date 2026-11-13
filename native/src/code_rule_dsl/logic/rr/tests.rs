@@ -466,6 +466,22 @@ fn a_context_covers_no_group_that_only_computes_from_an_asked_variable() {
     assert!(cover.iter().all(|r| r.contains("jb(p,")), "a cover binds what it is a relation of: {cover:?}");
 }
 
+/// A later group tying two asked variables through one not asked (c414's `same_keywords`: `double(c, s), call_nkwargs(c,
+/// n), call_nkwargs(s, n)`, counted) is a cover narrowed by the group that binds them, not every pair with the same `n`.
+#[test]
+fn a_cover_of_two_variables_is_narrowed_by_what_binds_them() {
+    let p = parse(concat!(
+        ".decl double(c: node, s: node)\n.decl nk(c: node, n: number)\n.decl kw(s: node, x: symbol)\n.decl km(c: node, s: node, x: symbol)\n",
+        ".input double, nk, kw, km\n",
+        ".decl same(c: node, s: node)\n.output same\n",
+        "same(c, s) :- double(c, s), nk(c, n), nk(s, n), count : { kw(s, x), !km(c, s, x) } = 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let cover: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("double(")), "{cover:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
@@ -1374,6 +1390,32 @@ Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
     paths.sort();
     assert_eq!(paths, [".hidden/a.txt", "included.py"]);
     assert_eq!(result["files"], 2);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A policy's run holds the program `run-rr` read (`corpus::run_read`), unless the root's settings add `env` facts to
+/// its text: then the run holds that text's program, which reads them. The same policy, without settings and then
+/// with them, in one process.
+#[test]
+fn a_policy_read_once_still_reads_the_roots_settings() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrenv");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "settings-read" revision 1
+.language python
+.violation Seen(at: span, m: symbol) "{m}"
+Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
+"#).unwrap();
+    let marks = |out: &str| -> Vec<String> {
+        let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).unwrap();
+        result["diagnostics"].as_array().unwrap().iter().map(|r| r["parameters"]["m"].as_str().unwrap().to_owned()).collect()
+    };
+    assert!(marks("plain").is_empty(), "no settings, no mark");
+    std::fs::write(root.join("rerail.env"), "mark = here\n").unwrap();
+    assert!(!marks("set").is_empty() && marks("again").iter().all(|m| m == "here"), "the setting read");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -2857,22 +2899,246 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
 
-/// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
-/// `run-rr` hands the run. Every data-layer policy, by its print.
+// ---------------------------------------------------------------- tests in rule files (decision 0130)
+
+/// `text` with each `.test` … `.end` block's lines blank: its program, were tests part of it, would differ.
+fn without_tests(text: &str) -> String {
+    let mut inside = false;
+    text.lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let blank = inside || t.starts_with(".test ");
+            if t.starts_with(".test ") {
+                inside = true;
+            } else if t == ".end" {
+                inside = false;
+            }
+            if blank { "" } else { l }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn files_with_tests() -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = rr_files().into_iter().filter(|f| super::testing::may_hold_tests(&std::fs::read_to_string(f).unwrap())).collect();
+    assert!(files.len() >= 2, "the B101 pack rule and the spike carry tests: {files:?}");
+    files
+}
+
+/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`).
 #[test]
-fn a_policys_printed_program_reads_back_as_the_program_read() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
-    paths.sort();
-    let mut read = 0;
-    for path in paths.iter().take(12) {
-        let Ok((program, _)) = super::read_file(path) else { continue };
-        read += 1;
-        let printed = super::print(&program).unwrap();
-        super::remember_lowered(&printed, &program);
-        assert_eq!(super::print(&super::parse(&printed).unwrap()).unwrap(), printed, "{}", path.display());
+fn rule_files_pass_their_own_tests() {
+    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let mut failed = Vec::new();
+    let mut ran = 0;
+    for (k, file) in files_with_tests().iter().enumerate() {
+        for (j, test) in super::testing::tests(file).unwrap().iter().enumerate() {
+            ran += 1;
+            match super::testing::run(file, test, &work.join(format!("{k}-{j}"))) {
+                Ok(outcome) if outcome.passed() => {}
+                Ok(outcome) => failed.push(format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings)),
+                Err(e) => failed.push(format!("{}::{}: {e}", file.display(), test.name)),
+            }
+        }
     }
-    assert!(read > 5, "{read} policies read");
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(ran >= 6, "{ran} tests");
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// A test is no part of its file's program (decision 0130): the program, and so every key made of it, is the one the
+/// file has with its tests' lines blank.
+#[test]
+fn a_rule_files_tests_are_no_part_of_its_program() {
+    for file in files_with_tests() {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let with = super::parse(&text).unwrap();
+        let without = super::parse(&without_tests(&text)).unwrap();
+        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
+        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    }
+}
+
+/// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
+#[test]
+fn failed_expectations_say_what_the_run_had() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, r#".policy "t:fail" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test wrong exactly
+    .fixture "a.py" ```
+        f()
+        g()
+        ```
+    .decl called(l: number)
+    called(l) :- Call(c), line(c, l).
+    .expect C1 at "a.py":1
+    .expect called(7)
+    .expect count C1 = 3
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(outcome.failures, [
+        "line 14: .expect called(7): called has 2 rows: (1), (2)",
+        "line 15: .expect count C1 = 3: counted 2",
+        "line 6: exactly: also reported C1 at \"a.py\":2",
+    ], "{outcome:?}");
+}
+
+/// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
+#[test]
+fn test_blocks_parse_only_whole() {
+    for (text, why) in [
+        (".test a\n.expect X\n", "`.end`"),
+        (".test a\n.test b\n.end\n.end\n", "do not nest"),
+        (".fixtures s\n.test b\n.end\n.end\n", "do not nest"),
+        (".end\n", "a `.test` or `.fixtures` before its `.end`"),
+    ] {
+        let error = super::parse(text).map(|_| ()).unwrap_err().to_string();
+        assert!(error.contains(why), "{text:?}: {error}");
+    }
+    assert_eq!(super::testing::dedent("\n    a\n      b\n\n    c\n    "), "a\n  b\n\nc\n");
+    // The closing fence says the indent: lines deeper than it keep the rest.
+    assert_eq!(super::testing::dedent("\n      a\n        b\n    "), "  a\n    b\n");
+    // A closing fence after text: the indent the lines share.
+    assert_eq!(super::testing::dedent("\n    a\n      b"), "a\n  b\n");
+}
+
+/// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
+fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, text).unwrap();
+    let out = match super::testing::tests(&file) {
+        Ok(tests) => tests
+            .iter()
+            .enumerate()
+            .map(|(k, t)| (t.name.clone(), super::testing::run(&file, t, &dir.join(format!("w{k}"))).map(|o| o.failures)))
+            .collect(),
+        Err(e) => vec![(String::new(), Err(e))],
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// A unit test (decision 0130): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
+/// no file. A file of rules with no `.violation` (a library's) is tested so too. `.expect only` names every row.
+#[test]
+fn a_unit_test_gives_a_relation_its_rows_and_reads_no_file() {
+    let library = r#"
+.decl seed(x: symbol)
+seed("from the rule").
+.decl edge(a: symbol, b: symbol)
+edge(x, "end") :- seed(x).
+.decl reach(a: symbol, b: symbol)
+reach(a, b) :- edge(a, b).
+reach(a, c) :- reach(a, b), edge(b, c).
+.test given_edges uses chain
+    .expect only reach("a", "b")
+    .expect only reach("b", "c")
+    .expect only reach("a", "c")
+    .expect no reach(_, "end")
+.end
+.fixtures chain
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+.end
+.test only_names_every_row
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+    .expect only reach("a", "b")
+.end
+.test the_rules_left_alone
+    .expect only reach("from the rule", "end")
+    .expect count reach = 1
+.end
+"#;
+    let got = run_tests_of("rr-unit", library);
+    assert_eq!(got, [
+        ("given_edges".to_owned(), Ok(vec![])),
+        ("only_names_every_row".to_owned(), Ok(vec!["line 24: .expect only reach: also 2: (a, c), (b, c)".to_owned()])),
+        ("the_rules_left_alone".to_owned(), Ok(vec![])),
+    ]);
+}
+
+/// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
+/// is not there, or have two fixtures at one path.
+#[test]
+fn a_test_that_cannot_run_is_refused_with_its_line() {
+    let head = ".decl r(x: symbol)\nr(\"a\").\n";
+    for (test, why) in [
+        (".test t\n    .given kind\n.end\n", "t.rr:4: .given kind: a core relation is the engine's"),
+        (".test t\n    .given nothing\n.end\n", "t.rr:4: .given nothing: no rule declares it"),
+        (".test t uses absent\n.end\n", "t.rr:3: no fixture set named absent"),
+        (".test t\n    .fixture \"a.py\" ```\n        x\n        ```\n    .fixture \"a.py\" ```\n        y\n        ```\n.end\n", "t.rr:3: two fixtures at \"a.py\""),
+        (".test t\n    .expect r(\"a\"\n.end\n", "t.rr:4: `.expect"),
+    ] {
+        let got = run_tests_of("rr-refused", &format!("{head}{test}"));
+        let error = match &got[0].1 { Err(e) => e.clone(), Ok(f) => format!("ran: {f:?}") };
+        assert!(error.contains(why), "{test:?}: {error}");
+    }
+}
+
+/// A test printed (`print_test`, as the converter prints a case) reads back as written: its fixture's bytes, however
+/// many backticks and blank lines they hold, and its expectations.
+#[test]
+fn a_printed_test_reads_back_as_written() {
+    // Every line indented: the closing fence keeps it.
+    let content = "  x = ```a```\n\n    y = \"````\"\n";
+    let text = format!(
+        ".decl r(x: symbol)\nr(\"a\").\n{}",
+        super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), &text).unwrap();
+    let tests = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(tests.len(), 1, "{text}");
+    assert_eq!(tests[0].fixtures, [("src/a.py".to_owned(), content.as_bytes().to_vec())], "{text}");
+    assert_eq!(tests[0].expects.iter().map(ToString::to_string).collect::<Vec<_>>(), ["no _ at \"src/a.py\"", "r(\"a\")"]);
+}
+
+/// `flatten` keeps a file's text as written (`program_text`), so its tests and fixture sets go with it.
+#[test]
+fn a_flattened_file_keeps_its_tests() {
+    let file = rule_syntax().join("spikes/rr-tests/print-calls.rr");
+    let flat = crate::code_rule_dsl::tools::flatten(&file).unwrap();
+    let blocks = super::testing::blocks(&std::fs::read_to_string(&file).unwrap());
+    assert!(blocks.len() >= 6 && blocks.iter().any(|b| b.starts_with(".fixtures logging_app")), "{blocks:?}");
+    assert_eq!(super::testing::blocks(&flat), blocks);
+    assert_eq!(format!("{:?}", super::parse(&flat).unwrap()), format!("{:?}", super::parse(&without_tests(&flat)).unwrap()));
+}
+
+/// `convert-rr --cases` prints a draft's cases as tests: a caught case expects a finding in its file, a passed one
+/// none. They are printed for a rule that needs a hand-written port too, and read back one test a case.
+#[test]
+fn converted_cases_are_tests() {
+    let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
+    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
+    let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
+    let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
+    let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), tests).unwrap();
+    let read = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(read.len(), caught + passed);
+    assert_eq!(read.iter().filter(|t| t.expects[0].negated).count(), passed);
+    let first = &n["caught"][0];
+    assert_eq!(read[0].fixtures, [(first["path"].as_str().unwrap().to_owned(), first["content"].as_str().unwrap().as_bytes().to_vec())]);
 }
 
 /// Aggregate demand's stratification shortcut (`aggregate_demand::optimize`): every data-layer policy lowers to the
@@ -2900,7 +3166,7 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
 }
 
 /// Lowering is idempotent: each program file under `dirs` (shard `k` of `n`, by its place in name order), printed and
-/// lowered again (not from `remember_lowered`'s cache), prints as the same text, statement for statement and in order.
+/// lowered again, prints as the same text, statement for statement and in order.
 /// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
 /// writes both prints of each that differs.
 fn lowers_back(dirs: &[&str], k: usize, n: usize) {
@@ -2992,3 +3258,138 @@ fn lowering_is_idempotent_javascript_typescript() {
 fn lowering_is_idempotent_other_packs() {
     lowers_back(&["packs/react", "packs/node", "packs/rust", "packs/vue", "packs/sql", "packs/next", "packs/php", "packs/blade", "packs/complexity", "packs/rr"], 0, 1);
 }
+
+/// `unreached_dropped`: an included file's clauses that nothing reaches are dropped before they are checked and
+/// lowered. For every `.rr` program under `dirs` that reads (the data layer's policies, and the packs', a test for
+/// each group within the time a test may take), `front::prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
+/// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
+fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut pending: Vec<PathBuf> = dirs.iter().map(|d| manifest.join(d)).collect();
+    let mut paths = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if !skip.iter().any(|s| path == manifest.join(s)) {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|e| e == "rr") {
+                paths.push(path);
+            }
+        }
+    }
+    // The `part.0`th of `part.1` parts, by position in name order: a group too long for one test is split.
+    paths.sort();
+    let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
+        let path = path.as_path();
+        let Ok((statements, _)) = program(&path) else { return None };
+        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
+        let own = path.canonicalize().unwrap();
+        let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
+        let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
+        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
+        // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
+        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        let shape = |mut p: Program| {
+            // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
+            // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
+            // file and guest reads (`rr_dir_req`, `rr_embed_req` …), which the engine answers for every reader.
+            let requests = super::LIBRARY_DERIVED.iter().copied().chain(super::WORLD.iter().map(|(_, req)| *req)).chain(["rr_embed_req", "rr_parse_req", "rr_splice_req"]);
+            for rel in requests {
+                if p.rules.iter().any(|r| r.head.rel == rel) && !p.outputs.iter().any(|o| o == rel) {
+                    p.outputs.push(rel.to_owned());
+                }
+            }
+            let p = front::prune(p);
+            let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut renumber = |s: &str| -> String {
+                helper.replace_all(s, |c: &regex::Captures| {
+                    let n = names.len();
+                    names.entry(c[0].to_owned()).or_insert_with(|| format!("rr_{}#{n}", &c[1])).clone()
+                }).into_owned()
+            };
+            // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
+            // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
+            // rule makes the value it reads.
+            let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
+            // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
+            // numbers change) are compared by their number for each helper; every other rule exactly.
+            let numbered = |rel: &str| helper.is_match(rel);
+            let mut rules: Vec<String> = p.rules.iter().filter(|r| !place_variant(r)).map(|r| {
+                let text = renumber(&format!("{r:?}"));
+                if numbered(r.head.rel.as_str()) { format!("helper {}", renumber(r.head.rel.as_str())) } else { text }
+            }).collect();
+            rules.sort();
+            let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(*r)).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            decls.sort();
+            let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
+            // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
+            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
+            let text = format!("{:?}{:?}", p.rules, p.natives);
+            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            inputs.sort();
+            let mut outputs = p.outputs.clone();
+            outputs.sort();
+            (rules, decls, natives, outputs, inputs)
+        };
+        let (a, b) = (shape(less), shape(whole));
+        if a != b {
+            let only = |x: &Vec<String>, y: &Vec<String>| x.iter().filter(|r| !y.contains(r)).take(3).cloned().collect::<Vec<_>>();
+            panic!(
+                "{}: its pruned program changed with its unreached clauses dropped\n rules only dropped: {:?}\n rules only whole: {:?}\n decls only dropped: {:?}\n decls only whole: {:?}\n natives {:?} vs {:?}\n outputs {:?} vs {:?}\n inputs {:?} vs {:?}",
+                path.display(), only(&a.0, &b.0), only(&b.0, &a.0), only(&a.1, &b.1), only(&b.1, &a.1), a.2, b.2, a.3, b.3,
+                (a.0.len(), a.1.len(), a.4.len(), only(&a.4, &b.4)), (b.0.len(), b.1.len(), b.4.len(), only(&b.4, &a.4))
+            );
+        }
+        Some((n, n - kept))
+    }).collect();
+    let (compared, all, dropped) = (counts.len(), counts.iter().map(|c| c.0).sum::<usize>(), counts.iter().map(|c| c.1).sum::<usize>());
+    eprintln!("{compared} programs; {dropped} of {all} clauses dropped");
+    compared
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program() {
+    let n = dropping_unreached_clauses_in(&["data-layer"], &[], (0, 1));
+    assert!(n > 40, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_0() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (0, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_1() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (1, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_2() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (2, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_python_pack_3() {
+    let n = dropping_unreached_clauses_in(&["packs/python"], &[], (3, 4));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_script_packs() {
+    let n = dropping_unreached_clauses_in(&["packs/javascript", "packs/typescript", "packs/react", "packs/next", "packs/node", "packs/vue"], &[], (0, 1));
+    assert!(n > 50, "{n} programs compared");
+}
+
+#[test]
+fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
+    let n = dropping_unreached_clauses_in(&["packs/php", "packs/blade", "packs/rust", "packs/sql", "packs/rr", "packs/complexity"], &[], (0, 1));
+    assert!(n > 20, "{n} programs compared");
+}
+

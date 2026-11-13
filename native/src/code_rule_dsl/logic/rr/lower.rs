@@ -296,6 +296,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
+    // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
+    let mut last_heads: Option<Vec<String>> = None;
+    let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
     for (item, line) in statements {
         let at = |e: Error| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
@@ -334,6 +337,15 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
+            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
+            // its own (`rr::testing`).
+            Item::Test { .. } | Item::Fixtures { .. } => {}
+            Item::Setting { key, text } if key == "shape" => {
+                let Some(heads) = &last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
+                for h in heads {
+                    shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
+                }
+            }
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -341,8 +353,10 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                     for (rel, row) in rows {
                         l.prog.facts.entry(rel).or_default().push(row);
                     }
+                    last_heads = None;
                     continue;
                 }
+                last_heads = edits.is_empty().then(|| heads.iter().map(|h| h.rel.clone()).collect());
                 clauses.push((heads, body, edits, line));
             }
         }
@@ -358,6 +372,22 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
             e => e,
         })?;
+    }
+    // Each directive names what its rules read: a relation of their body, and the variables it waits for.
+    for (shape, line) in shapes {
+        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
+        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
+        let missing = match &shape.wait {
+            _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
+            ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
+            ShapeWait::Bound(vars) => vars.iter().find(|v| !rules.iter().any(|r| r.body.iter().any(|x| x.vars().contains(*v)))).map(|v| format!("no rule of `{}` has the variable `{v}`", shape.head)),
+            _ => None,
+        };
+        if let Some(why) = missing {
+            return Err(Error::Syntax(format!("line {line}: `.shape {}`: {why}", shape.text)));
+        }
+        l.prog.shapes.push(shape);
     }
     l.three_valued();
     l.findings()?;
@@ -536,7 +566,7 @@ impl Lowerer {
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
                     let own = self.prog.qualifiers.entry(name.clone()).or_default();
                     own.insert(q.to_owned());
-                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic")] {
+                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
                         if own.contains(a) && own.contains(b) {
                             return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
                         }
@@ -2670,6 +2700,17 @@ impl Lowerer {
                 members.entry(*g).or_default().push(l.clone());
             }
         }
+        // A cover of two or more asked variables ties them through variables not asked (c414's `call_nkwargs(c, n),
+        // call_nkwargs(s, n)`): alone it is every pair with the same `n`, 38.8 M rows on 50 files where the context
+        // reaches a handful. Its body leads with the whole groups that bind its variables, so it holds only the
+        // bindings the context can reach, still a row per binding.
+        let whole_binding: Vec<(BTreeSet<String>, Vec<Lit>)> = whole
+            .iter()
+            .map(|&g| {
+                let lits = context.iter().zip(&groups).filter(|(_, h)| **h == g).map(|(l, _)| l.clone()).collect();
+                (asked_in(g, true), lits)
+            })
+            .collect();
         let mut out = Vec::new();
         for (l, g) in context.into_iter().zip(groups) {
             if whole.contains(&g) || (left.contains(&g) && membership(&l)) {
@@ -2683,6 +2724,13 @@ impl Lowerer {
             let Some(lits) = members.remove(&g) else { continue };
             let cols = projected.iter().find(|(p, _)| *p == g).map(|(_, c)| c.clone()).expect("a projected group");
             let rel = self.fresh("cover");
+            let lits = if cols.len() > 1 {
+                let mut narrowed: Vec<Lit> = whole_binding.iter().filter(|(b, _)| cols.iter().any(|c| b.contains(c))).flat_map(|(_, l)| l.iter().cloned()).collect();
+                narrowed.extend(lits);
+                narrowed
+            } else {
+                lits
+            };
             let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
             let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
             self.prog.decls.insert(rel.clone(), types);

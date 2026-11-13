@@ -294,7 +294,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
          .scope include \"**/*.py\"\n#include \"python/names.rr\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
-         .decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
+         .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
     .unwrap();
@@ -307,6 +307,112 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
 
 /// A guard that, when the test it guards runs past `after`, samples this process's stacks (macOS `sample`) into
 /// a file beside the temp dir and says where: a hang leaves what each thread was doing. Dropped, it does nothing.
+/// Imports held as a reach index (decision 0119), declared `reach` so a rule that lost the form fails, not runs as
+/// rows. Its readers probe it every way: both columns (`CYC`, an import that closes a cycle), the start alone
+/// (`TOF`, a document that reaches `f`), and the relation through it (`SEESE`, a document that can see module `e`).
+/// `cyclic`, `reachesf` and `seese` read nothing an edit changes but the index (`no_inline`: strata of their own),
+/// so a run that kept them clean when the index changed would give stale findings.
+pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
+.description "Imports through the reach index."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl own(a: number)
+own(a) :- doc(a, _, _).
+.decl reach(a: number, b: number) reach
+reach(a, a) :- own(a).
+reach(a, c) :- reach(a, b), dep(b, c).
+.decl modof(e: number, q: symbol)
+modof(e, q) :- doc(e, _, q).
+.decl sees(a: number, q: symbol) reach
+sees(a, q) :- reach(a, e), modof(e, q).
+.decl cyclic(a: number) no_inline
+cyclic(a) :- reach(a, b), reach(b, a), a != b.
+.decl reachesf(a: number) no_inline
+reachesf(a) :- reach(a, f), doc(f, _, "f").
+.decl seese(a: number) no_inline
+seese(a) :- sees(a, "e").
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.violation INCYC(at: node) code "INCYC" "This import is in a document on a cycle."
+INCYC(i) :- impmod(i, _), docof(i, a), cyclic(a).
+.violation TOF(at: node) code "TOF" "This import is in a document that reaches f."
+TOF(i) :- impmod(i, _), docof(i, a), reachesf(a).
+.violation SEESE(at: node) code "SEESE" "This import is in a document that can see module e."
+SEESE(i) :- impmod(i, _), docof(i, a), seese(a).
+.violation DIRECT(at: node) code "DIRECT" "This import is in a document that reaches f, read in place."
+DIRECT(i) :- impmod(i, _), docof(i, a), reach(a, f), doc(f, _, "f"), sees(a, "e").
+"#;
+
+/// Two import components (a cycle `a b c`, a chain `d e`) and a lone `f`, then edits that connect them, close a
+/// cycle across them, break it, disconnect them, make a second cycle, and merge every cycle into one.
+pub(super) const REACH_START: [(&str, &str); 6] =
+    [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "from e import w\n"), ("e.py", "x = 1\n"), ("f.py", "x = 1\n")];
+pub(super) const REACH_EDITS: [(&str, &str, &str); 10] = [
+    ("c.py", "from a import z\nfrom d import v\n", "connect the cycle to the chain"),
+    ("e.py", "from a import u\n", "close a cycle across both: a b c d e"),
+    ("c.py", "from d import v\n", "break the first cycle (a b c d e still one)"),
+    ("e.py", "x = 2\n", "break the last cycle"),
+    ("c.py", "x = 3\n", "disconnect the parts"),
+    ("e.py", "from d import t\n", "a second cycle, d e"),
+    ("b.py", "from c import y\nfrom d import s\n", "connect a b c to the d e cycle"),
+    ("f.py", "from a import r\n", "connect the lone f"),
+    ("a.py", "from b import x\nfrom f import q\n", "a cycle a f"),
+    ("d.py", "from a import p\nfrom e import w\n", "merge every cycle into one"),
+];
+
+/// The reach index read again after each edit: from a store a new process reads (the frames), every run's findings
+/// those of a run with an empty store, whether the edit changed a cycle, joined two parts or split them.
+#[test]
+fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let _watchdog = watchdog("reach", std::time::Duration::from_secs(90));
+    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let base = std::env::temp_dir().join(format!("rerail-reach-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    for (path, text) in REACH_START {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let rule = base.join("reach.rr");
+    std::fs::write(&rule, REACH_RULE).unwrap();
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let findings = || {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows
+    };
+    let fresh = std::cell::Cell::new(0);
+    let run = |kept: bool| {
+        let path = if kept {
+            base.join("kept.sqlite")
+        } else {
+            fresh.set(fresh.get() + 1);
+            base.join(format!("fresh{}.sqlite", fresh.get()))
+        };
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(path));
+        super::run_all(&[program.as_str()], &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        findings()
+    };
+    let first = run(true);
+    assert_eq!(run(false), first);
+    assert!(first.iter().any(|f| f.contains("CYC")), "the first cycle's imports: {first:?}");
+    let mut codes = std::collections::BTreeSet::new();
+    for (path, text, what) in REACH_EDITS {
+        std::fs::write(src.join(path), text).unwrap();
+        let got = run(true);
+        let want = run(false);
+        assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        codes.extend(got.iter().flat_map(|f| ["CYC", "INCYC", "TOF", "SEESE", "DIRECT"].into_iter().filter(|c| f.contains(c))));
+    }
+    assert_eq!(codes.len(), 5, "every reader's findings appeared along the edits: {codes:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 pub(super) fn watchdog(name: &str, after: std::time::Duration) -> Watchdog {
     let done = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let seen = std::sync::Arc::clone(&done);
@@ -552,6 +658,127 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
+/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
+/// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under
+/// the device's binding the pieces stay apart (the device takes no gates).
+#[test]
+fn a_maintained_strata_pieces_run_as_one_component() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import k\ndef h():\n    pass\n");
+    let rule = dir.join("uses.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.decl lone(f: node)
+lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
+.output unused
+.output lone
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let run_on = |store: &str, binding: Binding| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
+        let rows = ["unused", "lone"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
+        (report.cross_maintained.0, rows)
+    };
+    let run = |store: &str| run_on(store, Binding::Cpu);
+    run("kept.sqlite");
+    let together = super::maintain::pieces_together();
+    let edits = [
+        ("c.py", "def h():\n    pass\n"),
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n"),
+        ("c.py", "from b import g\ndef h():\n    pass\n"),
+        ("b.py", "def g():\n    pass\n"),
+    ];
+    for (i, (file, body)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (maintained, rows) = run("kept.sqlite");
+        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
+    }
+    assert!(super::maintain::pieces_together() > together, "a stratum's pieces ran together");
+    // Under the device's binding the pieces stay apart: the device takes no gates. The outputs are the same.
+    let together = super::maintain::pieces_together();
+    write("c.py", "from a import k\ndef h():\n    pass\n");
+    let (maintained, rows) = run_on("kept.sqlite", Binding::Metal);
+    let (_, fresh) = run("fresh-metal.sqlite");
+    assert_eq!(rows, fresh, "under the device's binding");
+    assert!(maintained > 0, "under the device's binding: maintained");
+    assert_eq!(super::maintain::pieces_together(), together, "under the device's binding the pieces stay apart");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A recursive stratum is maintained by levels (decision 0090) though one relation's cycle is closed only by a rule
+/// over a relation with no rows: the cold run leaves that rule out, but every relation of the stratum keeps its rows'
+/// levels, so the next run finds them all. (At O125, `garg` and `gcall` closed their cycle through `tmap`, empty,
+/// and their stratum of 61 relations was maintained by delete-and-rederive.) The next run is a new process's, so
+/// the levels come back from the store's frames. The outputs are a run's with an empty store.
+#[test]
+fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("levels-kept");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from b import g\ndef h():\n    pass\n");
+    let rule = dir.join("reach.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl never(n: node)
+never(n) :- kind(n, "no_such_kind").
+.decl reach(a: node, b: node)
+reach(a, b) :- uses(a, b).
+reach(a, c) :- reach(a, b), uses(b, c).
+.decl side(a: node)
+side(a) :- reach(a, _).
+reach(a, a) :- side(a), never(a).
+.output reach
+.output side
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = ["reach", "side"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
+        (report.cross_maintained, rows)
+    };
+    run("kept.sqlite");
+    let by_levels = super::maintain::strata_by_levels();
+    write("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n");
+    let ((maintained, recursive, _), rows) = run("kept.sqlite");
+    let (_, fresh) = run("fresh.sqlite");
+    assert_eq!(rows, fresh);
+    assert!(maintained > 0 && recursive > 0, "the recursive stratum is maintained ({maintained}, {recursive})");
+    assert!(super::maintain::strata_by_levels() > by_levels, "and by levels: `side` kept its rows' levels");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0103 (t33 K1): a relation is kept as a frame under its identity, not its program's. A second program
 /// with the same rules for `def`, `imp` and `uses` finds them clean on its first run, and the first program's
 /// relations are still clean after it. A rule edit makes new only the relations it reaches.
@@ -638,7 +865,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     let count = |path: &std::path::Path, sql: &str| -> i64 { rusqlite::Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
     let tapes = count(&template, "SELECT count(*) FROM tape_objects");
     assert!(tapes > 0, "the template holds the library's tapes");
-    let identity = count(&template, "SELECT id FROM store_identity");
+    assert_eq!(count(&template, "SELECT count(*) FROM store_identity"), 0, "the template is no store until copied");
     let probe = |n: usize| {
         let template = template.clone();
         // A thread named as the harness names a test's.
@@ -651,20 +878,92 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert_eq!(std::fs::read_to_string(out.join("defs.csv")).unwrap().trim(), "f");
             let path = super::tape_cache_path().unwrap();
             assert_ne!(path, template);
-            assert!(path.to_string_lossy().contains("rerail-test-store-"), "{}", path.display());
+            assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
             let held = count("SELECT count(*) FROM tape_objects");
             assert!(held > tapes, "the library's tapes and the test's own: {held} tapes, the template's {tapes}");
-            assert_ne!(count("SELECT id FROM store_identity"), identity, "a copy is a store of its own");
-            path.parent().unwrap().to_path_buf()
+            (path.parent().unwrap().to_path_buf(), count("SELECT id FROM store_identity"))
         }).unwrap()
     };
     let (a, b) = (probe(0), probe(1));
-    let (a, b) = (a.join().unwrap(), b.join().unwrap());
+    let ((a, ia), (b, ib)) = (a.join().unwrap(), b.join().unwrap());
     assert_ne!(a, b, "two tests, two stores");
+    assert_ne!(ia, ib, "each copy took an identity of its own");
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
         assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
     }
+}
+
+/// What a test's store costs to make and remove (`test_store::copy`), the template already made: wall, CPU and the
+/// process's instructions per copy, over 200.
+#[test]
+#[ignore = "a benchmark: the cost of a test's store"]
+fn benchmark_test_store_copy() {
+    let _ = super::test_store::template();
+    drop(super::test_store::copy());
+    let n = 200;
+    let (i0, _) = rerail_compiler::native_cpu_codegen::retired();
+    let cpu0 = super::usage();
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        let store = super::test_store::copy();
+        assert!(store.path().exists());
+    }
+    let wall = t.elapsed().as_secs_f64();
+    let cpu1 = super::usage();
+    let (i1, _) = rerail_compiler::native_cpu_codegen::retired();
+    eprintln!(
+        "test store copy: {:.0} µs wall, {:.0} µs user+sys, {:.2} M instructions, each (template {} bytes)",
+        wall * 1e6 / n as f64,
+        ((cpu1.0 - cpu0.0) + (cpu1.1 - cpu0.1)) * 1e6 / n as f64,
+        (i1 - i0) as f64 / 1e6 / n as f64,
+        std::fs::metadata(super::test_store::template()).unwrap().len()
+    );
+}
+
+/// `benchmark_test_store_copy`'s steps apart: the clone, the identity's write (as `copy` makes it, and without a
+/// journal or a sync), a first open as a store, and the removal.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "a benchmark: the steps of a test's store"]
+fn benchmark_test_store_copy_steps() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let template = super::test_store::template().to_path_buf();
+    let base = tempfile::tempdir().unwrap();
+    let n = 100;
+    let step = |label: &str, f: &mut dyn FnMut(usize)| {
+        let (i0, _) = rerail_compiler::native_cpu_codegen::retired();
+        let t = std::time::Instant::now();
+        for k in 0..n {
+            f(k);
+        }
+        let (i1, _) = rerail_compiler::native_cpu_codegen::retired();
+        eprintln!("{label:<44} {:>7.0} µs wall {:>7.2} M instructions", t.elapsed().as_secs_f64() * 1e6 / n as f64, (i1 - i0) as f64 / 1e6 / n as f64);
+    };
+    let path = |round: &str, k: usize| base.path().join(format!("{round}-{k}.sqlite"));
+    let clone = |to: &std::path::Path| {
+        let a = std::ffi::CString::new(template.as_os_str().as_bytes()).unwrap();
+        let b = std::ffi::CString::new(to.as_os_str().as_bytes()).unwrap();
+        // SAFETY: NUL-terminated paths that outlive the call.
+        assert_eq!(unsafe { libc::clonefile(a.as_ptr(), b.as_ptr(), 0) }, 0);
+    };
+    step("clonefile", &mut |k| clone(&path("a", k)));
+    step("identity: UPDATE (journal, full sync)", &mut |k| {
+        rusqlite::Connection::open(path("a", k)).unwrap().execute("UPDATE store_identity SET id = random() WHERE singleton = 1", []).unwrap();
+    });
+    step("clonefile again", &mut |k| clone(&path("b", k)));
+    step("identity: UPDATE, journal off, no sync", &mut |k| {
+        let db = rusqlite::Connection::open(path("b", k)).unwrap();
+        db.execute_batch("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; UPDATE store_identity SET id = random() WHERE singleton = 1;").unwrap();
+    });
+    step("first open as a store (ContentStore::open)", &mut |k| drop(crate::content_store::ContentStore::open(&path("b", k)).unwrap()));
+    step("remove the file and its sidecars", &mut |k| {
+        for p in std::fs::read_dir(base.path()).unwrap().flatten().map(|e| e.path()) {
+            if p.file_name().unwrap().to_string_lossy().starts_with(&format!("b-{k}.")) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    });
 }

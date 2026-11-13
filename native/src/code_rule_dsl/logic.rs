@@ -113,6 +113,8 @@ pub mod settings;
 #[allow(dead_code)]
 pub mod sql;
 pub mod simplify;
+/// The reach index's form found in a program (decision 0119).
+pub mod reach_form;
 #[path = "logic/strings"]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;

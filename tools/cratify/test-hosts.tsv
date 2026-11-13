@@ -28,6 +28,7 @@ logic::front::tests	rerail-logic
 logic::front::yaml::tests	rerail-logic
 logic::magic::tests	rerail-logic
 logic::native::setfix::device::tests	rerail-engine
+logic::native::reach::tests	rerail-engine
 logic::native::setfix::lab::tests	rerail-engine
 logic::native::setfix::scalars::tests	rerail-engine
 logic::native::tests	rerail-engine
@@ -35,7 +36,7 @@ logic::plan::corpus::base_tests	rerail-engine
 logic::plan::corpus::matchers::tests	rerail-engine
 logic::plan::corpus::session::tests	rerail-engine
 logic::plan::corpus::tests	rerail-engine
-logic::plan::native_demand::tests::integration_tests	rerail-device-metal
+logic::plan::native_demand::tests::integration_tests	rerail-engine
 logic::plan::tests	rerail-engine
 logic::profile::analysis_report::tests	rerail-logic
 logic::profile::tests	rerail-logic
@@ -84,6 +85,7 @@ value::sql::tests	rerail-engine
 value::tests	rerail-engine
 violations::each_limit_tests	rerail-engine
 violations::tests	rerail-engine
+waves::owner::tests	rerail-engine
 waves::relational::admission::tests	rerail-engine
 waves::relational::batch::tests	rerail-engine
 waves::relational::inputs::tests	rerail-engine

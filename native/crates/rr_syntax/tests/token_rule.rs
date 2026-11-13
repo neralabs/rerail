@@ -61,7 +61,7 @@ fn label(n: &tape::Node) -> String {
 fn gaps() -> Vec<Gap> {
     let mut out = Vec::new();
     for (path, src) in corpus() {
-        let t = rerail_rr_syntax::tape(&src);
+        let t = rerail_rr_syntax::engine_tape(&src);
         if t.iter().any(tape::Node::is_error) {
             continue;
         }

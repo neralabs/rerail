@@ -58,12 +58,16 @@ pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     admitted: &HashMap<K, Arc<AdmittedFrame>>,
     expected: impl Fn(&K) -> Option<&'a FrameStored>,
 ) -> bool {
-    keys.iter().all(|k| admitted.get(k).map(|f| &f.stored) == expected(k))
+    // By digest: a frame's rows are its digest's. Its reads may be newer in what the run opened than as stored (a
+    // confirmed frame's, decision 0117 step 5).
+    keys.iter().all(|k| admitted.get(k).map(|f| f.stored.digest) == expected(k).map(|s| s.digest))
 }
 
 pub(in crate::code_rule_dsl) struct Kept<'s> {
     store: &'s ContentStore,
     space: [u8; 32],
+    /// The program whose run this is (`frames::Used`): what it used is kept for its own next runs.
+    program: [u8; 32],
     /// Each relation of the program, as its frame names it (`program`).
     rels: HashMap<String, FrameRel>,
     /// What is stored of those relations.
@@ -83,10 +87,11 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
         Kept {
             store,
             space,
+            program,
             rels: HashMap::new(),
             was: HashMap::new(),
             admitted: HashMap::new(),
@@ -106,7 +111,7 @@ impl<'s> Kept<'s> {
         self.values = 0;
         if !puts.is_empty() || !gone.is_empty() || used.is_some() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
-            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token())));
+            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
     }
 
@@ -213,6 +218,8 @@ pub mod tests;
 /// them when its stratum is clean (`plan::decode_kept`); but `finding`, which SQL decodes, runs again.
 pub(in crate::code_rule_dsl) struct Part {
     space: [u8; 32],
+    /// The program it is of (`retain::key`): its runs keep what it used (`frames::Used`).
+    key: [u8; 32],
     /// Each relation and input of the program, as its frame names it, and what the store holds of it.
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
@@ -253,19 +260,20 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
 }
 
 /// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
-/// whose columns an input's kept rows are read under.
+/// whose columns an input's kept rows are read under; `sccs` its strata, computed once by the caller.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
+    sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
     // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
-    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
     let cones = cones(prog, &sccs, &input_names);
@@ -290,7 +298,7 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, frames, cones })
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
 }
 
 fn load_from_snapshot(
@@ -392,5 +400,5 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
-    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token())));
+    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
 }

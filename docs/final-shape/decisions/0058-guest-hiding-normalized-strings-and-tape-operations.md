@@ -242,3 +242,55 @@ stays as it is for the host's nodes, and a clone with the variable seeded as the
 - O96, O97 and O98 are closed (see the tests above).
 - O99: guests and hiding on the 9,010-file repository, in CPU time.
 - O100: normalized strings as native operations that rules read, and later as a transducer side program.
+
+## Built: hiding's copies that are another relation, merged (2026-11-12)
+
+**What was wrong.** At O125 step 07, hiding's `rr_in_annotation_*` copies were 419 relations holding 751 k rows,
+and 39% of the step's join work read or wrote one. Two kinds were pure duplication in the program:
+
+- **Copies whose rules are another relation's**, renamed: context helpers (`rr_ctx12` as `rr_ctx11`) and copies of
+  copies (`rr_in_annotation_0_annotation_2_wrap`).
+- **Repeated rules.** Hiding's O110 clones were made again, so 407 of the cross part's 1,483 rules were exact
+  repeats of another rule. Each was planned and run on its own, though it derives nothing new. A repeat also kept
+  its relation apart from its twin, since `simplify`'s congruence compares rule lists.
+
+**What runs now.** After hiding and combining, and again after the joins are pushed, the program drops repeated
+rules and merges identical relations (`simplify::merge_identical`), in turn until neither changes anything
+(`corpus::merge_to_fixpoint`). `RERAIL_SAME=off` turns it off. The test
+`the_combined_program_has_no_relation_twice_and_no_rule_twice` guards the combined `calls` program; with the
+switch off it finds 39 classes.
+
+**Measured at O125 step 07** (outputs equal to a full run's):
+
+| | Before | After |
+|---|---:|---:|
+| Cross-part rules | 1,483 | 1,053 |
+| Strata (run / all) | 775 / 829 | 596 / 645 |
+| Session CPU, step 07 | 17.4 s | 12.8 s |
+| Instructions, whole replay (cold run at 06 included) | 695.1 G | 621.9 G (first version) |
+| Peak memory | 1,152 MB | 1,049 MB |
+
+**Then: the copies for guests in the run's own language, folded (2026-11-12).** The copies left held their
+originals' rows exactly (76 of them, 329 k rows), though their rules differ. That is not a coincidence of the
+corpus. A copy exists for a guest grammar, here `annotation`, whose label is `python`:
+
+- A guest whose grammar's label is the run's language is keyed in the shown range, `GUEST_KEYS..HIDDEN_KEYS`
+  (`guests::key`). So the bound that a copy drops on its seeded column holds there anyway.
+- Its qualified kinds resolve through its label's kind table (`plan::lower`): in a Python run, `python:x` is `x`.
+- What else a copy reads is other copies, equal to theirs in the same way.
+
+So in a Python run, with guests shown, every copy specialised only to Python's own guests is its original. Hiding
+runs when the programs are combined, before the run knows its language (it comes from the files found). So the run
+folds them once it does, before the prepared program's key, which already holds the language
+(`hiding::fold_own`). Readers read the original, the copies' rules and kind sets go, and a `python:` kind is written
+plainly. An O110 clone is then its rule again, and `merge_to_fixpoint` drops it. Copies for another grammar's guests
+(an SQL string in Python) and every copy in a run with guests hidden are kept. `RERAIL_SHOWN_COPIES=on` keeps them
+all. Test: `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`.
+
+| O125 step 07, outputs equal to a full run's | Copies kept | Folded |
+|---|---:|---:|
+| Copies (`RERAIL_COPIES`) | 269 (503 k rows) | 0 |
+| Strata (run / all) | 596 / 645 | 310 / 338 |
+| Join work, session | 3.54 M | 1.75 M |
+| Instructions, whole replay without the full run | 551.3 G | 389.1 G |
+| Peak memory, the same | 1,064 MB | 815 MB |

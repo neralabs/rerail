@@ -214,6 +214,9 @@ pub struct Observer {
     open: u32,
     /// The roots the store has a cursor for (`journal`): a path under one is watched as the run first reads it.
     stored_roots: Vec<PathBuf>,
+    /// Each root's volume as the system named it (`journal::volume`), asked once a root the observer watches: a
+    /// cursor is of its volume. With the roots, the observer's own state.
+    volumes: Vec<(PathBuf, Option<[u8; 16]>)>,
     /// Where the journal's cookies are written: beside the store.
     cookies: Option<PathBuf>,
 }
@@ -307,7 +310,28 @@ impl Observer {
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
             .unwrap_or_default();
-        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, cookies }
+        // The journal's streams for the roots the last runs watched, started now: their replays run while the process
+        // starts, before a run asks (decision 0105).
+        let mut volumes: Vec<(PathBuf, Option<[u8; 16]>)> = Vec::new();
+        if journal_on()
+            && let (Some(k), Some(dir)) = (db.as_ref(), cookies.as_deref())
+        {
+            let roots: Vec<(PathBuf, String)> = stored_roots
+                .iter()
+                .filter_map(|r| {
+                    let v = super::journal::volume(r);
+                    volumes.push((r.clone(), v));
+                    let v = v?;
+                    match k.meta.get(&cursor_key(r, v))? {
+                        rusqlite::types::Value::Text(t) => Some((r.clone(), t.clone())),
+                        rusqlite::types::Value::Integer(i) => Some((r.clone(), i.to_string())),
+                        _ => None,
+                    }
+                })
+                .collect();
+            super::journal::prepare(&roots, dir);
+        }
+        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies }
     }
 
     /// Waits until everything this observer queued is in its file: a process's end, or a test's next observer.
@@ -506,6 +530,10 @@ impl Observer {
     /// asked of the journal again (`watch`).
     pub fn begin(&mut self) {
         self.git.clear();
+        // An outermost run: the journal is synchronised once for it, and the runs inside it share that.
+        if self.open == 0 {
+            super::journal::next_epoch();
+        }
         self.open += 1;
     }
 
@@ -532,7 +560,14 @@ impl Observer {
             if !self.stored_roots.contains(&root) {
                 self.stored_roots.push(root.clone());
             }
-            let volume = super::journal::volume(&root);
+            let volume = match self.volumes.iter().find(|(r, _)| *r == root) {
+                Some((_, v)) => *v,
+                None => {
+                    let v = super::journal::volume(&root);
+                    self.volumes.push((root.clone(), v));
+                    v
+                }
+            };
             // A cursor is of the volume it was taken on: kept under the volume's id with the root.
             let cursor = volume.and_then(|v| self.db.as_ref()?.meta.get(&cursor_key(&root, v)).cloned());
             // A cursor is the journal's own text (an FSEvents id, a Watchman clock); one kept as a number is an id.

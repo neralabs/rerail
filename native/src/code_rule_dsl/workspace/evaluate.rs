@@ -1283,7 +1283,9 @@ pub(super) fn encode_tape(
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
-    let own = tape::tree_parser(language).filter(|parser| !parser.stands_in_for_tree_sitter());
+    // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for tree-sitter's
+    // (JSON's Bitlex parser): a file that parser leaves to tree-sitter is read below, as the dialect's others are.
+    let own = tape::tree_parser(language);
     let own_image = match own.map(|parser| encode_own_image(file, grammar, parser, &interrupted, metrics)) {
         Some(Err(failure)) => return Ok(Err(failure)),
         Some(Ok(image)) => image,
@@ -1300,7 +1302,8 @@ pub(super) fn encode_tape(
     Ok(keep_tape(file, image))
 }
 
-/// Parses `file` with its dialect's own parser (Blade's Forte, `tape::TreeParser`) and encodes its tape.
+/// Parses `file` with its dialect's own parser (Blade's Forte, JSON's Bitlex parser: `tape::TreeParser`) and
+/// encodes its tape.
 /// `Err(failure)` where the parser stopped at a limit; `None` where it left the file to tree-sitter.
 fn encode_own_image(
     file: &FileState,

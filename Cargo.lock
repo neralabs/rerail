@@ -282,6 +282,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3164,6 +3170,7 @@ dependencies = [
  "libc",
  "rayon",
  "rerail-compiler",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3301,9 +3308,12 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-sessions",
+ "rerail-simdjson",
  "rerail-store",
+ "rerail-tape-format",
  "rerail-transducer",
  "rerail-w",
+ "roaring",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3455,6 +3465,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -3594,6 +3605,7 @@ dependencies = [
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-simdjson",
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
@@ -3947,6 +3959,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "roaring",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4128,6 +4141,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-rr-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-rr-parser",
+ "rerail-rr-syntax",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-rr-aot-gen"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+ "rerail-rr-parser",
+]
+
+[[package]]
 name = "rerail-rr-parser"
 version = "0.1.0"
 dependencies = [
@@ -4137,6 +4169,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-metal",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "sha2 0.10.9",
 ]
 
@@ -4179,6 +4212,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4272,6 +4306,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-simdjson"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "memchr",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
@@ -4293,6 +4337,13 @@ dependencies = [
  "tempfile",
  "tikv-jemalloc-sys",
  "zstd",
+]
+
+[[package]]
+name = "rerail-tape-format"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4432,6 +4483,16 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "roaring"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18bd8a37d17a58532776dcdf6041ce64929adca78e8489d5cacbafe99229d3e1"
+dependencies = [
+ "bytemuck",
+ "byteorder",
 ]
 
 [[package]]
@@ -4691,6 +4752,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+ "sha2-asm",
 ]
 
 [[package]]
@@ -4702,6 +4764,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

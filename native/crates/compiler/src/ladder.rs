@@ -114,7 +114,7 @@ impl Lang {
         let mut marks = Vec::new();
         for s in stmts {
             match s {
-                Stmt::Mark { kind, .. } => marks.push(kind.clone()),
+                Stmt::Mark { kind, .. } | Stmt::TokenMark { kind, .. } => marks.push(kind.clone()),
                 Stmt::Class(n, r) => {
                     classes.insert(n.clone(), r.clone());
                 }
@@ -533,7 +533,8 @@ pub fn check_shape(name: &str, c: &Compiled) {
             Step::Token | Step::Block | Step::Return => true,
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
-            Step::File | Step::Bits | Step::Round => false,
+            // No loop over bits: a local check (`CHECK`) is word-parallel, a loop over words.
+            Step::Bits | Step::File | Step::Round => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
@@ -549,7 +550,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
         let out: Vec<&str> = asm.lines().filter(|l| transfers(l).iter().any(|t| matches!(t, Transfer::NearCall | Transfer::Jump))).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
         assert_eq!(count_transfers(asm, Transfer::Table), tables, "{name}: {tier} jumps other than by its own tables");
-        assert_eq!(count_transfers(asm, Transfer::FarCall), own, "{name}: {tier} calls out");
+        assert_eq!(count_transfers(asm, Transfer::FarCall), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| transfers(l).iter().any(|t| matches!(t, Transfer::FarCall))).collect::<Vec<_>>());
     }
 }
 

@@ -949,6 +949,39 @@ fn definition_ids_fold_and_continue_past_their_fields() {
     }
 }
 
+/// `node_order`'s keys (decision 0121): in preorder in every document, and an edit inside one granule moves no other
+/// granule's keys, where a preorder index moves every node after the edit. Adding a granule moves those after it, still
+/// in preorder.
+#[test]
+fn node_order_keys_follow_preorder_and_keep_other_granules() {
+    if !definition_ids() {
+        return;
+    }
+    // Each leaf's text, id and order key; and whether the keys ascend in preorder.
+    let keys = |source: &str| {
+        let (_, p) = leaf_ids("python", "a.py", source);
+        let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
+        let f = &*p.facts;
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.core[l as usize]).is_empty()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l), p.order(l))).collect();
+        assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
+        (ascending, leaves)
+    };
+    let before = "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n    tail = 'ct'\n\ndef g():\n    return os.path.join('gx', 'gy')\n";
+    // `f`'s body grows; `C`'s nested method splits `C`'s nodes into two runs, which stay as they were.
+    let edited = before.replace("    return a + 1\n", "    y = [a, a, a]\n    return a + y[0]\n");
+    // A statement added before `f`: the ranks after it move.
+    let added = before.replace("LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n");
+    let (a0, k0) = keys(before);
+    let (a1, k1) = keys(&edited);
+    let (a2, _) = keys(&added);
+    assert!(a0 && a1 && a2, "keys not in preorder");
+    let kept = |k: &BTreeSet<(String, i64, u32)>, text: &str| k.iter().filter(|(t, _, _)| t == text).map(|(_, id, key)| (*id, *key)).collect::<Vec<_>>();
+    for text in ["os", "LIMIT", "size", "x", "self", "tail", "path", "join"] {
+        assert!(!kept(&k0, text).is_empty(), "{text} not a leaf");
+        assert_eq!(kept(&k0, text), kept(&k1, text), "{text} moved: an edit in f moved another granule's id or order key");
+    }
+}
+
 /// The bit widths from data (decision 0094 §2): over every source file under `DEFIDS_DIRS` (`:`-separated; files by
 /// suffix, `node_modules` and virtualenvs left out), per language: files, the most granules in a document and its
 /// 99th percentile, the most nodes and tokens in one granule, documents folded or continued, and the numbering's CPU.
@@ -1009,7 +1042,7 @@ fn definition_ids_census() {
                         let f = &*facts;
                         let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).iter().filter(|&&c| !f.named(c) && f.end[c as usize] > f.start[c as usize]).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens);
+                        let _ = granules::number(&p, &dialect, &tokens).0;
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
                         row.nodes += p.core.len() + tokens.len();
@@ -1193,5 +1226,58 @@ fn granule_kinds_are_a_table_by_kind_code() {
             assert_eq!(dialect.granule_kind(code as u16), want, "{label}: {name}");
         }
         assert!(seen > 0, "{label}: no kind starts or holds a granule");
+    }
+}
+
+/// What an edit changes of `node_order` (measured for the stable order keys): over `ORDER_PAIRS` (lines `step\told
+/// file\tnew file`, Python), the rows deleted plus inserted under each key: the preorder index (today's), a granule
+/// run's rank and the index inside the granule (no state: the same for a full run), and the floor, the nodes whose
+/// ids change (their rows change under any key).
+#[test]
+#[ignore]
+fn node_order_keys_census() {
+    let pairs = std::fs::read_to_string(std::env::var("ORDER_PAIRS").expect("ORDER_PAIRS")).unwrap();
+    // Each scheme's rows (id, key) of a document.
+    let rows = |path: &str| -> [BTreeSet<(i64, i64)>; 3] {
+        let src = std::fs::read_to_string(path).unwrap();
+        let (_, p) = leaf_ids("python", "a.py", &src);
+        let dialect = Dialect::new(core::facts_tag(&p.facts)).unwrap();
+        let of = granules::granule_of(&p, &dialect);
+        let n = p.core.len();
+        let mut pre = BTreeSet::new();
+        let mut runs = BTreeSet::new();
+        let mut ids = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        let (mut rank, mut idx) = (0i64, vec![0i64; of.iter().max().map_or(1, |&m| m as usize + 1)]);
+        for l in 0..n {
+            let id = p.global(l as u32);
+            if l > 0 && of[l] != of[l - 1] {
+                rank += 1;
+            }
+            let g = of[l] as usize;
+            pre.insert((id, l as i64));
+            runs.insert((id, rank << 32 | idx[g]));
+            assert_eq!(runs.len(), pre.len());
+            keys.insert((id, i64::from(p.order(l as u32))));
+            idx[g] += 1;
+            ids.insert((id, 0));
+        }
+        assert_eq!(runs.len(), keys.len());
+        [pre, keys, ids]
+    };
+    let mut total = [[0usize; 3]; 3];
+    for line in pairs.lines() {
+        let mut f = line.split('\t');
+        let (step, old, new) = (f.next().unwrap(), f.next().unwrap(), f.next().unwrap());
+        let (a, b) = (rows(old), rows(new));
+        let d: Vec<usize> = (0..3).map(|i| a[i].symmetric_difference(&b[i]).count()).collect();
+        let s = ["06", "07", "08"].iter().position(|x| *x == step).unwrap();
+        for i in 0..3 {
+            total[s][i] += d[i];
+        }
+        println!("{step} {:>6} nodes  preorder {:>6}  runs {:>6}  floor {:>6}  {}", b[0].len(), d[0], d[1], d[2], new.rsplit('/').take(2).collect::<Vec<_>>().join(" < "));
+    }
+    for (s, t) in total.iter().enumerate() {
+        println!("step {}: preorder {}  runs {}  floor {}", ["06", "07", "08"][s], t[0], t[1], t[2]);
     }
 }

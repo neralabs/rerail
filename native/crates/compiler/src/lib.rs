@@ -34,6 +34,8 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_rows;
 pub mod native_cpu_clusters;
 pub mod native_cpu_shape;
+pub mod clif_rust;
+pub mod rust_stream;
 pub mod native_cpu_stream;
 pub mod native_ir;
 pub mod program;

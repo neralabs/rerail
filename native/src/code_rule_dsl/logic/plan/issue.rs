@@ -264,9 +264,9 @@ impl<'a> Board<'a> {
             members.sort_unstable();
             let rules: Vec<Vec<&'a Rule>> = members.iter().map(|&m| rules_of(m)).collect();
             let digests: Vec<u64> = rules.iter().flatten().map(|r| obs_rule(&r.head, &r.body)).collect();
-            let all: Vec<&Rule> = rules.iter().flatten().copied().collect();
-            // A component whose statistics cannot be made for its strand runs on the loop's thread, as it would.
-            let Ok(strand) = run.strand(&reads, &digests, &Model::read_by(all.iter().copied())) else {
+            // Its statistics are not made here: the components issued together request theirs, made in one batch
+            // below (decision 0123). A component whose strand cannot be made runs on the loop's thread, as it would.
+            let Ok(strand) = run.strand(&reads, &digests, &[]) else {
                 if let Some(t) = &self.trace {
                     members.iter().for_each(|&m| t.why.borrow_mut()[m] = "its statistics not made");
                 }
@@ -286,6 +286,16 @@ impl<'a> Board<'a> {
         }
         if issued.is_empty() {
             return Ok(());
+        }
+        // Decision 0123: the statistics the issued components' plans will read, requested by each line that will be
+        // priced (its seeds; its probes), made in one batch. The strands bind the same lazy statistics, so each
+        // takes them as made; what a stratum's own rounds find still to make is made there.
+        if run.model.has_deferred() {
+            let mut wanted = BTreeSet::new();
+            let strata: Vec<usize> = issued.iter().flat_map(|&c| self.comps[c].members.clone()).collect();
+            let strata: Vec<(&BTreeSet<String>, Vec<&Rule>)> = strata.iter().map(|&m| (&sccs[m], run.runnable(&sccs[m], &rules_of(m)))).collect();
+            run.model.wants_strata(strata, &mut wanted);
+            run.model.make_statistics(run.prog, &wanted)?;
         }
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
         let mut wants: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
@@ -320,7 +330,9 @@ impl<'a> Board<'a> {
                 let mut strand = strand;
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
+                let before = super::super::lanes::wave::flushed_now();
                 let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                strand.2 = super::super::lanes::wave::since(before);
                 (strand, n, stop, times, reserved)
             }));
         }
@@ -407,6 +419,7 @@ impl<'a> Board<'a> {
         let Some(c) = self.member_of[at] else { return Ok(Got::Not) };
         let mut nap = 20e-6f64;
         loop {
+            let seen = stream.ended();
             match &self.comps[c].state {
                 State::Done(..) => break,
                 State::Job(h) if !stream.done(h) && !stream.queued(h) => {}
@@ -423,7 +436,8 @@ impl<'a> Board<'a> {
                 nap = 20e-6;
                 continue;
             }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+            // Woken when a job ends (one of a component's, which `collect` then retires), not after a nap.
+            stream.pause(seen, nap);
             nap = (nap * 2.0).min(1e-3);
         }
         let comp = &mut self.comps[c];

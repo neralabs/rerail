@@ -157,6 +157,19 @@ fn calls_name() -> String {
     std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls".to_owned())
 }
 
+/// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
+/// (`corpus::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
+/// O125's cross-file rules and a quarter of a one-file edit's CPU.
+#[test]
+fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
+    let text = program("calls");
+    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()], "").unwrap();
+    let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
+    assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
+    let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
+    assert_eq!(repeated, 0, "rules that repeat another");
+}
+
 fn program(name: &str) -> String {
     crate::code_rule_dsl::logic::settings::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }

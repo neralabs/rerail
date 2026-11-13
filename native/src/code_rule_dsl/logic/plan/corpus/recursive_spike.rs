@@ -1781,7 +1781,7 @@ pub(in crate::code_rule_dsl) fn run(
             program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Str(_) => i64::MIN }).collect()).collect())
         };
         let new_of = |rel: &str| derived.iter().find(|(r, _, _)| r == rel).map(|(_, w, h)| rel_rows(h, *w)).or_else(|| inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| rows_of(s.as_ref())));
-        let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
+        let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(&h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
         let old_rows: usize = scc.iter().filter_map(|r| old_of(r)).map(|r| r.len()).sum();
         // A component not maintained this run loses what it carried: its rows moved without it.
         let forget = || {

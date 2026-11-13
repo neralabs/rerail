@@ -296,6 +296,23 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   /** Canonical CPython facts for a whole document demand batch; source is never executed. */
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
+  /**
+   * The tests the `.rr` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
+   * `NativeRrTestResult` (`rerail-engine test-rr`).
+   */
+  testRr(pathsJson: string, filter?: string | null): string;
+}
+
+/** One test of a `.rr` file, as `testRr` reports it. */
+export interface NativeRrTestResult {
+  file: string;
+  test: string;
+  line: number;
+  status: "pass" | "fail";
+  /** Each failed `.expect`, with its line and what the run had instead. */
+  failures: string[];
+  /** The run's findings, as keys: `code at "path":line`. */
+  findings: string[];
 }
 
 /** A policy document for the first slice: its name (the file stem), source and format. */
@@ -415,7 +432,7 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at store floor 3). */
+  /** The content-store file name this binary's store schema owns (`content-v4.sqlite` at store floor 4). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

@@ -30,6 +30,12 @@ pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
+
+/// `src`'s tape as nodes: the lean parser's image (decision 0140) read back (`tape::nodes`), what
+/// the statements are read off as a stored tape's are (decision 0062).
+pub fn nodes(src: &str) -> Vec<tape::Node> {
+    tape::nodes(&tape(src)).expect("the lean parser's image decodes")
+}
 #[path = "rr"]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
@@ -93,37 +99,9 @@ pub fn parse_own(src: &str) -> Result<Program, Error> {
     parse_with(src, false)
 }
 
+// A run handed a program it read is handed the program itself (`corpus::run_read`), not its print to lower again.
 fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
-    if clauses && let Some(program) = lowered(src) {
-        crate::code_rule_dsl::prof::count("rr.lowered_reused", 1);
-        return Ok(program);
-    }
     read_text(src)?.lower(clauses)
-}
-
-/// Programs already lowered, by the digest of the text they print as (`remember_lowered`).
-static LOWERED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], Program>>> = std::sync::LazyLock::new(Default::default);
-
-fn text_digest(src: &str) -> [u8; 32] {
-    use sha2::Digest as _;
-    sha2::Sha256::digest(src.as_bytes()).into()
-}
-
-/// Keeps `program` as the program `text` (its print) is: a run handed the text (`tools::run_rr`, which read the file
-/// and lowered it) parses it back to `program` itself, not lowering it a second time. Lowering a printed program
-/// is no identity (a regex's group bindings are added again, a unit atom grounds a rule of constants), so the run
-/// would otherwise hold another program than the one read.
-pub fn remember_lowered(text: &str, program: &Program) {
-    if let Ok(mut kept) = LOWERED.lock() {
-        if kept.len() >= 256 {
-            kept.clear();
-        }
-        kept.insert(text_digest(text), program.clone());
-    }
-}
-
-fn lowered(src: &str) -> Option<Program> {
-    LOWERED.lock().ok()?.get(&text_digest(src)).cloned()
 }
 
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its
@@ -141,7 +119,7 @@ enum Read {
 
 /// `src` read once, its includes resolved (`Text`).
 pub fn read_text(src: &str) -> Result<Text, Error> {
-    let statements = from_tape::statements(src, &tape(src))?;
+    let statements = from_tape::statements(src, &nodes(src))?;
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         refuse_ungrounded(&statements, &BTreeSet::new())?;
         return Ok(Text(Read::Plain(statements)));
@@ -280,18 +258,78 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
     Ok(program)
 }
 
-/// The library files a program's text reads, includes resolved (`core.rr` first unless the text is in T's shape):
-/// what a record of the run must check besides the text (phase 0, t23). Empty for a text that includes nothing.
+/// A program text read once for what a run needs of it besides its rules (`plan::corpus::run_with_options`): its
+/// statements, and the seed phase 0 derives its include graph from. Once every text's graph is derived
+/// (`phase0::graphs`, one run for all of them), [`TextRead::resolved`] gives its library files, the relations it
+/// declares and the phase it names. The whole-run cutoff, its record and the texts' digest take these; none reads a
+/// text again (each parsed a pack's 278 texts again, about eight times a process).
+pub struct TextRead {
+    /// `None` for a text that includes nothing, or while phase 0 itself runs (`text_seed`).
+    pub seed: Option<super::plan::corpus::phase0::Seed>,
+    statements: Vec<syntax::Statement>,
+}
+
+/// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rr` first unless the
+/// text is in T's shape, and the engine's own library programs), the relations it and its includes declare, and the
+/// phase it names itself (`.phase`).
+pub struct TextNames {
+    pub included: Vec<PathBuf>,
+    pub names: Vec<String>,
+    pub phase: Option<String>,
+}
+
+/// `src` parsed, and its seed (`TextRead`).
+pub fn read_seed(src: &str) -> Result<TextRead, Error> {
+    use super::plan::corpus::phase0;
+    let statements = from_tape::statements(src, &nodes(src))?;
+    let includes: Vec<(i64, String)> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Include(name) => Some(name.clone()),
+            _ => None,
+        })
+        .enumerate()
+        .map(|(k, n)| (k as i64, n))
+        .collect();
+    let seed = (!includes.is_empty() && !phase0::active()).then(|| {
+        let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+        phase0::Seed::Text { t_shape, includes }
+    });
+    Ok(TextRead { seed, statements })
+}
+
+impl TextRead {
+    /// The text's library files, names and phase, its includes resolved in the graph phase 0 derived for its seed.
+    pub fn resolved(self) -> Result<TextNames, Error> {
+        let (files, own) = if self.statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) { resolve(self.statements)? } else { (Vec::new(), self.statements) };
+        let (mut names, mut phase) = (Vec::new(), None);
+        for (item, _) in files.iter().flat_map(|(_, st)| st.iter()).chain(own.iter()) {
+            match item {
+                syntax::Item::Decl { name, .. } => names.push(name.clone()),
+                syntax::Item::Setting { key, text } if key == "phase" && phase.is_none() => phase = Some(text.trim().to_owned()),
+                _ => {}
+            }
+        }
+        names.sort();
+        names.dedup();
+        let mut included: Vec<PathBuf> = files.into_iter().map(|(p, _)| p).collect();
+        // The engine's own library programs, which the runner adds to a run (decision 0076's components).
+        included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+        Ok(TextNames { included, names, phase })
+    }
+}
+
+/// The library files a program's text reads (`TextNames::included`): what a record of the run must check besides
+/// the text (phase 0, t23). For a text read alone; a run reads its programs once (`read_seed`).
 pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
-    let statements = from_tape::statements(src, &tape(src))?;
-    let mut paths: Vec<PathBuf> = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
-        resolve(statements)?.0.into_iter().map(|(p, _)| p).collect()
-    } else {
-        Vec::new()
-    };
-    // The engine's own library programs, which the runner adds to a run (decision 0076's components).
-    paths.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
-    Ok(paths)
+    Ok(read_seed(src)?.resolved()?.included)
+}
+
+/// The relations a program's text declares, its includes' with its own, and the phase it names itself
+/// (`TextNames`): for a text read alone (a phase program found by name, `corpus::phases::phase_files`).
+pub fn declared_names(src: &str) -> Result<(Vec<String>, Option<String>), Error> {
+    let t = read_seed(src)?.resolved()?;
+    Ok((t.names, t.phase))
 }
 
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
@@ -346,41 +384,18 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
 }
 
 /// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
-    paths
-        .into_iter()
-        .map(|p| {
-            let (statements, _) = read_shared(&p)?;
-            Ok((p, statements.iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).cloned().collect()))
-        })
-        .collect()
-}
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
-    use sha2::Digest as _;
-    use std::sync::{Mutex, OnceLock};
     // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
     // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
     if phase0::active() || !src.contains("#include") {
         return Ok(None);
     }
-    // A function of the text alone, so read once a process: every digest of a run's texts (`texts_digest`) asks it.
-    static SEEDS: OnceLock<Mutex<std::collections::HashMap<[u8; 32], Option<phase0::Seed>>>> = OnceLock::new();
-    let key: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
-    let seeds = SEEDS.get_or_init(Default::default);
-    if let Some(seed) = seeds.lock().expect("text seeds").get(&key) {
-        return Ok(seed.clone());
-    }
-    let seed = read_text_seed(src)?;
-    let mut kept = seeds.lock().expect("text seeds");
-    if kept.len() >= 256 {
-        kept.clear();
-    }
-    kept.insert(key, seed.clone());
-    Ok(seed)
+    // Read once a run: the run hands its texts' graph digests to its combines (`corpus::run_handed`).
+    read_text_seed(src)
 }
 
 fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
@@ -391,7 +406,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
         return Ok(None);
     }
-    let statements = from_tape::statements(src, &tape(src))?;
+    let statements = from_tape::statements(src, &nodes(src))?;
     let names: Vec<(i64, String)> = statements
         .iter()
         .filter_map(|(item, _)| match item {
@@ -541,7 +556,7 @@ impl LibraryFile {
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
-const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
@@ -557,7 +572,26 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
         return Ok((program.clone(), files.clone()));
     }
-    let (statements, files) = program(path)?;
+    // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
+    // to drop most of them (`unreached_dropped`).
+    let (shared, files) = program_shared(path)?;
+    let own = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
+    let program = lower_files_dropping(path, statements, false)?;
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+/// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
+/// as `read_file` reads it. Testing mode (`rr::testing`, decision 0130) gives the file's statements with a test's
+/// spliced in.
+pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
+    lower_files_dropping(path, statements, true)
+}
+
+/// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
+pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
+    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
     let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
@@ -565,6 +599,8 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
     }
+    // The included files' clauses nothing in the program reaches: dropped before they are checked and lowered.
+    let statements = if drop { unreached_dropped(&own_path, statements) } else { statements };
     token_reads::refuse(&statements)?;
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
@@ -579,8 +615,140 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     if !library.is_empty() {
         program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
-    Ok((program, files))
+    Ok(program)
+}
+
+/// `statements` less the included files' clauses that nothing in the program reaches. Of the 44 data-layer
+/// policies' rules, 76% were lowered (with the libraries' whole) and then pruned (`front::prune`): reading a policy
+/// was the largest part of a batch's setup (`lower_files`, 16% of the main thread). Kept whole: the file itself,
+/// `core.rr` and the engine's files (lowering reads their relations by name), and every item but a clause. A clause
+/// of another file is kept when one of its heads is reached: named by the file itself (each identifier of each of
+/// its items, so none is missed), by another file's output, violation or setting, by the engine (`LIBRARY_DERIVED`),
+/// by its own body when that makes a request (`asks`), or read by a kept clause. Every clause for a relation is kept with any, so a library relation is the same in each
+/// program that reaches it (decision 0091). `front::prune` of the program lowered from these is the same as of the whole
+/// (`dropping_unreached_clauses_prunes_to_the_same_program`).
+pub fn unreached_dropped(own: &Path, statements: Files) -> Files {
+    reached_statements(own, &statements.iter().map(|(p, s)| (p, s.iter().collect())).collect::<Vec<_>>())
+}
+
+/// Whether a read of `name` makes a request when lowered (`lower`'s demands): the file system's relations (`WORLD`), a
+/// guest's (`parsed`, `sub_tape`) and a tape operation's (`parse_of`, `splice_of`, and `@parse`, `@splice`, which
+/// lower to them). What is asked for is made for every reader, not the asking clause alone.
+fn asks(name: &str) -> bool {
+    WORLD.iter().any(|(r, _)| *r == name) || matches!(name, "parsed" | "sub_tape" | "parse_of" | "splice_of" | "parse" | "splice")
+}
+
+/// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
+fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
+    fn idents(text: &str, out: &mut BTreeSet<String>) {
+        out.extend(text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')).map(str::to_owned));
+    }
+    fn term(t: &syntax::Term, out: &mut BTreeSet<String>) {
+        match t {
+            syntax::Term::Call { name, args, .. } => {
+                out.insert(name.clone());
+                args.iter().for_each(|a| term(a, out));
+            }
+            syntax::Term::Bin { l, r, .. } => {
+                term(l, out);
+                term(r, out);
+            }
+            syntax::Term::Agg { over, by, body, .. } => {
+                over.iter().for_each(|o| term(o, out));
+                by.iter().for_each(|b| term(b, out));
+                lits(body, out);
+            }
+            syntax::Term::Named(_, t) => term(t, out),
+            // A relation may be an argument (`nearest(n, p, block_node)`, a set of nodes): every name in a term may
+            // be one.
+            syntax::Term::Json(text) | syntax::Term::Str(text) | syntax::Term::Tick(text) => idents(text, out),
+            syntax::Term::Var(v) => {
+                out.insert(v.clone());
+            }
+            _ => {}
+        }
+    }
+    fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
+        for l in body {
+            match l {
+                syntax::Lit::Atom { rel, args, .. } => {
+                    out.insert(rel.clone());
+                    args.iter().for_each(|a| term(a, out));
+                }
+                syntax::Lit::Cmp { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                syntax::Lit::Pattern { subject, .. } => term(subject, out),
+                syntax::Lit::Group { alts, .. } => alts.iter().for_each(|a| lits(a, out)),
+            }
+        }
+    }
+    let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
+    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
+    // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
+    // `load(…)` asked for no document, and no import was resolved.
+    let mut reached: BTreeSet<String> = LIBRARY_DERIVED.iter().map(|r| (*r).to_owned()).collect();
+    // Each other file's clauses by head: (file, statement) indices.
+    let mut by_head: std::collections::HashMap<&str, Vec<(usize, usize)>> = std::collections::HashMap::new();
+    for (f, (file, items)) in statements.iter().enumerate() {
+        let kept_whole = whole.contains(file);
+        for (s, (item, _)) in items.iter().copied().enumerate() {
+            match item {
+                syntax::Item::Clause { heads, body, edits } if !kept_whole => {
+                    heads.iter().for_each(|h| by_head.entry(h.rel.as_str()).or_default().push((f, s)));
+                    // A clause whose reads make requests (`asks`) is reached though nothing reads its heads: the engine
+                    // answers its request for every reader (`python/modules.rr`'s `py_listed` lists the directories the
+                    // other rules read entries of).
+                    let mut read = BTreeSet::new();
+                    lits(body, &mut read);
+                    edits.iter().for_each(|e| term(e, &mut read));
+                    if read.iter().any(|r| asks(r)) {
+                        reached.extend(heads.iter().map(|h| h.rel.clone()));
+                    }
+                }
+                syntax::Item::Clause { heads, body, edits } => {
+                    heads.iter().for_each(|h| {
+                        reached.insert(h.rel.clone());
+                        h.args.iter().for_each(|a| term(a, &mut reached));
+                    });
+                    lits(body, &mut reached);
+                    edits.iter().for_each(|e| term(e, &mut reached));
+                }
+                // What another file declares reads nothing (`.decl`, `.input`, `.stored`, `.functor`, `.type`, `.edit`):
+                // its relations are reached only when read. Its outputs, violations and settings are read.
+                syntax::Item::Decl { .. } | syntax::Item::Functor { .. } | syntax::Item::Type { .. } | syntax::Item::Edit { .. } | syntax::Item::Lattice { .. } | syntax::Item::Include(_) | syntax::Item::Io { output: false, .. } if !kept_whole => {}
+                other => idents(&format!("{other:?}"), &mut reached),
+            }
+        }
+    }
+    let mut keep: BTreeSet<(usize, usize)> = BTreeSet::new();
+    let mut todo: Vec<String> = reached.iter().cloned().collect();
+    while let Some(rel) = todo.pop() {
+        for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten() {
+            if !keep.insert((f, s)) {
+                continue;
+            }
+            let syntax::Item::Clause { heads, body, edits } = &statements[f].1[s].0 else { continue };
+            let mut more = BTreeSet::new();
+            heads.iter().for_each(|h| {
+                more.insert(h.rel.clone());
+                h.args.iter().for_each(|a| term(a, &mut more));
+            });
+            lits(body, &mut more);
+            edits.iter().for_each(|e| term(e, &mut more));
+            todo.extend(more.into_iter().filter(|r| reached.insert(r.clone())));
+        }
+    }
+    statements
+        .iter()
+        .enumerate()
+        .map(|(f, (file, items))| {
+            let kept_whole = whole.contains(*file);
+            let items = items.iter().copied().enumerate().filter(|(s, (item, _))| kept_whole || !matches!(item, syntax::Item::Clause { .. }) || keep.contains(&(f, *s))).map(|(_, i)| i.clone()).collect();
+            ((*file).clone(), items)
+        })
+        .collect()
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
@@ -707,7 +875,7 @@ pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {
-    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::tape_cache().ok().flatten() } else { None };
+    let store = if cfg!(feature = "tape-cache") { super::plan::corpus::phases::reading_store() } else { None };
     if let Some(store) = store {
         let src = std::sync::Arc::new(src);
         let file = crate::code_rule_dsl::facts::core::Source { language: "rr".to_owned(), source: std::sync::Arc::clone(&src) };
@@ -715,12 +883,12 @@ fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>
             crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
             return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
         }
-        return from_tape::statements(&src, &tape(&src));
+        return from_tape::statements(&src, &nodes(&src));
     }
-    from_tape::statements(&src, &tape(&src))
+    from_tape::statements(&src, &nodes(&src))
 }
 
-type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
+pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
@@ -757,13 +925,10 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
     Ok(())
 }
 
-/// A file and everything it includes, each once, includes first: (path, statements without the
-/// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
-pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+/// The files of `path`'s program, each once, includes first (`path` last); and every library file read or probed,
+/// in reading order.
+fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
-    if phase0::active() {
-        return builtin_program(path);
-    }
     let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
     let mut order = Vec::new();
@@ -786,15 +951,42 @@ pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         probe(&library, &name, &target, &mut files);
         trace(&g, &library, &target, &mut files, &mut seen);
     }
-    // An included file's `.output`s are its own, not the program's; `core.rr` is the prelude, read as the file is.
-    let core = library.join("core.rr").canonicalize().ok();
-    let mut modules = modules_of(order)?;
-    for (p, statements) in &mut modules {
-        if *p != path && Some(&*p) != core.as_ref() {
-            statements.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
-        }
+    Ok((order, files))
+}
+
+/// A file and everything it includes, each once, includes first: (path, statements without the
+/// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
+pub fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    let (shared, files) = program_shared(path)?;
+    Ok((shared.iter().map(|(p, s)| (p.clone(), s.iter().map(|s| (*s).clone()).collect())).collect(), files))
+}
+
+/// The modules of a program (`program_order`), each its statements as the process holds them (`read_shared`) and
+/// those a program reads of them: without its includes, and an included file without its `.output`s (its own, not
+/// the program's; `core.rr` is the prelude, read as the file is).
+struct Shared(Vec<(PathBuf, std::sync::Arc<Vec<syntax::Statement>>)>);
+
+impl Shared {
+    fn iter(&self) -> impl Iterator<Item = (&PathBuf, Vec<&syntax::Statement>)> {
+        let core = library().join("core.rr").canonicalize().ok();
+        let own = self.0.last().map(|(p, _)| p.clone());
+        self.0.iter().map(move |(p, statements)| {
+            let included = Some(p) != own.as_ref() && Some(p) != core.as_ref();
+            (p, statements.iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_)) && !(included && matches!(item, syntax::Item::Io { output: true, .. }))).collect())
+        })
     }
-    Ok((modules, files))
+}
+
+fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
+    if super::plan::corpus::phase0::active() {
+        let (modules, files) = builtin_program(path)?;
+        return Ok((Shared(modules.into_iter().map(|(p, s)| (p, std::sync::Arc::new(s))).collect()), files));
+    }
+    let (order, files) = program_order(path)?;
+    // One handle on the tape cache for the files read (`phases::Reading`), not one each.
+    let _reading = super::plan::corpus::phases::Reading::enter();
+    let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
+    Ok((Shared(modules), files))
 }
 
 /// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.
