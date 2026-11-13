@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -765,6 +765,58 @@ describe("the engine service's idle close", () => {
     startTestRepository(first, databasePath);
     // Claude Code resumes a session under its id.
     expect(await prompt("a", "resumed")).toEqual([]);
+  });
+
+  // The end of a suspended session that cannot be opened again ended its record and left the steer in its ledger, so
+  // the session's next start under the same id delivered a steer its end had dropped.
+  it("drops the steer a session quiet for a day owed when its end comes and it cannot be opened again", async () => {
+    let delivery: RuleSteerDelivery | undefined;
+    let made = 0;
+    const { clock, service, session, send, start, prompt, ended } = await idleService({
+      createAuditor: ({ steerDelivery }) => {
+        made += 1;
+        if (made === 2) throw new Error("evaluator unavailable");
+        delivery = steerDelivery;
+        return quietAuditor();
+      },
+    });
+    await start("a");
+    await send({ kind: "call", eventId: "a:call", sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash", input: { command: "rm -rf build" } });
+    await delivery!.requestSteer("a", "steer", "Fix a.py.", { revision: 0, scope: [], ruleIds: ["test:owed"], rules: [{ id: "test:owed", state: "steered" }] });
+    clock.now += 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+    await expect(send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") })).rejects.toThrow(/evaluator unavailable/u);
+    expect(made).toBe(2);
+    expect(ended("a")).not.toBeNull();
+    expect(await prompt("a", "resumed")).toEqual([]);
+  });
+
+  // After a daemon restart the session is neither open nor suspended in the new runtime, so an end from a repository
+  // stopped since wrote nothing, and the ledger kept the steer for the session's next start under the same id.
+  it.each([
+    ["no end comes, so the steer waits for the session's next event", "none"],
+    ["its end comes", "started"],
+    ["its end comes from a repository stopped since", "stopped"],
+  ])("gives or drops a steer owed across a daemon restart as %s", async (_case, end) => {
+    const { first, service, session, send, start, steer, databasePath } = await steeringService();
+    await start("a");
+    await send({ kind: "call", eventId: "a:call", sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash", input: { command: "rm -rf build" } });
+    await steer("a", "Fix a.py.");
+    services.splice(services.indexOf(service), 1);
+    await service.close();
+    const root = dirname(databasePath);
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-again-${process.pid}-${Date.now()}` : join(root, "engine-again.sock");
+    const again = await startEngineService({
+      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0,
+      createAuditor: quietAuditor,
+    });
+    services.push(again);
+    const sendAgain = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
+    if (end === "stopped") stopTestRepository(first, databasePath);
+    if (end !== "none") await sendAgain({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+    if (end === "stopped") startTestRepository(first, databasePath);
+    const delivered = await sendAgain({ kind: "user-prompt", eventId: "a:resumed", sessionId: "a", session: session("a"), text: "resumed" });
+    expect(delivered.map(delivery => delivery.content)).toEqual(end === "none" ? ["Fix a.py."] : []);
   });
 
   // Suspended and opened again by its next event, the session would check the agent's next edit only at the turn end.

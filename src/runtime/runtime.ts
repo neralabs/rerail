@@ -1072,7 +1072,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
-      const deliveries = await this.#ingest(event);
+      const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
       return deliveries;
@@ -1081,13 +1081,28 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * A session's end in a stopped repository records nothing, but ends what the session holds and drops what it owed its
-   * agent, as any end does. A session that attached while started closes, releasing its code-rule bridge and polling. A
-   * suspended one is not opened again for it (its service ends its record), so the `owed` entry its ledger keeps is
-   * emptied here: the session's next start under the same id would take it back. An empty entry records nothing.
+   * agent, as any end does. A session open here closes, releasing its code-rule bridge and polling. One that is not (a
+   * suspended one, which is not opened again for it and whose service ends its record, or one a runtime before a daemon
+   * restart held) has the `owed` entry its ledger keeps emptied: the session's next start under the same id would take
+   * it back. An empty entry records nothing.
    */
   async #endWhileStopped(sessionId: string): Promise<void> {
     if (this.#sessions.has(sessionId)) await this.closeSession(sessionId);
-    else if (this.#suspendedSessions?.get(sessionId) !== undefined) await this.#dropLedgerOwed(sessionId);
+    else await this.#dropLedgerOwed(sessionId);
+  }
+
+  /**
+   * `#ingest`, and for a session's end that could not open the session (its folder gone, its evaluator failing), the
+   * `owed` entry its ledger keeps emptied before the failure goes on: an end drops what the session owed, as any end
+   * does, and the session's next start under the same id would take it back. Its engine service ends its record.
+   */
+  async #ingestOrDropOwed(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+    try {
+      return await this.#ingest(event);
+    } catch (error) {
+      if (event.kind === "session-end" && !this.#sessions.has(event.sessionId)) await this.#dropLedgerOwed(event.sessionId);
+      throw error;
+    }
   }
 
   /** Writes an emptied `owed` entry to the ledger of a session not open here, when its last one owes something. */
