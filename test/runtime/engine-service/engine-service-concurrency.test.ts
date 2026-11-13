@@ -1,7 +1,8 @@
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import { mkdtemp } from "node:fs/promises";
-import { createServer } from "node:http";
-import { connect } from "node:net";
+import { createServer, IncomingMessage } from "node:http";
+import { connect, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -118,9 +119,11 @@ describe("engine service session concurrency", () => {
     try {
       const end = outcome(ingestEngineEvent(held.engine, { kind: "session-end", eventId: "end", sessionId: "busy" }));
       await held.ending;
+      const arrived = nextRequest();
       const restart = outcome(ingestEngineEvent(held.engine, { kind: "session-start", eventId: "restart", session: busySession(root) }));
-      // The server takes the waiting hook's request in before the close begins.
-      await sleep(250);
+      // The server has the waiting hook's whole request before the close begins.
+      const request = await arrived;
+      await vi.waitFor(() => expect(request.complete).toBe(true), { timeout: 5_000, interval: 10 });
       const closing = held.service.close();
       // The end holds on past the close's look 1 s in, the first that can cut a request, so both hooks wait through it
       // with their requests complete.
@@ -147,13 +150,15 @@ describe("engine service session concurrency", () => {
         outcome(held.service.ingest({ kind: "session-start", eventId: "restart", session: busySession(root) })),
         outcome(held.service.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "busy", text: "continue" })),
       ];
+      const accepted = nextConnection();
       const partial = connect(held.engine.socketPath);
       partial.on("error", () => undefined);
       await once(partial, "connect");
-      partial.write("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
+      const sent = "POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{";
+      partial.write(sent);
       const cutOff = once(partial, "close").then(() => performance.now());
-      // The server takes the connection in before the close begins.
-      await sleep(250);
+      // The server has read all that was sent before the close begins.
+      await serverRead(await accepted, Buffer.byteLength(sent));
       const began = performance.now();
       const closing = held.service.close();
       try {
@@ -179,12 +184,13 @@ describe("engine service session concurrency", () => {
     const held = await holdingService(root);
     try {
       // A hook that connected and then wrote nothing.
+      const accepted = nextConnection();
       const silent = connect(held.engine.socketPath);
       silent.on("error", () => undefined);
       const cutOff = new Promise<number>(done => silent.once("close", () => done(performance.now())));
       await once(silent, "connect");
-      // The server takes the connection in before the close begins.
-      await sleep(250);
+      // The server has taken the connection in before the close begins.
+      await accepted;
       const began = performance.now();
       const closing = held.service.close();
       try {
@@ -210,8 +216,6 @@ describe("engine service session concurrency", () => {
       // pipe (64 KB) or a Unix socket holds, so it is still being written while the hook reads none of it.
       const eventId = `restart-${"x".repeat(600_000)}`;
       const big = await handHook(held.engine.socketPath, JSON.stringify({ event: { kind: "session-start", eventId, session: busySession(root) } }));
-      // The server takes the request in before the close begins.
-      await sleep(250);
       const closing = held.service.close();
       held.release();
       // Once the answer begins to arrive the server has ended it; the close looks for stalled requests at least once
@@ -233,8 +237,6 @@ describe("engine service session concurrency", () => {
     try {
       const body = JSON.stringify({ event: { kind: "user-prompt", eventId: "late", sessionId: "busy", text: "continue" } });
       const late = await handHook(held.engine.socketPath, body, Math.floor(body.length / 2));
-      // The server takes the first half in before the close begins.
-      await sleep(250);
       const began = performance.now();
       const closing = held.service.close();
       // 0.7 s in, a check phase writes the rest and holds the loop to 1.3 s, past the look due at 1 s: no poll phase
@@ -302,14 +304,17 @@ interface HandHook {
 /**
  * Connects to the engine at `socketPath` and writes a request for `body`, its first `sent` characters only, then
  * reads nothing until `answer`: the socket stops reading at its high-water mark, so the server's write of a larger
- * answer stays unfinished.
+ * answer stays unfinished. Resolves once the server has read all it wrote.
  */
 async function handHook(socketPath: string, body: string, sent = body.length): Promise<HandHook> {
+  const accepted = nextConnection();
   const socket = connect(socketPath);
   socket.on("error", () => undefined);
   const closed = new Promise<void>(done => socket.once("close", () => done()));
   await once(socket, "connect");
-  socket.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body.slice(0, sent)}`);
+  const head = `POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body.slice(0, sent)}`;
+  socket.write(head);
+  await serverRead(await accepted, Buffer.byteLength(head));
   return {
     finish: () => {
       socket.write(body.slice(sent));
@@ -327,12 +332,52 @@ async function handHook(socketPath: string, body: string, sent = body.length): P
 /**
  * When a connection the close cut off closed (`closed`, a `performance.now()` time), counted from the close's start
  * (`began`): `cut off 1 s in` at the look 1 s in, which finds it silent since the look the close takes as it begins;
- * how long it took when a later look cut it; or `still open` after 5 s.
+ * how long it took when a later look, or something other than a look, closed it; or `still open` after 5 s.
  */
 async function whenCut(closed: Promise<number>, began: number): Promise<string> {
   const at = await Promise.race([closed, sleep(5_000).then(() => undefined)]);
   if (at === undefined) return "still open";
-  return at - began < 1_950 ? "cut off 1 s in" : `cut off ${Math.round(at - began)} ms in`;
+  const after = at - began;
+  return after >= 900 && after < 1_950 ? "cut off 1 s in" : `cut off ${Math.round(after)} ms in`;
+}
+
+/**
+ * Resolves with the next message Node publishes on its diagnostics channel `name` that `pick` takes, from any server in
+ * this process. A test starts the close once the engine's server has what it sent, which this shows without waiting a
+ * set time that a slow machine can outlast.
+ */
+async function nextMessage<T>(name: string, pick: (message: unknown) => T | undefined): Promise<T> {
+  const taken = Promise.withResolvers<T>();
+  const take = (message: unknown): void => {
+    const picked = pick(message);
+    if (picked === undefined) return;
+    unsubscribe(name, take);
+    taken.resolve(picked);
+  };
+  subscribe(name, take);
+  return await taken.promise;
+}
+
+/** The server's side of the next connection a server takes in. */
+async function nextConnection(): Promise<Socket> {
+  return await nextMessage("net.server.socket", message => field(message, "socket", Socket));
+}
+
+/** The next request a server has read the headers of. */
+async function nextRequest(): Promise<IncomingMessage> {
+  return await nextMessage("http.server.request.start", message => field(message, "request", IncomingMessage));
+}
+
+/** `message[key]` when it is an instance of `type`. */
+function field<T>(message: unknown, key: string, type: abstract new (...args: never[]) => T): T | undefined {
+  if (typeof message !== "object" || message === null) return undefined;
+  const value: unknown = Reflect.get(message, key);
+  return value instanceof type ? value : undefined;
+}
+
+/** Resolves once `server`, a server's side of a connection, has read `bytes` bytes. */
+async function serverRead(server: Socket, bytes: number): Promise<void> {
+  await vi.waitFor(() => expect(server.bytesRead).toBe(bytes), { timeout: 5_000, interval: 10 });
 }
 
 /** `whole` when `answer` is a 200 whose body carries the event `eventId`; otherwise its status line and its length. */
