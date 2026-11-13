@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
@@ -113,6 +113,15 @@ async function checkoutFolder({ git = true } = {}): Promise<{ folder: string; da
   mkdirSync(folder);
   if (git) execFileSync("git", ["init", "-q", "-b", "main"], { cwd: folder, stdio: "ignore" });
   return { folder, databasePath: join(root, "rerail.sqlite") };
+}
+
+/**
+ * Makes `folder`'s drive this computer's system drive, the one drive a writable open that names no folder reads, as it
+ * is for a checkout under the person's profile. A test runner can keep its temporary folder on another (GitHub's Windows
+ * runners keep it on `D:`).
+ */
+function onTheSystemDrive(folder: string): void {
+  vi.stubEnv("SystemDrive", win32.parse(folder).root.slice(0, 2));
 }
 
 /** `folder` spelt another way that names the same folder on Windows: its last name in capitals. */
@@ -405,6 +414,7 @@ describe("path keys an earlier build stored under another spelling", () => {
 
   it("leave out of this build's lists the copies kept for an earlier build, and remove a preference's copies with it", async () => {
     const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
     // A checkout of the same repository inside the folder, which the earlier build recorded under its own spelling.
@@ -431,6 +441,7 @@ describe("path keys an earlier build stored under another spelling", () => {
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
     const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
     const stored = otherSpelling(folder);
     const relative = join("relative", "checkout");
     earlierBuildRecorded(folder, databasePath, stored);
@@ -703,6 +714,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
     // A documentation address no host answers on (RFC 5737).
@@ -738,6 +750,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     const { folder, databasePath } = await checkoutFolder({ git: false });
+    onTheSystemDrive(folder);
     const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
     earlierBuildRecorded(folder, databasePath, stored);
     await removeFolder(folder);
