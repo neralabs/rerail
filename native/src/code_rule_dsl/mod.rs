@@ -4892,6 +4892,10 @@ pub(crate) fn install_languages() {
         if cfg!(feature = "lang-blade") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Blade, name: "Forte", rank: 0, runs: true, parser: &blade::tape::Forte });
         }
+        if cfg!(feature = "lang-python") {
+            // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Python, name: "lean Python parser", rank: 0, runs: true, parser: &tape::python_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

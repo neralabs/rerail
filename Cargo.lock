@@ -3304,6 +3304,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -3462,6 +3463,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-lang",
  "rerail-prof",
+ "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
@@ -4072,6 +4074,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-python-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-rr"
 version = "0.1.0"
 dependencies = [
@@ -4304,6 +4315,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "zstd",
 ]
+
+[[package]]
+name = "rerail-simd8"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-simdjson"
