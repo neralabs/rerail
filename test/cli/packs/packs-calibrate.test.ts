@@ -14,26 +14,26 @@ import {
   ruleSettings,
   setUpRepository,
   type RuleSetting,
-} from "../../src/engine/index.js";
-import { runSetup } from "../../src/cli/repository-setup.js";
-import { calibrationText, runPacksCalibrateCommand, type Calibration, type CalibrationChange } from "../../src/cli/packs-calibrate.js";
-import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
-import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
-import { agentIo, fixture, removeFixtures, request, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+} from "../../../src/engine/index.js";
+import { runSetup } from "../../../src/cli/repository-setup.js";
+import { calibrationText, runPacksCalibrateCommand, type Calibration, type CalibrationChange } from "../../../src/cli/packs-calibrate.js";
+import { fakeSetupEnvironment } from "../../support/fake-setup-environment.js";
+import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
+import { agentIo, fixture, removeFixtures, request, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../../support/repository-setup.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** What calibrating does, in order: the rule catalog loaded, the lint config read, a transaction opened. */
 const steps = vi.hoisted((): string[] => []);
-vi.mock("../../src/engine/catalog/rule-catalog.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/engine/catalog/rule-catalog.js")>("../../src/engine/catalog/rule-catalog.js");
+vi.mock("../../../src/engine/catalog/rule-catalog.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/catalog/rule-catalog.js")>("../../../src/engine/catalog/rule-catalog.js");
   return { ...actual, loadRuleCatalog: (...args: Parameters<typeof actual.loadRuleCatalog>) => (steps.push("catalog loaded"), actual.loadRuleCatalog(...args)) };
 });
-vi.mock("../../src/engine/catalog/lint-config/repository-lint-config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/engine/catalog/lint-config/repository-lint-config.js")>("../../src/engine/catalog/lint-config/repository-lint-config.js");
+vi.mock("../../../src/engine/catalog/lint-config/repository-lint-config.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/catalog/lint-config/repository-lint-config.js")>("../../../src/engine/catalog/lint-config/repository-lint-config.js");
   return { ...actual, readRepositoryLintConfig: (...args: Parameters<typeof actual.readRepositoryLintConfig>) => (steps.push("lint config read"), actual.readRepositoryLintConfig(...args)) };
 });
-vi.mock("../../src/engine/storage/database.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+vi.mock("../../../src/engine/storage/database.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/storage/database.js")>("../../../src/engine/storage/database.js");
   return {
     ...actual,
     openRerailDatabase: (...args: Parameters<typeof actual.openRerailDatabase>) => {
