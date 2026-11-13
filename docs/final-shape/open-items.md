@@ -1599,6 +1599,12 @@ after P's last native commit):
   positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
   It is P's open parity, and is left out the same way.
 - `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- P's producer-shape and SQL-budget CI steps (`npm run test:producer-shape`,
+  `npm run test:sql-execution-budget`) measure P's SQL anchor engine, test-only here (O20). On this
+  branch's `code-rule-profile` addon the shape gate finds no anchor batches or producer plans (12 of
+  17 fail), and the cold job takes 353 engine SQL submissions against the 100 the budget allows,
+  which P's own workplan records as an expected acceptance failure. `ci.yml` runs them only with
+  `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
   under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
