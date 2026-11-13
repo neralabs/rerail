@@ -484,3 +484,21 @@ mod file_error_tests {
         assert!(world.file_error(root.parent().unwrap().to_str().unwrap()).is_none(), "outside roots refused");
     }
 }
+
+#[cfg(test)]
+mod grounded_request_tests {
+    use super::*;
+    #[test]
+    fn grounded_world_requests_register_their_handlers() {
+        for (answer, request) in WORLD.iter().copied().chain([(LOADED, LOAD)]) {
+            let mut program = front::Program::default();
+            program.facts.insert(request.to_owned(), vec![vec![front::Value::Str(".".into())]]);
+            assert!(wanted(&program), "ground request {request} needs its world handler");
+            assert_eq!(answers(&program).get(request), Some(&vec![answer.to_owned()]));
+        }
+        let mut ordinary = front::Program::default();
+        ordinary.facts.insert("configuration".into(), vec![vec![front::Value::Str("value".into())]]);
+        assert!(!wanted(&ordinary));
+        assert!(answers(&ordinary).is_empty());
+    }
+}
