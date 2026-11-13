@@ -131,9 +131,21 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     for &v in dfg.block_params(entry) {
         writeln!(out, "    v{0} = a{0};", v.as_u32()).unwrap();
     }
-    if let Some(shape) = Shape::of(f, entry) {
+    let blocks: Vec<ir::Block> = std::iter::once(entry).chain(f.layout.blocks().filter(|&b| b != entry)).collect();
+    let node_of: std::collections::HashMap<ir::Block, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
+    let first: Vec<Vec<usize>> = blocks.iter().map(|&b| successors(f, b).iter().map(|t| node_of[t]).collect()).collect();
+    let sizes: Vec<usize> = blocks.iter().map(|&b| f.layout.block_insts(b).count()).collect();
+    if let Some(shape) = Shape::of(first, &sizes) {
         out.push_str("    let mut d: u32 = 0;\n");
-        let body = shape.tree(f, &name, 0)?;
+        let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
+            let mut s = String::new();
+            for inst in f.layout.block_insts(blocks[node]) {
+                s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
+                s.push('\n');
+            }
+            Ok(s)
+        };
+        let body = shape.tree(&emit, 0)?;
         out.push_str(&body);
         out.push_str("}\n\n");
         return Ok(true);
@@ -163,9 +175,10 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
 /// does not dominate its source (an irreducible loop, a loop entered at two places), the edge
 /// gets its own copy of its target (node splitting), until none does. A copy runs the block's
 /// code: each value is a local, which its last definition set, as SSA's dominance requires.
-struct Shape {
-    /// Each node's block and its successors (nodes), in the terminator's order.
-    block: Vec<Option<ir::Block>>,
+pub(crate) struct Shape {
+    /// Each node's block (its place in the graph given) and its successors (nodes), in the
+    /// terminator's order.
+    block: Vec<Option<usize>>,
     succ: Vec<Vec<usize>>,
     /// The edges into a dispatch node (`None` its block): their target's place in its successors.
     label: std::collections::HashMap<(usize, usize), usize>,
@@ -288,13 +301,11 @@ impl Order {
 impl Shape {
     /// The shape of `f`: its nodes split until it is reducible, within its own size again in
     /// copies; past that, each loop with two entries given one, a dispatch.
-    fn of(f: &ir::Function, entry: ir::Block) -> Option<Shape> {
-        let blocks: Vec<ir::Block> = std::iter::once(entry).chain(f.layout.blocks().filter(|&b| b != entry)).collect();
-        let node_of: std::collections::HashMap<ir::Block, usize> = blocks.iter().enumerate().map(|(i, &b)| (b, i)).collect();
-        let first: Vec<Vec<usize>> = blocks.iter().map(|&b| successors(f, b).iter().map(|t| node_of[t]).collect()).collect();
-        let size = |b: ir::Block| f.layout.block_insts(b).count();
-        let budget: usize = blocks.iter().map(|&b| size(b)).sum();
-        let (mut block, mut succ): (Vec<Option<ir::Block>>, _) = (blocks.iter().map(|&b| Some(b)).collect(), first.clone());
+    /// A graph's nodes' successors, the entry node 0, and each node's size (its copies' cost).
+    pub(crate) fn of(first: Vec<Vec<usize>>, sizes: &[usize]) -> Option<Shape> {
+        let size = |b: usize| sizes[b];
+        let budget: usize = sizes.iter().sum();
+        let (mut block, mut succ): (Vec<Option<usize>>, _) = ((0..first.len()).map(Some).collect(), first.clone());
         let mut copied = 0;
         let mut label = std::collections::HashMap::new();
         let order = loop {
@@ -303,7 +314,7 @@ impl Shape {
             let t = succ[x][k];
             copied += block[t].map_or(0, size);
             if copied > budget {
-                (block, succ, label) = Self::dispatched(blocks.iter().map(|&b| Some(b)).collect(), first.clone())?;
+                (block, succ, label) = Self::dispatched((0..first.len()).map(Some).collect(), first.clone())?;
                 let order = Order::of(&succ);
                 if order.irreducible(&succ).is_some() {
                     return None;
@@ -339,7 +350,7 @@ impl Shape {
     /// edges into those nodes go to the dispatch, each with its target's place (`label`), the
     /// dispatch on to it. `None` where the function's first block is one of two entries.
     #[allow(clippy::type_complexity)]
-    fn dispatched(mut block: Vec<Option<ir::Block>>, mut succ: Vec<Vec<usize>>) -> Option<(Vec<Option<ir::Block>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
+    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>) -> Option<(Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
         let mut label = std::collections::HashMap::new();
         let mut out = vec![false; block.len()];
         loop {
@@ -383,21 +394,23 @@ impl Shape {
         }
     }
 
-    /// The code of node `x` and the nodes it dominates.
-    fn tree(&self, f: &ir::Function, name: &dyn Fn(ir::Value) -> String, x: usize) -> Result<String, String> {
-        let within = self.within(f, name, x, &self.merges[x])?;
+    /// The code of node `x` and the nodes it dominates: each node's own code by `emit`, given
+    /// the node (its place in the graph given) and its branches' code (`jump(k)`, its `k`th
+    /// successor's).
+    pub(crate) fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
+        let within = self.within(emit, x, &self.merges[x])?;
         Ok(if self.header[x] { format!("'b{x}: loop {{\n{within}}}\n") } else { within })
     }
 
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
-    fn transfer(&self, f: &ir::Function, name: &dyn Fn(ir::Value) -> String, x: usize, k: usize) -> Result<String, String> {
+    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
             format!("continue 'b{to};")
         } else if self.merge[to] {
             format!("break 'm{to};")
         } else {
-            self.tree(f, name, to)?
+            self.tree(emit, to)?
         };
         Ok(match self.label.get(&(x, k)) {
             Some(j) => format!("d = {j}; {jump}"),
@@ -405,28 +418,26 @@ impl Shape {
         })
     }
 
-    fn within(&self, f: &ir::Function, name: &dyn Fn(ir::Value) -> String, x: usize, ys: &[usize]) -> Result<String, String> {
+    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize]) -> Result<String, String> {
         if let Some((&y, rest)) = ys.split_first() {
-            let inner = self.within(f, name, x, rest)?;
-            let after = self.tree(f, name, y)?;
+            let inner = self.within(emit, x, rest)?;
+            let after = self.tree(emit, y)?;
             return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
         }
         let Some(b) = self.block[x] else {
             let mut s = String::from("match d {\n");
             for k in 0..self.succ[x].len() {
-                writeln!(s, "{k} => {{ {} }}", self.transfer(f, name, x, k)?).unwrap();
+                writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
             return Ok(s);
         };
-        let mut s = String::new();
-        for inst in f.layout.block_insts(b) {
-            s.push_str(&instruction(f, inst, name, &|k, _| self.transfer(f, name, x, k))?);
-            s.push('\n');
-        }
-        Ok(s)
+        emit(b, &|k| self.transfer(emit, x, k))
     }
 }
+
+/// A node's own code (`Shape::tree`): the node, and its branches' code.
+pub(crate) type Emit<'a> = &'a dyn Fn(usize, &dyn Fn(usize) -> Result<String, String>) -> Result<String, String>;
 
 /// The graph's strongly connected parts with a cycle, the nodes `out` left out (iterative
 /// Tarjan).
