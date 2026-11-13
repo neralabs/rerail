@@ -347,11 +347,16 @@ impl Found {
     }
 
     /// The whole entry this was found for, when it is a frame of its outputs (`Memo::found_outputs_all`): its frame
-    /// of rows, by its content's digest, as the waves read frames (from memory). A held entry is whole already.
+    /// of rows, by its content's digest, read from the store. A held entry is whole already. It is asked only when the
+    /// kept inputs were not taken, inside the waves; the waves' snapshot holds no entry of a file looked up before
+    /// them (`admit_memo_entries`), so a read of the snapshot found none ("its memo entry is gone").
     pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
         match self {
             Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
-            Found::Frame(f) => Ok(by_digest(store, &plan_digest(program), &[f.path.as_str()], vec![(0, f.digest)])?.pop().map(|(_, found)| found)),
+            Found::Frame(f) => {
+                let plan = plan_digest(program);
+                Ok(by_digest_read(store, &plan, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
+            }
         }
     }
 
@@ -393,13 +398,19 @@ fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<
 
 /// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
 fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
+    let stored = rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves();
+    by_digest_read(store, plan, paths, wanted, rel, stored)
+}
+
+/// `by_digest_in`, from the store (`stored`) or the waves' snapshot.
+fn by_digest_read(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
     let space = crate::content_store::local_space(plan);
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
     // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
     // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
-    let mut frames = if rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves() {
+    let mut frames = if stored {
         store.admit_parts_stored(&space, &rel, &parts)?
     } else {
         store.admit_parts_of(&space, &rel, &parts)?

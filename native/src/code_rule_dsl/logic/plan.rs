@@ -1494,7 +1494,11 @@ impl Model {
             // 0038): at least one string.
             self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
         } else {
-            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+            // Any relation empty when it plans is not empty where its plans are reused, for the same reason: at least
+            // one row. At 0, every step after it was priced 0 rows and every order was free: annotation demand's
+            // `rel_base` planned before its guest round made `rr_ast_1_1`, scanned `pkg` whole and then probed
+            // `docof` (10,728 -> 25.8 M -> 10,728 rows); `impmod`, `ruff_qual` and `frag_str` the same.
+            self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
         }
     }
 
@@ -2207,12 +2211,16 @@ impl Model {
                         let dfreq = stats.dfreq.get(&key);
                         let name = m.col(&a.rel, c);
                         let freq = if self.input { stats.const_freq(&a.rel, &name, &k) } else { None };
+                        // A count is at least one row, as `card`: a constant absent from the chunk that plans is not
+                        // absent from the chunks that reuse the plan (`frag_str`'s `doc_role(d, 17505)` priced 0.01
+                        // rows, 2,455 found, each joined with every string: 7.1 M rows, none kept). The memo's count
+                        // is exact (a delta's complete constant memo: an absence proof), and stays as it is.
                         konst = if let Some(d) = dfreq {
-                            Some(d.get(&k).copied().unwrap_or(0) as f64)
+                            Some((d.get(&k).copied().unwrap_or(0) as f64).max(1.0))
                         } else if let Some(&f) = stats.memo.get(a.rel.as_str()).and_then(|m| m.get(&(name.clone(), k.clone()))) {
                             Some(f as f64)
                         } else {
-                            freq.map(|f| f as f64)
+                            freq.map(|f| (f as f64).max(1.0))
                         };
                         counted = freq.map(|f| f as f64).or_else(|| dfreq.map(|d| d.get(&k).copied().unwrap_or(0) as f64));
                     }
