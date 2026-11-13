@@ -49,5 +49,12 @@ class SideEffectsFilesCheckpointTests(unittest.TestCase):
         value=copy.deepcopy(self.receipt);value['fullMigrationAcceptance']=True
         with self.assertRaisesRegex(ValueError,'not full rule admission'):validate(value)
 
+    def test_final_apis_cannot_mix_different_rule_revisions(self):
+        value=copy.deepcopy(self.receipt)
+        call=self.case(value,'relative-repo-mapped')['native'][0]
+        item=next(r for r in call['programInputs']if r['path']=='docs/rule-syntax/lib/data-layer/side-effects-files.rr')
+        item['sha256']='f'*64
+        with self.assertRaisesRegex(ValueError,'Final program revisions differ'):validate(value)
+
 
 if __name__=='__main__':unittest.main()

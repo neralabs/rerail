@@ -52,6 +52,14 @@ def validate(value):
         require(report['exitCode']==0 and not report['semanticFallbacks'],'Original assertion failed')
         for key in ['collected','cases','observations','sourceFiles']:require(equal(report[key],source[key]),'Original assertion or observation differs')
         require(set(report['cases'])==set(source['collected']),'Original assertion omitted')
+    final_inputs={}
+    final_reports=[value['originals'][mode]for mode in MODES]
+    final_reports.extend(report for group in value['contracts'].values()for mode in MODES for report in group[mode])
+    for report in final_reports:
+        for call in calls(report):
+            for item in call['programInputs']:
+                name,digest=item['path'],item['sha256']
+                require(final_inputs.setdefault(name,digest)==digest,'Final program revisions differ')
     red=value['tdd']['native']
     require(not red['passed']and len(red['cases'])==36 and all(not r['passed']for r in red['cases']),'Missing pre-port failures')
     external=next(r for r in red['cases']if r['input']['id']=='repo-external-link')
