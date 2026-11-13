@@ -452,7 +452,7 @@ export async function configureHostAuth(
       await importAccessOnlyAuth("codex", sandbox, profile, env, timeoutMs);
     }
     const hooks = await readFile(join(ROOT, "hooks", "codex.json"), "utf8");
-    await writeFile(join(env.CODEX_HOME, "hooks.json"), hooks.replaceAll("$PLUGIN_ROOT", ROOT), { mode: 0o600 });
+    await writeFile(join(env.CODEX_HOME, "hooks.json"), hooks.replaceAll("${PLUGIN_ROOT}", ROOT), { mode: 0o600 });
   } else if (host === "claude-code") {
     if (!process.env.ANTHROPIC_FOUNDRY_API_KEY)
       throw new Error("FAILED prerequisite: Claude Code requires ANTHROPIC_FOUNDRY_API_KEY");

@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { replaceFileSync } from "../file-replace.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
@@ -59,6 +60,15 @@ function isMainInstanceHolder(value: unknown): value is MainInstanceHolder {
     && typeof record.packageRoot === "string" && typeof record.startedAt === "string";
 }
 
+/**
+ * Removes the holder record when it names `pid`, a holder the OS ended without its `release`: on Windows a daemon is
+ * always ended that way, and the record would then name whatever process Windows gives that pid next. The lock itself
+ * went with the process.
+ */
+export function forgetMainInstanceHolder(pid: number, directory: string = mainContentStoreDirectory()): void {
+  if (readHolder(directory)?.pid === pid) rmSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), { force: true });
+}
+
 function readHolder(directory: string): MainInstanceHolder | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), "utf8"));
@@ -66,6 +76,26 @@ function readHolder(directory: string): MainInstanceHolder | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether a process holds the main-instance lock in `directory`, asked by taking the lock and giving it straight back:
+ * the lock is the liveness signal, where the holder record can name a pid the OS has given another process since.
+ * False where there is no lock file, which is left unmade; undefined when the native binding does not load or the
+ * lock cannot be tried, for the caller to fall back on what else it knows.
+ */
+export function mainInstanceLockHeld(directory: string): boolean | undefined {
+  const path = join(directory, MAIN_INSTANCE_LOCK_FILE);
+  if (!existsSync(path)) return false;
+  let lock: NativeExclusiveFileLock | null;
+  try {
+    lock = loadNativeBinding().tryLockExclusive(path);
+  } catch {
+    return undefined;
+  }
+  if (lock === null) return true;
+  lock.release();
+  return false;
 }
 
 /**
@@ -84,13 +114,10 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
     startedAt: new Date().toISOString(),
   };
   const holderPath = join(directory, MAIN_INSTANCE_HOLDER_FILE);
-  const staged = `${holderPath}.${process.pid}`;
   try {
-    // A refusal may read the record at any moment; the rename keeps it from ever seeing half of one.
-    writeFileSync(staged, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
-    renameSync(staged, holderPath);
+    // A refusal may read the record at any moment; replacing it whole keeps it from ever seeing half of one.
+    replaceFileSync(holderPath, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
   } catch (error) {
-    rmSync(staged, { force: true });
     lock.release();
     throw error;
   }

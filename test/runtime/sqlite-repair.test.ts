@@ -1,10 +1,13 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NpmOptions, NpmRunner } from "../../src/runtime/npm.js";
 import { ensureSqlite, sqliteInstallPrefix } from "../../src/runtime/sqlite-repair.js";
+import { linkFolder } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { literal } from "../support/platform/text-patterns.js";
 
 const WORKING_BINDING = "module.exports = function Database() { this.close = () => {}; };";
 const ABI_MISMATCH =
@@ -49,7 +52,7 @@ describe("SQLite binding repair", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   it("resolves the npm prefix that hoists the binding, for a checkout and for a managed install", async () => {
@@ -64,7 +67,7 @@ describe("SQLite binding repair", () => {
     // ~/.rerail/current -> ~/.rerail/versions/<v>/node_modules/@neralabs/rerail: resolution must start from the target.
     const { prefix, packageRoot } = await managedInstall(root, WORKING_BINDING);
     const current = join(root, "current");
-    await symlink(packageRoot, current, "dir");
+    linkFolder(packageRoot, current);
     expect(sqliteInstallPrefix(current)).toBe(prefix);
     await expect(ensureSqlite(current, { npm: recordingNpm([], async () => {}) })).resolves.toEqual({ prefix, rebuilt: false });
   });
@@ -110,7 +113,7 @@ describe("SQLite binding repair", () => {
     const calls: NpmCall[] = [];
     await expect(ensureSqlite(packageRoot, { npm: recordingNpm(calls, async () => {}) })).rejects.toThrow(
       new RegExp(
-        `^better-sqlite3 in ${prefix} cannot load under Node ${process.versions.node} \\(ABI ${process.versions.modules}\\) ` +
+        `^better-sqlite3 in ${literal(prefix)} cannot load under Node ${process.versions.node} \\(ABI ${process.versions.modules}\\) ` +
         "and npm rebuild did not fix it\\.\\nProbe still fails: [\\s\\S]*NODE_MODULE_VERSION 141[\\s\\S]*run rerail daemon start again[\\s\\S]*" +
         "npx @neralabs/rerail setup",
         "u",
@@ -125,7 +128,7 @@ describe("SQLite binding repair", () => {
       throw new Error("npm failed (1): gyp ERR! build error");
     };
     await expect(ensureSqlite(packageRoot, { npm })).rejects.toThrow(
-      new RegExp(`better-sqlite3 in ${prefix} cannot load[\\s\\S]*Rebuild failed: npm failed \\(1\\): gyp ERR! build error`, "u"),
+      new RegExp(`better-sqlite3 in ${literal(prefix)} cannot load[\\s\\S]*Rebuild failed: npm failed \\(1\\): gyp ERR! build error`, "u"),
     );
   });
 

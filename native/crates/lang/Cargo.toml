@@ -10,8 +10,9 @@ build = "build.rs"
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-java", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
+lang-java = ["ast-grep-language/tree-sitter-java"]
 lang-javascript = []
 lang-json = ["ast-grep-language/tree-sitter-json"]
 lang-php = ["ast-grep-language/tree-sitter-php"]

@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v4.sqlite` | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v4.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v4.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -142,8 +142,9 @@ a secret token sent as `x-rerail-access`, on every request.
 - **DNS rebinding.** `hostAllowlist` (`src/api/http.ts`) answers `421` unless `Host` is loopback or a `--public-host`
   name. Mounted before every route; checked again in the MCP handler.
 - **Access capability** (`accessCapability`, `src/api/http.ts`):
-  - Required as `x-rerail-access` on every request, including `/healthz`, `/openapi.json`, `/api/*`, `/mcp` and
-    `/native/session`. Only GET and HEAD of the page's own static files are exempt (`PUBLIC_PAGE_FILE`).
+  - Required as `x-rerail-access` on every request, including `/healthz`, `/openapi.json`, `/api/*`, `/mcp`,
+    `/native/session` and `/native/shutdown`. Only GET and HEAD of the page's own static files are exempt
+    (`PUBLIC_PAGE_FILE`).
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
@@ -157,7 +158,10 @@ a secret token sent as `x-rerail-access`, on every request.
     `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`).
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
-  `/native/session` refuses any `Origin`.
+  `/native/session` and `/native/shutdown` refuse any `Origin`.
+- **Stopping the daemon.** `POST /native/shutdown` closes the daemon on every platform; `rerail daemon stop` sends it
+  on Windows, where no signal reaches a handler. Besides the capability it takes the native token from `daemon.json`
+  as a bearer token, so a page or process holding only the dashboard's capability cannot stop the daemon.
 - **Dashboard page.**
   - Moves the token from `?rerail-access=` into its origin's `localStorage`, then calls `history.replaceState`
     (`ui/index.html`).
@@ -217,9 +221,10 @@ without hooks or network.
 - **Parser budgets.** Files are capped at 1 MB in the bridge; the audit walk caps 32 MB per file, 512 MB total and
   100,000 files. Each clause has node, witness and file budgets. Parsing aborts via tree-sitter's progress callback.
   Value decoding is depth-limited.
-- **Symlinks when reading.** `O_NOFOLLOW`, then a `realpath` containment check, then a `dev`/`ino` recheck. Directory
-  walks skip symlinks. `#writeSource` (rewind) writes with `O_EXCL|O_NOFOLLOW`
-  (`src/engine/code-rule/code-rule-bridge.ts`).
+- **Symlinks when reading.** An open that refuses a symlink (`src/engine/no-follow.ts`: `O_NOFOLLOW`, or on Windows,
+  which has none, an `lstat` before the open and a `dev`/`ino` match after), then a `realpath` containment check, then
+  a `dev`/`ino` recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes a new file under a random name
+  with `O_CREAT|O_EXCL`, which refuses any name that exists (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git** (`src/engine/git.ts`):
   - Runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail (so
     Windows never searches the current folder first), then the usual install locations.
@@ -286,8 +291,13 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
-- The repository identity file is read with `O_NOFOLLOW` plus size and format checks, and created with `wx`
-  (`src/engine/catalog/repository-identity.ts`).
+- Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
+  let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
+  everything written in it inherits; a home an earlier release made gets it at the next daemon launch
+  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
+  (everyone has full control), is refused.
+- The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
+  and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
   through a symlink (`src/engine/storage/ledger-paths.ts`).
 
@@ -332,7 +342,7 @@ run the `rerail` CLI, which acts for the person. Two controls narrow this.
 
 | Host | What Rerail's data is protected by |
 | --- | --- |
-| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and `~/.cache/rerail`; `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
+| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and the content cache (`~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`); `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
 | Cursor CLI | `Read` and `Write` denies in `~/.cursor/cli-config.json`; they bind its file tools only. |
 | Codex | Nothing added. No network by default, so commands cannot reach the daemon; writes stay in the workspace. But commands **read every file**, including the database (other repositories' history too) and the capability. |
 | Cursor editor | Sandbox on by default on macOS (Cursor 2.0 and later) and blocks loopback, but has no per-path read deny, so commands can read the Rerail home. |
@@ -394,17 +404,25 @@ The first request is the `/healthz` probe in `probeDaemon` (`src/runtime/daemon-
 the same capability across restarts.
 
 **Mitigated.** Before any probe, `lookupDaemon`, the MCP bridge's `DaemonLocator` and the session presentation check the
-recorded pid with `ownProcessAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the state is
-stale and no capability is sent.
+recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
+state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
+holds it, and the engine on that pipe must answer a random challenge with an HMAC keyed by the capability
+(`engineCapabilityProof` in `src/runtime/engine-proof.ts`), which never shows it the capability. That holds for a pid
+this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
+own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
+says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
+request of `rerail daemon stop` included.
 
 **What remains:**
 
-- If one of the person's own processes reuses the pid while another user holds `127.0.0.1:4737`, the probe still
-  hands that user the capability.
+- On macOS and Linux, if one of the person's own processes reuses the pid while another user holds `127.0.0.1:4737`,
+  the probe still hands that user the capability.
+- On Windows the proof travels over the pipe and the capability over the port: if the daemon ends between the two,
+  another user who takes its port in that moment gets the probe.
 - A port squatter also serves the origin `http://127.0.0.1:4737`, whose `localStorage` holds the dashboard's token.
 
-**What would close it:** the daemon proves it holds the token before a client sends it (an HMAC challenge), and the
-capability rotates at each start.
+**What would close it:** on macOS and Linux, the same challenge on the engine socket before the probe; a challenge the
+HTTP listener itself answers before any request carries the capability; and a capability that rotates at each start.
 
 </details>
 
@@ -535,8 +553,8 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
   checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
-  running: ledgers and `daemon.log` are rewritten in place without losing concurrent appends, and held steers under
-  their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
+  running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing concurrent
+  appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up.
@@ -600,7 +618,7 @@ and keeps its own `.gitignore`.
 **Mitigated** (`src/engine/storage/ledger-paths.ts`):
 
 - Every folder from the innermost `.rerail` down is checked with `lstat`; a symlink or non-folder is refused. Ledger
-  and pending-steer files open with `O_NOFOLLOW`.
+  and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
 - `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
   to `git add -A`.
@@ -766,7 +784,11 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 
 - **Device key** goes to `security -i` on stdin, not `argv` (`src/activation/device-keystore.ts`).
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
-  symlink (`src/runtime/engine-service.ts`). On Linux another user can create that folder first; the daemon then
+  symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
+  under its predictable name. The daemon asks the holder to answer a random challenge with an HMAC keyed by the access
+  capability (`src/runtime/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
+  this home's engine, and the engine listens on that name with a random suffix. On Linux another user can create that
+  folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the
   path in `daemon.json` for hooks. Start fails only if no folder is usable, naming each folder, why it was refused,
   and who must remove it.

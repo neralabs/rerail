@@ -70,3 +70,5 @@ Internal designs for contributors.
 - [data-layer-batch-four.md](data-layer-batch-four.md): Completed SQL grammar candidates, Rust coverage, upstream ambiguities, and performance measurements
 - [data-layer-batch-four-root-causes.md](data-layer-batch-four-root-causes.md): Failure analysis, source requirements, and TDD ladders
 - [data-layer-engine-gaps.md](data-layer-engine-gaps.md): demonstrated engine features, withdrawn issues, and required approval before new Linear issues
+- [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
+  holds it

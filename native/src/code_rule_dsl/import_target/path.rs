@@ -1,5 +1,6 @@
 //! Node's POSIX `path` functions, as enhanced-resolve and eslint-plugin-n call them on absolute
-//! paths: `normalize`, `join`, `resolve`, `dirname`, `basename`, `extname` and `relative`.
+//! paths: `normalize`, `join`, `resolve`, `dirname`, `basename`, `extname` and `relative`; and
+//! the `/`-separated form a Windows absolute path takes among them (`windows`).
 
 /// `path.posix.normalize`'s segment walk: `.` dropped, `..` removing the segment before it, or
 /// kept where nothing is left to remove and `above_root` allows it.
@@ -63,6 +64,61 @@ pub(crate) fn resolve(base: &str, request: &str) -> String {
         format!("{base}/{request}")
     };
     format!("/{}", normalize_segments(&joined, false).join("/"))
+}
+
+/// The path a Windows absolute path names, in the `/`-separated form the paths here take: its
+/// drive, or its server, first below a `/`, the drive letter upper case. `C:`, `C:\a` and `c:/a`
+/// are `/C:` and `/C:/a`; `\\server\share\a` is `/server/share/a`; a device path drops its `\\?\`
+/// or `\\.\` and a `UNC\` after it (`\\?\C:\a` is `/C:/a`). These are the paths enhanced-resolve
+/// reads as `AbsoluteWin` (`util/path.js`'s `getType`) on any platform; `None` for any other, a
+/// `/` path among them. A `..` never climbs above the drive or the server.
+pub(crate) fn windows(text: &str) -> Option<String> {
+    let separator = |c: char| c == '\\' || c == '/';
+    let drive = |name: &str| match name.as_bytes() {
+        [letter, b':'] if letter.is_ascii_alphabetic() => {
+            Some(format!("{}:", char::from(letter.to_ascii_uppercase())))
+        }
+        _ => None,
+    };
+    let (anchor, rest) = if let Some(device) = text.strip_prefix("\\\\") {
+        let mut names = device.split(separator);
+        let mut first = names.next()?;
+        if first == "?" || first == "." {
+            first = names.next()?;
+            if first.eq_ignore_ascii_case("UNC") {
+                first = names.next()?;
+            }
+        }
+        let anchor = drive(first).unwrap_or_else(|| first.to_owned());
+        (anchor, names.collect::<Vec<_>>().join("/"))
+    } else {
+        let anchor = drive(text.get(..2)?)?;
+        let rest = &text[2..];
+        if !rest.is_empty() && !rest.starts_with(separator) {
+            return None;
+        }
+        (anchor, rest.replace('\\', "/"))
+    };
+    let rest = resolve("/", &rest);
+    Some(if rest == "/" {
+        format!("/{anchor}")
+    } else {
+        format!("/{anchor}{rest}")
+    })
+}
+
+/// The form here of a path Node's `path` reads as absolute on the platform Rerail runs on beyond a
+/// `/` path: on Windows a drive, UNC or device path (`windows`), as get-tsconfig's
+/// `path.isAbsolute` and eslint-plugin-n's `path.resolve` read one there. `None` elsewhere, where
+/// such a path is relative.
+pub(crate) fn platform_absolute(text: &str) -> Option<String> {
+    if cfg!(windows) { windows(text) } else { None }
+}
+
+/// `path.resolve(base, request)` as Node resolves it on the platform Rerail runs on, for an
+/// absolute `base`: a Windows absolute `request` stands alone on Windows (`platform_absolute`).
+pub(crate) fn platform_resolve(base: &str, request: &str) -> String {
+    platform_absolute(request).unwrap_or_else(|| resolve(base, request))
 }
 
 /// `path.posix.dirname`.
@@ -159,5 +215,27 @@ pub mod tests {
         assert_eq!(join("./x", "y/"), "x/y/");
         assert_eq!(dirname("/a/b/c.js"), "/a/b");
         assert_eq!(stem("/a/b.test.js"), "b.test");
+    }
+
+    /// Each path enhanced-resolve reads as `AbsoluteWin`, in the form the paths here take.
+    #[test]
+    fn windows_absolute_paths_read_in_slash_form() {
+        for (text, form) in [
+            (r"C:\Users\me\repo\", Some("/C:/Users/me/repo")),
+            ("c:/Users/me/./repo", Some("/C:/Users/me/repo")),
+            (r"C:\a\..\..\b", Some("/C:/b")),
+            ("C:", Some("/C:")),
+            (r"C:\", Some("/C:")),
+            (r"\\server\share\repo", Some("/server/share/repo")),
+            (r"\\?\C:\Users\me", Some("/C:/Users/me")),
+            (r"\\.\c:\Users", Some("/C:/Users")),
+            (r"\\?\UNC\server\share\repo", Some("/server/share/repo")),
+            ("C:repo", None),
+            ("/C:/repo", None),
+            (r"\repo", None),
+            ("repo", None),
+        ] {
+            assert_eq!(windows(text).as_deref(), form, "{text}");
+        }
     }
 }

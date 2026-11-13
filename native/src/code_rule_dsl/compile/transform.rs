@@ -1,7 +1,9 @@
+use super::unsupported_semantic;
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
     ValueFeature, gate,
 };
+use crate::code_rule_dsl::language::{CodeRuleLanguage, Semantic};
 use crate::code_rule_dsl::matcher::{
     Digits, Reading, Separator, Source, StringCase, Trans, Transform,
 };
@@ -21,15 +23,27 @@ fn is_name(name: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// Refuses a step at `at` reading values, written `key`, where `language` does not read them
+/// (`Semantic::Value`), as `refuse_unavailable_semantics` refuses `value` and `compare`.
+fn reads_values(at: &str, key: &str, language: CodeRuleLanguage) -> Result<()> {
+    unsupported_semantic(
+        language.capability(Semantic::Value),
+        at,
+        key,
+        language.name(),
+    )
+}
+
 /// A transformation's `source` (`$NAME` or `$$$NAME`, upstream's `parse_meta_var`), `default`, the
 /// text an unbound source reads as, and `value`, whether a capture's value is read (with `reading`)
-/// rather than its source text. Whether `value`'s source is a capture is checked with the query
-/// (`check_value_sources`).
+/// rather than its source text, which `language` must read. Whether `value`'s source is a capture
+/// is checked with the query (`check_value_sources`).
 fn source(
     body: &Map<String, Value>,
     at: &str,
     limits: &Limits,
     reading: &Reading,
+    language: CodeRuleLanguage,
 ) -> Result<Source> {
     let default = body
         .get("default")
@@ -39,6 +53,7 @@ fn source(
     let value = match body.get("value") {
         None | Some(Value::Bool(false)) => None,
         Some(Value::Bool(true)) => {
+            reads_values(&format!("{at}/value"), "value", language)?;
             if matches!(variable, MetaVariable::MultiCapture(_)) {
                 return Err(invalid(format!(
                     "{at}/value: a value is read from a single capture (`$NAME`)"
@@ -86,7 +101,13 @@ fn variable(value: Option<&Value>, path: &str) -> Result<MetaVariable> {
     Ok(variable)
 }
 
-fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Result<Trans> {
+fn trans(
+    value: &Value,
+    path: &str,
+    limits: &Limits,
+    reading: &Reading,
+    language: CodeRuleLanguage,
+) -> Result<Trans> {
     let Value::Object(entry) = value else {
         return Err(invalid(format!(
             "{path} must be an object with one of {}; the string form is not supported",
@@ -127,7 +148,7 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                 limits,
             )?;
             Trans::Replace {
-                source: source(body, &at, limits, reading)?,
+                source: source(body, &at, limits, reading, language)?,
                 regex,
                 by,
             }
@@ -149,7 +170,7 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                     .transpose()
             };
             Trans::Substring {
-                source: source(body, &at, limits, reading)?,
+                source: source(body, &at, limits, reading, language)?,
                 start: index("startChar")?,
                 end: index("endChar")?,
             }
@@ -164,12 +185,13 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                 }
             };
             Trans::Line {
-                source: source(body, &at, limits, reading)?,
+                source: source(body, &at, limits, reading, language)?,
                 end,
             }
         }
         "toPrecision" => {
             reject_unknown(body, &["source", "default", "value", "digits"], &at)?;
+            reads_values(&at, "toPrecision", language)?;
             gate(
                 &at,
                 { let pack = language_pack::pack(reading.family); pack.value_feature(
@@ -202,13 +224,13 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                 }
             };
             Trans::ToPrecision {
-                source: source(body, &at, limits, reading)?,
+                source: source(body, &at, limits, reading, language)?,
                 digits,
             }
         }
         "lines" | "count" => {
             reject_unknown(body, &["source", "default"], &at)?;
-            let source = source(body, &at, limits, reading)?;
+            let source = source(body, &at, limits, reading, language)?;
             if kind == "lines" {
                 Trans::Lines { source }
             } else {
@@ -257,7 +279,7 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
                 })
                 .transpose()?;
             Trans::Convert {
-                source: source(body, &at, limits, reading)?,
+                source: source(body, &at, limits, reading, language)?,
                 case,
                 separators,
             }
@@ -268,12 +290,14 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
 /// An ast query's `transform`: names to transformations, ordered so that each source is computed
 /// before it is read. A cycle is refused, as upstream refuses it. `reading` is how a `value`
 /// source's value is read (the query's language and options); a `value` source must be a capture,
-/// not another transform variable.
+/// not another transform variable. A step reading values (`toPrecision`, a `value` source) needs
+/// `language` to read them.
 pub(super) fn compile_transform(
     value: &Value,
     path: &str,
     limits: &Limits,
     reading: &Reading,
+    language: CodeRuleLanguage,
 ) -> Result<Transform> {
     let entries = object(value, path)?;
     let mut parsed = BTreeMap::new();
@@ -285,7 +309,7 @@ pub(super) fn compile_transform(
         }
         parsed.insert(
             name.clone(),
-            trans(entry, &format!("{path}/{name}"), limits, reading)?,
+            trans(entry, &format!("{path}/{name}"), limits, reading, language)?,
         );
     }
     for (name, trans) in &parsed {

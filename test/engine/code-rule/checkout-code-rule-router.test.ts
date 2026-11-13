@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
+import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
@@ -20,7 +21,10 @@ import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
-import { stopTestRepository } from "../../support/started-repository.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -47,7 +51,7 @@ function git(cwd: string, ...args: string[]): void {
 
 async function temporaryRoot(): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-router-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   return root;
 }
 
@@ -170,6 +174,125 @@ describe("CheckoutCodeRuleRouter", () => {
     ]);
   });
 
+  it("leaves out what Git ignores in a checkout that runs no rules, not set up or stopped, while the session follows .gitignore", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    // Started but not set up: no lane runs, and a walk of the session's folder asks this of every folder and file in it.
+    startTestRepository(session, databasePath);
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("not-set-up");
+    expect(following.acceptsPath("api/x.py")).toBe(false);
+    expect([following.ignoresPath("scratch", true), following.ignoresPath("run.log", false)]).toEqual([true, true]);
+    expect([following.ignoresPath("api", true), following.ignoresPath("api/x.py", false)]).toEqual([false, false]);
+
+    const unfollowed = router(session, databasePath, recorder);
+    await unfollowed.openWorkspace("not-set-up-unfollowed");
+    expect(unfollowed.ignoresPath("scratch", true)).toBe(false);
+
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    stopTestRepository(session, databasePath);
+    const stopped = router(session, databasePath, recorder, undefined, true);
+    await stopped.openWorkspace("stopped");
+    expect(stopped.acceptsPath("api/x.py")).toBe(false);
+    expect([stopped.ignoresPath("scratch", true), stopped.ignoresPath("api", true)]).toEqual([true, false]);
+  });
+
+  it("keeps following a checkout's Git ignore rules after one path's rules cannot be read", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    startTestRepository(session, databasePath);
+    // A nested `.gitignore` the matcher cannot read (or the index caught mid-rewrite) fails that one path's question.
+    const binding = loadNativeBinding();
+    const open = binding.openGitIgnoreMatcher.bind(binding);
+    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
+      const matcher = open(checkoutRoot);
+      return matcher === null ? null : {
+        ignored: (path, directory) => {
+          if (path.startsWith("locked/")) throw new Error(`cannot read Git excludes for ${path}: Permission denied`);
+          return matcher.ignored(path, directory);
+        },
+        ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+      };
+    });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("unreadable-path");
+
+    expect([following.ignoresPath("locked/a.log", false), following.ignoresPath("locked/b.log", false)]).toEqual([false, false]);
+    expect([following.ignoresPath("scratch", true), following.ignoresPath("run.log", false)]).toEqual([true, true]);
+    expect(following.ignoresPath("api/x.py", false)).toBe(false);
+    expect(opens).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+  });
+
+  it("looks up the checkout of a walk's files once per folder, not once per file", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await mkdir(join(session, "api", "deep"), { recursive: true });
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(join(session, "api", `f${index}.py`), "seed\n");
+      await writeFile(join(session, "api", "deep", `g${index}.py`), "seed\n");
+    }
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    const { recorder, audits } = recordingAudits();
+    const bridge = new CodeRuleBridge(session, router(session, databasePath, recorder, undefined, true));
+    cleanups.push(() => bridge.close());
+    await bridge.openWorkspace("walk");
+    await bridge.checkpoint("turn");
+    // Each lookup resolves the path's real path and looks for `.git` on disk; a walk asked two of each file.
+    const lookups = vi.spyOn(CheckoutOwners.prototype, "ownerOf");
+    cleanups.push(async () => { lookups.mockRestore(); });
+    await bridge.checkpoint("turn");
+    // The session's folder, api and api/deep; and, once a pass whatever the files, the checkout that owns the session
+    // folder and the one that owns the `.git` entry the walk passed, whose unmerged entries each pass reads.
+    expect(lookups.mock.calls.length).toBeLessThanOrEqual(5);
+
+    lookups.mockRestore();
+    // A command writes it: what is stamped while one of the session's calls runs is the session's own.
+    await bridge.begin("write-1", "shell", { command: "./write.sh" });
+    await writeFile(join(session, "api", "deep", "g3.py"), "NEEDLE\n");
+    await bridge.finish("write-1");
+    await bridge.checkpoint("turn");
+    await bridge.settle();
+    expect(violations(audits)).toEqual([{ checkout: session, path: "api/deep/g3.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("answers a walk's questions as it answers each path alone, across nested checkouts and ignored folders", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const { parent, sub } = await withSubmodule(root);
+    await writeFile(join(parent, ".gitignore"), "scratch/\n*.log\n");
+    await mkdir(join(parent, "scratch"));
+    await mkdir(join(sub, "api"), { recursive: true });
+    setUpTestRepository(parent, { library: [file(needle("test:parent", "PARENT"))] }, databasePath);
+    setUpTestRepository(sub, { library: [file(needle("test:sub", "SUB"))] }, databasePath);
+    const { recorder } = recordingAudits();
+    const auditor = router(parent, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("view");
+    const view = auditor.walkView();
+
+    const folders = ["api", "scratch", "sub", "sub/api"];
+    const files = ["README.md", "run.log", "api/a.py", "scratch/x.py", "sub/README.md", "sub/api/b.py"];
+    const answers = (judge: Pick<CheckoutCodeRuleRouter, "acceptsPath" | "ignoresPath">) => ({
+      folders: folders.map(folder => judge.ignoresPath(folder, true)),
+      files: files.map(path => [judge.ignoresPath(path, false), judge.acceptsPath(path)]),
+    });
+    expect(answers(view)).toEqual({
+      folders: [false, true, false, false],
+      files: [[false, false], [true, false], [false, true], [true, false], [false, false], [false, true]],
+    });
+    expect(answers(view)).toEqual(answers(auditor));
+  });
+
   it("names the checkout that owns a `.git` entry as it does for the files beside it: a submodule's file, the session checkout's folder", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
@@ -242,7 +365,7 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(violations(audits)).toEqual([]);
   });
 
-  it("rejects a symlink whose target leaves its checkout", async () => {
+  it("rejects a symlink whose target leaves its checkout", async context => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const session = await repository(join(root, "session"));
@@ -250,7 +373,7 @@ describe("CheckoutCodeRuleRouter", () => {
     setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
     setUpTestRepository(sibling, { library: [file(needle("test:sibling", "SIBLING"))] }, databasePath);
     await writeFile(join(sibling, "api", "x.py"), "NEEDLE\n");
-    await symlink(join(sibling, "api", "x.py"), join(session, "api", "escape.py"));
+    symlinkOrSkip(context, join(sibling, "api", "x.py"), join(session, "api", "escape.py"));
     const { recorder, audits } = recordingAudits();
     const auditor = router(session, databasePath, recorder);
 
@@ -361,7 +484,7 @@ describe("CheckoutCodeRuleRouter", () => {
     expect(violations(audits)).toEqual([{ checkout: session, path: "api/z.py", code: "SESSION", mode: "block" }]);
   });
 
-  it("rejects a parent's file that is a symlink into a nested checkout, which the parent's rules would otherwise judge", async () => {
+  it("rejects a parent's file that is a symlink into a nested checkout, which the parent's rules would otherwise judge", async context => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const { parent, sub } = await withSubmodule(root);
@@ -370,7 +493,7 @@ describe("CheckoutCodeRuleRouter", () => {
     await mkdir(join(sub, "api"), { recursive: true });
     await writeFile(join(sub, "api", "b.py"), "NEEDLE\n");
     // Lexically `api/link.py` is the parent's; really it is the submodule's `api/b.py`.
-    await symlink(join(sub, "api", "b.py"), join(parent, "api", "link.py"));
+    symlinkOrSkip(context, join(sub, "api", "b.py"), join(parent, "api", "link.py"));
     const { recorder, audits } = recordingAudits();
     const auditor = router(parent, databasePath, recorder);
 
@@ -389,7 +512,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
@@ -561,7 +684,7 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     git(session, "worktree", "add", "--quiet", "-b", "stopped", stopped);
     const removed = join(root, "elsewhere", "removed");
     git(session, "worktree", "add", "--quiet", "-b", "removed", removed);
-    await rm(removed, { recursive: true });
+    await removeFolder(removed);
     await mkdir(join(session, "forged"));
     await writeFile(join(session, "forged", ".git"), `gitdir: ${join(session, ".git")}\n`);
     const database = openRerailDatabase(databasePath);

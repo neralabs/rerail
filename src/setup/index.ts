@@ -16,7 +16,7 @@ export {
   VERSIONS_DIR,
 } from "./updater.js";
 export { codingAgentHome, codingAgentStates, registrationRoot, SEEN_AGENTS_FILE } from "./coding-agents.js";
-export { registerHarnesses } from "./harness-registration.js";
+export { CLAUDE_HOOK_EVENTS, registerHarnesses } from "./harness-registration.js";
 export { LAUNCHER_PATH_FILE, launcherPathMarker } from "./shell-path.js";
 export { type Harness } from "./harness-registration.js";
 export {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,8 @@ import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schem
 import type { CodeRule } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { loadNativeBinding } from "../../../../src/engine/native/native.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
+import { linkFolder } from "../../../support/platform/links.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 // What an ECMA file's nearest package.json gives it: the module system a query that leaves `languageOptions.sourceType`
 // unset reads (its `type`), and what `file.package` and `file.jsxRuntime` read. Repository audits (native index and host
@@ -18,7 +20,7 @@ import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
 // derive them alike, and a changed manifest must change the next result.
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
@@ -766,7 +768,7 @@ describe("a package.json edit alone", () => {
     const outside = await directory("rerail-package-facts-outside-");
     await writeFile(join(outside, "package.json"), '{ "type": "commonjs", "dependencies": { "next": "15" } }\n');
     await writeFile(join(outside, "x.js"), "module.exports = require('x');\n");
-    await symlink(outside, join(root, "vendor"), "dir");
+    linkFolder(outside, join(root, "vendor"));
     const binding = loadNativeBinding();
     const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
     const { edit, close } = await enforcerFor(root, CODE_RULE, sources);
@@ -950,7 +952,7 @@ describe("a Next app's server module graph (file.package.serverGraph)", () => {
       await mkdir(dirname(join(outside, path)), { recursive: true });
       await writeFile(join(outside, path), source);
     }
-    await symlink(outside, join(root, "vendor"), "dir");
+    linkFolder(outside, join(root, "vendor"));
     const binding = loadNativeBinding();
     const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
     const { edit, close } = await enforcerFor(root, CODE_RULE, {});

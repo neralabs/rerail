@@ -9,6 +9,7 @@ description = "The rule engine's own .rr parser: a .rr file's statements and its
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
 all-languages = []
 lang-blade = []
+lang-java = []
 lang-javascript = []
 lang-json = []
 lang-php = []

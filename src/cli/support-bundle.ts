@@ -10,7 +10,8 @@
  * file before attaching it. The command only writes a local file; nothing here touches the network.
  */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import { replaceFileSync } from "../engine/file-replace.js";
 import { arch, homedir, hostname, platform, release, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -227,9 +228,11 @@ export function scrubText(text: string, { knownValues }: { knownValues: readonly
   for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
     // A home or checkout of `/`, as a container can have, would take every slash with it.
     if (value.length < 2) continue;
-    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else scrubbed = scrubbed.replaceAll(value, () => label);
+    // Windows paths ignore case, and a host can spell one with another drive letter case than Git does (VS Code's `d:\`).
+    const flags = /^[A-Za-z]:[\\/]/u.test(value) ? "giu" : "gu";
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
+    else scrubbed = scrubbed.replace(new RegExp(escapeRegExp(value), flags), () => label);
   }
   for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
   return scrubbed;
@@ -650,14 +653,8 @@ function summaryText(summary: SupportBundleSummary): string {
 }
 
 function writeBundle(output: string, bundle: SupportBundle): void {
-  const staging = `${output}.${process.pid}.tmp`;
   mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
-  try {
-    writeFileSync(staging, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
-    renameSync(staging, output);
-  } finally {
-    rmSync(staging, { force: true });
-  }
+  replaceFileSync(output, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
 }
 
 export interface SupportBundleCommandIo {

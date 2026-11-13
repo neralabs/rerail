@@ -810,7 +810,7 @@ impl BladeTree {
         (index < self.nodes.len()).then_some(index)
     }
 
-    /// Nodes in the tree.
+    /// Nodes in the tree: the throughput benchmark's checksum, which builds on Unix only.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn len(&self) -> usize {
         self.nodes.len()

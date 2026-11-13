@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { enableWal } from "../engine/storage/sqlite-wal.js";
 import { CLAUDE_STATUS_DATABASE_FILE } from "../engine/storage/rerail-home.js";
 
@@ -118,7 +119,7 @@ export async function writeClaudeStatusRegistration(
   path: string = join(resolve(home), ".claude", "settings.json"),
 ): Promise<void> {
   const databasePath = claudeStatusDatabasePath(home);
-  mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+  makeRerailHome(dirname(databasePath));
   using database = openStatusDatabase(databasePath, { timeout: 5000 });
   const settingsPath = resolve(registration?.settingsPath ?? path);
   chmodSync(databasePath, 0o600);

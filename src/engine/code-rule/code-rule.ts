@@ -4,7 +4,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -1580,6 +1580,9 @@ export interface IgnoredEditMatch {
   pattern: string;
 }
 
+/** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1593,6 +1596,12 @@ export interface CodeRuleAuditor {
    * a shell-write walk neither descends into such a folder (`directory`) nor observes such a file. Absent: nothing is.
    */
   ignoresPath?(path: string, directory: boolean): boolean;
+  /**
+   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
+   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
+   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   */
+  walkView?(): WalkView;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
@@ -1691,9 +1700,12 @@ function steerFindings(violations: readonly CodeRuleViolation[], sensitive: (pat
   });
 }
 
-/** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
-export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
-  return steerBlock(trigger, steerFindings(violations, sensitiveByName));
+/**
+ * The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default), its
+ * command written for `shell` (`steerBlock`'s default when absent).
+ */
+export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }, shell?: SteerShell): string {
+  return steerBlock(trigger, steerFindings(violations, sensitiveByName), shell);
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1705,17 +1717,19 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
  * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
  * the text is byte-identical to `renderSteer` when `sensitive` is `sensitiveByName`. `sensitive` judges which
  * violation paths are secret-like: a caller that knows the checkout the paths are relative to passes
- * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one.
+ * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one. `shell` is the session's
+ * coding agent's (`steerShell`), which the steer's command is written for.
  */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
   trigger: SteerTrigger,
   sourceOf: SteerSourceOf = () => undefined,
   sensitive: (path: string) => boolean = sensitiveByName,
+  shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
   return {
-    content: steerBlock(trigger, findings),
+    content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
     rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
   };

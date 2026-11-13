@@ -9,6 +9,7 @@ description = "CPU time and counts by stage (RERAIL_PROF), shared by the engine 
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
 all-languages = []
 lang-blade = []
+lang-java = []
 lang-javascript = []
 lang-json = []
 lang-php = []

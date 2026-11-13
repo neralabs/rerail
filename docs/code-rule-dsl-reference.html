@@ -441,7 +441,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <p>Languages come from the registry (<code>languages/*.json</code>, see <code>docs/language-packs.md</code>):</p>
 <ul>
 <li><b>Planned</b> language: stored, but refused at compile time with <code>language-not-supported</code>; the catalog keeps the rule inactive until the engine reads it.</li>
-<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise.</li>
+<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise, and so is a <a href="#transform"><code>transform</code></a> step reading a value (<code>toPrecision</code>, a <code>value</code> source) where values are not read yet.</li>
 <li><b><code>refused</code></b> capability: its predicates are invalid.</li>
 </ul>
 
@@ -505,18 +505,21 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">vue</span></td><td>vue</td><td><code>vue</code>: <code>.vue</code></td><td>vue</td></tr>
 <tr><td><span class="b">sql</span></td><td>sql</td><td><code>sql</code>: <code>.sql</code></td><td>sql</td></tr>
 <tr><td><span class="b">rr</span></td><td>rr</td><td><code>rr</code>: <code>.rr</code></td><td>rr</td></tr>
+<tr><td><span class="b">java</span></td><td>java</td><td><code>java</code>: <code>.java</code></td><td>java</td></tr>
 </tbody></table></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th></tr></thead>
+<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>rr</th><th>java</th></tr></thead>
 <tbody>
-<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td></tr>
-<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td></tr>
-<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td></tr>
-<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td></tr>
+<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
+<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
+<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>not yet</td></tr>
+<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td></tr>
+<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>no</td><td>not yet</td></tr>
+<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td><td>none</td></tr>
 </tbody></table></div>
 <p>TypeScript rules also run on JavaScript with the JavaScript grammar; kinds unique to another dialect are <code>Never</code> there.</p>
+
+<p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, <code>regex</code>, the relations, <code>field</code>, <code>nthChild</code>, <code>count</code>, <code>layout</code> and <code>matches</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code>, or whose <code>transform</code> reads a value (<code>toPrecision</code>, a <code>value</code> source), is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
 
 <p><b>PHP.</b> PHP-only files; <code>.blade.php</code> templates use Blade.</p>
 <ul>
@@ -715,6 +718,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><b>TypeScript, TSX, JavaScript</b> add <code>html_comment</code> (<code>&lt;!--</code> and <code>--&gt;</code> lines).</li>
 <li><b>Blade, Vue</b>: the template's comments; under <a href="#embedded"><code>ast.embedded</code></a>, the program's (<a href="#blade">Blade</a>, <a href="#vue">Vue</a>).</li>
 <li><b>Rust</b>: <code>line_comment</code> and <code>block_comment</code>; a doc comment has an <code>outer_doc_comment_marker</code> or <code>inner_doc_comment_marker</code> child and a <code>doc_comment</code> text child.</li>
+<li><b>Java</b>: <code>line_comment</code> and <code>block_comment</code>; a Javadoc comment is a <code>block_comment</code>, told apart by its opening (below).</li>
 </ul>
 <p>Elsewhere, tell line, block and doc comments apart by their opening, with <code>regex</code>:</p>
 <div class="table-wrap"><table>
@@ -727,6 +731,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>), not doc</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>has: { kind: "outer_doc_comment_marker" }</code> (<code>///</code>, <code>/**</code>) or <code>has: { kind: "inner_doc_comment_marker" }</code> (<code>//!</code>, <code>/*!</code>); <code>////</code> and <code>/***</code> are no doc comments</td></tr>
 <tr><td><span class="b">vue</span></td><td>TypeScript's, under <code>ast.embedded</code></td><td><code>^&lt;!--</code> (the template's HTML); TypeScript's under <code>ast.embedded</code></td><td>TypeScript's, under <code>ast.embedded</code></td></tr>
 <tr><td><span class="b">sql</span></td><td><code>^--</code></td><td><code>^/\*</code> (nested, as PostgreSQL reads them)</td><td>none</td></tr>
+<tr><td><span class="b">java</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>)</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>kind: "block_comment"</code> with <code>regex: "^/\\*\\*[^/]"</code> (Javadoc; <code>/**/</code> is an empty block comment, no doc)</td></tr>
 </tbody></table></div>
 <p><b>Position.</b> A comment is a tree-sitter <i>extra</i>: a child of the node whose span holds it, in source order. A comment before a declaration is its preceding <b>sibling</b>, so use sibling relations, not <code>inside</code> or <code>has</code>:</p>
 <ul>
@@ -948,7 +953,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-Define" data-zod="codeRuleDefineSchema"><summary><span class="nt">Define</span><span class="about">A clause that reports nothing and holds shared utilities, options and config</span></summary>
 <ul class="keys" style="--kw:11ch">
-<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
+<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span> | <span class="lit">"java"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
 <li><span class="key"><a class="kl" href="#define"><b class="k">utils</b></a><span class="q">?</span></span><span class="t">map of <a class="nt" href="#g-UtilId">UtilId</a> to <a class="nt" href="#g-Utility">Utility</a></span><span class="d">Named rules every query of the define's language can call with matches</span></li>
 <li><span class="key"><a class="kl" href="#options"><b class="k">options</b></a><span class="q">?</span></span><span class="t">map of OptionName to <a class="nt" href="#g-OptionDecl">OptionDecl</a></span><span class="d">Typed options declared once for the whole document</span></li>
 <li><span class="key"><a class="kl" href="#config"><b class="k">config</b></a><span class="q">?</span></span><span class="t">map of OptionName to Json</span><span class="d">Values set for declared options; an unset option takes its default</span></li>
@@ -1089,7 +1094,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-AstQuery" data-zod="codeRuleQuerySchema.ast"><summary><span class="nt">AstQuery</span><span class="about">A rule object matched on a language's syntax tree, with the options around it</span></summary>
 <ul class="keys" style="--kw:18ch">
-<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span></span><span class="d">The language whose files the query reads and parses</span></li>
+<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"rr"</span> | <span class="lit">"json"</span> | <span class="lit">"java"</span></span><span class="d">The language whose files the query reads and parses</span></li>
 <li><span class="key"><a class="kl" href="#ast-embedded"><b class="k">embedded</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-Via">Via</a></span><span class="d">Runs the query on the program a Blade or Vue file embeds</span></li>
 <li><span class="key"><a class="kl" href="#ast-syntax"><b class="k">syntax</b></a><span class="q">?</span></span><span class="t"><span class="lit">"valid"</span> | <span class="lit">"invalid"</span></span><span class="d">Reads only files that parse without errors, or only files with errors</span></li>
 <li><span class="key"><a class="kl" href="#rule-objects"><b class="k">rule</b></a></span><span class="t"><a class="nt" href="#g-AstRule">AstRule</a></span><span class="d">The rule object matched on every candidate node</span></li>
@@ -5532,7 +5537,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 <li>A witness regex group's text is known only once the rule matched.</li>
 <li><code>toPrecision</code> reads a numeric literal as written (<code>0x</code>, <code>0o</code>, <code>0b</code>, legacy octal and <code>_</code> separators included) or a <code>value</code>'s text. <code>digits</code> is a number, or the text of another capture or variable read as an integer.</li>
 <li>ESLint's <code>no-loss-of-precision</code> compares a literal with <code>value.toPrecision(n)</code> for its <code>n</code> significant digits: <code>9223372036854775808</code> is exact at 19 digits though <code>String</code> gives <code>9223372036854776000</code>.</li>
-<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused.</li>
+<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused; in a language whose values are not read yet (Java), it is <code>language-not-supported</code> instead.</li>
 <li><code>line</code> uses the linter's terminators. <code>count</code> skips comments and Python line continuations.</li>
 <li><code>default: ""</code> with <code>replace: "^$"</code> supplies a fallback. Without <code>default</code>, an unbound source gives the empty text and runs no operation, as upstream.</li>
 <li><code>value: true</code> conversions: JavaScript <code>String(v)</code> (<code>'\x61'</code> is <code>a</code>, <code>1e2</code> is <code>100</code>); Python <code>str(v)</code> (<code>1e2</code> is <code>100.0</code>).</li>

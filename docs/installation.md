@@ -32,7 +32,7 @@ Run set-up in your repository; it turns nothing on until you say yes.
 npx @neralabs/rerail setup
 ```
 
-It installs Rerail under `~/.rerail`, without admin rights, and asks:
+It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Developer Mode, and asks:
 
 1. **Read sessions?** "No" stops set-up with Rerail installed and off.
 2. **Read this repository?** Or skip the scan and pick rule packs yourself.
@@ -91,7 +91,9 @@ Set-up writes to three places outside the repository, and to nothing before you 
 <summary>Exact files and entries</summary>
 
 - **`~/.rerail`** (or `RERAIL_HOME`): the package, the `rerail` launcher in `~/.rerail/bin`, the database of your rules
-  and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`.
+  and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`, on Windows
+  `%USERPROFILE%\AppData\Local\rerail`. On Windows, a `RERAIL_HOME` set-up creates outside your profile folder gets an access list
+  that lets only you, SYSTEM and Administrators in, since a new folder under `C:\` lets every local user read it.
 - **Shell startup file**: a block between `# >>> rerail >>>` and `# <<< rerail <<<` on macOS and Linux, or the user
   `Path` on Windows. `RERAIL_MODIFY_PATH=0` leaves `PATH` to you.
 - **Coding agent settings** in `~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent` and `~/.pi/agent`. The denies keep
@@ -186,7 +188,7 @@ Restart open coding agent sessions afterwards. `--delete-data` also deletes your
 leaving other tools' entries alone. It stops the daemon and moves your database into `~/.rerail-clean-YYYYMMDD/`.
 
 It then deletes, naming each path, `~/.rerail/current`, the launcher, every version, the rule packs and the cache
-`~/.cache/rerail`.
+`~/.cache/rerail` (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
 
 `rerail install --remove --delete-data` deletes the database, its backups, the cache and the checkouts' session ledgers
 instead of keeping them. Nothing it deletes can be restored.
@@ -220,6 +222,9 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
   - Codex CLI; trust the hook once with `/hooks`.
   - Cursor's IDE agent and its CLI (`cursor-agent`).
   - OMP and Pi.
+  - On Windows, Claude Code runs Rerail's commands in Git Bash, and Codex and Cursor in PowerShell; set-up writes each
+    agent's commands for its shell. Claude Code there needs Git Bash, from Git for Windows, even though Claude Code
+    itself does not require it.
 - **Containers and devcontainers** with a glibc image, including the default `node:24` and `node:24-slim`, with or
   without an init process.
 - **WSL 2**, as Linux, with the coding agent running in WSL too: install Rerail on the same side as the coding agent. A
@@ -240,6 +245,9 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
 - Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. A config file that is not strict JSON (comments,
   trailing commas) is left alone; that coding agent stays unconnected until the file is fixed.
 - A coding agent on Windows with Rerail in WSL, or the other way round.
+- Claude Code on Windows without Git Bash, where Claude Code runs commands in PowerShell instead. Rerail's hooks still
+  record and steer, but its status line, `/rerail` commands and set-up's answers are written for Git Bash
+  ([#558](https://github.com/neralabs/rerail/issues/558)).
 - Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
 </details>
@@ -254,8 +262,8 @@ agent's tools can read Rerail's data.
 <details>
 <summary>Per-agent coverage</summary>
 
-Rerail's data is `~/.rerail` (the dashboard's access token, your rules and history) and `~/.cache/rerail`. Set-up adds
-denies for both where the agent's settings have a place for them.
+Rerail's data is `~/.rerail` (the dashboard's access token, your rules and history) and `~/.cache/rerail`, on Windows
+`%USERPROFILE%\AppData\Local\rerail`. Set-up adds denies for both where the agent's settings have a place for them.
 
 - **Claude Code**: file tools always kept out; commands only with its sandbox on (`/sandbox`).
 - **Cursor CLI**: file tools kept out.

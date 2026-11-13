@@ -96,7 +96,7 @@ Code rules check the files the agent edits; command rules check the commands it 
 
 - **Code rules** catch cross-layer imports, a call that bypasses a helper, a blocking call in async code, an old path
   still written in a `Justfile`, or a file in the wrong folder. A clause is a `regex` over a file's text or path, a
-  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP or Blade.
+  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade or Java.
 - **Command rules** catch force pushes, `--no-verify` or publishing.
 
 </details>

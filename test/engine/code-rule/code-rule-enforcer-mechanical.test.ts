@@ -1,11 +1,11 @@
 import { execFileSync, fork } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import Database from "better-sqlite3";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
 import { tmpdir } from "node:os";
@@ -26,11 +26,14 @@ import type {
   NativeCodeRuleDslWorkspace,
   NativeRepositoryIndexOptions,
 } from "../../../src/engine/native/native.js";
+import { linkFolder } from "../../support/platform/links.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
+import { holdRemovals } from "../../support/platform/held-removal.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -40,7 +43,7 @@ vi.mock("node:fs", { spy: true });
 
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 function needleCodeRule(revision: number, pattern = "NEEDLE", code = "NEEDLE") {
   return codeRuleSchema.parse({
@@ -107,6 +110,7 @@ async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
   audits?: AuditRecorder;
   codeRules?: readonly CodeRule[];
   timingLog?: (line: string) => void;
+  steerShell?: "posix" | "git-bash" | "powershell";
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
@@ -224,7 +228,8 @@ function completedDirectories(): number {
 /** Another process that takes the content store's write lock (`lock`) and gives it back (`release`) on request. */
 interface StoreWriterHolder {
   request(command: "lock" | "release"): Promise<void>;
-  close(): void;
+  /** Ends the process and settles once it has exited, so it holds neither the store nor its script's folder. */
+  close(): Promise<void>;
 }
 
 async function storeWriterHolder(storePath: string): Promise<StoreWriterHolder> {
@@ -262,7 +267,12 @@ async function storeWriterHolder(storePath: string): Promise<StoreWriterHolder> 
       child.send(command);
       await replied;
     },
-    close: () => child.kill(),
+    async close() {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    },
   };
 }
 
@@ -921,6 +931,28 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   }, 60_000);
 
+  it("removes its spool folder on close while Windows holds a file in it for a moment", async () => {
+    const { enforcer } = await fixture();
+    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+    // The spool folder, not a spooled file in it.
+    const refused = holdRemovals(vi.mocked(rm), actual.rm, 2, path => /rerail-policy-[^\\/]+$/u.test(path));
+    try {
+      await enforcer.openWorkspace("held-spool");
+      const source = `NEEDLE\n${"x".repeat(850_000)}`;
+      const edits = Array.from({ length: 12 }, (_, index) => ({ path: `api/generated-${index}.py`, language: "python" as const, generatedText: source }));
+      await enforcer.auditGeneratedEdits("held-spool", { revision: 1, checkpoints: ["edit"], edits });
+      await settled(enforcer);
+
+      await enforcer.close();
+
+      expect(refused).toHaveLength(2);
+      expect(existsSync(refused[0]!)).toBe(false);
+    } finally {
+      vi.mocked(rm).mockReset();
+      await enforcer.close();
+    }
+  }, 60_000);
+
   it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {
     const { recorder, audits } = recordingAudits();
     const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
@@ -1017,7 +1049,8 @@ describe("mechanical code rule regressions", () => {
         forbid: { ast: { language: "typescript", rule: { pattern: "console.log($ARG)" } } },
       }],
     });
-    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [fixing] });
+    // The steer's command is written for sh, as for an agent off Windows, on every machine.
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [fixing], steerShell: "posix" });
     try {
       const source = "export function App() {\n  console.log(user);\n  return <main />;\n}\n";
       await mkdir(join(root, "web"));
@@ -1209,15 +1242,16 @@ describe("mechanical code rule regressions", () => {
     roots.push(plain, checkout, links);
     await writeAuditTree(plain, false);
     await writeAuditTree(checkout, true);
-    await symlink(plain, join(links, "plain"));
-    await symlink(checkout, join(links, "checkout"));
+    linkFolder(plain, join(links, "plain"));
+    linkFolder(checkout, join(links, "checkout"));
     const walked = await repositoryAuditPaths(plain);
     expect(walked).toContain("api/a.py");
     expect(await repositoryAuditPaths(join(links, "plain"))).toEqual(walked);
     expect(await repositoryAuditPaths(join(links, "checkout"))).toEqual(walked);
   }, 60_000);
 
-  it("audits a Git checkout holding unreadable untracked directories as the walk does", async () => {
+  it("audits a Git checkout holding unreadable untracked directories as the walk does", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's mode, so chmod cannot make a folder unreadable");
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
     const checkout = await mkdtemp(join(tmpdir(), "rerail-scan-git-"));
     roots.push(plain, checkout);
@@ -1295,7 +1329,7 @@ describe("mechanical code rule regressions", () => {
       expect(completedDirectories()).toBeGreaterThan(before);
     } finally {
       binding.mockRestore();
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 30_000);
@@ -1329,7 +1363,7 @@ describe("mechanical code rule regressions", () => {
     } finally {
       stderr.mockRestore();
       await holder.request("release").catch(() => undefined);
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 60_000);
@@ -1357,7 +1391,7 @@ describe("mechanical code rule regressions", () => {
       });
     } finally {
       binding.mockRestore();
-      holder.close();
+      await holder.close();
       await enforcer.close();
     }
   }, 30_000);

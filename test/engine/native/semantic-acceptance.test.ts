@@ -11,6 +11,7 @@ import {
 import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
 import { contentStorePath } from "../../../src/engine/native/rerail-build.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const SECRET_NAMES = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
 
@@ -233,7 +234,7 @@ describe("semantic acceptance", () => {
         await attachment;
       } finally {
         native.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
 
@@ -302,7 +303,7 @@ describe("semantic acceptance", () => {
         expect(new Set(results.map(siblingId)).size).toBe(1);
       } finally {
         native.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
 
@@ -314,7 +315,7 @@ describe("semantic acceptance", () => {
         expect(USING_REFERENCE_ADDON).toBe(true);
         first.close();
         second.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
         return;
       }
       try {
@@ -335,7 +336,7 @@ describe("semantic acceptance", () => {
       } finally {
         first.close();
         second.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
   });

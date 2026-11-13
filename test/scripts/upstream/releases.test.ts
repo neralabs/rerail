@@ -6,7 +6,7 @@
  * network.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
@@ -26,6 +26,7 @@ import {
   type Fetch,
   type UpstreamPin,
 } from "../../../scripts/upstream/releases.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
@@ -214,7 +215,7 @@ function releasing(root: string, latest: Record<string, string>): Fetch {
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 test("npm's latest is the latest dist-tag, and a pre-release there is refused", () => {

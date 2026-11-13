@@ -1,19 +1,24 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:fs", { spy: true });
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  vi.mocked(fs.symlinkSync).mockRestore();
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -162,6 +167,22 @@ describe("headless rerail scan", () => {
     expect(report.failures).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/a-broken.json" }),
       expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/z-again.json", message: expect.stringContaining("rule needle is already in needle.json") }),
+    ]));
+    expect(report.status).toBe("completed");
+  });
+
+  it("leaves out a symlink entry at --rules-ref, as a checkout's loader does, on a Windows that makes no symlinks", async () => {
+    const root = checkout();
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: root, input: "needle.json", encoding: "utf8" }).trim();
+    git(root, "update-index", "--add", "--cacheinfo", `120000,${blob},.rerail/rules/link.json`);
+    git(root, "commit", "--quiet", "-m", "a link");
+    vi.mocked(fs.symlinkSync).mockImplementation(() => {
+      throw Object.assign(new Error("EPERM: operation not permitted, symlink"), { code: "EPERM" });
+    });
+    const report = await scan(root, { rulesRef: "HEAD" });
+    expect(report.rules.map(rule => rule.ruleId)).toEqual(["needle"]);
+    expect(report.failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/link.json", message: expect.stringContaining("not a regular file") }),
     ]));
     expect(report.status).toBe("completed");
   });

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "vitest";
 
 import {
   installIntoHome,
+  launcherPath,
   loadSqlite,
   parseRestoreArguments,
   processAlive,
@@ -18,6 +19,7 @@ import {
   stageDatabase,
   stopDaemon,
 } from "../../scripts/dev/rerail-restore.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const { DatabaseSync } = await loadSqlite();
 
@@ -26,12 +28,19 @@ async function withHome(run) {
   try {
     return await run(home);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    removeFolderSync(home);
   }
 }
 
 function envFor(home) {
   return { HOME: home, PATH: process.env.PATH ?? "" };
+}
+
+/** Writes the home's launcher: the sh script `sh`, or on Windows the `rerail.cmd` batch file `cmd`, as Rerail installs. */
+function writeLauncher(rerailHome, sh, cmd) {
+  const path = launcherPath(rerailHome);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, process.platform === "win32" ? `${cmd.join("\r\n")}\r\n` : `${sh.join("\n")}\n`, { mode: 0o755 });
 }
 
 /** Every file and symlink under `root` with its contents or target, for exact before/after comparison. */
@@ -65,7 +74,7 @@ function walOnlyDatabase(directory, name, rows) {
     rmSync(`${path}${suffix}`, { force: true });
     if (existsSync(join(copy, `${name}${suffix}`))) writeFileSync(`${path}${suffix}`, readFileSync(join(copy, `${name}${suffix}`)));
   }
-  rmSync(copy, { recursive: true, force: true });
+  removeFolderSync(copy);
   assert.ok(existsSync(`${path}-wal`) && statSync(`${path}-wal`).size > 0, "fixture keeps its rows in the WAL");
 }
 
@@ -122,7 +131,7 @@ test("restore folds the backup's WAL in and moves the destination's database and
       assert.ok(!existsSync(join(stagingDir, "rerail.sqlite-wal")));
       installIntoHome({ backupDir: backup, staged, home: rerailHome, stamp, includeHomeWorkspace: true });
     } finally {
-      rmSync(stagingDir, { recursive: true, force: true });
+      removeFolderSync(stagingDir);
     }
 
     assert.ok(!existsSync(join(rerailHome, "rerail.sqlite-wal")), "no stale WAL beside the restored file");
@@ -189,7 +198,10 @@ test("stopDaemon without a launcher stops the recorded pid, and nothing recorded
 });
 
 test("restoreInstalled stops the launcher's daemon, restores, restarts it on its port, and checks /healthz", async () => {
-  await withHome(async home => {
+  await withHome(async base => {
+    // A home whose path holds a space, as a Windows profile folder can: the launcher still runs.
+    const home = join(base, "a home");
+    mkdirSync(home);
     const server = createServer((request, response) => {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify(request.url === "/healthz" ? { status: "ok" } : {}));
@@ -202,20 +214,24 @@ test("restoreInstalled stops the launcher's daemon, restores, restarts it on its
       const rerailHome = join(home, ".rerail");
       const calls = join(home, "launcher-calls");
       const state = { pid: 999_999_999, port, url: `http://127.0.0.1:${port}` };
-      mkdirSync(join(rerailHome, "bin"), { recursive: true });
-      writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify(state));
-      writeFileSync(join(rerailHome, "bin", "rerail"), [
+      const daemonFile = join(rerailHome, "daemon.json");
+      mkdirSync(rerailHome, { recursive: true });
+      writeFileSync(daemonFile, JSON.stringify(state));
+      writeLauncher(rerailHome, [
         "#!/bin/sh",
         `printf '%s %s\\n' "$RERAIL_HOME" "$*" >> '${calls}'`,
-        `if [ "$1 $2" = "daemon stop" ]; then rm -f '${join(rerailHome, "daemon.json")}'; echo 'Rerail stopped.'; fi`,
-        `if [ "$1 $2" = "daemon start" ]; then printf '%s' '${JSON.stringify(state)}' > '${join(rerailHome, "daemon.json")}'; fi`,
-        "",
-      ].join("\n"));
-      chmodSync(join(rerailHome, "bin", "rerail"), 0o755);
+        `if [ "$1 $2" = "daemon stop" ]; then rm -f '${daemonFile}'; echo 'Rerail stopped.'; fi`,
+        `if [ "$1 $2" = "daemon start" ]; then printf '%s' '${JSON.stringify(state)}' > '${daemonFile}'; fi`,
+      ], [
+        "@echo off",
+        `>>"${calls}" echo %RERAIL_HOME% %*`,
+        `if "%1 %2"=="daemon stop" (del "${daemonFile}" & echo Rerail stopped.)`,
+        `if "%1 %2"=="daemon start" (>"${daemonFile}" echo ${JSON.stringify(state)})`,
+      ]);
 
       const lines = [];
       const result = await restoreInstalled({ backupDir: backup, env: envFor(home), log: line => lines.push(line) });
-      assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), [`${rerailHome} daemon stop`, `${rerailHome} daemon start --port ${port}`]);
+      assert.deepEqual(readFileSync(calls, "utf8").trim().split(/\r?\n/u), [`${rerailHome} daemon stop`, `${rerailHome} daemon start --port ${port}`]);
       assert.deepEqual(result.rules, { table: "library_rules", count: 2 });
       assert.deepEqual(ruleIds(join(rerailHome, "rerail.sqlite")), ["r1", "r2"]);
       assert.ok(lines.some(line => line.includes(`Daemon healthy at http://127.0.0.1:${port}`)));
@@ -230,7 +246,7 @@ test("restoreInstalled refuses when setup left no launcher", async () => {
     walOnlyDatabase(join(home, ".rerail-clean-20260929", "rerail-home"), "rerail.sqlite", ["r"]);
     await assert.rejects(
       restoreInstalled({ backupDir: join(home, ".rerail-clean-20260929"), env: envFor(home), log: () => {} }),
-      /rerail is missing; rerail setup did not complete/u,
+      { message: `${launcherPath(join(home, ".rerail"))} is missing; rerail setup did not complete, so nothing was restored` },
     );
   });
 });

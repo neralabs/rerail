@@ -3,7 +3,11 @@ use napi::{Error, Result, Status};
 use napi_derive::napi;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError, Weak},
+};
 use tokenizers::Tokenizer;
 
 pub const ENGINE_FORMAT_VERSION: u32 = 1;
@@ -162,6 +166,44 @@ pub fn load_model(root: &Path) -> Result<LoadedModel> {
             engine_format_version: ENGINE_FORMAT_VERSION,
         },
     })
+}
+
+/// A model folder and the checksums its manifest names: two loads with the same key read the same files.
+#[derive(PartialEq, Eq)]
+struct ModelKey {
+    root: PathBuf,
+    checksums: [String; 3],
+}
+
+/// The models some engine of this process still holds. Every session opens its own conversation engine, and the model
+/// (its weights and two tokenizers, about 14 MB) is the same for all of them.
+static SHARED_MODELS: Mutex<Vec<(ModelKey, Weak<LoadedModel>)>> = Mutex::new(Vec::new());
+
+/// The model in `root`, loaded and verified as `load_model` does when no engine holds it already, and otherwise the copy
+/// that engine holds. A changed manifest is a different model and loads anew.
+pub fn shared_model(root: &Path) -> Result<Arc<LoadedModel>> {
+    let manifest = read_manifest(root).map_err(|fault| invalid(fault.message))?;
+    let key = ModelKey {
+        root: fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
+        checksums: [
+            manifest.files.model.sha256,
+            manifest.files.tokenizer.sha256,
+            manifest.files.config.sha256,
+        ],
+    };
+    // Held while loading, so two engines opening at once load one copy.
+    let mut shared = SHARED_MODELS.lock().unwrap_or_else(PoisonError::into_inner);
+    shared.retain(|(_, model)| model.strong_count() > 0);
+    if let Some(model) = shared
+        .iter()
+        .find(|(held, _)| *held == key)
+        .and_then(|(_, model)| model.upgrade())
+    {
+        return Ok(model);
+    }
+    let model = Arc::new(load_model(root)?);
+    shared.push((key, Arc::downgrade(&model)));
+    Ok(model)
 }
 
 #[cfg(test)]

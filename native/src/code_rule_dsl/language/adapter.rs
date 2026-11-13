@@ -10,6 +10,7 @@
 pub mod arguments;
 pub mod calls;
 pub mod format_args;
+// cratify: `java` is rerail-engine's (it mounts it)
 // cratify: `kit` is rerail-engine's (it mounts it)
 // cratify: `json` is rerail-lang-json's (it mounts it)
 pub mod rr;

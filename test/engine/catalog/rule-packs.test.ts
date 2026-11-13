@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,10 +27,12 @@ import { recordCheckout } from "../../../src/engine/catalog/repository-registry.
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
 import { installPack, removeInstalledPacks } from "../../support/installed-packs.js";
 import { repositoryPath } from "../../support/oracles.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  for (const directory of temporaryDirectories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of temporaryDirectories.splice(0)) await removeFolder(directory);
 });
 
 async function temporaryDirectory(prefix: string): Promise<string> {
@@ -504,7 +506,7 @@ describe("recommendRulePacks", () => {
     }
   });
 
-  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async () => {
+  it("reads no package.json that is a symlink, outside the repository or to a device, and none larger than 1 MiB", async context => {
     const parent = await temporaryDirectory("rerail-manifest-guard-");
     const typescriptManifest = JSON.stringify({ devDependencies: { typescript: "5.9.0" } });
     writeFiles(parent, { "outside/package.json": typescriptManifest });
@@ -514,14 +516,17 @@ describe("recommendRulePacks", () => {
       // Valid JSON that names typescript, padded past the cap.
       "big/package.json": `${typescriptManifest.slice(0, -1)}, "padding": "${"x".repeat(1024 * 1024)}"}`,
     });
+    execFileSync("git", ["init", "-q", root]);
+    execFileSync("git", ["-C", root, "add", "app/main.py", "big/package.json"]);
+    const from = await withTestPacks();
+    expect(recommendRulePacks(root, from)).toEqual([]);
+
+    // The links last, since a Windows machine that cannot make a file link skips the rest of the test here.
     mkdirSync(join(root, "linked"));
     mkdirSync(join(root, "device"));
-    symlinkSync(join(parent, "outside/package.json"), join(root, "linked/package.json"));
-    symlinkSync("/dev/zero", join(root, "device/package.json"));
-    execFileSync("git", ["init", "-q", root]);
-    execFileSync("git", ["-C", root, "add", "app/main.py", "big/package.json", "linked/package.json", "device/package.json"]);
-
-    const from = await withTestPacks();
+    symlinkOrSkip(context, join(parent, "outside/package.json"), join(root, "linked/package.json"));
+    symlinkOrSkip(context, "/dev/zero", join(root, "device/package.json"));
+    execFileSync("git", ["-C", root, "add", "linked/package.json", "device/package.json"]);
     expect(recommendRulePacks(root, from)).toEqual([]);
     writeFileSync(join(root, "package.json"), typescriptManifest);
     expect(recommendRulePacks(root, from).map(({ pack: found, reason }) => [found.id, reason])).toEqual([["lang-ts", "matches the typescript dependency in package.json"]]);

@@ -1,0 +1,1 @@
+On Windows, an import written as an absolute Windows path (`C:\repo\lib\a.js`), and a tsconfig `extends` or `paths` entry written as one, name that file, as Node's resolvers read them. Rules that resolve imports, such as the node pack's `n-no-missing-import`, reported such an import as missing.

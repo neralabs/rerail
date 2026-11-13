@@ -241,6 +241,21 @@ impl Usage {
         { let pack = language_pack::pack(table.family); language_pack::scope_usage(pack, table, root, &mut steps) }
     }
 
+    /// The index of a file whose family's scope the engine does not read yet (registry
+    /// `not-supported-yet`): no binding carries a fact and no name is a site.
+    pub fn unread(table: &ScopeTable, steps: &Steps<'_>) -> Self {
+        Self {
+            facts: table.scopes.iter().map(|_| HashMap::new()).collect(),
+            sites: Vec::new(),
+            exports: Vec::new(),
+            comment_exports: BTreeSet::new(),
+            occurrences: HashMap::new(),
+            privates: Vec::new(),
+            private_names: Vec::new(),
+            before_local: Vec::new(),
+            cost: steps.cost,
+        }
+    }
 }
 
 /// What a function's own binding of a name shadows in an enclosing scope (`shadowed_by_local`).

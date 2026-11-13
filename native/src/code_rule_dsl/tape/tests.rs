@@ -253,14 +253,15 @@ fn persisted_image_round_trips_without_parsing() {
     // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
-    // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
+    // `_member_name_here`, Patch 29's `_template_escape_without_digits`,
+    // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
     // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
     // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
     // version alone; 14: the tokens the grammar implies never written, RER-131; 15: delimiters left out where
     // implied, other tokens only where always implied, RER-131) changes the bytes.
     assert_eq!(
         digest,
-        "df11d157b5916832e7ccd615205d8c0ff9ed1418c11a1716f3dab476a51d257e"
+        "5e9b8dc45f69e91f77139bbd18dac40bbc123697a55a66064335985e6bdc6c86"
     );
 }
 

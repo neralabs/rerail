@@ -169,6 +169,9 @@ language::adapter::sql	rerail-lang-sql
 language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
+# Java reads syntax alone (no semantic concern yet): its adapter is the engine's until a capability needs a crate
+language::adapter::java	rerail-engine
+
 # The engine: napi, CLI, boot and the composition glue
 crate	rerail-engine
 dsl_root	rerail-engine

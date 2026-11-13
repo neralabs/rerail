@@ -1,16 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { keepFilesPrivate, makeRerailHome } from "../../../src/engine/storage/private-files.js";
+import { keepFilesPrivate, keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDirectory(): Promise<string> {
@@ -28,6 +29,24 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     const home = join(await temporaryDirectory(), "home");
     makeRerailHome(home);
     expect(await mode(home)).toBe(0o700);
+  });
+
+  it("is a folder kept private on every call, made or not, since a chmod starts no program", async () => {
+    const folder = join(await temporaryDirectory(), "tokens");
+    await mkdir(folder);
+    await chmod(folder, 0o755);
+    keepFolderPrivate(folder);
+    expect(await mode(folder)).toBe(0o700);
+  });
+
+  it("is a secret with no group or other permission, and one with any is named with its mode", async () => {
+    const key = join(await temporaryDirectory(), "key.pem");
+    await writeFile(key, "key");
+    await chmod(key, 0o600);
+    expect(await openToOthers(key)).toBeUndefined();
+    await chmod(key, 0o620);
+    expect(await openToOthers(key)).toBe("is open to other users (mode 0620)");
+    await expect(openToOthers(join(key, "..", "missing.pem"))).rejects.toThrow(/ENOENT/u);
   });
 
   it("takes group and other access from an existing Rerail home and the private files in it", async () => {

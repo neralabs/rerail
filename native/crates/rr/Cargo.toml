@@ -9,8 +9,9 @@ description = "The .rr front end: parsing to programs, magic sets, lowering, pri
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages"]
+all-languages = ["lang-blade", "lang-java", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages"]
 lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade"]
+lang-java = ["ast-grep-language/tree-sitter-java", "rerail-facts/lang-java", "rerail-lang/lang-java"]
 lang-javascript = ["rerail-facts/lang-javascript", "rerail-lang/lang-javascript"]
 lang-json = ["ast-grep-language/tree-sitter-json", "rerail-facts/lang-json", "rerail-lang/lang-json"]
 lang-php = ["ast-grep-language/tree-sitter-php", "rerail-facts/lang-php", "rerail-lang/lang-php"]
