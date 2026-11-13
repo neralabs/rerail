@@ -15,10 +15,10 @@ use crate::code_rule_dsl::matcher::{
     Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
+use crate::code_rule_dsl::regexes::Regex;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
-use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeSet;
 

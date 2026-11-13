@@ -210,7 +210,9 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
  * and without a dashboard leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
-  const dashboard = cwd === undefined ? undefined : await steerDashboard(cwd);
+  // Hooks call this on every event, and most events deliver nothing: only a rule to link is worth asking the daemon.
+  const linksRules = deliveries.some(delivery => delivery.rules.length > 0);
+  const dashboard = cwd === undefined || !linksRules ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
   return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
 }
