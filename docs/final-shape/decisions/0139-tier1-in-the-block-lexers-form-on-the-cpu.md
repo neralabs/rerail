@@ -1,6 +1,7 @@
 # 0139: Tier 1 on the CPU in the block lexer's form
 
-Status: decided (2026-11-13); step 1 built (2026-11-13), steps 2 to 4 to build.
+Status: decided (2026-11-13); step 1 built, step 2 in part and step 3's marks built
+(2026-11-13); the rest to build.
 The design: docs/parser-generators/36.
 
 ## Intro
@@ -56,3 +57,37 @@ Over the corpus ahead of time it went from 700.4M instructions to 630.0M (395 to
 The cut is smaller than the passes' share suggested:
 most of pass 0's masks were needed by the later pass, and are still made there.
 Steps 2 to 4 take operations out of that one pass.
+
+## The records' marks, built (step 3, in part)
+
+- A mark of one word (9 of the grammar's 13) is read from the word's table slot: its bits
+  are in the slot's meta, set with the token's code. No test a token.
+- The other marks, of any word, are set after the tokens, from their rare bits.
+- The record pass over the corpus went from 310.2M instructions to 191.9M.
+  The `lasts` extract is left.
+
+## Step 2, in part: the directives' refusals are token marks
+
+Two escapes refused a file by the token after a directive. Each was a chain of masks at
+every byte: blanks and comments skipped by fills, and the directive's spelling.
+
+- **The grammar.** They are token marks now, with two new forms of a token mark's element:
+  `~X` (a token not `X`) and `end` (no token left).
+
+  ```
+  # `@`, a name, then a token that can not follow a functor named, not called
+  mark fn_uncalled = tokens "@" identifier ~("(" | "," | "}")
+  # `.input` or `.output`, then an `#include` or the file's end
+  mark io_bare     = tokens "." "input" | "output" hash_word | end
+  ```
+
+- **Where they are tested.** A token mark the grammar takes nowhere refuses the file
+  wherever it holds. As a mark, it was tested in every state, two words a state:
+  tier 2 grew by 610 words.
+  So `TOKEN` tests these marks instead, once a token, from the record's bit; no state
+  tests them. The program marks them (`tokenmark K refuses`). `no_value` is one too.
+- Tier 2's words went from 3,932 to 3,515.
+- Tier 1, ahead of time, went from 626.4M instructions to 487.9M; through the JIT, from
+  665.2M to 527.5M. The figures before include the records' marks. Tier 2 rose from
+  394.6M to 403.8M: the one test a token.
+

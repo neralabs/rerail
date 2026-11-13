@@ -479,13 +479,21 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenmark {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            let refuses = line.peek_word().as_deref() == Some("refuses");
+            if refuses {
+                line.word()?;
+            }
             while let Some(w) = line.peek_word() {
                 line.word()?;
                 if let Some(o) = w.strip_prefix('o') {
                     let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
-                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new() });
+                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), not: false, end: false });
+                } else if w == "not" {
+                    elems.last_mut().ok_or("a `not` before its element")?.not = true;
+                } else if w == "end" {
+                    elems.last_mut().ok_or("an `end` before its element")?.end = true;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     elems.last_mut().ok_or("a word before its element")?.words.push(s);
@@ -493,7 +501,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
-            parts.token_marks.push(crate::program::TokenMark { order, elems });
+            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses });
         }
         "tokenextra" => {
             let b: u8 = line.number("b")?;

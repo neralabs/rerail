@@ -73,11 +73,17 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
 pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
     use std::fmt::Write as _;
     for m in marks {
-        let _ = write!(out, "  tokenmark {}", m.order);
+        let _ = write!(out, "  tokenmark {}{}", m.order, if m.refuses { " refuses" } else { "" });
         for e in &m.elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
             for s in &e.words {
                 let _ = write!(out, " s{s}");
+            }
+            if e.not {
+                out.push_str(" not");
+            }
+            if e.end {
+                out.push_str(" end");
             }
         }
         out.push('\n');

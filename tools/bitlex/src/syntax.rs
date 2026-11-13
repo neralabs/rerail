@@ -15,10 +15,32 @@ enum Tok {
 }
 
 /// A token mark's choice (`Stmt::TokenMark`): a token of a kind, or a token whose text is a word.
+/// After the first element, two more: `~C` (`Not`), a token none of `C`'s choices, never the
+/// file's end, the only choice of its element; `end` (`End`), no token left, in the last element.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenElem {
     Kind(String),
     Word(Vec<u8>),
+    Not(Vec<TokenElem>),
+    End,
+}
+
+impl TokenElem {
+    /// Whether an element's choices hold at a token of `kind` and text `word` (`None`: no token
+    /// left, the file's end).
+    pub fn holds(choices: &[TokenElem], token: Option<(&str, &[u8])>) -> bool {
+        let one = |c: &TokenElem, (kind, word): (&str, &[u8])| match c {
+            TokenElem::Kind(k) => k == kind,
+            TokenElem::Word(w) => w.as_slice() == word,
+            TokenElem::Not(_) | TokenElem::End => false,
+        };
+        match (choices, token) {
+            ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(c, t)),
+            ([TokenElem::Not(_)], None) => false,
+            (_, None) => choices.contains(&TokenElem::End),
+            (_, Some(t)) => choices.iter().any(|c| one(c, t)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -606,6 +628,29 @@ impl P {
     fn token_choices(&mut self) -> R<Vec<TokenElem>> {
         let mut out = vec![];
         loop {
+            if self.eat_p("~") {
+                // `~C` or `~(C | …)`: none of the choices.
+                let inner = if self.eat_p("(") {
+                    let c = self.token_choices()?;
+                    self.want_p(")")?;
+                    c
+                } else {
+                    let mut c = self.token_choices_one()?;
+                    std::mem::take(&mut c)
+                };
+                if inner.iter().any(|c| matches!(c, TokenElem::Not(_) | TokenElem::End)) || !out.is_empty() || self.is_p("|") {
+                    return self.err("a `~` of kinds and words, alone in its element");
+                }
+                out.push(TokenElem::Not(inner));
+                return Ok(out);
+            }
+            if self.eat_kw("end") {
+                out.push(TokenElem::End);
+                if !self.eat_p("|") {
+                    return Ok(out);
+                }
+                continue;
+            }
             match self.peek().cloned() {
                 Some(Tok::Str(s)) => {
                     self.i += 1;
@@ -620,6 +665,20 @@ impl P {
             if !self.eat_p("|") {
                 return Ok(out);
             }
+        }
+    }
+    /// One kind or word, for a `~` of one.
+    fn token_choices_one(&mut self) -> R<Vec<TokenElem>> {
+        match self.peek().cloned() {
+            Some(Tok::Str(s)) => {
+                self.i += 1;
+                Ok(vec![TokenElem::Word(s)])
+            }
+            Some(Tok::Ident(n)) if n != "end" => {
+                self.i += 1;
+                Ok(vec![TokenElem::Kind(n)])
+            }
+            _ => self.err("a token kind or a word"),
         }
     }
     fn kind(&mut self) -> R<String> {
@@ -1260,11 +1319,18 @@ impl P {
                 if self.eat_kw("tokens") {
                     let before = if self.eat_kw("after") { self.token_choices()? } else { vec![] };
                     let mut seq = vec![];
-                    while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
+                    while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~"))) {
                         seq.push(self.token_choices()?);
                     }
                     if seq.is_empty() {
                         return self.err("a token after `tokens`");
+                    }
+                    // The mark's token, and the one before, are tokens of the choices: no `~`, no
+                    // `end`; an `end` only in the last element.
+                    let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End));
+                    let ends = |c: &[TokenElem]| c.contains(&TokenElem::End);
+                    if special(&seq[0]) || special(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
+                        return self.err("a mark's token of kinds and words, and `end` only last");
                     }
                     let s = Stmt::TokenMark { kind, before, seq };
                     self.end_stmt()?;

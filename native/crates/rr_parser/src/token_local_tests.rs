@@ -20,17 +20,10 @@ fn rr_facts_hold_on_the_corpus() {
     sample.extend(corpus.iter().max_by_key(|f| f.len()).map(|f| f.as_bytes()));
     // The token marks are tier 2's, from the records (decision 0129): their words' masks are gone
     // from tier 1.
-    for word in ["fix_w", "suppress_w", "options_w", "over_w", "agg_word"] {
+    // `input_w` and `output_w` too (decision 0139, step 2): the I/O directives' checks are token
+    // marks.
+    for word in ["fix_w", "suppress_w", "options_w", "over_w", "agg_word", "input_w", "output_w"] {
         assert!(c.values.iter().all(|v| v.name != word), "`{word}` is a token mark's, not a mask");
-    }
-    // The other keyword masks are checks of one identifier: anchored on its first byte.
-    let id = starts.iter().position(|v| v.name == "token identifier start").expect("identifiers");
-    for word in ["input_w", "output_w"] {
-        let v = c.values.iter().find(|v| v.name == word).unwrap_or_else(|| panic!("no `{word}`"));
-        let fact = &facts[usize::from(v.op)];
-        let shifts: Vec<i32> = fact.anchors.iter().filter(|a| a.0 == id).map(|&(_, s)| s + i32::from(starts[id].delay) - i32::from(v.delay)).collect();
-        assert_eq!(shifts, [0], "`{word}` is anchored on an identifier's first byte: {:?}", fact.anchors);
-        assert!(fact.local.is_some(), "`{word}` is local");
     }
     let checked = token_local::check(&c.block, &anchors, &facts, &sample);
     eprintln!(
@@ -43,7 +36,9 @@ fn rr_facts_hold_on_the_corpus() {
         checked.wrong.len()
     );
     assert!(checked.wrong.is_empty(), "{:#?}", &checked.wrong[..checked.wrong.len().min(10)]);
-    assert!(checked.local > 100 && checked.anchored > 20, "too few claims: {checked:?}");
+    // Anchored: the token starts' own, at least (the keyword and directive masks once anchored
+    // on them are token marks now).
+    assert!(checked.local > 100 && checked.anchored >= 8, "too few claims: {checked:?}");
 }
 
 /// How much of the `.rr` grammar's tier 1 is token-level: each operation by its facts, and the

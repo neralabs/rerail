@@ -180,31 +180,7 @@ mask sig16      = sig8 & prev(sig8, 8)
 mask long_int   = fill(sig16 & prev(sig2, 16) & prev(sig, 18), ~int)
 escape "a number of 19 digits or more" when long_int & ~next(int) & ~next(f_dot)
 
-# --- Directives the engine refuses by the token after them ------------------------------------
-
-# Between two tokens: blanks and comments. `after(X)`: the first byte past them after `X`'s.
-mask blank      = (code & ws) | f_line | f_block | block_last
-mask solid      = ~blank
-# A functor named, not called: `@`, then its name; past the name, a `(` calls it, and only a
-# `,` or a `}` (in a lattice) may follow one not called.
-mask at_gap     = fill(code & at_sign, solid)
-mask fn_name    = fill(alpha & ident & ~prev(ident) & prev(at_gap), ~ident)
-mask fn_last    = fn_name & ~next(fn_name)
-mask fn_past    = prev(fn_last)
-mask fn_run     = fill(fn_past & blank, solid)
-mask fn_next    = (fn_past & solid) | (prev(fn_run) & ~fn_run)
-escape "a functor named, not called, before what can not follow it" when fn_next & code & ~lparen & ~comma & ~rbrace
-# `.input` and `.output`: relations, or none before a `.`; before an `#include`, or at the
-# file's end, the engine refuses the directive.
-mask dot_gap    = fill(code & dot, solid)
-mask dir_start  = alpha & ident & ~prev(ident) & prev(dot_gap)
-mask input_w    = dir_start & c_i & next(c_n) & next(c_p, 2) & next(u, 3) & next(c_t, 4) & ~next(ident, 5)
-mask output_w   = dir_start & c_o & next(u) & next(c_t, 2) & next(c_p, 3) & next(u, 4) & next(c_t, 5) & ~next(ident, 6)
-mask io_last    = prev(input_w, 4) | prev(output_w, 5)
-mask io_past    = prev(io_last)
-mask io_run     = fill(io_past & blank, solid)
-mask io_next    = (io_past & solid) | (prev(io_run) & ~io_run)
-escape "an I/O directive with no relation, and no `.` after it" when (io_next & hash) | ((io_last | io_run) & last_byte)
+# Directives the engine refuses by the token after them: token marks, after the other marks.
 
 # A name's first byte: a `.end`'s word starts at one.
 mask id_first   = alpha & ident & ~prev(ident)
@@ -275,6 +251,16 @@ mark end_on      = tokens "." "end"
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
 mask in_str      = f_str & ~o_str
 mark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit)) | (int & zero & ~prev(int) & next(int))
+
+# Token marks that refuse: the tokens after a token, comments between them skipped. Declared
+# last, a state tests each only in its switch's arms for its token's first byte.
+# A functor named, not called: `@`, then its name, then a token that can not follow it (a `(`
+# calls it; a `,` or a `}`, in a lattice, may follow one not called). The engine refuses it:
+# a mark the grammar takes nowhere, so the file is refused where it is.
+mark fn_uncalled = tokens "@" identifier ~("(" | "," | "}")
+# `.input` and `.output` with no relation: before an `#include`, or at the file's end. Refused
+# as the engine refuses them.
+mark io_bare     = tokens "." "input" | "output" hash_word | end
 
 # --- The tree ----------------------------------------------------------------------------------
 
