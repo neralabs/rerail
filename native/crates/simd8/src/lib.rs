@@ -151,7 +151,8 @@ macro_rules! dispatch {
         /// As the kernel's dispatched function, on `backend`: `None` where the CPU does not run it.
         #[allow(dead_code)]
         $vis fn $on(backend: $crate::Backend, $($arg: $ty),*) -> Option<$ret> {
-            if !backend.runs() {
+            // (`best` runs: its features are not detected again.)
+            if backend != $crate::best() && !backend.runs() {
                 return None;
             }
             match backend {
@@ -424,6 +425,21 @@ unsafe impl Simd8x64 for Fallback {
     unsafe fn to_bitmask(a: Self::V) -> u64 {
         a.iter().enumerate().fold(0, |m, (i, &b)| m | u64::from(b >> 7) << i)
     }
+    /// 8 bytes a word (SWAR): each equal byte's low bit, the 8 gathered into one byte by a
+    /// multiply.
+    #[inline(always)]
+    unsafe fn eq_mask(a: Self::V, x: u8) -> u64 {
+        const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+        const ONES: u64 = 0x0101_0101_0101_0101;
+        let mut m = 0;
+        for k in 0..8 {
+            let w = u64::from_le_bytes(a[8 * k..8 * k + 8].try_into().expect("8 bytes"));
+            let v = w ^ (ONES * u64::from(x));
+            let hit = (!(((v & LO7) + LO7) | v) >> 7) & ONES;
+            m |= (hit.wrapping_mul(0x0102_0408_1020_4080) >> 56) << (8 * k);
+        }
+        m
+    }
 }
 
 #[cfg(test)]
@@ -457,6 +473,12 @@ mod tests {
                 x ^= x >> 7;
                 x ^= x << 17;
                 *c = [b'x', b'{', 0x80, (x >> 8) as u8][(x % 4) as usize];
+            }
+            // The fallback's SWAR compare, as a byte by byte one.
+            for x in [b'x', b'{', 0x80, (x >> 8) as u8, 0, 0xff] {
+                let bytes = (0..64).fold(0u64, |m, i| m | u64::from(b[i] == x) << i);
+                // SAFETY: the fallback is plain Rust.
+                assert_eq!(unsafe { Fallback::eq_mask(Fallback::load(&b), x) }, bytes);
             }
             let want = block_masks_on(Backend::Fallback, &b).unwrap();
             assert_eq!(block_masks(&b), want);

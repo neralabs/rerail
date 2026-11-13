@@ -2,12 +2,14 @@
 //! tree-sitter's (`python_tape_expect`, to `RERAIL_PY_OUT`); this compares, and reports the files
 //! that differ (the first differing line, with the lines around it) and the ones refused.
 
-use crate::{tape, tape_text};
+use crate::tape_text;
 
 #[test]
 #[ignore = "needs RERAIL_PY_OUT, the engine's expected tapes (python_tape_expect)"]
 fn oracle() {
     let dir = std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT");
+    // The product's parse (error texts refused), or with `RERAIL_PY_RECOVER=1` decision 0169's recovery.
+    let tape = if std::env::var("RERAIL_PY_RECOVER").is_ok_and(|v| v == "1") { crate::tape_recovering } else { crate::tape };
     let show: usize = std::env::var("RERAIL_PY_SHOW").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
     paths.sort();
@@ -25,19 +27,27 @@ fn oracle() {
         let expected = std::fs::read_to_string(p).unwrap();
         let (head, want) = expected.split_once('\n').unwrap();
         // A cut text: its file's first `cut` bytes; `ERROR` where tree-sitter's tree has an error.
-        let (path, cut) = match head.split_once('\t') {
-            Some((p, c)) => (p, c.parse::<usize>().ok()),
-            None => (head, None),
+        // An edited text: `@<cut>-<line end>`, the line cut short in the middle of the file.
+        let (path, cut, edit) = match head.split_once('\t') {
+            Some((p, c)) => match c.strip_prefix('@').and_then(|e| e.split_once('-')) {
+                Some((a, b)) => (p, None, a.parse::<usize>().ok().zip(b.parse::<usize>().ok())),
+                None => (p, c.parse::<usize>().ok(), None),
+            },
+            None => (head, None, None),
         };
         let Ok(mut src) = std::fs::read(path) else { continue };
         if let Some(cut) = cut {
             src.truncate(cut);
         }
-        let path = &format!("{path}{}", cut.map_or(String::new(), |c| format!(" (cut at {c})")));
+        if let Some((a, b)) = edit {
+            src = [&src[..a], &src[b..]].concat();
+        }
+        let path = &format!("{path}{}{}", cut.map_or(String::new(), |c| format!(" (cut at {c})")), edit.map_or(String::new(), |(a, b)| format!(" (line cut at {a}, to {b})")));
         // A text where tree-sitter's tree has an error: its recovered tape follows the `ERROR` line.
         let (want, error) = match want.strip_prefix("ERROR\n") {
             Some(w) => (w, true),
-            None => (want, false),
+            // tree-sitter's `has_error` can miss an ERROR its tree holds: the tape says so too.
+            None => (want, want.contains(" flags=2 ") || want.contains(" flags=3 ")),
         };
         if error {
             match tape(&src) {
@@ -65,7 +75,7 @@ fn oracle() {
                     }
                     if shown < show {
                         shown += 1;
-                        show_diff(path, &got, want, &src);
+                        show_diff(&format!("{path} [error text]"), &got, want, &src);
                     }
                 }
             }

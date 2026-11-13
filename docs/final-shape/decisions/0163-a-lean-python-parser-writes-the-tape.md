@@ -111,8 +111,8 @@ running the layout scanner: 643 instructions a node before those two changes.
   one is its oracle and its cost to beat.
 - **GLR forks.** `print(a, *b)` and any other construct where tree-sitter's tree comes from a fork are
   refused. They are rare (1 file in 3,917).
-- **Error recovery.** A file with a syntax error goes to tree-sitter-python, which is what a file being
-  written mostly is. A permissive read (as 0158's trailing commas) is not built.
+- **Error recovery.** Built in 0169 (`tape_recovering`), off in the product: a file with a syntax
+  error goes to tree-sitter-python (amended below).
 
 ## Amended (2026-11-13): every file with a syntax error is refused
 
@@ -133,3 +133,10 @@ missing. The user decided: refuse any file with a syntax error. `recover_at_end`
 unused, for the Bitlex parser's work. Only files with errors pay tree-sitter's cost. The parity test
 checks that each cut text is refused and that the engine's tape for it is tree-sitter-python's
 (`python_tapes_from_the_lean_parser_are_tree_sitters`).
+
+The roll-up of 0169 (2026-11-13) kept this: 0169's recovery matches tree-sitter on most recovered texts
+but not all (e-cut 225 of 1,790 differ, e-edit 76 of 133), and a tape that differs would be carried by
+the product. The user chose to merge 0169 and keep refusing: `rerail_python_lean::tape` refuses, and
+`tape_recovering` runs 0169's recovery for its oracle (`RERAIL_PY_RECOVER=1`). 0169's line joins stay
+on: a text tree-sitter's scanner reads with a joined line end (`col:⏎message: str`) parses without an
+error, and its tape is tree-sitter's (0 of 2,138 clean texts differ).

@@ -4223,6 +4223,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-rr-syntax",
+ "rerail-simd8",
  "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",

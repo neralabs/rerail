@@ -558,13 +558,43 @@ pub const fn unkey(key: u32) -> (u8, u8, u8, bool) {
 pub use rerail_tape_format::Columns as Tape;
 
 /// The tape of `src`, a Python file: tree-sitter-python's, as the engine encodes it. `Err` where the
-/// parser leaves the file to tree-sitter (a syntax error, a construct it does not read).
+/// parser leaves the file to tree-sitter (a syntax error, a construct it does not read). A line end
+/// tree-sitter's scanner joins is joined here too; a statement that still fails is refused, never
+/// recovered (0163 amended, kept by the 2026-11-13 roll-up: no tape tree-sitter would not write).
 pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
+    tape_with(src, false)
+}
+
+/// `tape`, with a statement the line or text ends in recovered as tree-sitter recovers it (decision
+/// 0169): for its oracle and measurements, not the product, while some recovered tapes differ.
+pub fn tape_recovering(src: &[u8]) -> Result<Tape, Refusal> {
+    tape_with(src, true)
+}
+
+fn tape_with(src: &[u8], recover: bool) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
-    let lexed = lex::lex(src)?;
-    parse::parse(src, &lexed)
+    // Each line end a statement did not take, joined (as tree-sitter's scanner gives no NEWLINE
+    // there), and the text read again.
+    // A joined line end where the next line's first token failed is kept (`parse::Relex`).
+    let (mut joins, mut kept): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+    let insert = |v: &mut Vec<u32>, at: u32| {
+        let k = v.partition_point(|&j| j < at);
+        v.insert(k, at);
+    };
+    loop {
+        let lexed = lex::lex_joined(src, &joins)?;
+        match parse::parse(src, &lexed, &joins, &kept, recover) {
+            Ok(t) => return Ok(t),
+            Err(Ok(parse::Relex::Join(at))) => insert(&mut joins, at),
+            Err(Ok(parse::Relex::Keep(at))) => {
+                joins.retain(|&j| j != at);
+                insert(&mut kept, at);
+            }
+            Err(Err(r)) => return Err(r),
+        }
+    }
 }
 
 /// How many tokens and extras `src` lexes to (the lexer alone, for a measurement).
