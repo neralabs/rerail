@@ -7197,6 +7197,34 @@
         "Cargo.toml": "4024eb6fea9ae80bc123751fbeb076ebbb440327",
         "Cargo.lock": "34e8353c3970039ad173666ac88349ad679ec10a"
       }
+    },
+    "cliArtifact": {
+      "format": "rerail.root-engine-build/v1",
+      "engineCommit": "2e5e273b9eba88e936c35932e1a9dc238043a236",
+      "upstreamCommit": "2f42857e4250f25f8e1dad28df1e5b7e8078ec15",
+      "sourceTrees": {
+        "native": "2926a8cb6199ba1f5ea31fe33e03ccad81280073",
+        "accel": "193e76a3e6ccbcb3d3d05444a9f47c310f639c1c",
+        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+        "tools/bitlex": "5c570a682df908e7afbbc427004cff8b6da4fc96",
+        "Cargo.toml": "4024eb6fea9ae80bc123751fbeb076ebbb440327",
+        "Cargo.lock": "34e8353c3970039ad173666ac88349ad679ec10a"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-cd8079b4bc291599",
+      "sha256": "cd8079b4bc291599d741d78e211e4bb391b973196d239aa41b7ba593f22f162c",
+      "command": "RUSTUP_TOOLCHAIN=1.97.1 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+      "buildAttempts": [
+        {
+          "log": "build-2f.log",
+          "status": "passed",
+          "wallSeconds": 212.12,
+          "userCpuSeconds": 1165.66,
+          "systemCpuSeconds": 36.95
+        }
+      ],
+      "wallSeconds": 212.12,
+      "userCpuSeconds": 1165.66,
+      "systemCpuSeconds": 36.95
     }
   },
   "engineSourceSnapshots": [
