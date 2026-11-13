@@ -133,6 +133,7 @@ fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
         return Ok(Arc::clone(s));
     }
     let s = symbols_by_path(conn)?;
+    forgets();
     SCOPE_SYMS.lock().unwrap().insert(at, Arc::clone(&s));
     Ok(s)
 }
@@ -144,6 +145,7 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
     if let Some(p) = SCOPE_PATHS.lock().unwrap().get(&at) {
         return Arc::clone(p);
     }
+    forgets();
     // Off the run's thread (a strand, decision 0113) the path is not known unless the run's thread found it
     // (`prime`): not kept, so the run's own lookup finds it.
     let Ok(sql) = conn.sql() else { return Arc::from("") };
@@ -161,6 +163,13 @@ pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms
     Ok(arena)
 }
 static SCOPE_PATHS: std::sync::LazyLock<Mutex<HashMap<usize, Arc<str>>>> = std::sync::LazyLock::new(Default::default);
+/// What is kept here by a connection's address is dropped when it closes (`forget_scope`, from the close hook
+/// `vtab::connection_scope` sets), installed before anything is kept so: by whoever loaded the evaluator, not only
+/// the engine's set-up (`install_languages`), which this crate's own runs never make.
+fn forgets() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| crate::code_rule_dsl::facts::vtab::install_forget(crate::code_rule_dsl::facts::vtab::Forget { scope: forget_scope, engine: forget_engine }));
+}
 /// Each live connection's symbols (`symbols`), by its scope.
 static SCOPE_SYMS: std::sync::LazyLock<Mutex<HashMap<usize, Arc<RwLock<Interner>>>>> = std::sync::LazyLock::new(Default::default);
 fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
@@ -5360,6 +5369,30 @@ pub mod posted_tests {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
                     sketches: self.sketches.clone(), serves: self.serves.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: self.level.clone(), stats: self.stats.clone() }
         }
+    }
+}
+
+#[cfg(test)]
+pub mod scope_tests {
+    use super::*;
+
+    /// What a connection left by its address (its path, its symbols, the inputs loaded from its database) is dropped
+    /// when it closes, whoever loaded the evaluator: a closed connection's address goes to the next one opened. Only
+    /// the engine's set-up installed the drop (`install_languages`), so in this crate's own tests a second test's
+    /// connection at the first's address read the first's path, and with it the first's `events` (4 rows for 3,000:
+    /// `repeated_native_consumers_fold_each_demanded_bag_once` after `native_join_shares_summaries_…`).
+    #[test]
+    fn a_closed_connection_leaves_nothing_by_its_address() {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        let at = conn.at();
+        assert!(conn_path(&conn).ends_with(path.file_name().unwrap().to_str().unwrap()));
+        symbols(&conn).unwrap();
+        assert!(SCOPE_PATHS.lock().unwrap().contains_key(&at) && SCOPE_SYMS.lock().unwrap().contains_key(&at));
+        drop(conn);
+        assert!(!SCOPE_PATHS.lock().unwrap().contains_key(&at), "the closed connection's path is kept by its address");
+        assert!(!SCOPE_SYMS.lock().unwrap().contains_key(&at), "the closed connection's symbols are kept by its address");
     }
 }
 
