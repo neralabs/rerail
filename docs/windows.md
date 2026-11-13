@@ -410,7 +410,9 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
   comparison, and a comparison that throws counts as a refusal, so such a holder does not hold the capability.
 - A holder that proves it is this home's engine stops the start: a second daemon must not run beside it. Any other
   holder is a squatter, and the engine listens on the same name with a random hex suffix, recorded in `daemon.json` as
-  `kernelSocketPath`, where hooks read it.
+  `kernelSocketPath`, where hooks read it. While every instance of the held pipe is taken, as when this home's engine
+  is busy, the start waits up to 30 s for a free one, as long as Node's own connect waits, so a busy engine of this
+  home that frees one in that time stops the start; the holder then has 2 s to answer.
 - Rerail 0.1.3 listened on the name with no check and no fallback, so a pipe another user created first made every
   daemon start fail. A probe that sent the capability to learn who holds the pipe would hand it to that user.
 
