@@ -55,7 +55,7 @@ fn aot_tapes_are_the_jits() {
         if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
             tier1_differ.push(i);
         }
-        match (aot.parser.columns(f.as_bytes()), jit.parser.columns(f.as_bytes())) {
+        match (aot.parser.image(f.as_bytes()), jit.parser.image(f.as_bytes())) {
             (Ok(a), Ok(j)) => {
                 taken += 1;
                 if a != j {
@@ -74,8 +74,8 @@ fn aot_tapes_are_the_jits() {
 /// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU
 /// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
 /// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a
-/// time (`columns`: the batch, both tiers, the tape and its columns); the engine's parser
-/// (`rr::tape`); the lean parser's lexer and whole.
+/// time (`image`: the batch, both tiers, the tape's bytes); the engine's parser
+/// (`rr::engine_tape`); the lean parser's lexer and whole.
 #[test]
 #[ignore = "a benchmark: run by name, on an optimized build"]
 fn jit_against_aot() {
@@ -83,7 +83,7 @@ fn jit_against_aot() {
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
     let files = corpus();
-    let ours: Vec<&String> = files.iter().filter(|f| jit.parser.columns(f.as_bytes()).is_ok()).collect();
+    let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
     let nodes: usize = ours.iter().map(|f| rr::engine_tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
     let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
@@ -98,7 +98,7 @@ fn jit_against_aot() {
     let (mut bj, mut ba) = (batch(&jit.parser), batch(&aot.parser));
     let mut tapes: Vec<_> = bj.iter().map(|b| jit.parser.tape(b)).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole"];
+    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::engine_tape)", "lean: lexer", "lean: whole", "lean: the digest"];
     let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); names.len()];
     for _ in 0..rounds {
         let mut at = (thread_cpu(), retired());
@@ -126,11 +126,11 @@ fn jit_against_aot() {
         lap(3, &mut best);
         let mut n = 0;
         for f in &ours {
-            n += jit.parser.columns(f.as_bytes()).map_or(0, |c| c.len());
+            n += jit.parser.image(f.as_bytes()).map_or(0, |c| c.len());
         }
         lap(4, &mut best);
         for f in &ours {
-            n += aot.parser.columns(f.as_bytes()).map_or(0, |c| c.len());
+            n += aot.parser.image(f.as_bytes()).map_or(0, |c| c.len());
         }
         lap(5, &mut best);
         for f in &ours {
@@ -144,8 +144,13 @@ fn jit_against_aot() {
         for f in &ours {
             n += rr::lean::tape(f).len();
         }
-        std::hint::black_box(n);
         lap(8, &mut best);
+        // The tape header's digest alone: a part of the whole above.
+        for f in &ours {
+            n += usize::from(rerail_tape_format::digest(f.as_bytes())[0]);
+        }
+        std::hint::black_box(n);
+        lap(9, &mut best);
     }
     let mb = bytes as f64 / 1e6;
     eprintln!("{} files the grammar parses, {mb:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len());
@@ -214,3 +219,4 @@ fn tier2_words_a_token() {
         eprintln!("  {k}: {:.3}", n as f64 / tokens as f64);
     }
 }
+

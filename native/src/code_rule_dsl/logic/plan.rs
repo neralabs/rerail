@@ -194,7 +194,7 @@ pub struct Step {
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
-/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105).
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
     let mut into = 1.0;
     for step in &plan.steps {
@@ -1533,11 +1533,15 @@ impl Model {
             // 0038): at least one string.
             self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
         } else {
+            // Any relation empty when it plans is not empty where its plans are reused, for the same reason: at least
+            // one row. At 0, every step after it was priced 0 rows and every order was free: annotation demand's
+            // `rel_base` planned before its guest round made `rr_ast_1_1`, scanned `pkg` whole and then probed
+            // `docof` (10,728 -> 25.8 M -> 10,728 rows); `impmod`, `ruff_qual` and `frag_str` the same.
             let card = self.stats.card.get(rel).copied();
             if card.is_none() && (rel.ends_with("__plus") || rel.ends_with("__minus")) && !self.stats.lazy.0.contains_key(rel) {
                 UNSIZED_DELTAS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
-            card.unwrap_or(1000.0)
+            card.unwrap_or(1000.0).max(1.0)
         }
     }
 
@@ -1683,6 +1687,15 @@ impl Model {
             (Some(a), Some(b)) => growth(a, b),
             _ => f64::INFINITY,
         };
+        // A literal with a constant reads the constant's rows, not its relation's: `doc_role(d, 7)` with one row
+        // for 7 when planned and 2,455 now grew 2,455 times, though `doc_role` grew 9 (smoking gun 10, t34).
+        let grew = grew * Self::const_slots(body, first).into_iter().map(|i| match (previous.sizes.get(i), sizes.get(i)) {
+            (Some(&a), Some(&b)) if a != -1.0 && b != -1.0 => {
+                let n = |x: f64| if x == -2.0 { 0.0 } else { x };
+                (n(b).max(1.0) / n(a).max(1.0)).max(1.0)
+            }
+            _ => 1.0,
+        }).product::<f64>();
         // A line that did nothing tells nothing of its order's cost but that one row of input costs about that:
         // counted as one row of work (an order kept from an empty input, with 5,000 rows now, is searched).
         (ran.max(1.0) * grew < SEARCH_WORK && self.valid_live_driver(order, body, first))
@@ -1978,6 +1991,25 @@ impl Model {
             .collect()
     }
 
+    /// Where `live_sizes` holds the count of each constant the body's atoms test: the planning budget reads them
+    /// as growth (`budget_takes`).
+    fn const_slots(body: &[Literal], first: Option<usize>) -> Vec<usize> {
+        // `read_sizes` (the nodes, then each atom's rows), then the delta's rows.
+        let mut at = 1 + body.iter().filter(|l| l.atom().is_some()).count() + usize::from(first.and_then(|f| body[f].atom()).is_some());
+        let mut slots = Vec::new();
+        for a in body.iter().filter_map(Literal::atom) {
+            for t in &a.args {
+                if matches!(t, Term::Wild) { continue; }
+                at += 2;
+                if constant(t).is_some() {
+                    slots.push(at);
+                    at += 1;
+                }
+            }
+        }
+        slots
+    }
+
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
     /// search pays for itself; its distinct values and fanouts can change the cheapest order even at fixed size.
     pub fn live_sizes(&self, body: &[Literal], _first: Option<usize>) -> Vec<f64> {
@@ -2024,6 +2056,12 @@ impl Model {
     /// the next run's planning budget (decision 0122).
     pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
         plans_update(&key, |k| k.5 = Some(work));
+    }
+
+    /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ran_as_planned(&self, head: &Atom, body: &[Literal], first: Option<usize>, work: f64) {
+        Self::ran(self.plan_key("", head, body, first), work);
     }
 
     /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
@@ -2359,12 +2397,16 @@ impl Model {
                         let dfreq = stats.dfreq.get(&key);
                         let name = m.col(&a.rel, c);
                         let freq = if self.input { stats.const_freq(&a.rel, &name, &k) } else { None };
+                        // A count is at least one row, as `card`: a constant absent from the chunk that plans is not
+                        // absent from the chunks that reuse the plan (`frag_str`'s `doc_role(d, 17505)` priced 0.01
+                        // rows, 2,455 found, each joined with every string: 7.1 M rows, none kept). The memo's count
+                        // is exact (a delta's complete constant memo: an absence proof), and stays as it is.
                         konst = if let Some(d) = dfreq {
-                            Some(d.get(&k).copied().unwrap_or(0) as f64)
+                            Some((d.get(&k).copied().unwrap_or(0) as f64).max(1.0))
                         } else if let Some(&f) = stats.memo.get(a.rel.as_str()).and_then(|m| m.get(&(name.clone(), k.clone()))) {
                             Some(f as f64)
                         } else {
-                            freq.map(|f| f as f64)
+                            freq.map(|f| (f as f64).max(1.0))
                         };
                         counted = freq.map(|f| f as f64).or_else(|| dfreq.map(|d| d.get(&k).copied().unwrap_or(0) as f64));
                     }
@@ -2772,6 +2814,12 @@ impl Model {
         let no_size: u64 = (0..joins.len())
             .filter(|&i| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str())))
             .fold(0, |m, i| m | 1 << i);
+        // A join of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a guest
+        // round's do). Not the delta, whose rows are its wave's.
+        let no_rows_when_priced = |i: usize| {
+            first != Some(joins[i])
+                && (no_size & 1 << i != 0 || matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && self.stats.card.get(a.rel.as_str()).is_some_and(|&n| n <= 0.0)))
+        };
         let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool { unfounded_cross(i, prev, bound, &jmask, no_size) };
         // The greedy order (Postgres's `geqo_threshold`): the cheapest connected step next. Long bodies take it; under
         // `RERAIL_PLAN_GREEDY_PROBE` (a measurement aid) every searched body is also ordered so, and compared.
@@ -2830,6 +2878,9 @@ impl Model {
             prev: u64,
             last: usize,
             mode: Option<Mode>,
+            /// Its rows rest only on relations with no rows of their own when priced (empty, or unsized): a
+            /// cross product taken from it is priced from at least a search's rows (`SEARCH_WORK`), not theirs.
+            unfounded: bool,
         }
         let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
         let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
@@ -2943,7 +2994,7 @@ impl Model {
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, usize)> = vec![(0, 0); 1 << joins.len()];
-        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false });
         closed[0] = closure(0);
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
@@ -2982,13 +3033,21 @@ impl Model {
                     if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) || shape_waits(i, prev, &|v: &str| bound >> var_ids[v] & 1 == 1) || unfounded_cross(i, prev, *bound) {
                         continue;
                     }
-                    let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
+                    // Smoking gun 10's cold case (t34): `frag_str` planned before the guest round made `doc_role`'s
+                    // rows took `doc_role(d, 17505)` (empty, priced at one row) first, then `kind($s, 1255)` crossed
+                    // with it (7.1 M rows where 2,455 came), where `kind` first and `doc_role` probed by `@doc` was
+                    // as cheap as priced. A cross product multiplies rows no row of the relations it follows vouched
+                    // for: priced from a search's rows at least, it is taken only where it is cheap even so.
+                    let crossed = prev != 0 && jmask[i] & *bound == 0;
+                    let left = if crossed && from.unfounded { from.rows.max(SEARCH_WORK) } else { from.rows };
+                    let Some((w, mut out, mode)) = priced(price(i, *bound), left) else { continue };
+                    let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.
                     for _ in *h_prev..mine.1 {
                         out *= 0.5;
                     }
-                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode };
+                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode, unfounded };
                     if best.as_ref().is_none_or(|b| cand.work < b.work) {
                         best = Some(cand);
                     }
@@ -3110,7 +3169,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
-        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105).
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
         let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
@@ -5453,25 +5512,28 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: placement::Binding,
     explain: bool,
+    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it.
+    under: Option<String>,
 }
 
 impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, under: super::profile::here() }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
     }
 }
 
@@ -6374,8 +6436,24 @@ impl<'a> Run<'a, '_> {
         let cyclic = cyclic_relations(scc, rules);
         self.why_not = None;
         self.why_class = None;
-        if scc.iter().any(|r| prog.lattice.contains_key(r)) {
-            self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+        // A lattice relation runs here as one row a key, folded by its lattice's join (decision 0124), except where
+        // the component's other machinery keeps sets: a gate, or a request answered (its SQL seeds and probes insert
+        // by key, not by join). A session's `levels` are kept as any relation's: a lattice stratum is not maintained
+        // (`maintain::unmaintainable`), it is derived again each run.
+        if let Some(why) = scc.iter().filter_map(|r| prog.lattice.get(r).map(|l| (r, l))).find_map(|(r, l)| {
+            let lattice = match super::native::lattice(l.lattice()) {
+                Ok(lattice) => lattice,
+                Err(e) => return Some(format!("a lattice relation ({r}): {e}")),
+            };
+            if !lattice.finite() && l.widen.is_none() {
+                return Some(format!("a lattice relation ({r}) of unbounded height without `widen`"));
+            }
+            if prog.gates.iter().any(|(g, _)| scc.contains(g)) || prog.answers.keys().any(|a| scc.contains(a)) {
+                return Some(format!("a lattice relation ({r}) in a component with gates or requests"));
+            }
+            None
+        }) {
+            self.why_not = Some(why);
             self.why_class = Some("a lattice relation".into());
             return Ok(Native::Declined);
         }
@@ -6668,6 +6746,17 @@ impl<'a> Run<'a, '_> {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
             }
+        }
+        // A lattice relation's key and join, after the relations (decision 0124). One that starts from a kept
+        // relation (a maintained session's survivors) is a set there: it is not folded in place yet.
+        for r in &rels {
+            let Some(l) = prog.lattice.get(*r) else { continue };
+            if based.contains_key(*r) {
+                self.why_not = Some(format!("a lattice relation ({r}) maintained from its kept rows"));
+                self.why_class = Some("a lattice relation".into());
+                return Ok(Native::Declined);
+            }
+            rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: l.lattice().to_owned(), widen: l.widen });
         }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
@@ -7110,14 +7199,7 @@ impl<'a> Run<'a, '_> {
         let device = super::native::component::device_report().or_else(|| {
             not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
         });
-        #[cfg(not(target_os = "macos"))]
-        let _ = not_taken;
-        #[cfg(not(target_os = "macos"))]
-        let device: Option<()> = None;
-        #[cfg(target_os = "macos")]
         placement::record(&stratum_key(scc), &placed, device.as_ref().map(|d| d.refused.clone()));
-        #[cfg(not(target_os = "macos"))]
-        placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();
@@ -9437,6 +9519,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
                 // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
                 let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
+                // so its readers read the facts and the answers both.
+                let mut rows = rows;
+                if run.native_rels.contains(rel) {
+                    if let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    }
+                }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());
             }

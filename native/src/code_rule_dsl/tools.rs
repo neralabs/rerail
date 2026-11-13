@@ -518,12 +518,14 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063).
 pub fn cli(args: &[String]) -> Result<String, String> {
+    let budgets = budget_options(args)?;
+    let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
     struct Flush;
     impl Drop for Flush {
@@ -666,6 +668,27 @@ fn repeat_command(script: &str) -> Result<String, String> {
 #[cfg(target_family = "wasm")]
 fn repeat_command(_: &str) -> Result<String, String> {
     Err("repeat is not in the browser build".into())
+}
+
+/// The memory budgets, set by any command's `--memory-mb <n>` (the overall budget, 1 GB by default) and
+/// `--metal-mb <n>` (the Metal budget, on top of it: half the overall budget by default) (decision 0126): the
+/// arguments without them.
+fn budget_options(args: &[String]) -> Result<Vec<String>, String> {
+    let mut rest = Vec::with_capacity(args.len());
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        let set: fn(usize) -> Result<(), String> = match argument.as_str() {
+            "--memory-mb" => rerail_accel::budget::set_memory_mb,
+            "--metal-mb" => rerail_accel::budget::set_metal_mb,
+            _ => {
+                rest.push(argument.clone());
+                continue;
+            }
+        };
+        let mb = args.next().and_then(|v| v.parse::<usize>().ok()).ok_or_else(|| format!("{argument} takes a size in MB"))?;
+        set(mb)?;
+    }
+    Ok(rest)
 }
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).

@@ -225,13 +225,13 @@ impl World {
     }
 
     /// Takes back every document loaded from beyond the corpus root this run: a cone that starts again in levels
-    /// (decision 0108) asks them again, level by level. How many.
+    /// (decision 0145) asks them again, level by level. How many.
     pub(super) fn take_back_libraries(&mut self) -> usize {
         let paths: Vec<String> = self.loads.keys().filter(|p| !self.own(p)).cloned().collect();
         paths.iter().filter(|p| self.unload(p)).count()
     }
 
-    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// Takes back the document loaded from `path` this run (decision 0145, a load taken back): its place in the
     /// budget is free again. Whether it was loaded.
     pub(super) fn unload(&mut self, path: &str) -> bool {
         let Some(loaded) = self.loads.remove(path) else { return false };

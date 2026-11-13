@@ -102,6 +102,125 @@ The cost store gets about 6,000 samples a run: training is due again every 10 mi
   (`maintained_early`). `kept_inputs` (0.13 s) decodes the kept inputs' old rows to patch them with the changed
   files' rows: the read of unchanged rows, left for the design of the local part's delta. (see git log)
 
+## Smoking guns (2026-11-13, 300 files, profiling build)
+
+A search for the large, structural wastes, not a benchmark. Fixed (see git log):
+
+1. **A cover's cross product.** A cover of two asked variables was a product of everything that binds either one. It
+   is now narrowed by the group that binds them. On 50 files: 716 → 463 G instructions, 5.67 → 2.34 GB.
+2. **The planner's zero rows.** A relation that was empty when it was planned (`rel_base` before its guest round,
+   `impmod`, `ruff_qual`, `frag_str`) priced every later step at 0. That made cross products look free
+   (10,728 → 25.8 M → 10,728 rows). Estimates are now floored at one row; a memo's exact count is not.
+   A cold run's local part: 1,079 → 921 G.
+3. **Kept inputs refused.** `group_col` grouped `p197_arg_at` by column 2, the memo by column 0. Every edit then
+   failed with "memo entry is gone". It now groups by the split's locations.
+4. **A fallback that read the store inside the waves.** The kept route is decided before the first wave
+   (decision 0104).
+5. **The memory budget capped the store.** A relation past `RERAIL_CROSS_RETAIN_MB` was not written to the frames,
+   so every next process derived it again: an edit ran 3,758 of 4,087 strata, 1,546 of them derived again. It is now
+   written, then let go: 0 derived again.
+6. **`@place` in a head had no native form.** The 0117 walk's maintained form has no SQL fallback.
+   `violations_at_places…` had been red in every worktree since 11-12.
+7. **A flaky test.** In `closures_of_one_level…`, the three closures' wave ran on a stratum job's thread and was
+   counted there. The tally now goes with the run's ambient.
+
+Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
+
+8. **A maintained stratum copies and re-indexes its whole kept relation** (4.47 s, 43.5% of the edit, against 0.76 s
+   of joins). `Rel::based` clones the kept rows and chains, and `Rel::compacted` pushes every row again with a new
+   dedup index (open: survivors, 1.41 s in 210 calls). `set_delta` and `restamp` walk every index, and `want(cols)`
+   builds a whole-relation index per multi-column key (open: indexes, 1.37 s). A derived input read back from the
+   frames has no chains, so each probed key set is indexed over all its rows (1.17 s in 2,447 calls). Each of these
+   costs the relation's size, not the delta's. The shape is the one `Layered` gives inputs:
+   - the stratum's relation is the kept `InRel`, shared through an `Arc`, with its dead rows marked;
+   - its new rows go in a vector of its own (ids from `old.n` on);
+   - the kept chains and indexes serve the old rows, and only the added rows are indexed.
+
+   *The fix, located (2026-11-13, after the hub merge):* `Rel::based` (`native/setfix.rs`) clones `old.rows`,
+   `old.dead`, `old.chains`, `old.serves`, `old.sketches` and `old.level`; `Rel::compacted` pushes every survivor
+   through `Rel::push` (a dedup probe and an index insert each). Sharing needs the rows segmented in both forms:
+   - `Rel.data` becomes a kept segment (`Arc<InRel>`, read in place, its dead rows marked in a bitmap of its own)
+     and a tail of the rows this run pushed (ids from `old.n`); `close` makes an `InRel` of the same two segments,
+     so the next run shares them again, never concatenating (a copy at close is the same cost moved).
+   - `Index::find` and the probes take a row reader, not one `&[i64]`; the kept chains serve ids `..old.n`, and
+     the run's runs only its tail, so `restamp` and `set_delta` touch the tail's runs alone.
+   - `want(cols)` on a kept segment builds its index once per kept relation (kept with it, as the chains are),
+     not per run; a relation read back from the frames gets its chains when admitted.
+   - Compaction, when dead rows pass the eighth, is a background rewrite of the kept segment, not a start's cost.
+   About 36 row reads in `setfix.rs` and 28 elsewhere in `native/`, and the device uploads of a relation's rows,
+   which take each segment as a buffer.
+
+   *Done (2026-11-13), two steps:* a relation's rows are `setfix::rows::Rows`, frozen segments shared through `Arc`
+   and a tail of the rows a run pushes; an `InRel` holds them frozen, and `close` freezes a run's tail into a
+   segment (moved), merging the newest past eight. The orders read rows through `runs::RowData` (generic: the flat
+   case is unchanged). `Rel::based` shares the kept segments; for a kept relation read from the frames, which has
+   no orders, it makes the dedup order by one sort of the ids and counts the sketches, instead of `compacted`
+   pushing every row again. Measured (profiling build, corpus0, second edit after a cold run): **7.20 → 4.93 s of
+   span CPU**; `open: survivors` 1.11 → 0.63 s, `open: indexes` 1.09 → 0.21 s; cold 29 → 20.4 s wall (with gun
+   10's cold case). Peak memory unchanged (3.75–4.04 GB): the kept relations are still read whole from the frames.
+
+   *Still open, a decision to make:* what is left of gun 8 (`survivors` 0.63 s, `index of a derived input`
+   0.52 s) is a new process ordering its kept relations again: each edit's process reads the rows from the frames
+   without their orders, and sorts them. The orders (4 bytes a row each, and the tags) belong in the frames with
+   the rows, read as they are, so an edit's process builds orders over its delta only.
+9. **Statistics of `__old` relations are counted from their rows** ("count run_scope__old from its rows", 0.05–0.07 s
+   each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
+   *Fixed:* `Retained::admit`, which reads a reached relation's rows from the frames mid-run, read its rows and
+   levels but not its statistics part. It now reads that part in the same batch (when stored for the same digest)
+   and keeps it under the rows' address in this process (`late_stats`). `measured`, `patched`, `measured_all` and
+   the frames' write-back read it as they read the statistics admitted before the run.
+10. **`frag_str`'s `doc_role(d, 17505)` is planned from statistics made before its rows exist:** estimated at 1 row,
+    2,455 found, 7.1 M rows, none kept. The floor (item 2) bounds this but does not fix it. The plan should be made
+    when the relation is known.
+    *Fixed:* the planning budget (`budget_takes`, decision 0122) took a kept order while the relations it reads
+    grew by less than a search's work, by their rows alone. A literal with a constant reads that constant's rows:
+    their counts (already in `live_sizes`) are now part of the growth, unknown counts left out. One row for 7 when
+    planned and 2,455 now is 2,455 times growth: the line is searched again.
+    *Still open in a cold run* (2026-11-13, after the hub merge, `cold-merge`): with no kept plan, the line is planned
+    before the guest round makes `doc_role`'s rows, and runs `doc_role(d, 17505)` (2,455) → `kind($s, 1255)`
+    unbound (7.1 M) → `$d = @doc($s)` (0): 0.80 s of the cold run. `$s` reaches `doc_role` only through `@doc`,
+    so the plan's first step binds nothing the second reads. The fix: a step that binds none of the next one's
+    columns is priced at the next one's whole size times its own rows (a cross product), not at its estimate,
+    or the stratum is planned when its relation's rows are known (decision 0123's round, not the seed's).
+11. **Smaller:** `p149_LOG001` scans `import_alias` with nothing bound (3.9 M rows → 0). `rr_agg48` goes from 135 k
+    to 3.1 M rows. There are 1.5 M scalar node visits.
+    *Located* (2026-11-13, a profiled cold run after the hub merge, 33.2 s wall, 77.6 s CPU, 615 findings):
+    - `p149_LOG001`'s scan is gone: its largest `import_alias` scan now reads 16 k rows.
+    - `rr_agg48` (1.15 s) is `body_stmt`'s index in `lib/python/ast.rr`,
+      `i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }`: for each of 125,910 statements, every
+      earlier sibling (2.8 M pairs, two `node_order` lookups each). The count of a group's members before one
+      is its rank: sorting the group once gives every statement's in one pass. Wanted: the lowering of a count
+      whose only test against the outer row is `s2 < s` over the same group as a rank (a decision), not a rule
+      rewrite.
+    - The scalar visits are `BROAD_SCALAR_PROJECTION` (2.5 s CPU): 1,588,373 nodes visited and 984,956 strings
+      interned to project `text`, `str`, `op`, `value` and `comment` for every node, where their consumers
+      (`q5_noqa`, `case_value_name`, `py_import`, …) read a few kinds. The consumers' kind restrictions are to
+      reach the projection (`Projection::of`) as demands, as `text_kind_demand` does for texts.
+
+Tests, one a gun (each fixed gun's test was checked red with its fix undone; the open ones are red, `#[ignore]`d
+with the gun's reason until fixed):
+
+| Gun | Test | State |
+|---|---|---|
+| 1 | `rr::tests::a_cover_of_two_variables_is_narrowed_by_what_binds_them` | green |
+| 2 | `plan::tests::a_relation_empty_when_planned_does_not_make_a_cross_product_free` | green |
+| 3 | `retain::frame_tests::kept_rows_are_grouped_by_the_column_the_memo_attributes_them_by` | green |
+| 4 | `retain::frame_tests::the_kept_inputs_are_known_before_the_waves_with_why_not` | green |
+| 5 | `retain::frame_tests::a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go` | green |
+| 6 | `strings::functions::tests::a_place_is_native_and_encoded_as_sql_encodes_it`, `plan::tests::violations_at_places_are_found_at_their_path_and_line` | green |
+| 7 | `lanes::wave_tests::a_jobs_waves_are_credited_to_the_run_that_takes_it_back`, `plan::tests::closures_of_one_level_launch_in_one_wave` (the hub's fix, 4dde583e2, kept at the merge) | green |
+| 8 | `setfix::survivor_tests::a_maintained_relation_starts_from_its_kept_rows_without_copying_them`, `…::a_start_from_a_relation_read_from_the_frames_shares_its_rows`, `setfix::rows::tests::started_rows_share_the_kept_segments_and_freeze_their_own` | green (rows shared; orders still built per process, below) |
+| 10, cold | `plan::tests::a_cross_product_after_a_relation_empty_when_planned_is_not_free` (red with the pricing undone) | green |
+| 9 | `retain::frame_tests::rows_read_where_reached_come_with_their_kept_statistics` | green (fixed at the hub merge) |
+| 10 | `plan::tests::a_constant_counted_none_when_planned_is_growth_when_it_has_rows` | green (fixed at the hub merge) |
+| 11 | none yet: located above (one gone; a rank lowering and the projection's demands wanted) | — |
+
+After the hub merge (2026-11-13, profiling build, corpus0, B-now rules, load about 6): cold 615 findings, an
+append 616, the rule edit 616, a second append 618. The second append, the steady state: **6.00 s of span CPU**
+(12.85 s before guns 1–7, 9 and 10), 6.1 s wall, 9.7 s process CPU; six `__old` relations still counted from
+their rows (those maintained for the first time in that run, by design). Gun 8 is now the largest: `open:
+indexes` 0.92 s, `open: survivors` 0.83 s, `open: index of a derived input` 0.54 s, 38% of the edit.
+
 ## To do, in order
 
 Items 1–3 (texts read once, caches refused by construction, my statics by flow) are done: see above.
@@ -126,6 +245,19 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     what holds the specs: an edit with it off costs 117.1 G and peaks at 2074 MB, with it on 115.5–119.1 G and
     2043–2089 MB; the 366 MB are the specs the run holds. Next: one form of the program where four are held (front,
     lowered, the split's local and cross); the specs' size.
+    Measured again (2026-11-13, after the hub merge and guns 8–10, 300 files × 317 rules, one-line edit): the peak
+    is 3.39–3.55 GB, at the run's end (the store's writer), and it is what the run **keeps**, not a transient. Net
+    bytes kept, by span: the parse of the 300 files 1.46 GB (memo decode of the 299 unchanged ones 575 MB, the memo
+    lookup 268 MB, the parse itself 617 MB), the kept part's rows read from the frames 610 MB (held to the end, not
+    released after their last read), the kept part's changes to the frames 190 MB, survivors 148 MB, the joins'
+    indexes 111 MB; then the writer's last writes +412 MB on top (frames queued to the end: 303 MB in 1,174 frames).
+    The footprint is 0.9 GB after the prepared program, 1.25 GB after the parse, and grows 1.4 → 2.7 GB through the
+    cross part. Done: a derived input's index is a sorted order on the key columns (decision 0112), not a hash table
+    (`Csr::build`, 18 bytes a row kept, 46 while built): its bytes 1,217 → 637 MB allocated, its rise of the
+    high-water mark 1,160 → 398 MB. The order of the next steps, by bytes: (a) the unchanged files' memo is not
+    decoded and held (no reads of unchanged: their rows are in the frames); (b) the kept part's rows released after
+    their last read, as derived relations are (`release`); (c) each stratum's frame queued when it finishes (item
+    11's direction), so nothing waits for the end; (d) the prepared program's four forms (above).
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
     entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).
@@ -137,3 +269,23 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     `WITHOUT ROWID` record with its rows in it): 2.9 s of a cold run's writer, now a row of `frame_part_used`. The
     WAL's checkpoints ran in the writer's commits (3.0 s): now beside it, `PASSIVE`, on a thread of its own. A cold
     run after a rebuild passed under the default cap with the queue never full (load 13). (see git log)
+
+## Findings against main (2026-11-13, full shape, cold)
+
+Datalog 615 findings, main 459. Keyed by (rule, path, line), main's 459 are 454 keys: five of its findings are a
+second column on a line Datalog reports once (the findings contract is by line). Every main key is in Datalog's.
+Datalog has 161 more:
+
+- **B002, 157 (Datalog wrong).** 156 are strings starting with `--` (`parser.add_argument("--host")`). With RUF041 in
+  the program, `typing.rr`'s `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r)` asks for
+  annotation guests. The demand's context keeps input relations only (`lower.rs`, `context`: "may hold more rows
+  than the rule"), so it is `str_node(s)`: every string is parsed as an annotation (17,997 requests on the full
+  shape). `"--host"` parses as `--host`. Decision 0058 makes every guest in the run's language visible to every
+  rule, so B002 fires inside it and the finding maps to the string's line. The repro is one line,
+  `p.add("--host")`, with B002 and RUF041 alone. Either fix stops it: an annotation guest is visible only through
+  `parsed`, or the demand keeps the rule's derived context. The first also matches Ruff, which runs no code
+  rules inside string annotations. The second also saves the parse of every string.
+- **B110, 2 (main's quirk).** The `pass` has a trailing comment. Main's rule wants the block to have exactly one
+  child, and tree-sitter counts the comment. Bandit reports both.
+- **PYI046, 2 (Datalog wrong).** The protocol is used only in a string (`cast("_TransactionWithConnection", t)`).
+  Ruff counts a string forward reference as a use; the `.rr` rule does not.

@@ -3078,6 +3078,20 @@ impl Lowerer {
                     }
                     return Ok(Term::Call(f.to_owned(), args));
                 }
+                // `@printf` of a constant format: its pieces concatenated (`printf_pieces`), each one a function every
+                // executor has.
+                if name == "printf"
+                    && let Some(Term::Str(format)) = args.first()
+                    && let Some(t) = printf_pieces(format, &args[1..])
+                {
+                    return Ok(t);
+                }
+                // `@concat(a, b, c)` is `@concat(@concat(a, b), c)`, as Soufflé's `cat` is.
+                if name == "concat" && args.len() > 2 {
+                    let mut args = args.into_iter();
+                    let first = args.next().expect("three or more");
+                    return Ok(args.fold(first, |acc, a| Term::Call("concat".to_owned(), vec![acc, a])));
+                }
                 Term::Call(if name == "dot" { "cat".to_owned() } else { name.clone() }, args)
             }
             STerm::Call { name, functor: false, args } => {
@@ -3601,4 +3615,48 @@ fn literal_terms(l: &Literal) -> Vec<&Term> {
         Literal::Cmp { l, r, .. } => vec![l, r],
         _ => Vec::new(),
     }
+}
+
+/// `@printf(format, args…)` of a constant format as the concatenation of its pieces: literal text, `%d` an
+/// integer's digits (`rr_to_string`), `%0Nd` its digits zero-padded to N columns, the sign first, never truncated
+/// (`zero_pad`), `%s` a text as it is, `%%` a percent sign. `None`: another conversion, or not one argument each.
+fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
+    let mut pieces: Vec<Term> = Vec::new();
+    let mut literal = String::new();
+    let mut args = args.iter();
+    let mut chars = format.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            literal.push(c);
+            continue;
+        }
+        let mut width = String::new();
+        while let Some(d) = chars.peek().filter(|d| d.is_ascii_digit()) {
+            width.push(*d);
+            chars.next();
+        }
+        let piece = match (chars.next()?, width.as_str()) {
+            ('%', "") => {
+                literal.push('%');
+                continue;
+            }
+            ('d', "") => Term::Call("rr_to_string".to_owned(), vec![args.next()?.clone()]),
+            ('d', w) if w.starts_with('0') && w.len() > 1 => Term::Call("zero_pad".to_owned(), vec![args.next()?.clone(), Term::Int(w[1..].parse().ok()?)]),
+            ('s', "") => args.next()?.clone(),
+            _ => return None,
+        };
+        if !literal.is_empty() {
+            pieces.push(Term::Str(std::mem::take(&mut literal)));
+        }
+        pieces.push(piece);
+    }
+    if args.next().is_some() {
+        return None;
+    }
+    if !literal.is_empty() || pieces.is_empty() {
+        pieces.push(Term::Str(literal));
+    }
+    let mut pieces = pieces.into_iter();
+    let first = pieces.next()?;
+    Some(pieces.fold(first, |acc, p| Term::Call("concat".to_owned(), vec![acc, p])))
 }

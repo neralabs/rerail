@@ -104,9 +104,14 @@ struct MatcherWave {
 type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
 
 /// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
-/// executor's learned rates once it has measured the form.
+/// executor's learned rates once it has measured the form. Measured over the data layer (M5, under load): the cores
+/// 1.1e-8 to 2.4e-8, the GPU's interpreter 2.5e-8 to 2.5e-7 (one wave of large files 5.6e-5 a node): no faster a
+/// unit than one core, on one lane against the cores' many.
 const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
-const WAVE_GPU_PER_NODE_PASS: f64 = 1e-9;
+const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
+
+/// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
+pub const METAL_FELL_BACK: &str = "ast matcher wave fell back to the CPU (its Metal run failed)";
 
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
@@ -137,10 +142,13 @@ impl rerail_accel::kernel::Program for MatcherWave {
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         #[cfg(target_os = "macos")]
-        if lane == rerail_accel::Lane::Gpu
-            && let Ok(found) = self.on(MatcherBackend::MetalInterpreter)
-        {
-            return Ok(Arc::new(Ok(found) as WaveFound));
+        if lane == rerail_accel::Lane::Gpu {
+            match self.on(MatcherBackend::MetalInterpreter) {
+                Ok(found) => return Ok(Arc::new(Ok(found) as WaveFound)),
+                // The CPU's wave instead, named in the profile's warnings: a Metal path that fails (a kernel that does
+                // not compile, a run over its bounds) is never silent.
+                Err(e) => crate::code_rule_dsl::logic::profile::decision(METAL_FELL_BACK, || e.lines().next().unwrap_or("").chars().take(160).collect()),
+            }
         }
         let _ = lane;
         Ok(Arc::new(self.on(MatcherBackend::Cpu)))
@@ -281,7 +289,7 @@ fn captured_rows(
     let per: Vec<StoreResult<(Vec<Vec<i64>>, usize)>> = held
         .par_iter()
         .zip(found.par_iter())
-        .map(|(&i, roots)| {
+        .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
             let mut rows = Vec::new();
             let mut limited = 0;
             if roots.is_empty() {
@@ -323,7 +331,7 @@ fn captured_rows(
                 rows.extend(product);
             }
             Ok((rows, limited))
-        })
+        }))
         .collect();
     let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
     let limited = per.iter().map(|(_, l)| l).sum();

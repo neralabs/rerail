@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// The most states a table holds (a state is a byte in the device's scratch).
-pub(in crate::code_rule_dsl) const MAX_STATES: usize = 255;
+pub const MAX_STATES: usize = 255;
 
 /// A dense automaton: `bytes` is the byte classes (256), then `next` (`states` rows of `classes`), then the
 /// end-of-text transition per state, then whether each state accepts (all bytes).
@@ -35,7 +35,7 @@ pub struct Table {
 impl Table {
     /// Whether `text` matches: the CPU's walk of the same table (tests only; the device walks it in chunks).
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn is_match(&self, text: &[u8]) -> bool {
+    pub fn is_match(&self, text: &[u8]) -> bool {
         let (s, c) = (self.states as usize, self.classes as usize);
         let next = &self.bytes[256..256 + s * c];
         let eoi = &self.bytes[256 + s * c..256 + s * c + s];
@@ -278,7 +278,7 @@ impl Replacer {
     /// `text` with every match replaced by `with` (a literal), walking the automata as the device does, a byte at a
     /// time (tests only; the device composes 32 bytes' transitions at once).
     #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn replace(&self, text: &str, with: &str) -> String {
+    pub fn replace(&self, text: &str, with: &str) -> String {
         let w = |i: usize| u32::from_le_bytes(self.bytes[4 * i..4 * i + 4].try_into().unwrap()) as usize;
         struct Dir<'a> { t: &'a [u8], s: usize, c: usize, edge: usize, mid: usize, dead: usize }
         impl Dir<'_> {

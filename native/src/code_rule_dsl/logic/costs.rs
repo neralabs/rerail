@@ -27,6 +27,9 @@ pub mod sql_plans;
 const KEPT: i64 = 500_000;
 /// The recent samples a run's prices are fitted from, and its model trained on.
 const READ: i64 = 20_000;
+/// The recent samples of each form on each lane read besides: a form run once a stratum (on the cores) fills the
+/// newest `READ`, and one run less often (the GPU's matcher wave) would fall out of them, its prior never replaced.
+const READ_PER_FORM: i64 = 2_000;
 /// The fewest samples a model is trained from.
 const MIN_TRAIN: usize = 500;
 /// The samples written after a training that start another.
@@ -45,7 +48,7 @@ fn path() -> Option<PathBuf> {
 }
 
 /// This machine, as its samples are keyed: the architecture, its cores, and its GPU.
-fn machine() -> String {
+pub fn machine() -> String {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     #[cfg(target_os = "macos")]
     let gpu = rerail_accel::gpu::shared::get().map(|s| s.device.name().to_owned()).unwrap_or_default();
@@ -54,7 +57,7 @@ fn machine() -> String {
     format!("{} {cores} cores {gpu}", std::env::consts::ARCH).trim().to_owned()
 }
 
-fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
+pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -67,6 +70,7 @@ fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            estimate REAL, host_estimate REAL, wall REAL, cpu REAL, waited REAL, phases TEXT,
            cold INTEGER, ok INTEGER, load REAL);
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);
+         CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);",
     )?;
     sql_plans::create(&db)?;
@@ -131,13 +135,31 @@ fn write() {
     }
 }
 
-/// This machine's most recent samples (at most `limit`), oldest first.
-fn read_samples(db: &rusqlite::Connection, limit: i64) -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
+/// This machine's most recent samples (at most `limit`), and each lane and form's most recent (at most `per_form`
+/// of each), oldest first.
+pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
+    let machine = machine();
+    // The newest overall, then each lane and form's newest (an index search each: `samples_by_form`).
+    let mut ids: std::collections::BTreeSet<i64> = db
+        .prepare("SELECT rowid FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT ?2")?
+        .query_map(rusqlite::params![machine, limit], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let groups: Vec<(String, String)> = db
+        .prepare("SELECT DISTINCT lane, forms FROM samples WHERE machine = ?1")?
+        .query_map([&machine], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut newest = db.prepare("SELECT rowid FROM samples WHERE machine = ?1 AND lane = ?2 AND forms = ?3 ORDER BY at DESC LIMIT ?4")?;
+    for (lane, forms) in &groups {
+        for id in newest.query_map(rusqlite::params![machine, lane, forms, per_form], |r| r.get::<_, i64>(0))? {
+            ids.insert(id?);
+        }
+    }
+    let ids = serde_json::to_string(&ids).expect("integers");
     let mut q = db.prepare(
         "SELECT lane, forms, launches, units, estimate, host_estimate, wall, cpu, waited, phases, cold, ok, load, threads
-         FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT ?2",
+         FROM samples WHERE rowid IN (SELECT value FROM json_each(?1)) ORDER BY at DESC",
     )?;
-    let rows = q.query_map(rusqlite::params![machine(), limit], |r| {
+    let rows = q.query_map([ids], |r| {
         let lane: String = r.get(0)?;
         Ok(rerail_accel::score::Sample {
             lane: rerail_accel::Lane::ALL.into_iter().find(|l| l.name() == lane).unwrap_or(rerail_accel::Lane::Cpu),
@@ -181,7 +203,7 @@ fn read() {
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)),
             )
             .ok();
-        Ok((read_samples(&db, READ)?, saved))
+        Ok((read_samples(&db, READ, READ_PER_FORM)?, saved))
     })();
     match r {
         Ok((samples, saved)) => {
@@ -339,7 +361,7 @@ fn maybe_retrain() {
             return;
         }
         let Some(path) = path() else { return };
-        let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ));
+        let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ, READ_PER_FORM));
         if let Ok(samples) = r {
             train(path, samples, false, true);
         }
@@ -373,7 +395,7 @@ pub fn start() {
 
 /// Writes what is left: a run's end.
 pub fn flush() {
-    // The command's end: its samples go to the statistics store as the writer thread's would, behind the run.
+    // After the last wave, on the command's thread: behind the run, as the writer's own thread is.
     crate::code_rule_dsl::logic::profile::behind(write);
 }
 
@@ -405,7 +427,7 @@ pub mod tests {
         let path = super::path().expect("RERAIL_COSTS");
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
         let limit: i64 = std::env::var("COSTS_READ").ok().and_then(|v| v.parse().ok()).unwrap_or(super::READ);
-        let samples = super::read_samples(&db, limit).unwrap();
+        let samples = super::read_samples(&db, limit, super::READ_PER_FORM).unwrap();
         let config = rerail_accel::cost_model::CostConfig::default();
         let (cpu, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
         let (c, model) = rerail_accel::cost_model::compare(&samples, &config).unwrap();
@@ -423,7 +445,7 @@ pub mod tests {
         let path = std::path::PathBuf::from(std::env::var("COSTS_COPY").expect("COSTS_COPY"));
         let db = super::open(&path).unwrap();
         db.execute("DELETE FROM models", []).unwrap();
-        let samples = super::read_samples(&db, super::READ).unwrap();
+        let samples = super::read_samples(&db, super::READ, super::READ_PER_FORM).unwrap();
         let t = std::time::Instant::now();
         super::train(path.clone(), samples, false, true);
         while super::TRAINING.load(Ordering::Acquire) {

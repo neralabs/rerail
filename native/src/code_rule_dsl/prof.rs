@@ -179,7 +179,7 @@ pub fn register_device_memory(read: fn() -> (usize, usize)) {
 }
 
 /// The device's buffers in MB (reserved, driver); none without a device.
-fn device_memory() -> (usize, usize) {
+pub fn device_memory() -> (usize, usize) {
     DEVICE_MEMORY.get().map_or((0, 0), |read| read())
 }
 

@@ -97,3 +97,76 @@ Bitlex path still packs that way (O-bitlex-writes-tape); tree-sitter's trees do 
 (O-tape-pack-cost).
 
 The Bitlex parse is 85% generated code (tier 2 51%, tier 1 34%), the rest buffer set-up.
+
+## Amendment (2026-11-13): a stage 2 of our own, the digest in stage 1
+
+Point 2 wrote the tape from the index *after* simdjson's DOM parser ran its own stage 2. That stage 2
+builds simdjson's tape, unescapes every string into its buffer, and converts every number. The engine
+uses none of it, and the index was then walked a second time to write our columns. The source was then
+read a third time, for its SHA-256.
+
+Now one pass of stage 1 and one of a stage 2 of ours make the tape and the digest, and nothing is
+written twice:
+
+- **Stage 1 is simdjson's**, its scanner, UTF-8 checker and indexer, in the shim's copy of its block
+  loop (`index_and_hash`). Each 64-byte block of the source is also hashed with the CPU's SHA-256
+  instructions while it is in the cache. The digest comes out with the index, and `TapeImage::written`
+  takes it instead of hashing the source again. Its DOM document is never allocated.
+- **Stage 2 walks the index itself**. It is simdjson's `json_iterator::walk_document`, one label for
+  each state, with the tape builder's checks, and its state in locals:
+  - structure, depth, and what follows the value;
+  - escapes and surrogate pairs, without unescaping;
+  - numbers, by a copy of `parse_number` that keeps no value and returns where the number ends;
+  - `true`, `false` and `null`.
+- **The tape is written in place:** each node's columns go in at its preorder slot, in the `Tape`'s
+  own `Vec`s, at their stored widths, with the tape's code table.
+  - A string with no escape in its first 32 bytes (most strings) is written as its two nodes at once:
+    the string and its content.
+  - The buffers are made once, for the most nodes a file of its length can have. A node starts at a
+    byte of its own, except a pair (at its key's quote) and the document (at its value's first byte),
+    and a pair takes four bytes or more. So no node checks for room. What the tape does not use is
+    given back after.
+
+The columns are 2 bytes wide unless a value needs 4. `size`'s width is predicted from the structural
+count; `off` and `tail` start at 2. Each column's values are or-ed as they are written, and a file whose
+prediction proves wrong is walked again at the right widths: 7 of the 2,200 files.
+
+The old writer (`tape_from_index`) stays as the oracle (`the_stage_2_tape_is_the_index_writers`). The
+two tapes are equal byte for byte, widths included. Each refuses what the other refuses, and the
+digest equals the `sha2` crate's. This holds:
+- on every `.json` file of the repository;
+- on documents made to reach each check (structure, depth, escapes, numbers at their ranges);
+- on strings across the 32-byte blocks.
+
+| | instructions | a node | CPU |
+|---|---:|---:|---:|
+| simdjson: stage 1 alone | 0.20 G | 28 | 16 ms |
+| simdjson: stage 1, SHA-256 in it | 0.34 G | 47 | 32 ms |
+| simdjson: DOM parse (stages 1 and 2) | 0.45 G | 62 | 28 ms |
+| simdjson: DOM parse, columns from the index (before) | 1.63 G | 227 | 81 ms |
+| **the tape: stage 1 (hashed), stage 2, the codes** | **0.79 G** | **110** | 56 ms |
+| the source's SHA-256 alone, Rust's `sha2` (before) | 0.21 G | 29 | 24 ms |
+
+The tape with its digest was 1.89 G with the DOM parse, then 1.00 G with the first stage 2 of ours (a
+visitor of simdjson's walker); now 0.79 G. The SHA-256 in stage 1 costs 1.9 instructions a byte,
+against 2.9 for the `sha2` crate. Stage 2 alone costs 58 instructions a node; simdjson's own DOM stage
+2 costs 34. By shape, in instructions a node (`shape_costs`), simdjson's DOM stage 2 first and ours
+second:
+
+- an array of short strings: 34 and 44;
+- objects of a number and a string: 35 and 49;
+- an array of `true`: 42 and 67;
+- an array of small integers: 95 and 108.
+
+Two steps did most of it:
+- **The walker of our own**, once its slow paths were inlined too. A lambda that is not inlined and
+  captures the walk's state by reference puts all that state in memory. That cost 30 instructions a
+  node until it was found.
+- **The digest's block loop unrolled by hand** (6.2 instructions a byte before).
+
+## Amendment (2026-11-13): every CPU family, and a router (0148)
+
+The stage 2 and the fused hash were arm64's alone. They now run on x86-64 too: the kernel is compiled for
+each of simdjson's implementations, in `rerail-simdjson-native`, the crate that holds all the native
+code. The engine's parser router takes the best kernel the host runs, and simdjson's DOM parser with the
+index writer is the router's last JSON entry (0148).

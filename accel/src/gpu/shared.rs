@@ -24,6 +24,30 @@ use std::sync::{Mutex, OnceLock};
 const SMALLEST: usize = 16 << 10;
 /// The most bytes the pool keeps idle (decision 0039).
 const IDLE_LIMIT: usize = 32 << 20;
+/// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A profiler's hook (`set_lease_hook`): told each lease's buffer address and length when it is leased, and its address
+/// with length 0 when it is dropped.
+static LEASE_HOOK: OnceLock<fn(usize, usize)> = OnceLock::new();
+
+/// Sets the hook told of every lease and its drop (the engine's heap sampler, which names the span that leased it).
+pub fn set_lease_hook(hook: fn(usize, usize)) {
+    let _ = LEASE_HOOK.set(hook);
+}
+
+fn leased(b: &Buffer) {
+    LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+    if let Some(hook) = LEASE_HOOK.get() {
+        hook(b.contents() as usize, b.length() as usize);
+    }
+}
+
+/// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
+pub fn held_bytes() -> (usize, usize) {
+    let idle = pool().lock().map_or(0, |p| p.held);
+    (LIVE.load(std::sync::atomic::Ordering::Relaxed), idle)
+}
 
 /// The device and its one queue.
 pub struct Shared {
@@ -130,6 +154,10 @@ impl std::ops::Deref for Pooled {
 impl Drop for Pooled {
     fn drop(&mut self) {
         let Some(b) = self.buffer.take() else { return };
+        LIVE.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+        if let Some(hook) = LEASE_HOOK.get() {
+            hook(b.contents() as usize, 0);
+        }
         if !self.keep {
             return;
         }
@@ -151,18 +179,87 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
+        leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: false });
     }
     let mut p = pool().lock().expect("the pool");
     if let Some(b) = p.idle.get_mut(&class).and_then(Vec::pop) {
         p.held -= class;
         p.reused += 1;
+        leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: true });
     }
     p.made += 1;
     drop(p);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
+    leased(&b);
     Ok(Pooled { buffer: Some(b), keep: true })
+}
+
+/// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
+/// ledger): set by its owner, which this crate cannot depend on.
+static OTHER_RESERVED: OnceLock<fn() -> usize> = OnceLock::new();
+
+/// Sets the reader of what else holds the Metal budget (`lease_within`).
+pub fn set_other_reserved(reader: fn() -> usize) {
+    let _ = OTHER_RESERVED.set(reader);
+}
+
+/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
+/// refusal its caller runs on the CPU, when relational work's leases and the pool's reservations would pass it. The
+/// device joins' buffers are leased so: without it, their waves and the strata run apart from them held up to 600 MB
+/// of a 512 MB budget. Idle buffers are given back first.
+pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
+    let need = class(bytes);
+    let other = OTHER_RESERVED.get().map_or(0, |f| f());
+    let fits = || {
+        let (live, _) = held_bytes();
+        other + live + need <= crate::budget::metal()
+    };
+    if !fits() {
+        drop_free();
+        if !fits() {
+            let (live, idle) = held_bytes();
+            return Err(format!(
+                "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool)",
+                need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other >> 20
+            ));
+        }
+    }
+    lease(bytes)
+}
+
+thread_local! {
+    /// Whether this thread's leases keep within the budget (`within_budget`).
+    static BOUNDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's device-join leases (`crate::gpu::join::Held`) bounded by the Metal budget
+/// (`lease_within`): for a caller that runs its work on the CPU when a lease is refused (the logic engine's device
+/// joins). Elsewhere (the executor's GPU lane, which has no such fallback) a lease is never refused.
+pub fn within_budget<R>(f: impl FnOnce() -> R) -> R {
+    let was = BOUNDED.with(|b| b.replace(true));
+    let out = f();
+    BOUNDED.with(|b| b.set(was));
+    out
+}
+
+/// A lease for a device join's buffer: bounded inside `within_budget`, else as `lease`.
+pub fn lease_for_join(bytes: usize, zeroed: bool) -> Result<Pooled, String> {
+    match (BOUNDED.try_with(std::cell::Cell::get).unwrap_or(false), zeroed) {
+        (true, false) => lease_within(bytes),
+        (true, true) => lease_zeroed_within(bytes),
+        (false, false) => lease(bytes),
+        (false, true) => lease_zeroed(bytes),
+    }
+}
+
+/// `lease_within`, its first `bytes` zero.
+pub fn lease_zeroed_within(bytes: usize) -> Result<Pooled, String> {
+    let b = lease_within(bytes)?;
+    // SAFETY: the lease is this caller's alone, its buffer at least `bytes` long and not in use by any command.
+    unsafe { std::ptr::write_bytes(b.host(), 0, bytes) };
+    Ok(b)
 }
 
 /// A buffer of at least `bytes`, its first `bytes` zero (a new buffer is zero already).
@@ -211,6 +308,24 @@ pub fn guard() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
+    /// are dropped.
+    #[test]
+    fn a_bounded_lease_keeps_within_the_metal_budget() {
+        if get().is_none() {
+            return;
+        }
+        let (live, _) = held_bytes();
+        crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
+        let first = lease_within(64 << 20).expect("64 MB fits a budget of 96 MB more than is leased");
+        let refused = lease_within(64 << 20);
+        assert!(refused.as_ref().is_err_and(|e| e.contains("device budget")), "a second 64 MB passes the budget");
+        drop(first);
+        drop(refused);
+        assert!(lease_within(64 << 20).is_ok(), "fits again once the first is dropped");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
 
     #[test]
     fn leases_return_to_the_pool_by_size_class() {

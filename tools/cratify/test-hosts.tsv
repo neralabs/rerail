@@ -32,7 +32,7 @@ logic::native::reach::tests	rerail-engine
 logic::native::setfix::lab::tests	rerail-engine
 logic::native::setfix::scalars::tests	rerail-engine
 logic::native::tests	rerail-engine
-logic::plan::corpus::base_tests	rerail-device-metal
+logic::plan::corpus::base_tests	rerail-engine
 logic::plan::corpus::matchers::tests	rerail-engine
 logic::plan::corpus::session::tests	rerail-engine
 logic::plan::corpus::tests	rerail-engine
@@ -96,3 +96,7 @@ workspace::placement_tests	rerail-engine
 workspace::results::tests	rerail-engine
 workspace::storage_tests	rerail-engine
 workspace::tests	rerail-engine
+logic::liveness::tests	rerail-engine
+typing::phase_tests	rerail-engine
+waves::owner::tests	rerail-engine
+logic::strings::registered_tests	rerail-engine

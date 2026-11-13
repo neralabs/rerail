@@ -781,7 +781,7 @@ fn normalized(mut p: front::Program) -> front::Program {
         }
         rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
     }
-    // The lowering's projections (`lower::projections`, decision 0047): `kind` and `docof` over nodes, read as
+    // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
     let v = |s: &str| front::Term::Var(s.to_owned());
     let mut at = 0;
@@ -3293,7 +3293,16 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them: renumbered by their
         // first appearance in the pruned rules, as dropped clauses no longer take numbers before them.
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
-        let shape = |p: Program| {
+        let shape = |mut p: Program| {
+            // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
+            // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
+            // file and guest reads (`rr_dir_req`, `rr_embed_req` …), which the engine answers for every reader.
+            let requests = super::LIBRARY_DERIVED.iter().copied().chain(super::WORLD.iter().map(|(_, req)| *req)).chain(["rr_embed_req", "rr_parse_req", "rr_splice_req"]);
+            for rel in requests {
+                if p.rules.iter().any(|r| r.head.rel == rel) && !p.outputs.iter().any(|o| o == rel) {
+                    p.outputs.push(rel.to_owned());
+                }
+            }
             let p = front::prune(p);
             let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let mut renumber = |s: &str| -> String {

@@ -277,7 +277,9 @@ pub fn build_in_wave_with_tape(
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
             // Handed to the writer, the source and the tape each moved, not copied; read from memory until written.
             let (source, held, stored) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape), stored.cloned());
-            cache.write_back(
+            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
+            // the file again (decision 0104: no wave waits for the writer).
+            cache.write_back_unless_full(
                 "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(key, Some(std::sync::Arc::clone(&tape) as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
@@ -375,7 +377,9 @@ pub(crate) fn build_cached_with_tape(
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
             let (source, held) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape));
-            cache.write_back(
+            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
+            // the file again (decision 0104: no wave waits for the writer).
+            cache.write_back_unless_full(
                 "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(queued_tape(&digest, tag, gv, fv), Some(tape as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
@@ -680,7 +684,7 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
+/// The relations `core.rr` declares (the engine's names, decision 0141), as the rule language reads them;
 /// registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();

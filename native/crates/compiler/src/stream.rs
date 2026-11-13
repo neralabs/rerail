@@ -305,6 +305,26 @@ pub struct Node {
     pub size: u32,
 }
 
+/// The engine's tape of `nodes`, in preorder as `run` gives them, over `src`: its bytes
+/// (`rerail_tape_format`, decision 0140). A node of an extra's kind (`Readings::extras`) is
+/// flagged an extra; `tag` is the language's. The interpreter's tape: the meaning the
+/// compiled tiers' bytes are checked against.
+pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> Vec<u8> {
+    // The supertypes the nodes are in, ascending: a bit each in a node's key, its code's classes.
+    let mut classes: Vec<u16> = nodes.iter().flat_map(|n| n.supers.iter().copied()).collect();
+    classes.sort_unstable();
+    classes.dedup();
+    let rows: Vec<(u32, u32, u32, u32)> = nodes
+        .iter()
+        .map(|n| {
+            let flags = if extras.contains(&n.kind) { rerail_tape_format::CODE_EXTRA } else { 0 };
+            let member = n.supers.iter().fold(0u32, |m, s| m | 1 << (rerail_tape_format::CLASS_SHIFT as usize + classes.binary_search(s).expect("a class of the nodes'")));
+            (rerail_tape_format::key(n.kind, n.field, flags) | member, n.start, n.end, n.size)
+        })
+        .collect();
+    rerail_tape_format::preorder_image_in(tag, &classes, src, &rows)
+}
+
 /// Why a file went to tree-sitter: the word that refused it, and what it found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refused {

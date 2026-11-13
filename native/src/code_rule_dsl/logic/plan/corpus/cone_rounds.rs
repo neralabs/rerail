@@ -1,4 +1,4 @@
-//! The cone of requests maintained by delta (decision 0108).
+//! The cone of requests maintained by delta (decision 0145).
 //!
 //! With its answers and its gates taken as inputs, the cone's rules stratify: each relation is a stratum of its own,
 //! and all of the cone's recursion is through the answers. So the cone is run as rounds of one stratified program,
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     fs: Vec<(String, String)>,
 }
 
-/// The relation of the file system an answer is the join of its request with (decision 0108, t33's K2): its rows are
+/// The relation of the file system an answer is the join of its request with (decision 0145, t33's K2): its rows are
 /// the file system's where asked, kept as inputs, and the answer is derived.
 pub(in crate::code_rule_dsl) fn fs_input(answer: &str) -> String {
     format!("rr_fs_{answer}")
@@ -161,7 +161,7 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) ledger: &'a std::sync::Mutex<LoadLedger>,
 }
 
-/// What the rounds and the thread answering their loads share (decision 0108, a load taken back).
+/// What the rounds and the thread answering their loads share (decision 0145, a load taken back).
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct LoadLedger {
     /// Each file a load answered (its path's atom, `loaded`'s first column) with its document: what a load taken
@@ -174,7 +174,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
     /// the budget's levels.
     pub(in crate::code_rule_dsl) rounds: bool,
     /// A load the rounds asked was past the budget: what they load then depends on their order, so they give up and
-    /// the cone runs fresh, in levels (decision 0108).
+    /// the cone runs fresh, in levels (decision 0145).
     pub(in crate::code_rule_dsl) bound: bool,
     /// The rounds gave up and the cone runs fresh: what was answered to them is not the run's answers.
     pub(in crate::code_rule_dsl) restarted: bool,
@@ -356,17 +356,19 @@ impl RoundProgram {
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
             let program = &self.program;
+            // A cone's program has no split: its inputs' rows are grouped by their first node column (`group_col`).
+            let no_locations = retain::Locations::new();
             for (done, _) in &self.gates {
-                open.insert(done.clone(), k.read_input(on.store, program, done, None)?.unwrap_or_default());
+                open.insert(done.clone(), k.read_input(on.store, program, &no_locations, done, None)?.unwrap_or_default());
             }
             for (rel, _) in &self.produced {
-                provisional.insert(rel.clone(), k.read_input(on.store, program, rel, None)?.unwrap_or_default());
+                provisional.insert(rel.clone(), k.read_input(on.store, program, &no_locations, rel, None)?.unwrap_or_default());
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
             // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, rel, (*at == retain::group_col(program, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
+                let rows = k.read_input(on.store, program, &no_locations, rel, (*at == retain::group_col(program, &no_locations, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
                 provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
@@ -527,7 +529,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.program, &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
+                next.write_frames(on.store, was, &self.program, &retain::Locations::new(), &crate::code_rule_dsl::logic::front::strata(&self.program).map_err(|e| super::Error::Plan(e.to_string()))?.0, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new())?
             }
             None => 0,
         };

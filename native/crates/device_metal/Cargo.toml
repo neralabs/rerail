@@ -28,7 +28,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-w/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-w/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-logic/metal-tests", "rerail-rr/metal-tests", "rerail-transducer/metal-tests", "rerail-w/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-w/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-compiler/test-hooks", "rerail-store/test-hooks", "rerail-w/test-hooks", "dep:tempfile"]
 
 [dependencies]
 base64 = "=0.22.1"

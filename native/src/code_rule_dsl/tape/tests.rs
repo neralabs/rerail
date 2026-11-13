@@ -1829,8 +1829,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
 /// parser refuses the file (`Some` of each tape's bytes otherwise).
 fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
-    let columns = crate::code_rule_dsl::transducer::packed::json_parser::columns(source)?;
-    let ours = crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_columns(&grammar, source, &columns, &|| false).unwrap().to_bytes().unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
     let tree = parser.parse(source, None).unwrap();
@@ -1920,7 +1919,7 @@ fn rr_parse_costs() {
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
         ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
-        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().rows.len())),
+        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().len())),
         ("statement parser: tree", Box::new(|f| rerail_rr_syntax::engine_tape(f).len())),
         ("statement parser: the tape, packed (before)", Box::new(|f| packed_rr_tape(&grammar, f).len())),
     ];
@@ -1973,15 +1972,58 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
     }
     // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
     for source in ["1e+2", "[1.5E+3]"] {
-        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(source).is_some(), "refused {source:?}");
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(source).is_some(), "refused {source:?}");
     }
     for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
-        assert!(crate::code_rule_dsl::transducer::packed::json_parser::columns(invalid).is_none(), "accepted {invalid:?}");
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(invalid).is_none(), "accepted {invalid:?}");
     }
 }
 
 /// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
 /// refuses the file (`Ok` of each tape's bytes otherwise).
+/// `source` with a space for each trailing comma (a `,` before `]` or `}`, comments between), outside
+/// strings and comments: the text whose tree-sitter-json tape a JSONC file's simdjson tape is (decision 0158).
+fn without_trailing_commas(source: &str) -> String {
+    let b = source.as_bytes();
+    let mut out = b.to_vec();
+    // The end of the string, comment or whitespace run at `i`, or `i` where none starts there.
+    let skip = |i: usize| -> usize {
+        match (b[i], b.get(i + 1)) {
+            (b'/', Some(b'/')) => b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n),
+            (b'/', Some(b'*')) => source[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2),
+            (c, _) if c.is_ascii_whitespace() => i + 1,
+            _ => i,
+        }
+    };
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
+        let after = skip(i);
+        if after != i {
+            i = after;
+            continue;
+        }
+        if b[i] == b',' {
+            let mut j = i + 1;
+            while j < b.len() && skip(j) != j {
+                j = skip(j);
+            }
+            if j < b.len() && matches!(b[j], b']' | b'}') {
+                out[i] = b' ';
+            }
+        }
+        i += 1;
+    }
+    String::from_utf8(out).unwrap()
+}
+
 fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false)
@@ -1991,9 +2033,58 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
         .unwrap();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
-    let tree = parser.parse(source, None).unwrap();
-    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
+    // without it, which is as long.
+    let text = without_trailing_commas(source);
+    let tree = parser.parse(&text, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false).unwrap().primary.to_bytes().unwrap();
     Ok((ours, theirs))
+}
+
+/// The product reads JSON with simdjson: a JSON file's image through the engine's parse
+/// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
+/// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
+#[test]
+fn the_product_reads_json_with_simdjson() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
+    use sha2::Digest;
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    assert!(tree_parser(GrammarDialect::Json).is_some(), "JSON's parser is installed");
+    let source = "\u{feff}{\"a\": [1, true, \"x\\ny\"], \"b\": {\"c\": null}}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let simdjson = jp::simdjson::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), simdjson.to_bytes().unwrap());
+    assert_eq!(product.primary.source_digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(source.as_bytes()))));
+    // Refused by simdjson, as JSON and as JSONC (two commas): tree-sitter-json's tape.
+    let jsonc = "// c\n{\"a\": 1,,}\n";
+    assert!(jp::simdjson::encode(&grammar, jsonc, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, jsonc, &|| false).unwrap().is_ok());
+}
+
+/// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
+/// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
+/// tape, the DOM parser and the index writer included.
+#[test]
+fn the_router_takes_the_best_json_parser_this_cpu_runs() {
+    let routes: Vec<_> = parser_routes().into_iter().filter(|(r, _)| r.dialect == GrammarDialect::Json).collect();
+    let listing: Vec<String> = routes.iter().map(|(r, taken)| format!("{}{}{}", r.name, if r.runs { "" } else { " (not here)" }, if *taken { " <- taken" } else { "" })).collect();
+    eprintln!("JSON's implementations: {listing:#?}");
+    let taken: Vec<_> = routes.iter().filter(|(_, taken)| *taken).collect();
+    assert_eq!(taken.len(), 1, "one implementation taken");
+    let best = rerail_simdjson::Kernel::best().expect("a kernel this CPU runs");
+    assert_eq!(taken[0].0.name, best.name());
+    assert!(routes.iter().all(|(r, _)| !r.runs || r.rank >= taken[0].0.rank), "a better implementation runs here");
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let source = "{\"a\": [1, -2.5e3, true, false, null, \"x\\u00e9y\"], \"b\": {}}";
+    let want = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap().primary.to_bytes().unwrap();
+    for (r, _) in routes.iter().filter(|(r, _)| r.runs) {
+        let image = r.parser.parse(&grammar, source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.to_bytes().unwrap(), want, "{}", r.name);
+    }
+    // Every kernel's name is registered, whether this CPU runs it or not.
+    for kernel in rerail_simdjson::Kernel::ALL {
+        assert!(routes.iter().any(|(r, _)| r.name == kernel.name()), "{:?}", kernel);
+    }
 }
 
 /// JSON's tapes from simdjson (the engine's JSON parser) are tree-sitter-json's, byte for byte: kinds,
@@ -2017,11 +2108,32 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
         "[\"\\\\\", \"\\\\\\\"\", \"a\\tb\\u0041c\", \"\\ud83d\\ude00\", \"é \\/ ü\", \"  \"]",
         "{\"\": {\"\": []}, \"k\\\"\": \"v\"}",
         "[[],{},[{}],{\"a\":[]}]\r\n",
+        // JSONC: comments where tree-sitter-json places them (extras of the lowest node holding the tokens on
+        // either side), read again after the strict read refused them.
+        "// c\n{}",
+        "// a\n{ /*b*/ \"k\" /*c*/ : /*d*/ 1 /*e*/ , /*f*/ \"j\": [ /*g*/ 2 /*h*/ , 3 /*i*/ ] /*j*/ } // k\n",
+        "{\"a\": {} /*x*/, \"b\": [ /*y*/ ], \"c\": { /*z*/ }}",
+        "{\"a\": 1 // c\r\n}",
+        "/* a **/ /** b */1",
+        "\u{feff}// x\n{}",
+        "1 // eof",
+        "[\"/*x*/\", 1] /* a \" quote */",
+        "{\n  // The compiler's options.\n  \"compilerOptions\": {\n    \"strict\": true, // always\n    /* \"lib\": [\"dom\"], */\n    \"target\": \"es2022\"\n  }\n}\n",
+        // Trailing commas, passed over: tree-sitter-json's tape of the text without them.
+        "[1,]",
+        "{\"a\": 1,}",
+        "// c\n{\"a\": 1,}",
+        "[[1,],]",
+        "{\"a\": {\"b\": 1,},}",
+        "[{\"a\": 1},\n]",
+        "[\"x\", // c\n]",
+        "{\"a\": [1, 2,], \"b\": 3, /* last */ }",
+        "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
     ] {
         let (ours, theirs) = simdjson_tapes(source).unwrap_or_else(|why| panic!("refused {source:?}: {why}"));
         assert!(ours == theirs, "the tapes of {source:?} differ");
     }
-    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", "", "// c\n{}", "{\"a\": 1,}"] {
+    for invalid in ["{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open"] {
         assert!(simdjson_tapes(invalid).is_err(), "accepted {invalid:?}");
     }
     // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are simdjson's alone.
@@ -2060,8 +2172,7 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             // allows: `1e+2`). The tape is then the Bitlex parser's, a reading of its own.
             Ok((ours, _)) => {
                 assert!(parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()), "the tapes of {} differ", path.display());
-                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::columns(&source)
-                    .map(|c| crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_columns(&grammar, &source, &c, &|| false).unwrap().to_bytes().unwrap());
+                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::image(&source);
                 assert!(bitlex.is_none_or(|b| b == ours), "{}: tree-sitter errs, and simdjson's tape is not the Bitlex parser's", path.display());
                 corrected += 1;
             }
@@ -2098,6 +2209,38 @@ fn json_tapes_over_files() {
     }
     for p in corrected.iter().take(20) {
         eprintln!("tree-sitter's error: {p}");
+    }
+    assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
+}
+
+/// [`json_tapes_from_simdjson_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file listing one path
+/// a line (say a `node_modules`' `.json` files, its `tsconfig.json`s with comments). Each file simdjson
+/// reads, strictly or as JSONC, has tree-sitter-json's tape; what it refuses is counted, by whether it
+/// has a comment.
+#[test]
+#[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
+fn simdjson_tapes_over_files() {
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).unwrap();
+    let (mut strict, mut jsonc, mut refused, mut differ) = (0, 0, Vec::new(), Vec::new());
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let kinds = &crate::code_rule_dsl::transducer::packed::json_parser::simdjson::kinds().unwrap().0;
+    let kernel = rerail_simdjson::Kernel::best().unwrap();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match simdjson_tapes(&source) {
+            Err(_) => refused.push(path.to_owned()),
+            Ok((ours, theirs)) if ours == theirs => {
+                if rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds).is_ok() { strict += 1 } else { jsonc += 1 }
+            }
+            // tree-sitter-json's error in valid JSON (an exponent's `+`): not this test's.
+            Ok(_) if parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()) => {}
+            Ok(_) => differ.push(path.to_owned()),
+        }
+    }
+    eprintln!("{strict} strict and {jsonc} JSONC files equal tree-sitter-json's tapes; {} refused, {} differ", refused.len(), differ.len());
+    for p in refused.iter().take(40) {
+        eprintln!("refused: {p}");
     }
     assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
 }
@@ -2150,7 +2293,7 @@ fn json_parse_costs() {
         }
     }
     let all = files.len();
-    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::columns(f).is_some());
+    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::image(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || {
@@ -2163,12 +2306,17 @@ fn json_parse_costs() {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let kinds = &jp::simdjson::kinds().unwrap().0;
     let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
+    let kernel = rerail_simdjson::Kernel::best().expect("a kernel this CPU runs");
+    let product = tree_parser(GrammarDialect::Json).expect("JSON's parser");
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("simdjson: stage 1 alone", Box::new(|f| kernel.stage1(f.as_bytes(), false) as usize)),
+        ("simdjson: stage 1, SHA-256 in it", Box::new(|f| kernel.stage1(f.as_bytes(), true) as usize)),
         ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
-        ("simdjson: parse, index and columns", Box::new(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count())),
-        // Through `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
-        ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::simdjson::Simdjson.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
-        ("bitlex: parse (node table)", Box::new(|f| jp::columns(f).unwrap().rows.len())),
+        ("simdjson: DOM parse, columns from index", Box::new(|f| rerail_simdjson::tape_from_index(f.as_bytes(), kinds).unwrap().node_count())),
+        ("simdjson: stage 1 (hashed), stage 2", Box::new(|f| rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds).unwrap().node_count())),
+        // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
+        ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(product.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("bitlex: parse (the image)", Box::new(|f| jp::image(f).unwrap().len())),
         ("bitlex: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
         ("tree-sitter-json: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
         ("tree-sitter-json: the tape", Box::new(|f| {
@@ -2201,7 +2349,7 @@ fn json_parse_costs() {
     for ((name, _), (t, i)) in steps.iter().zip(best) {
         eprintln!("{name:36} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
     }
-    eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; simdjson's kernel {}", files.len(), rerail_simdjson::implementation());
+    eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; {}", files.len(), kernel.name());
 }
 
 /// The lean `.rr` parser writes the engine's tape (decision 0140): its bytes are the engine's

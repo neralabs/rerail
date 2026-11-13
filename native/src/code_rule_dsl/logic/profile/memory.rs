@@ -127,6 +127,17 @@ pub(super) struct Sample {
     /// Each thread's innermost open span, as `thread: path`, and how many threads had opened a span (live).
     pub(super) open: Vec<String>,
     pub(super) threads: usize,
+    /// What else holds memory then, beside the heap (MB): the Metal driver's allocations, the device buffer pool's
+    /// reservations, relational work's leases (live, idle), SQLite's heap.
+    pub(super) holders: [usize; 5],
+}
+
+/// The holders a sample reads (`Sample::holders`), in MB.
+fn holders() -> [usize; 5] {
+    let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
+    let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
 }
 
 #[derive(Default)]
@@ -138,6 +149,10 @@ pub(super) struct Sampled {
     pub(super) top: Sample,
     /// Bytes the high-water mark rose while each `thread: path` was open, and the most footprint seen while it was.
     pub(super) rise: std::collections::BTreeMap<String, (u64, u64)>,
+    /// `RERAIL_HEAP_SAMPLE`: the live heap by allocating span at the peak (`rerail_prof::heap::snapshot`), and the
+    /// footprint it was taken at.
+    pub(super) heap: Vec<(u32, u64)>,
+    pub(super) heap_at: u64,
 }
 
 pub(super) static SAMPLED: std::sync::LazyLock<std::sync::Mutex<Sampled>> = std::sync::LazyLock::new(Default::default);
@@ -148,6 +163,16 @@ pub(super) fn sample() {
     STARTED.call_once(|| {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
+        // Relational work's device leases are sampled as the heap is, under the span that leased them.
+        if rerail_prof::heap::on() {
+            rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
+                if len == 0 {
+                    rerail_prof::heap::free(ptr);
+                } else {
+                    rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
+                }
+            });
+        }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
@@ -164,17 +189,30 @@ pub(super) fn sample() {
                 if !(keep || rose > 0 || top) {
                     continue;
                 }
+                // The threads' open spans are read without this lock held: a thread closing a span holds its own lock
+                // and waits for the profile's state, which a dump holds while it waits for this one (a run stopped by
+                // `timeout` hung so, its profile never written).
+                drop(s);
                 let (mut open, threads) = super::open_paths();
                 open.extend(doing());
+                let mut s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 for p in &open {
                     let e = s.rise.entry(p.clone()).or_default();
                     e.0 += rose;
                     e.1 = e.1.max(now);
                 }
                 last_max = max;
-                let sample = Sample { at, unix, footprint: now, max, live, resident, open, threads };
+                let sample = Sample { at, unix, footprint: now, max, live, resident, open, threads, holders: holders() };
                 if top {
                     s.top = sample.clone();
+                    // The heap by span at the peak, again each 16 MB it rises (a scan of the sampler's table).
+                    if rerail_prof::heap::on() && now >= s.heap_at + (16 << 20) {
+                        s.heap_at = now;
+                        drop(s);
+                        let heap = rerail_prof::heap::snapshot();
+                        s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        s.heap = heap;
+                    }
                 }
                 if keep {
                     s.rows.push(sample);
@@ -233,6 +271,22 @@ pub(super) fn sampled_report(r: &mut String) {
     for p in &t.open {
         let _ = writeln!(r, "    {}", super::short(p, 160));
     }
+    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
+    // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
+    // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
+    let [driver, reserved, leased, idle, sqlite] = t.holders;
+    let heap_mb = |b: u64| (b >> 20) as usize;
+    let accounted = heap_mb(t.resident) + driver;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; the rest {}",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, heap_mb(t.footprint).saturating_sub(accounted));
+    if !s.heap.is_empty() {
+        let total: u64 = s.heap.iter().map(|h| h.1).sum();
+        let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
+            mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
+        for (id, bytes) in s.heap.iter().take(30) {
+            let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
     let mut rose: Vec<(&String, &(u64, u64))> = s.rise.iter().filter(|(_, v)| v.0 > 0).collect();
     rose.sort_by_key(|(_, v)| std::cmp::Reverse(v.0));
     let _ = writeln!(r, "Open (innermost, on any thread) while the high-water mark rose, by the rise; most footprint seen while open");
@@ -245,9 +299,10 @@ pub(super) fn sampled_report(r: &mut String) {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tthreads\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\tthreads\topen\n");
     for r in &s.rows {
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

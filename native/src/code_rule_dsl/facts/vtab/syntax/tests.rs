@@ -559,7 +559,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0105) on the CPU and on Metal.
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
@@ -1194,5 +1194,89 @@ fn node_order_keys_census() {
     }
     for (s, t) in total.iter().enumerate() {
         println!("step {}: preorder {}  runs {}  floor {}", ["06", "07", "08"][s], t[0], t[1], t[2]);
+    }
+}
+
+/// A phase whose exports hold no node projects only the subtrees of the kinds its rules start from (`node_anchors`):
+/// a kind reached below another is no anchor of its own; a parent, an ancestor, a child's place among unnamed
+/// siblings, a node no kind or descent proves, or an export holding a node, keeps every node.
+#[test]
+fn a_phase_projects_the_subtrees_its_rules_start_from() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let kinds = |ks: &[&str]| Ok(ks.iter().map(|k| k.to_string()).collect::<BTreeSet<String>>());
+    let phase = |body: &str, out: &str| format!("{prelude}\n.phase p\n.export out\n.decl out({out})\n{body}\n.output out\n");
+    for (src, want) in [
+        (phase("out(t) :- kind(i, \"import_statement\"), field(i, \"name\", n), kind(n, \"dotted_name\"), text(n, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase(".decl imp(i: node, q: symbol)\nimp(i, q) :- kind(i, \"import_statement\"), child(i, n, 0), text(n, q).\nout(q) :- imp(i, q), kind(i, \"import_statement\"), docof(i, _).", "q: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), !child(i, _, 1), text(i, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(p, i, _), text(p, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), within(i, f), text(f, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(_, i, k), k = 0, text(i, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- node(_, n, _, _, _), text(n, t).", "t: symbol"), Err(String::new())),
+        (phase("out(i) :- kind(i, \"import_statement\").", "i: node"), Err(String::new())),
+        (format!("{prelude}\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_statement\"), text(i, t).\n.output out\n"), Err(String::new())),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+        let got = node_anchors(&program, &matchers);
+        let body = src.rsplit(".decl out").next().unwrap_or("");
+        match &want {
+            Ok(k) => assert_eq!(got.as_ref().ok(), Some(k), "{body}: {got:?}"),
+            Err(_) => assert!(got.is_err(), "{body}: {got:?}"),
+        }
+    }
+}
+
+/// The definition ids of every node, token and span of a set of files, pinned (decision 0094 §2): a change to how
+/// they are computed (which nodes start a granule, their keys, their slots) must leave every id as it was, or the
+/// ids kept across edits and runs move.
+#[test]
+fn definition_ids_are_pinned() {
+    if !definition_ids() {
+        return;
+    }
+    use sha2::{Digest, Sha256};
+    let ruff = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let mut files: Vec<(&str, String, String)> = [
+        ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
+        ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
+        ("typescript", "a.ts", "class Store {\n  items: number[] = [];\n  add(n: number) { this.items.push(n); }\n}\nfunction helper() { return 'hp'; }\n"),
+        ("sql", "a.sql", "CREATE TABLE users (id INT, name TEXT);\nCREATE VIEW active AS SELECT id FROM users WHERE id > 7;\n"),
+        ("php", "a.php", "<?php\nclass A {\n  public $v = 1;\n  function one() { return 'po'; }\n}\nfunction free() { return 'pf'; }\n"),
+        ("rust", "a.rs", "struct S { n: u32 }\nimpl S {\n    fn get(&self) -> u32 { self.n }\n}\nfn main() { let s = S { n: 5 }; }\n"),
+    ].into_iter().map(|(l, p, s)| (l, p.to_owned(), s.to_owned())).collect();
+    for f in ["pyflakes/F601.py", "pyflakes/F632.py", "flake8_simplify/SIM905.py", "flake8_bugbear/B031.py", "flake8_bugbear/B006_B008.py"] {
+        let source = std::fs::read_to_string(ruff.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+        files.push(("python", f.to_owned(), source));
+    }
+    let mut h = Sha256::new();
+    for (label, path, source) in &files {
+        let (_, p) = leaf_ids(label, path, source);
+        for l in 0..p.locs() {
+            h.update(p.global(l).to_le_bytes());
+            assert_eq!(p.local_of((p.global(l) & 0xffff_ffff) as u32), Some(l), "{path}: id of {l} does not map back");
+        }
+    }
+    let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
+}
+
+/// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
+/// made once per grammar from the kind names (`Dialect::granule_kind`), not names matched for each node: in every
+/// grammar the table says what the names say.
+#[test]
+fn granule_kinds_are_a_table_by_kind_code() {
+    for (label, path, source) in [("python", "a.py", "x = 1\n"), ("javascript", "a.js", "x;\n"), ("typescript", "a.ts", "x;\n"), ("tsx", "a.tsx", "x;\n"),
+        ("php", "a.php", "<?php\nx();\n"), ("rust", "a.rs", "fn f() {}\n"), ("sql", "a.sql", "SELECT 1;\n")] {
+        let d = document(7, path, label, source);
+        let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
+        let mut seen = 0;
+        for code in 0..dialect.catalog.kind_count() {
+            let name = dialect.catalog.kind_name(code as u16).unwrap_or("");
+            let want = granules::kind_flags(name);
+            seen += usize::from(want != 0);
+            assert_eq!(dialect.granule_kind(code as u16), want, "{label}: {name}");
+        }
+        assert!(seen > 0, "{label}: no kind starts or holds a granule");
     }
 }

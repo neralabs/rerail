@@ -127,7 +127,13 @@ fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
 
 /// The only files that may know a relation is a cache: the lint of `.cache` and the program front that calls it.
 /// Nothing that evaluates, keeps or maintains a relation asks whether it is a cache.
-const KNOWS_CACHES: &[&str] = &["code_rule_dsl/logic/front/caches.rs", "code_rule_dsl/logic/front.rs"];
+const KNOWS_CACHES: &[&str] = &[
+    "code_rule_dsl/logic/front/caches.rs",
+    "code_rule_dsl/logic/front.rs",
+    // The crate split's facades, which re-export `front::caches` for the crates above rerail-rr (no code of theirs).
+    "code_rule_dsl/logic.rs",
+    "code_rule_dsl/mod.rs",
+];
 
 /// A cache's own store, hook or lookup: names no engine code may have (decision 0103: cached facts are just facts).
 const CACHE_MACHINERY: &[&str] = &["CacheStore", "cache_hits", "queue_cache_rows", "keep_cache_rows", "CachePut", "hold_kept"];

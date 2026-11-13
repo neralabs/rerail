@@ -69,7 +69,7 @@ pub use print::print;
 pub use syntax::quote;
 pub use translate::translate;
 
-/// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
+/// The relations `core.rr` declares: the engine's names (decision 0141). Empty when `core.rr` does not read.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
@@ -556,7 +556,7 @@ impl LibraryFile {
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rr` declares for libraries to derive: the engine reads them (decision 0055's embeds).
 /// And the documents they load (t21 E2).
-const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
@@ -623,11 +623,19 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
 /// was the largest part of a batch's setup (`lower_files`, 16% of the main thread). Kept whole: the file itself,
 /// `core.rr` and the engine's files (lowering reads their relations by name), and every item but a clause. A clause
 /// of another file is kept when one of its heads is reached: named by the file itself (each identifier of each of
-/// its items, so none is missed), by another file's output, violation or setting, or read by a kept clause. Every clause for a relation is kept with any, so a library relation is the same in each program that
-/// reaches it (decision 0091). `front::prune` of the program lowered from these is the same as of the whole
+/// its items, so none is missed), by another file's output, violation or setting, by the engine (`LIBRARY_DERIVED`),
+/// by its own body when that makes a request (`asks`), or read by a kept clause. Every clause for a relation is kept with any, so a library relation is the same in each
+/// program that reaches it (decision 0091). `front::prune` of the program lowered from these is the same as of the whole
 /// (`dropping_unreached_clauses_prunes_to_the_same_program`).
 pub fn unreached_dropped(own: &Path, statements: Files) -> Files {
     reached_statements(own, &statements.iter().map(|(p, s)| (p, s.iter().collect())).collect::<Vec<_>>())
+}
+
+/// Whether a read of `name` makes a request when lowered (`lower`'s demands): the file system's relations (`WORLD`), a
+/// guest's (`parsed`, `sub_tape`) and a tape operation's (`parse_of`, `splice_of`, and `@parse`, `@splice`, which
+/// lower to them). What is asked for is made for every reader, not the asking clause alone.
+fn asks(name: &str) -> bool {
+    WORLD.iter().any(|(r, _)| *r == name) || matches!(name, "parsed" | "sub_tape" | "parse_of" | "splice_of" | "parse" | "splice")
 }
 
 /// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
@@ -677,14 +685,28 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
         }
     }
     let whole: Vec<PathBuf> = ["core.rr"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
-    let mut reached: BTreeSet<String> = BTreeSet::new();
+    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
+    // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
+    // `load(…)` asked for no document, and no import was resolved.
+    let mut reached: BTreeSet<String> = LIBRARY_DERIVED.iter().map(|r| (*r).to_owned()).collect();
     // Each other file's clauses by head: (file, statement) indices.
     let mut by_head: std::collections::HashMap<&str, Vec<(usize, usize)>> = std::collections::HashMap::new();
     for (f, (file, items)) in statements.iter().enumerate() {
         let kept_whole = whole.contains(file);
         for (s, (item, _)) in items.iter().copied().enumerate() {
             match item {
-                syntax::Item::Clause { heads, .. } if !kept_whole => heads.iter().for_each(|h| by_head.entry(h.rel.as_str()).or_default().push((f, s))),
+                syntax::Item::Clause { heads, body, edits } if !kept_whole => {
+                    heads.iter().for_each(|h| by_head.entry(h.rel.as_str()).or_default().push((f, s)));
+                    // A clause whose reads make requests (`asks`) is reached though nothing reads its heads: the engine
+                    // answers its request for every reader (`python/modules.rr`'s `py_listed` lists the directories the
+                    // other rules read entries of).
+                    let mut read = BTreeSet::new();
+                    lits(body, &mut read);
+                    edits.iter().for_each(|e| term(e, &mut read));
+                    if read.iter().any(|r| asks(r)) {
+                        reached.extend(heads.iter().map(|h| h.rel.clone()));
+                    }
+                }
                 syntax::Item::Clause { heads, body, edits } => {
                     heads.iter().for_each(|h| {
                         reached.insert(h.rel.clone());
@@ -700,52 +722,10 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
             }
         }
     }
-    // The engine's relations (`core.rr`'s) are read by the engine: a library clause deriving one asks it for
-    // something (`load(f, q, "python")`, python/modules.rr), though no rule reads it.
-    let core = library().join("core.rr").canonicalize().ok();
-    let listed: Vec<&String> = statements
-        .iter()
-        .filter(|(file, _)| core.as_ref() == Some(*file))
-        .flat_map(|(_, items)| items.iter())
-        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
-        .collect();
-    if listed.is_empty() {
-        reached.extend(core_names().iter().cloned());
-    } else {
-        reached.extend(listed.into_iter().cloned());
-    }
-    // A request rule: its head is read by no clause, but its body reads the file system (`dir_entry`, `file_line`,
-    // `file_digest`), which asks the engine for what it reads (`py_listed(d) :- py_file_at(_, _, d, _),
-    // dir_entry(d, _, _)`, python/modules.rr). It is kept once what it reads is reached.
-    let mut read_by_some: BTreeSet<String> = BTreeSet::new();
-    for (item, _) in statements.iter().flat_map(|(_, items)| items.iter()) {
-        if let syntax::Item::Clause { body, .. } = item {
-            lits(body, &mut read_by_some);
-        }
-    }
-    let mut askers: std::collections::HashMap<&str, Vec<(usize, usize)>> = std::collections::HashMap::new();
-    for (f, (file, items)) in statements.iter().enumerate() {
-        if whole.contains(file) {
-            continue;
-        }
-        for (s, (item, _)) in items.iter().copied().enumerate() {
-            let syntax::Item::Clause { heads, body, .. } = item else { continue };
-            if heads.iter().any(|h| read_by_some.contains(&h.rel)) {
-                continue;
-            }
-            for l in body {
-                if let syntax::Lit::Atom { rel, .. } = l
-                    && let Some((world, _)) = lower::WORLD.iter().find(|(w, _)| *w == rel.as_str())
-                {
-                    askers.entry(world).or_default().push((f, s));
-                }
-            }
-        }
-    }
     let mut keep: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut todo: Vec<String> = reached.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
-        for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten().chain(askers.get(rel.as_str()).into_iter().flatten()) {
+        for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten() {
             if !keep.insert((f, s)) {
                 continue;
             }
@@ -771,10 +751,10 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
         .collect()
 }
 
-/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
+/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
-    // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
+    // `core.rr`'s relations are the engine's (decision 0141): no other file declares or derives one.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);

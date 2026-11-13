@@ -215,6 +215,32 @@ pub mod wave {
     }
 }
 
+#[cfg(test)]
+mod wave_tests {
+    use super::wave;
+
+    /// Smoking gun 7 (t34, 2026-11-13): a level's strata may run as a job off the run's thread (decision 0113 §4), and
+    /// the wave their launches join is flushed there. The job takes its waves off its thread's count (`since`) and
+    /// the run's thread credits them when it takes the job back (`credit`, in `absorb`): the run counts them.
+    #[test]
+    fn a_jobs_waves_are_credited_to_the_run_that_takes_it_back() {
+        let before = wave::flushed();
+        let waves = std::thread::spawn(|| {
+            let at = wave::flushed_now();
+            wave::defer(Box::new(|| Ok(())));
+            assert_eq!(wave::flush(1).unwrap(), 1);
+            let waves = wave::since(at);
+            assert_eq!(wave::flushed_now(), at, "taken off the job's thread");
+            waves
+        })
+        .join()
+        .unwrap();
+        assert_eq!(wave::flushed(), before, "not the run's until it takes the job back");
+        wave::credit(waves);
+        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave is the run's");
+    }
+}
+
 /// The acceleration profile (decision 0098 §4): per form, where a launch's time goes from recognizing the form to
 /// consuming its output. Each form's host phases are timed here (`host`), each batch's executor report is added
 /// (`run`), and `report` renders the profile's section. Only under `RERAIL_PROFILE`.
