@@ -459,6 +459,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
 const signedOutGithub: GithubClient = {
   readiness: async repository => ({ state: "signed-out", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` }),
   openPullRequests: async () => ({ pulls: [], truncated: false }),
+  closedPullRequests: async () => ({ pulls: [], truncated: false }),
 };
 
 /** Turns Merge Assist on in the checkout as a person does on its page, then stores its conflicts. */

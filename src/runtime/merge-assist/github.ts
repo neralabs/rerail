@@ -1,6 +1,6 @@
 /**
- * Merge Assist's reads from GitHub, through the developer's own `gh` sign-in: whether `gh` is signed in (and as whom), and
- * the open pull requests.
+ * Merge Assist's reads from GitHub, through the developer's own `gh` sign-in: whether `gh` is signed in (and as whom), the
+ * open pull requests, and those closed without merging.
  *
  * `gh` only ever runs `auth status`, `pr list` and `api` with GET, with no shell, prompts off, a timeout and an output
  * cap. Everything it prints is untrusted: each response is validated, and every value placed in an API path is checked
@@ -50,6 +50,11 @@ export interface GithubClient {
    * Throws `GithubError` when `gh` fails.
    */
   openPullRequests(repository: GithubRepository): Promise<PullRequestListing>;
+  /**
+   * Up to {@link PULL_REQUEST_LIMIT} pull requests closed without merging, newest first, validated as the open ones
+   * are. Throws `GithubError` when `gh` fails.
+   */
+  closedPullRequests(repository: GithubRepository): Promise<PullRequestListing>;
 }
 
 export interface GithubClientOptions {
@@ -188,6 +193,10 @@ const pullRequestEntrySchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
+/** A closed pull request that was not merged: `gh pr list --json mergedAt` gives it none. */
+const unmergedSchema = z.object({ mergedAt: z.null() });
+const PULL_REQUEST_FIELDS = "number,title,url,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,baseRefName,author,isDraft,updatedAt";
+
 const userSchema = z.object({ login: z.string() });
 
 /** One entry of `gh pr list` on `host` as a summary, or null when it fails validation. */
@@ -211,6 +220,22 @@ function pullRequestOf(entry: unknown, host: string): PullRequestSummary | null 
     crossRepository: value.isCrossRepository,
     headOwner: value.headRepositoryOwner?.login ?? null,
   };
+}
+
+/**
+ * `gh pr list`'s arguments for the pull requests in `state`. `--state closed` lists merged ones too: a closed listing
+ * asks for unmerged ones only (`is:unmerged`, so merged ones take none of the limit) and for each one's `mergedAt`.
+ */
+function listArgs(repository: GithubRepository, state: "open" | "closed"): string[] {
+  const closed = state === "closed";
+  return [
+    "pr", "list",
+    `--repo=${repository.host}/${repository.owner}/${repository.name}`,
+    "--state", state,
+    ...(closed ? ["--search", "is:unmerged"] : []),
+    "--limit", String(PULL_REQUEST_LIMIT),
+    "--json", closed ? `${PULL_REQUEST_FIELDS},mergedAt` : PULL_REQUEST_FIELDS,
+  ];
 }
 
 export function createGithubClient(options: GithubClientOptions = {}): GithubClient {
@@ -360,25 +385,25 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     signedInHosts.add(host);
   }
 
-  async function openPullRequests(repository: GithubRepository): Promise<PullRequestListing> {
+  /** `gh pr list` in `state`: open, or closed without merging (an entry with a `mergedAt` is dropped). */
+  async function listPullRequests(repository: GithubRepository, state: "open" | "closed"): Promise<PullRequestListing> {
     checkRepository(repository);
     await requireSignedIn(repository.host);
-    const result = await run([
-      "pr", "list",
-      `--repo=${repository.host}/${repository.owner}/${repository.name}`,
-      "--state", "open",
-      "--limit", String(PULL_REQUEST_LIMIT),
-      "--json", "number,title,url,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,baseRefName,author,isDraft,updatedAt",
-    ]);
+    const result = await run(listArgs(repository, state));
     if (result.code !== 0) {
       const detail = cleanDetail(result.stderr);
-      throw new GithubError("failed", `gh could not list open pull requests${detail === "" ? "." : `: ${detail}`}`);
+      throw new GithubError("failed", `gh could not list ${state} pull requests${detail === "" ? "." : `: ${detail}`}`);
     }
     const entries = z.array(z.unknown()).safeParse(json(result.stdout));
     if (!entries.success) throw new GithubError("invalid-response", "gh pr list did not print a list.");
-    const pulls = entries.data.flatMap(entry => pullRequestOf(entry, repository.host) ?? []);
+    const listed = state === "closed" ? entries.data.filter(entry => unmergedSchema.safeParse(entry).success) : entries.data;
+    const pulls = listed.flatMap(entry => pullRequestOf(entry, repository.host) ?? []);
     return { pulls, truncated: entries.data.length >= PULL_REQUEST_LIMIT };
   }
 
-  return { readiness, openPullRequests };
+  return {
+    readiness,
+    openPullRequests: async repository => await listPullRequests(repository, "open"),
+    closedPullRequests: async repository => await listPullRequests(repository, "closed"),
+  };
 }

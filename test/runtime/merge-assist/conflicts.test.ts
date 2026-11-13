@@ -255,3 +255,48 @@ describe("which work is theirs", { timeout: 30_000 }, () => {
     expect(existsSync(marker)).toBe(false);
   });
 });
+
+describe("which work is still in flight", { timeout: 30_000 }, () => {
+  const REMOTE = "https://github.com/acme/app.git";
+  const DAY = 24 * 60 * 60 * 1000;
+  const pullOf = (number: number, head: string): PullRequestSummary => ({
+    number, title: "Share compiled matchers", url: `https://github.com/acme/app/pull/${number}`, headRefName: "jbarnes-model", headCommit: head,
+    baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
+  });
+
+  it("leaves out a branch whose pull request was closed without merging, until it gains a commit", async () => {
+    const { ws, theirs } = await overlapping({ remote: REMOTE });
+    ws.push(theirs, "jbarnes-model");
+    const github = new FakeGithub({ closedPullRequests: [pullOf(11, git(theirs, "rev-parse", "HEAD"))] });
+    const service = ws.service({ github });
+    await service.setEnabled(ws.repo, true);
+    expect((await service.scan(ws.repo)).conflicts).toEqual([]);
+
+    commit(theirs, { "src/api/other.ts": "export {};\n" }, "Picked up again");
+    expect((await service.scan(ws.repo)).conflicts.map(conflict => conflict.theirs.label)).toEqual(["jbarnes-model", "jbarnes-model"]);
+  });
+
+  it("compares every branch when the closed pull requests could not be listed, and says so", async () => {
+    const { ws, theirs } = await overlapping({ remote: REMOTE });
+    const github = new FakeGithub({ closedPullRequests: [pullOf(11, git(theirs, "rev-parse", "HEAD"))], closedError: true });
+    const service = ws.service({ github });
+    await service.setEnabled(ws.repo, true);
+    const status = await service.scan(ws.repo);
+    expect(status.conflicts).toHaveLength(2);
+    expect(status.lastScan?.problems).toEqual([expect.stringContaining("could not list closed pull requests")]);
+  });
+
+  it("leaves out a branch last committed over 30 days ago, unless it has an open pull request", async () => {
+    const { ws, theirs } = await overlapping({ remote: REMOTE });
+    const later = Date.now() + 31 * DAY;
+    const github = new FakeGithub();
+    const service = ws.service({ github, now: () => later });
+    await service.setEnabled(ws.repo, true);
+    expect((await service.scan(ws.repo)).conflicts).toEqual([]);
+    // Within 30 days it is compared.
+    expect((await ws.service({ github, now: () => Date.now() + 29 * DAY }).scan(ws.repo)).conflicts).toHaveLength(2);
+
+    github.options.pullRequests = [pullOf(12, git(theirs, "rev-parse", "HEAD"))];
+    expect((await service.scan(ws.repo)).conflicts.map(conflict => conflict.theirs.label)).toEqual(["PR #12", "PR #12"]);
+  });
+});

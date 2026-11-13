@@ -72,7 +72,7 @@ repository, Rerail runs no `gh` for it:
 | When | What `gh` reads |
 | --- | --- |
 | Merge Assist reads its readiness (at most every five minutes, and at each scan) | Your sign-in state and login |
-| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The 200 newest open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, head repository owner and whether it is a fork, and head commit |
+| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The 200 newest open pull requests of the repository, and the 200 newest closed without merging: number, title, URL, author, draft state, last update, head and base branch, head repository owner and whether it is a fork, and head commit (for a closed one, also whether it merged) |
 
 Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose
 remote is not on GitHub is not read at all; only its local and remote-tracking branches are.

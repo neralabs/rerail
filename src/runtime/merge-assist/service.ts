@@ -136,9 +136,10 @@ const githubCacheSchema = z.object({ at: z.number(), readiness: githubReadinessS
 const scanningSchema = z.object({ since: z.number(), pid: z.number().int() });
 type ScanMark = z.infer<typeof scanningSchema>;
 
-/** The open pull requests as listed, and what the listing could not cover, one sentence each. */
+/** The open pull requests as listed, those closed without merging, and what the listings could not cover, one sentence each. */
 interface PullListing {
   readonly pulls: readonly PullRequestSummary[];
+  readonly closed: readonly PullRequestSummary[];
   readonly problems: readonly string[];
 }
 
@@ -160,7 +161,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #githubReads = new Map<string, Promise<GithubReadiness>>();
   /** When this process last found a checkout's conflicts after an edit, by checkout. */
   readonly #detectedAt = new Map<string, number>();
-  /** The open pull requests this process last listed, by repository, and when. */
+  /** The open and closed pull requests this process last listed, by repository, and when. */
   readonly #pulls = new Map<string, { at: number; listing: Promise<PullListing> }>();
   /** Who hears that a checkout's sessions may have something new to take. */
   readonly #listeners = new Set<(checkoutPath: string) => void>();
@@ -326,29 +327,47 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return work;
   }
 
-  /** The open pull requests once `gh`'s readiness is read: none unless signed in, and what the listing left out. */
+  /**
+   * The open pull requests once `gh`'s readiness is read, with those closed without merging: none unless signed in, and
+   * what the listings left out.
+   */
   async #listPulls(repository: GithubRepository, readiness: GithubReadiness): Promise<PullListing> {
     if (readiness.state === "unavailable") {
-      return { pulls: [], problems: ["Rerail could not read gh's sign-in (it did not answer in time or failed), so no open pull request was compared."] };
+      return { pulls: [], closed: [], problems: ["Rerail could not read gh's sign-in (it did not answer in time or failed), so no open pull request was compared."] };
     }
-    if (readiness.state !== "signed-in") return { pulls: [], problems: [] };
-    const { pulls, truncated } = await this.#githubClient.openPullRequests(repository);
-    return { pulls, problems: truncated ? [`Only the ${PULL_REQUEST_LIMIT} newest open pull requests were compared.`] : [] };
+    if (readiness.state !== "signed-in") return { pulls: [], closed: [], problems: [] };
+    const [open, closed] = await Promise.all([this.#githubClient.openPullRequests(repository), this.#closedPulls(repository)]);
+    return {
+      pulls: open.pulls,
+      closed: closed.pulls,
+      problems: [...(open.truncated ? [`Only the ${PULL_REQUEST_LIMIT} newest open pull requests were compared.`] : []), ...closed.problems],
+    };
+  }
+
+  /** The pull requests closed without merging; none when they could not be listed, which is a problem of its own. */
+  async #closedPulls(repository: GithubRepository): Promise<{ pulls: readonly PullRequestSummary[]; problems: string[] }> {
+    try {
+      return { pulls: (await this.#githubClient.closedPullRequests(repository)).pulls, problems: [] };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return { pulls: [], problems: [`Rerail could not list closed pull requests, so branches whose pull request was closed were compared too: ${reason}`] };
+    }
   }
 
   /**
-   * The open pull requests for detecting conflicts: the listing of the last five minutes unless `fresh`, else read now;
-   * none without `gh`. A listing that failed or was cut short says so.
+   * The open pull requests for detecting conflicts, and those closed without merging: the listings of the last five
+   * minutes unless `fresh`, else read now; none without `gh`. A listing that failed or was cut short says so.
    */
   #openPulls(checkout: CheckoutContext, fresh: boolean): Promise<PullListing> {
     const repository = githubRepositoryOf(checkout.repositoryKey);
-    if (repository === null) return Promise.resolve({ pulls: [], problems: [] });
+    if (repository === null) return Promise.resolve({ pulls: [], closed: [], problems: [] });
     const cached = this.#pulls.get(checkout.repositoryKey);
     if (!fresh && cached !== undefined && this.#now() - cached.at < PULLS_REUSE_MS) return cached.listing;
     const listing = this.#githubReadiness(checkout.repositoryKey, fresh)
       .then(readiness => this.#listPulls(repository, readiness))
       .catch((error: unknown): PullListing => ({
         pulls: [],
+        closed: [],
         problems: [`Rerail could not list open pull requests: ${error instanceof Error ? error.message : String(error)}`],
       }));
     this.#pulls.set(checkout.repositoryKey, { at: this.#now(), listing });
@@ -361,10 +380,10 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
    * as the checkout's last scan.
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
-    const { pulls, problems } = await this.#openPulls(checkout, scan);
+    const { pulls, closed, problems } = await this.#openPulls(checkout, scan);
     // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
     if (this.#stopped) return;
-    const detected = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
+    const detected = await detectConflicts({ database: this.#db, checkout, pulls, closedPulls: closed, now: this.#now });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
