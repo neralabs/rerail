@@ -1,6 +1,7 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
-Status: decided (2026-11-13); stage 1 building.
+Status: decided (2026-11-13); stage 1 in part (the rules and their meaning built; the CPU's
+lowering measured worse and not kept, see Stage 1, measured); the order under review.
 Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
 pass" does not). Metal keeps the bit-parallel form.
 The design: docs/parser-generators/36; the log: docs/parser-generators/35.
@@ -92,3 +93,33 @@ After stage 3 the CPU lowering of today's masks is gone from the CPU path.
   worse by more than the noise is not committed as progress.
 - **Logged.** Each step and each dropped try is a row in docs/parser-generators/35;
   docs/parser-generators/36 holds the design as built; this record its stages' status.
+
+## Stage 1, measured
+
+Built and kept: the syntax (`token K = start S run R`, `pair P`), its mask meaning
+(`TokenRule::last`), the records' end rules (`Records::ends`, `rules`), and the
+interpreter's lasts from them. Over the corpus the rules' lasts are the masks' lasts
+(1,473 files, 2,567,918 tokens). The `.rr` grammar ends its words, numbers, `#` words and
+punctuation by rules, and its strings, comments and backtick literals by their masks.
+
+Not kept: the CPU's lowering. The record pass found each last from its first byte (a rule
+by a table load, a compare a rule, the run mask's word loaded from the file's rows), and the
+lasts' extract and masks went. Tier 1 rose:
+
+| | Before | With the rules in the record pass |
+|---|---|---|
+| AOT | 465.9M | 503.4M |
+| JIT | 501.5M | 530.3M |
+
+The extract it replaced cost about 10 instructions a token, and the last masks a few
+operations a block; the rule, in a pass over the file after the blocks, about 25 a token,
+with its branches mispredicted (127M cycles, from about 95M). The lean lexer's end costs
+almost nothing because it is made inside the block loop, from the block's word mask in a
+register (`end = pos + max(run, n1)`). The diff is in the worktree's
+`tmp/0177-stage1-record-pass-rules.diff`.
+
+So a token's work belongs in the block loop, where its masks are, not in a pass after it.
+The block loop's body is still about 350 operations, which a token loop in it would compete
+with for registers. The order proposed: stage 2 and 3 first (the body shrunk to the lean
+lexer's few masks), then the token loop moved into the block loop, ends and codes together.
+
