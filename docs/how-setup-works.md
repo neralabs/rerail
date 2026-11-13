@@ -264,8 +264,11 @@ launcher starts node through winpty, so set-up shows a person its menu.
 - **Ownership.** Set-up records that it handled `PATH` in `~/.rerail/launcher-path.json`; from then on `PATH` is
   yours. A block you take out stays out until `rerail setup` runs again. `rerail update` adds the entry only when that
   record is missing.
-- **When nothing changes.** Set-up says what it changed. It changes nothing when the running `PATH` already has the
-  directory, the entry is in place, or `RERAIL_MODIFY_PATH=0`. A block written for another Rerail home is replaced.
+- **When nothing changes.** Set-up says what it changed. It changes nothing when the entry is in place, with
+  `RERAIL_MODIFY_PATH=0`, or, once that record exists, when the running `PATH` already has the directory. Before the
+  record exists the running `PATH` does not count: the shell that removed Rerail keeps the directory on its `PATH`
+  after the block is gone, so installing again from it writes the block. A block written for another Rerail home is
+  replaced.
 - **Backup.** A changed startup file keeps one `<file>.rerail.bak` beside it: the file before Rerail last changed it.
   Each change replaces it; `rerail install --remove` deletes it once the block is out.
 
