@@ -4054,6 +4054,20 @@ optimized as a dependency is), written from a parser's rows straight into the co
 parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
 cells written at fixed widths. Measured as the tape within 2 times the tree in a debug build.
 
+## O-bitlex-writes-tape. Bitlex does not write the tape: doc 12 §2.2 and doc 13 §7 step 3 were never built
+
+**Seen (2026-11-12).** Doc 12 §2.2 (decided): "the output is our v9np tape, written directly, by a final extract
+pass whose sizes come from the passes before it"; doc 13 §7 step 3: "the CPU executors write the tape … byte for
+byte". Neither exists, on this branch or on `Parser-generators` (33e9b514f): tier 2 writes `NodeRow`s
+(`native_cpu_stream::Columns`), and `json_parser::tape::encode_columns` copies them into `Pending` records and runs
+the engine's `TapeImage::finish`/`pack`, a second packing (O-tape-pack-cost: 31.5 of 35.6 G on the repository's JSON
+in a debug build). simdjson's hookup (0134) copied that route.
+
+**Closure:** the executors' last pass writes the v9np columns (codes, sizes, base and offsets, tails) from the
+records, with the sizes the passes before it found; no `Pending`, no `finish`. Tapes equal `TapeImage::encode`'s
+byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
+the parse's plus the writing of its bytes. The same for simdjson's tree (`rerail_simdjson::tree` writes the columns).
+
 ## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
 
 **Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
