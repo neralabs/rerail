@@ -9,3 +9,4 @@
 #include "data-layer/side-effects-detect.rr"
 #include "data-layer/side-effects-api.rr"
 #include "data-layer/side-effects-helpers.rr"
+#include "data-layer/side-effects-events.rr"

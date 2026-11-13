@@ -11,13 +11,39 @@ TEXT='with open_write_plan() as p:\n n=q.count()\n if n: lazy.resolve()\n'
 
 def cases(_module):
     rows=[dict(kind=kind,id=kind,source=TEXT)for kind in ['callbacks','private-with','mutate-after-callbacks','clear-after-finish','reuse-file']]
-    rows.extend(dict(kind=kind,id=kind,source=TEXT)for kind in ['underflow','live-state','manual-finding','duplicate-callback','mutable-callback','custom-context'])
+    rows.extend(dict(kind=kind,id=kind,source=TEXT)for kind in ['underflow','live-state','manual-finding','duplicate-callback','mutable-callback','custom-context',
+        'batched-scope','changed-exit','mutable-path','nested-frames','invalid-finding','escaped-findings'])
     return rows
 
 
 def exercise(module,case,scratch):
     try:
         path=Path('caller.py');tree=ast.parse(case['source']);collector=module.FileCollector('caller.py',set(),is_write_plan=False)
+        if case['kind']=='invalid-finding':
+            collector.violations.append(module.Violation('CALLER','other.py',99,object()))
+            return collector.finish_file()
+        if case['kind']=='escaped-findings':
+            held=collector.violations;ctx=context(tree);collector.on_With(tree.body[0],ctx)
+            collector.on_Call(tree.body[0].body[1].body[0].value,ctx)
+            before=canonical(held);held.clear()
+            return dict(before=before,facts=canonical(collector.finish_file()),same=held is collector.violations)
+        if case['kind']=='batched-scope':
+            ctx=context(tree);collector.on_With(tree.body[0],ctx);call=tree.body[0].body[1].body[0].value
+            for _ in range(64):collector.on_Call(call,ctx)
+            collector.on_exit_With(tree.body[0],ctx)
+            return dict(facts=canonical(collector.finish_file()))
+        if case['kind']=='changed-exit':
+            with_=tree.body[0];ctx=context(tree);collector.on_With(with_,ctx);with_.items[0].context_expr.func.id='ordinary'
+            collector.on_exit_With(with_,ctx)
+            return dict(stack=canonical(collector._scope_stack),facts=canonical(collector.finish_file()))
+        if case['kind']=='mutable-path':
+            ctx=context(tree);collector.on_With(tree.body[0],ctx);call=tree.body[0].body[1].body[0].value
+            collector.on_Call(call,ctx);collector.rel_path='later.py';collector.on_Call(call,ctx)
+            return dict(facts=canonical(collector.finish_file()))
+        if case['kind']=='nested-frames':
+            text='with open_write_plan() as p:\n n=q.count()\n with open_read_plan() as r:\n  if n: lazy.resolve()\n if n: lazy.resolve()\n'
+            drive(collector,ast.parse(text),path,text)
+            return dict(facts=canonical(collector.finish_file()),stack=canonical(collector._scope_stack))
         if case['kind']=='underflow':
             collector.on_exit_With(tree.body[0],context(tree))
             return dict(unexpected='exit returned without error')

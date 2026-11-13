@@ -1,0 +1,52 @@
+// A callback batch is a sequence of immutable syntax observations, not a tree replay.
+// Negative frame ids name caller-owned seed frames; event ordinals name pushed frames.
+.decl psee_event(e:number,method:symbol,root:node)
+psee_event(e,m,to_number(n)) :- option("entryPoint","_pse_events"),option_item("pseEventMethods",e,m),option_item("pseEventRoots",e,n).
+.decl psee_enter(e:number,n:node)
+psee_enter(e,n) :- psee_event(e,"enter",n),pse_plan(n).
+.decl psee_pop(e:number)
+psee_pop(e) :- psee_event(e,"exit",n),pse_plan(n).
+.decl psee_delta(e:number,delta:number)
+psee_delta(e,1) :- psee_enter(e,_).
+psee_delta(e,-1) :- psee_pop(e).
+psee_delta(e,0) :- psee_event(e,_,_),!psee_enter(e,_),!psee_pop(e).
+.decl psee_depth(e:number,depth:number)
+psee_depth(0,to_number(n)) :- option("entryPoint","_pse_events"),option("pseFrameCount",n).
+psee_depth(e+1,d+v) :- psee_depth(e,d),psee_delta(e,v),d+v>=0.
+.decl psee_frame(frame:number,depth:number)
+psee_frame(i-to_number(n),i+1) :- option("pseFrameCount",n),option_item("pseFrameWrites",i,_).
+psee_frame(e,d+1) :- psee_enter(e,_),psee_depth(e,d).
+.decl psee_current(e:number,frame:number)
+psee_current(e,f) :- psee_event(e,_,_),psee_depth(e,d),d>0,f=max other:{psee_frame(other,d),other<e}.
+.decl psee_write(frame:number)
+psee_write(i-to_number(n)) :- option("pseFrameCount",n),option_item("pseFrameWrites",i,"1").
+psee_write(e) :- psee_enter(e,n),pse_write(n).
+.decl psee_name(frame:number,name:symbol)
+psee_name(to_number(f),s) :- option_item("pseFrameNameFrames",i,f),option_item("pseFrameNames",i,s).
+psee_name(e,s) :- psee_enter(e,n),pse_scope_name(n,s).
+.decl psee_read(frame:number,event:number,name:symbol)
+psee_read(to_number(f),-1,s) :- option_item("pseFrameReadFrames",i,f),option_item("pseFrameReads",i,s).
+psee_read(f,e,s) :- psee_event(e,"assign",n),psee_current(e,f),psee_write(f),pse_assign(n,t,v),pse_read(v),pse_assigned(t,s).
+.decl psee_reference(event:number,name:symbol)
+psee_reference(to_number(e),s) :- option_item("pseContextEvents",i,e),option_item("pseContextKinds",i,"Name"),option_item("pseContextIds",i,s).
+.decl psee_allowed(e:number)
+psee_allowed(e) :- psee_event(e,"call",n),psee_current(e,f),pse_call(n,fn),pse_attr(fn,obj,"execute"),pse_name(obj,s),psee_name(f,s).
+.decl psee_audit(e:number)
+psee_audit(e) :- psee_event(e,"if",n),psee_current(e,f),psee_write(f),pse_if(n,t),pse_read(t).
+psee_audit(e) :- psee_event(e,"if",_),psee_current(e,f),psee_write(f),psee_reference(e,s),psee_read(f,prior,s),prior<e.
+.decl psee_finding(e:number,code:symbol,message:symbol,severity:symbol)
+psee_finding(e,c,m,"error") :- psee_event(e,"attribute",n),psee_current(e,_),pse_candidate(n,c,m),c="PSE-010".
+psee_finding(e,c,m,"error") :- psee_event(e,"call",n),psee_current(e,_),pse_candidate(n,c,m),c!="PSE-010",!psee_allowed(e).
+psee_finding(e,"PSE-AUDIT-010","Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms.","audit") :- psee_audit(e).
+.violation SideEffectsPush(at:span,event:number,write:number) code "PSE_EVENT_PUSH" "Push collector scope"
+SideEffectsPush(@place("",0),e,1) :- psee_enter(e,_),psee_depth(e,_),psee_write(e).
+SideEffectsPush(@place("",0),e,0) :- psee_enter(e,_),psee_depth(e,_),!psee_write(e).
+.violation SideEffectsPop(at:span,event:number) code "PSE_EVENT_POP" "Pop collector scope"
+// An empty pop is returned too: applying this operation raises at the exit callback.
+SideEffectsPop(@place("",0),e) :- psee_pop(e),psee_depth(e,_).
+.violation SideEffectsScopeName(at:span,event:number,name:symbol) code "PSE_EVENT_NAME" "Pushed scope alias"
+SideEffectsScopeName(@place("",0),e,s) :- psee_enter(e,_),psee_depth(e,_),psee_name(e,s).
+.violation SideEffectsAddRead(at:span,event:number,name:symbol) code "PSE_EVENT_READ" "Add eager-read name"
+SideEffectsAddRead(@place("",0),e,s) :- psee_read(_,e,s),e>=0.
+.violation SideEffectsEventFact(at:span,event:number,source_code:symbol,file_path:symbol,line_number:number,source_message:symbol,severity:symbol) code "PSE_EVENT_FACT" "{source_message}"
+SideEffectsEventFact(@place("",0),e,c,p,l,m,s) :- psee_finding(e,c,m,s),psee_event(e,_,n),pse_line(n,l),option_item("pseEventPaths",e,p).

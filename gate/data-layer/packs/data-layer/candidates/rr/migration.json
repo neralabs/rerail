@@ -356,7 +356,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "sha256": "e0143ca885607c2a1df07744a2de633c30eae1d1b8475dcb61a6b4e27bc295ff",
+      "sha256": "c6d84fce9cd01d2f4a24d0b14594d2587f4779fdcb9b5d0fca7644c0a96de12d",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
@@ -3445,6 +3445,27 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-events.rr",
+      "sha256": "0912297af7fe1724a844c1111a680186b6b51aba3a0b56f01b77dcbeee59675e",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-detect.rr",
+      "sha256": "20b7877706d572d368cfedd9e41bb703d2e2ab37c6600d770acb9349a5c6d4af",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-helpers.rr",
+      "sha256": "885ed4239d2f82208a45d6943a9aa9ca189a8c68d57529a12ebc7b3844a1582f",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
     }
   ],
   "rules": [
@@ -5147,7 +5168,7 @@
       "legacySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "ruleSha256": "e0143ca885607c2a1df07744a2de633c30eae1d1b8475dcb61a6b4e27bc295ff",
+      "ruleSha256": "c6d84fce9cd01d2f4a24d0b14594d2587f4779fdcb9b5d0fca7644c0a96de12d",
       "migrationProgress": {
         "status": "hub kernel parity; full rule remains draft",
         "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",

@@ -14,7 +14,10 @@ pse_helper_true("_is_allowed_scope_execute") :- pse_allowed(0).
 pse_helper_true("_is_typed_eager_read_call") :- pse_read(0).
 pse_helper_true("_looks_like_python_side_effect") :- pse_effect(0).
 pse_helper_true("_branches_on_eager_read") :- pse_seed(),pse_read(0).
-pse_helper_true("_branches_on_eager_read") :- pse_seed(),pse_reference(0,s),option_item("pseSeedEagerNames",_,s).
+pse_helper_true("_branches_on_eager_read") :- pse_seed(),pse_helper_reference(s),option_item("pseSeedEagerNames",_,s).
+.decl pse_helper_reference(name:symbol)
+pse_helper_reference(s) :- !option("pseUseContext","1"),pse_reference(0,s).
+pse_helper_reference(s) :- option("pseUseContext","1"),option_item("astContextKinds",i,"Name"),option_item("astContextIds",i,s).
 .decl pse_helper_scalar(name:symbol,value:symbol)
 pse_helper_scalar("_call_name",@json_str(s)) :- pse_leaf(0,s).
 pse_helper_scalar("_call_name","null") :- !pse_leaf(0,_).
@@ -30,4 +33,4 @@ SideEffectsHelperKind(@place("",0),"set") :- option("entryPoint","_pse_helper"),
 .violation SideEffectsHelperName(at:span,ordinal:number,name:symbol) code "PSE_HELPER_NAME" "Syntax helper collection item"
 SideEffectsHelperName(@place("",0),0-t,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_receiver_tokens"),pse_receiver_component(0,t,s).
 SideEffectsHelperName(@place("",0),0,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_assigned_names"),pse_assigned(0,s).
-SideEffectsHelperName(@place("",0),0,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_referenced_names"),pse_reference(0,s).
+SideEffectsHelperName(@place("",0),0,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_referenced_names"),pse_helper_reference(s).

@@ -105,9 +105,12 @@ pse_audit(n) :- pse_if(n,t),pse_scope(n,w),pse_write(w),pse_read(t).
 pse_audit(n) :- pse_if(n,t),pse_scope(n,w),pse_write(w),pse_reference(t,s),pse_eager_name(w,a,s),pse_order(a,ai),pse_order(n,ni),ai<ni.
 
 .decl pse_finding(n:node,code:symbol,message:symbol,severity:symbol)
-pse_finding(n,"PSE-010",cat(s," is forbidden inside plan-scope construction."),"error") :- pse_attr(n,_,s),pse_constant("EAGER_VALUE_ATTRS",s),pse_scope(n,_).
-pse_finding(n,"PSE-020",cat(s,"() is eager resolution inside plan-scope construction."),"error") :- pse_call_name(n,s),pse_constant("EAGER_CALLS",s),pse_scope(n,_),!pse_allowed(n).
-pse_finding(n,"PSE-030",cat(s,"() is raw database execution inside plan-scope construction."),"error") :- pse_call_name(n,s),pse_constant("RAW_DB_CALLS",s),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s).
-pse_finding(n,"PSE-040",cat("Nested legacy callback API ",s,"() is forbidden inside plan scopes."),"error") :- pse_call(n,f),pse_attr(f,_,s),pse_constant("LEGACY_CALLBACK_METHODS",s),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s).
-pse_finding(n,"PSE-050",cat("Python side-effect call ",s,"() is forbidden inside plan scopes."),"error") :- pse_call_name(n,s),pse_effect(n),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s),!pse_constant("LEGACY_CALLBACK_METHODS",s).
+.decl pse_candidate(n:node,code:symbol,message:symbol)
+pse_candidate(n,"PSE-010",cat(s," is forbidden inside plan-scope construction.")) :- pse_attr(n,_,s),pse_constant("EAGER_VALUE_ATTRS",s).
+pse_candidate(n,"PSE-020",cat(s,"() is eager resolution inside plan-scope construction.")) :- pse_call_name(n,s),pse_constant("EAGER_CALLS",s).
+pse_candidate(n,"PSE-030",cat(s,"() is raw database execution inside plan-scope construction.")) :- pse_call_name(n,s),pse_constant("RAW_DB_CALLS",s),!pse_constant("EAGER_CALLS",s).
+pse_candidate(n,"PSE-040",cat("Nested legacy callback API ",s,"() is forbidden inside plan scopes.")) :- pse_call(n,f),pse_attr(f,_,s),pse_constant("LEGACY_CALLBACK_METHODS",s),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s).
+pse_candidate(n,"PSE-050",cat("Python side-effect call ",s,"() is forbidden inside plan scopes.")) :- pse_call_name(n,s),pse_effect(n),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s),!pse_constant("LEGACY_CALLBACK_METHODS",s).
+pse_finding(n,"PSE-010",m,"error") :- pse_candidate(n,"PSE-010",m),pse_scope(n,_).
+pse_finding(n,c,m,"error") :- pse_candidate(n,c,m),c!="PSE-010",pse_scope(n,_),!pse_allowed(n).
 pse_finding(n,"PSE-AUDIT-010","Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms.","audit") :- pse_audit(n).

@@ -3,7 +3,7 @@ import ast
 import json
 
 
-def columns(tree):
+def columns(tree, *, omit_root_fields=()):
     result = {name: [] for name in ['astKinds', 'astIds', 'astAttrs', 'astNames', 'astLines',
                                    'astParents', 'astFields', 'astOrdinals', 'astValueTypes']}
     pending = [(-1, '', 0, tree)]
@@ -22,6 +22,8 @@ def columns(tree):
             result[name].append(value)
         children = []
         for name, value in ast.iter_fields(node):
+            if index == 0 and name in omit_root_fields:
+                continue
             if isinstance(value, ast.AST):
                 children.append((index, name, 0, value))
             elif isinstance(value, list):
@@ -29,6 +31,18 @@ def columns(tree):
         # Store occurrences, matching iter_child_nodes; shared AST expressions retain visit multiplicity.
         pending.extend(reversed(children))
     return result
+
+
+def context_columns(tree, context):
+    """Capture the caller's child graph without choosing reference names."""
+    data = dict(astContextKinds=[], astContextIds=[])
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        data['astContextKinds'].append(type(node).__name__)
+        data['astContextIds'].append(getattr(node, 'id', ''))
+        pending.extend(reversed(context.children(node)))
+    return data
 
 
 def syntax_columns(tree):
