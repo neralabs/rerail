@@ -560,12 +560,12 @@ fn stages(r: &mut String) {
     }
     // Timed stages by CPU, then the counts by name.
     let mut timed: Vec<_> = stages.iter().filter(|(_, (d, _))| !d.is_zero()).collect();
-    timed.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    timed.sort_by_key(|b| std::cmp::Reverse(b.1.0));
     for (name, (d, calls)) in timed {
         let _ = writeln!(r, "{:>12.1} ms {calls:>9}  {name}", d.as_secs_f64() * 1e3);
     }
     let mut kernels: Vec<_> = stages.iter().filter(|(n, _)| n.starts_with("kernel_us.")).collect();
-    kernels.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    kernels.sort_by_key(|b| std::cmp::Reverse(b.1.1));
     for (name, (_, us)) in &kernels {
         let k = &name["kernel_us.".len()..];
         let n = stages.get(&format!("kernel_n.{k}")).map_or(0, |e| e.1);
@@ -575,7 +575,7 @@ fn stages(r: &mut String) {
     // their walks and longest walk: a long walk is a dispatch's critical path.
     let mut walks: Vec<_> = stages.iter().filter_map(|(n, e)| n.strip_prefix("walk_steps.").map(|w| (w, e.1))).collect();
     if !walks.is_empty() {
-        walks.sort_by(|a, b| b.1.cmp(&a.1));
+        walks.sort_by_key(|b| std::cmp::Reverse(b.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
         let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");

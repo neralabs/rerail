@@ -99,11 +99,11 @@ fn prepare(g: &Graph) -> Prep {
     drop(rsrc);
     // 2. next: the first edge into a live node; an edge to itself is skipped unless it is a hit.
     let mut nxt = vec![NONE; n];
-    for u in 0..n {
+    for (u, next) in nxt.iter_mut().enumerate() {
         for e in g.out(u as u32) {
             let d = g.dst[e] as usize;
             if live[d] && (d != u || g.target[d]) {
-                nxt[u] = e as u32;
+                *next = e as u32;
                 break;
             }
         }

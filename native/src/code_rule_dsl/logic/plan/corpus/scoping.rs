@@ -235,7 +235,6 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     for ((_, outside), n) in groups.iter().zip(added) {
         report.guarded.push((outside.clone(), n));
     }
-    drop(place);
     all.rules = rules;
     Ok(report)
 }

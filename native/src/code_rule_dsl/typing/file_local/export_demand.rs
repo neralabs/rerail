@@ -461,7 +461,7 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
                             continue;
                         }
                         if pass.usable(&a.rel) && pass.same(&a.rel, j) {
-                            let args = a.args.iter().enumerate().map(|(k, t)| if k == j { t.clone() } else if matches!(t, Term::Int(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
+                            let args = a.args.iter().enumerate().map(|(k, t)| if k == j || matches!(t, Term::Int(_) | Term::Str(_)) { t.clone() } else { Term::Wild }).collect();
                             filters.push(Filter::Atom(Atom { rel: a.rel.clone(), args, neg: false, gated: false }, j, v.clone()));
                         } else if !pass.usable(&a.rel) && pass.located(&a.rel, j) {
                             filters.push(Filter::Key((a.rel.to_string(), j), v.clone()));

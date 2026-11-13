@@ -23,6 +23,7 @@ use rerail_accel::stream::{Handle, Stream};
 pub(super) type Out<'a> = (Strand<'a>, usize, Option<Result<(Option<String>, Option<String>)>>, Vec<(Instant, Instant)>, crate::content_store::atoms::Reserved);
 use std::time::Instant;
 
+#[allow(clippy::large_enum_variant)]
 enum State<'a> {
     Job(Handle<Out<'a>>),
     Inline(Strand<'a>, Vec<(BTreeSet<String>, Vec<&'a Rule>)>),
@@ -233,7 +234,7 @@ impl<'a> Board<'a> {
             let mut est = self.estimate(run, &rules_of(j));
             let mut local: HashMap<usize, u32> = HashMap::new();
             let mut chain: BTreeSet<usize> = BTreeSet::new();
-            let mut grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
+            let grow = |m: usize, local: &mut HashMap<usize, u32>, chain: &mut BTreeSet<usize>, this: &Self| {
                 for &r in &this.readers[m] {
                     let n = local.entry(r).or_default();
                     *n += 1;

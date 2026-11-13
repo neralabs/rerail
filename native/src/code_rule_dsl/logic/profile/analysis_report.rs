@@ -6,37 +6,39 @@ use super::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 fn input(state: &State) -> Input {
-    let mut i = Input::default();
-    i.spans = state
-        .spans
-        .iter()
-        .map(|(p, s)| Span {
-            path: p.clone(),
-            own_cpu: s.own,
-            calls: s.calls,
-        })
-        .collect();
-    i.sql = state
-        .sql
-        .iter()
-        .map(|((p, q), s)| Sql {
-            path: p.clone(),
-            text: q.clone(),
-            runs: s.runs,
-            vm: s.vm,
-            autoindex: s.autoindex,
-        })
-        .collect();
-    i.joins = state
-        .native
-        .iter()
-        .map(|((p, q), steps)| Join {
-            path: p.clone(),
-            plan: q.clone(),
-            steps: steps.clone(),
-            cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
-        })
-        .collect();
+    let mut i = Input {
+        spans: state
+            .spans
+            .iter()
+            .map(|(p, s)| Span {
+                path: p.clone(),
+                own_cpu: s.own,
+                calls: s.calls,
+            })
+            .collect(),
+        sql: state
+            .sql
+            .iter()
+            .map(|((p, q), s)| Sql {
+                path: p.clone(),
+                text: q.clone(),
+                runs: s.runs,
+                vm: s.vm,
+                autoindex: s.autoindex,
+            })
+            .collect(),
+        joins: state
+            .native
+            .iter()
+            .map(|((p, q), steps)| Join {
+                path: p.clone(),
+                plan: q.clone(),
+                steps: steps.clone(),
+                cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
+            })
+            .collect(),
+        ..Input::default()
+    };
     let reasons: Vec<_> = state
         .decisions
         .keys()

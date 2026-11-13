@@ -132,7 +132,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
     let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &rules {
         for l in &r.body {
-            if let Some(a) = l.atom().filter(|a| !(a.neg && a.gated) && !names.contains(a.rel.as_str())) {
+            if let Some(a) = l.atom().filter(|a| !(a.neg && a.gated || names.contains(a.rel.as_str()))) {
                 reads.entry(r.head.rel.to_string()).or_default().insert(a.rel.to_string());
             }
         }

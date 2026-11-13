@@ -114,6 +114,7 @@ fn nearest_costs(cap: usize) {
     let trees = Trees { parent: &parent, kind: &kind };
     let sys = system(&trees, &sets).unwrap();
     let t = std::time::Instant::now();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] // the Metal rounds check against it
     let cpu = solve_cpu(&sys);
     let cpu_worklist = t.elapsed();
     // One pass in preorder.
@@ -271,7 +272,7 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(constant_relations(&program).contains("side"));
     let parts = programs(&program);
     assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
-    assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
+    assert!(!cross_causes(&program).contains_key("under"), "{:?}", cross_causes(&program));
 }
 
 #[test]

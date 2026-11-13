@@ -729,8 +729,8 @@ impl Csr {
         let mut at = 0;
         for e in table.iter_mut() { e.1 = at; at += e.2; e.2 = 0; }
         let mut ids = vec![0u32; rel.n];
-        for id in 0..rel.n {
-            let e = table.find_mut(hashes[id], |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
+        for (id, &hash) in hashes.iter().enumerate() {
+            let e = table.find_mut(hash, |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
             ids[(e.1 + e.2) as usize] = id as u32;
             e.2 += 1;
         }

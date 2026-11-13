@@ -839,7 +839,7 @@ impl Fresh {
                 out.extend_from_slice(&data[s * k..][..k]);
                 (s, kept) = (s + 1, kept + 1);
             }
-            if !h && !(s < settled && cmp(s as u32, q).is_eq()) {
+            if !(h || s < settled && cmp(s as u32, q).is_eq()) {
                 out.extend_from_slice(&data[q as usize * k..][..k]);
                 kept += 1;
             }
@@ -1477,7 +1477,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     } else if !seeded && let Some(cl) = comp.closure.take() {
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let mut syms = &mut cursor;
+        let syms = &mut cursor;
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
@@ -1490,7 +1490,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data[i * k..][..k]); }
         let prep = closure::prepare(&cl, store, syms);
-        drop(syms);
         match prep {
             None => closure_ran = Some(None),
             Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
@@ -1657,7 +1656,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         };
         if tried && !on_device {
             // The seeds were parsed without the CPU's indexes: parse them again with them.
-            drop(syms);
             drop(guard);
             let specs = std::mem::take(&mut comp.seed_specs);
             {
@@ -2696,7 +2694,7 @@ impl InRel {
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
-        Derived::new(Arc::clone(self), Some(names))
+        Derived::source(Arc::clone(self), Some(names))
     }
     /// Its rows' bytes and their levels' (decision 0090, 4 bytes a row); its indexes not counted.
     pub fn bytes(&self) -> usize {
@@ -3194,14 +3192,14 @@ const FREQ_NDV: usize = 64;
 pub fn derived(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let conn = conn.db();
     let rel = DERIVED.lock().unwrap().get(&(conn.at(), table.to_owned())).cloned()?;
-    Some(Derived::new(rel, None))
+    Some(Derived::source(rel, None))
 }
 /// A native relation's rows as a source; `live`, a relation with dead rows' live row ids (dense, as a source's are);
 /// `orders`, each column's rows (the source's) sorted by value, built on first probe: SQL that reads a kept relation
 /// (a session's, or one a new process read back, t32 4.1) probes it as it probes any held source, not by a scan.
 struct Derived(Arc<InRel>, Option<Vec<String>>, Option<Vec<u32>>, Vec<std::sync::OnceLock<Vec<u32>>>);
 impl Derived {
-    fn new(rel: Arc<InRel>, names: Option<Vec<String>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    fn source(rel: Arc<InRel>, names: Option<Vec<String>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         let live = (rel.ndead > 0).then(|| (0..rel.len() as u32).filter(|&id| !is_dead(&rel.dead, id)).collect());
         let orders = (0..rel.k).map(|_| std::sync::OnceLock::new()).collect();
         Arc::new(Derived(rel, names, live, orders))
@@ -5223,7 +5221,7 @@ pub mod posted_tests {
         let gone = InRel::moved(gone);
         for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, Some(&gone)).expect("few rows dead"))] {
             let rel = Arc::new(rel);
-            let source = Derived::new(Arc::clone(&rel), None);
+            let source = Derived::source(Arc::clone(&rel), None);
             let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
             assert_eq!(rel.posted().expect("a relation with its postings"), measured);
         }

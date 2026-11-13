@@ -306,6 +306,7 @@ pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64
 }
 
 /// Where the rounds start.
+#[allow(clippy::large_enum_variant)]
 pub(in crate::code_rule_dsl) enum Start {
     /// From the last run's final round.
     Kept(retain::Retained),

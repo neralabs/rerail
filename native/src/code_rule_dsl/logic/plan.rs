@@ -3526,8 +3526,6 @@ fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
         .collect()
 }
 
-/// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
-
 impl Run<'_, '_> {
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
     fn ensure_indexes(&mut self, order: &[Step]) -> Result<()> {
@@ -4350,7 +4348,8 @@ impl Ambient {
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        // The plans', memo's and observed keeps' guards, held until the ambient is left.
+        struct Entered(placement::Binding, bool, Box<dyn std::any::Any>, Box<dyn std::any::Any>, Box<dyn std::any::Any>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
@@ -5429,7 +5428,7 @@ impl<'a> Run<'a, '_> {
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::From(sql) });
             } else if let Some((old, gone)) = based.get(*r) {
                 // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
-                let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
+                let seeded = !prog.facts.get(*r).is_none_or(|f| f.is_empty()) || sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Base { old: old.clone(), gone: gone.clone(), seeded } });
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
@@ -6162,10 +6161,10 @@ impl<'a> Run<'a, '_> {
             for (r, l) in rels.iter().zip(live) {
                 live_stats(&mut self.model, r, l);
             }
-            for k in 0..probes.len() {
-                let (r, ai) = (probes[k].0, probes[k].3);
+            for (k, probe) in probes.iter_mut().enumerate() {
+                let (r, ai) = (probe.0, probe.3);
                 let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
-                if same_order(&new, &probes[k].1) {
+                if same_order(&new, &probe.1) {
                     continue;
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
@@ -6178,8 +6177,8 @@ impl<'a> Run<'a, '_> {
                     }
                 };
                 self.fx().reprobe(&name, k, &new_body)?;
-                probes[k].1 = new;
-                probes[k].2 = nat;
+                probe.1 = new;
+                probe.2 = nat;
             }
             chunk *= 2;
         }
@@ -6643,7 +6642,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         // otherwise alternate input supports must not multiply aggregate counts.
         let preserves=|t:&Term|match t{Term::Var(v)=>h.args.iter().any(|x|matches!(x,Term::Var(x) if x==v)),Term::Wild=>false,_=>true};
         let key=match a.rel.as_str(){"node" if a.args.len()==5=>Some(1),"doc"|"tape"=>Some(0),_=>None};
-        query.body.distinct=!(key.is_some_and(|k|a.args.get(k).is_some_and(preserves))||a.args.iter().all(preserves));
+        query.body.distinct = !(key.is_some_and(|k|a.args.get(k).is_some_and(preserves))||a.args.iter().all(preserves));
         views.push((rel.to_owned(), query));
         model.resolve(prog, [a.rel.as_str()])?;
         model.view_stats(rel, h, a);
@@ -6874,10 +6873,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
     // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
-    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
+    let inlined_rels: BTreeSet<String>;
     let prog: &Program = match reused {
         Some(c) => {
-            inlined_rels = c.inlined.iter().cloned().collect();
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
             inlined_rels = c.inlined.iter().cloned().collect();
@@ -6983,9 +6981,10 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
     // A run that is not native runs SQL from its start: the connection's deferred set-up first (`vtab::setup_now`).
-    if !(atoms && !native.is_empty()) {
+    if !atoms || native.is_empty() {
         crate::code_rule_dsl::facts::vtab::setup_now(db)?;
     }
+    #[allow(clippy::arc_with_non_send_sync)] // `numbers` keys rules by address; `Run`'s forks share it by `Arc`
     let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), numbers: Arc::new(prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect()), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
@@ -7835,8 +7834,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let mut ran_native=false;
         if recursive {
             for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {} WHERE 0", crate::code_rule_dsl::logic::sql::ident(r)),[])?;}
-            if native.contains("fixpoint") && run.native_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
-            else if native.contains("setfix") && run.native_set_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
+            if native.contains("fixpoint") && run.native_fixpoint(scc,&rules)? || native.contains("setfix") && run.native_set_fixpoint(scc,&rules)? {ran_native=true;outcome.native.insert(key.clone());}
         }
         if !ran_native {
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;

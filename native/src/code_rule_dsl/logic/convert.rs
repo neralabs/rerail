@@ -1697,7 +1697,7 @@ impl Globber {
                     break;
                 }
             }
-            if comp.len() <= 4 && comp.iter().all(|(_, b)| b.is_ascii()) && !(self.text == Text::Path && !comp.iter().any(|&(a, b)| a <= '/' && '/' <= b)) {
+            if comp.len() <= 4 && comp.iter().all(|(_, b)| b.is_ascii()) && (self.text != Text::Path || comp.iter().any(|&(a, b)| a <= '/' && '/' <= b)) {
                 return render(&comp).map(|s| ClassIs::Other(format!("[!{s}]")));
             }
         }

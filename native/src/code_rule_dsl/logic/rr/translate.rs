@@ -104,7 +104,7 @@ fn comment_vars(gap: &str) -> String {
         };
         out.push_str(&line[..at]);
         let mut tick = false;
-        let b = line[at..].as_bytes();
+        let b = &line.as_bytes()[at..];
         let text = &line[at..];
         let mut i = 0;
         while i < b.len() {

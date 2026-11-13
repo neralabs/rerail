@@ -462,7 +462,6 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
             rows += rel.push(&row) as usize;
         }
     }
-    drop(reach);
     prof::count("closure", "rows made", rows as u64);
     let how: Vec<&str> = [(dense, "bit rows"), (chain, "chains"), (host, "host walks past the limits")].iter().filter(|w| w.0).map(|w| w.1).collect();
     Some(Ran { nodes: n, rows, how: if how.is_empty() { "chains".into() } else { how.join(" and ") } })

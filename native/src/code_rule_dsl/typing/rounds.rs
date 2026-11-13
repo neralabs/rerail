@@ -943,9 +943,9 @@ fn build(f: &mut Facts) -> Built {
     let mut retslot = vec![NONE; n];
     let mut gdoc = f.doc.clone();
     let mut gn = n as u32;
-    for v in 0..n {
+    for (v, slot) in retslot.iter_mut().enumerate() {
         if f.kind[v] == k_fn {
-            retslot[v] = gn;
+            *slot = gn;
             gn += 1;
             gdoc.push(f.doc[v]);
         }
@@ -1081,8 +1081,8 @@ fn golden(dir: &str, name: &str) -> Vec<String> {
 }
 fn ty_rows(f: &Facts, vals: &[Ty]) -> Vec<String> {
     let mut out = Vec::new();
-    for v in 0..f.n {
-        for &t in &vals[v].0 {
+    for (v, val) in vals.iter().enumerate().take(f.n) {
+        for &t in &val.0 {
             out.push(format!("{v}\t{}", f.sy.s(t)));
         }
     }
@@ -1092,8 +1092,8 @@ fn ty_rows(f: &Facts, vals: &[Ty]) -> Vec<String> {
 fn cv_rows(f: &Facts, vals: &[Cv]) -> Vec<String> {
     let (ki, kb) = (f.sy.get("identifier"), f.sy.get("binary_operator"));
     let mut out = Vec::new();
-    for v in 0..f.n {
-        if let Cv::C(x) = vals[v]
+    for (v, val) in vals.iter().enumerate().take(f.n) {
+        if let Cv::C(x) = *val
             && (f.kind[v] == ki || f.kind[v] == kb) {
                 out.push(format!("{v}\t{x}"));
             }

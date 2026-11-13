@@ -1917,7 +1917,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
     let hand = mode != "off";
     let texts: Vec<String> = ids
         .iter()
-        .map(|id| {
+        .filter_map(|id| {
             // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
             let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
             let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
@@ -1932,7 +1932,6 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
                 _ => Some(std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap()),
             }
         })
-        .flatten()
         .collect();
     let mut texts = texts;
     // The hand-written rules of checks the pack has no rule for.

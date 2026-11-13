@@ -2197,7 +2197,7 @@ impl Lowerer {
             // The scalar fallback treats an uncompiled matcher as false. A literal in
             // a policy must therefore be validated before it reaches that fallback.
             if op == "rx" && let STerm::Str(re) = p {
-                crate::code_rule_dsl::logic::strings::Matcher::new("rx", &[re.clone()])
+                crate::code_rule_dsl::logic::strings::Matcher::new("rx", std::slice::from_ref(re))
                     .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
@@ -2632,8 +2632,7 @@ impl Lowerer {
         // Or left out: a group binding no asked variable (`root(a), (s = a ; within(s, a))` before `kind(s,
         // "string")` asked for s) only narrows what later groups bind, at the cost of its own rows.
         let mut left: BTreeSet<usize> = BTreeSet::new();
-        for k in 0..context.len() {
-            let g = groups[k];
+        for &g in &groups {
             if whole.contains(&g) || left.contains(&g) || projected.iter().any(|(p, _)| *p == g) {
                 continue;
             }

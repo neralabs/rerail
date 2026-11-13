@@ -640,8 +640,7 @@ pub mod tests {
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
         // relation pays no sort; a range inside a document takes the tile; a small lookup stays on the CPU's index.
         let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, keys: 1, range };
-        let mut joined = Shape::default();
-        joined.joins = vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)];
+        let joined = Shape { joins: vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)], ..Shape::default() };
         let p = place(&joined);
         let forms: Vec<JoinForm> = p.joins.iter().map(|c| c.form).collect();
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");

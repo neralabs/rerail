@@ -935,8 +935,8 @@ impl Adorn<'_> {
             rules.push(Rule { head: r.head, body: nb });
         }
         let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
-        for i in 0..gates.len() {
-            let (done, g) = gates[i].clone();
+        for gate in &mut gates {
+            let (done, g) = gate.clone();
             if let Some(src) = &g.src {
                 let cols = self.prog.decls[src].clone();
                 let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}"))).collect();
@@ -965,8 +965,8 @@ impl Adorn<'_> {
                 .filter(|rel| names.contains((*rel).as_str()) && **rel != done)
                 .map(|rel| rel.to_string())
                 .collect();
-            gates[i].1.quiet = quiet.into_iter().collect();
-            gates[i].1.deps = deps.into_iter().collect();
+            gate.1.quiet = quiet.into_iter().collect();
+            gate.1.deps = deps.into_iter().collect();
         }
         self.prog.rules = rules;
         self.prog.gates = gates;

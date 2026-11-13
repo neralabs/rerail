@@ -44,7 +44,7 @@ fn pack_policies_round_trip_through_datalog_text() {
         let text = text(&prog);
         let back = parse(&text).unwrap_or_else(|e| panic!("{path}: {e}\n{text}"));
         assert_eq!(back.rules, prog.rules, "{path}");
-        assert_eq!(documents(&back).unwrap(), [doc.clone()], "{path}");
+        assert_eq!(documents(&back).unwrap(), std::slice::from_ref(doc), "{path}");
     }
     assert!(rules >= 500, "{rules} matcher rules");
 }

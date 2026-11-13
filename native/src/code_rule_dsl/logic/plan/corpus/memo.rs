@@ -476,7 +476,7 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
-        by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        by.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", bytes as f64 / 1048576.0, held.len(), top.join("; "));
     }
