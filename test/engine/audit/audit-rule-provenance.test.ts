@@ -154,6 +154,24 @@ async function stderrWhile<T>(run: () => Promise<T>): Promise<{ result: T; logge
   }
 }
 
+/** Spies on this thread's stderr: what it has written so far, read at any time, and how to put it back. */
+function spyOnStderr(): { logged: () => string; restore: () => void } {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  return { logged: () => stderr.mock.calls.map(([chunk]) => String(chunk)).join(""), restore: () => stderr.mockRestore() };
+}
+
+/** Resolves once `holds` returns true, read every 50 ms; throws after `timeoutMs`. */
+async function until(holds: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!holds()) {
+    if (performance.now() > deadline) throw new Error(`still not so after ${timeoutMs} ms`);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
+/** The start of the line a `VACUUM` that gives way writes once it has waited its bound without committing. */
+const NOT_SHRUNK = "has not shrunk yet";
+
 /**
  * Makes every disk report `times` the bytes of the file's pages in use as free (`statfsSync`), read each time the move
  * asks; how to undo it.
@@ -611,6 +629,73 @@ describe("audit rule provenance", () => {
     expect(told[0]).toContain("in 2.5 s no other connection left the file alone for the 2 s its VACUUM waits for");
     expect(pageBytes(path).free).toBe(0);
   }, 60_000);
+
+  it("says how many times its VACUUM gave way when it says, past its bound, that the file has not shrunk", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // The watched thread stops answering as each attempt starts, until the line is written: each attempt gives way before
+    // its process runs VACUUM, and the next waits for twice the quiet (2 s, then 4 s, then 8 s), so the bound of 10 s
+    // passes while the third waits. Once the line is written, the next attempt runs to its end.
+    const stderr = spyOnStderr();
+    const watch: ThreadWatch = stalled => {
+      if (!stderr.logged().includes(NOT_SHRUNK)) stalled();
+      return () => undefined;
+    };
+    let logged = "";
+    try {
+      expect(await move(path, { watch, waitNotice: 10_000 })).toBe(30);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+    }
+
+    const lines = logged.split("\n");
+    const toldAt = lines.findIndex(line => line.includes(NOT_SHRUNK));
+    const gaveWay = lines.slice(0, toldAt).filter(line => line.includes("VACUUM gave way (")).length;
+    expect(gaveWay).toBeGreaterThan(0);
+    expect(lines[toldAt]).toContain(`in 10 s its VACUUM gave way ${gaveWay === 1 ? "once" : `${gaveWay} times`}, and runs `
+      + `again once no other connection has written to the file for ${2 * 2 ** gaveWay} s. The daemon keeps trying; run `
+      + "`rerail scrub`");
+    expect(lines.filter(line => line.includes(NOT_SHRUNK))).toHaveLength(1);
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
+
+  it("says its VACUUM is running when an attempt runs as its bound passes, after one that gave way", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // The first VACUUM a process runs holds the write lock 30 s before it runs, as one of a large file on a loaded
+    // machine does. The watched thread stops answering as the first attempt starts, which gives way before its process
+    // runs VACUUM, and answers through the second, which starts after 4 s of quiet and holds the lock past the bound of
+    // 10 s. A stop ends it once the line is written.
+    const held = join(dirname(path), "vacuum-held");
+    const restore = slowVacuumNext({ held, holdMs: 30_000 });
+    let attempts = 0;
+    const watch: ThreadWatch = stalled => {
+      if ((attempts += 1) === 1) stalled();
+      return () => undefined;
+    };
+    const stop = new AbortController();
+    const stderr = spyOnStderr();
+    let logged = "";
+    try {
+      const moving = move(path, { watch, waitNotice: 10_000, signal: stop.signal });
+      await until(() => stderr.logged().includes(NOT_SHRUNK), 60_000);
+      await untilExists(held, 60_000);
+      stop.abort();
+      expect(await moving).toBe(30);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+      restore();
+    }
+
+    const told = logged.split("\n").filter(line => line.includes(NOT_SHRUNK));
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("in 10 s its VACUUM gave way once; it is running again now. The daemon keeps trying; run "
+      + "`rerail scrub`");
+    expect(attempts).toBe(2);
+    expect(logged).toContain("Rerail stopped before VACUUM finished");
+  }, 90_000);
 
   it("reads the free disk space again before each attempt of a VACUUM that gives way", async () => {
     const path = await fileOfTheBuildBefore();

@@ -20,7 +20,9 @@ import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
-import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumNotRun, WAIT_NOTICE_MS } from "./vacuum-giving-way.js";
+import {
+  PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumNotRun, WAIT_NOTICE_MS, type Waiting,
+} from "./vacuum-giving-way.js";
 
 /** What `moveRuleProvenancesInWorker` posts to stop the move's thread (`rule-provenance-move-worker.ts`). */
 export const MOVE_STOP = "rerail-move-stop";
@@ -142,7 +144,7 @@ function vacuumFor(client: Client, path: string, free: Free, options: RuleProven
     watch, signal, noticeMs,
     // Read again before each attempt: one can start hours after the first, when the disk holds less.
     blocked: () => shortOfDisk(client, path),
-    waitedLong: quietMs => sayStillWaiting(client, path, { quietMs, noticeMs }),
+    waitedLong: waiting => sayStillWaiting(client, path, { waiting, noticeMs }),
   });
 }
 
@@ -406,13 +408,34 @@ function sayKeepsItsSize(client: Client, path: string, skipped: string): void {
 }
 
 /**
- * The line for a `VACUUM` that has waited `noticeMs` for the quiet it needs: what is free, that the daemon keeps waiting,
- * and what gives the space back now.
+ * The line for a `VACUUM` that has not committed `noticeMs` after its first wait began: what is free, what its attempts
+ * did meanwhile (`attemptsSaid`), that the daemon keeps trying, and what gives the space back now.
  */
-function sayStillWaiting(client: Client, path: string, { quietMs, noticeMs }: { quietMs: number; noticeMs: number }): void {
+function sayStillWaiting(client: Client, path: string, { waiting, noticeMs }: { waiting: Waiting; noticeMs: number }): void {
   process.stderr.write(`rerail: ${path} has not shrunk yet${freeOfSize(client, path)} after this Rerail's upgrade: in `
-    + `${duration(noticeMs)} no other connection left the file alone for the ${duration(quietMs)} its VACUUM waits for. `
-    + "The daemon keeps waiting; run `rerail scrub` to give the free space back now.\n");
+    + `${duration(noticeMs)} ${attemptsSaid(waiting)}. `
+    + "The daemon keeps trying; run `rerail scrub` to give the free space back now.\n");
+}
+
+/**
+ * What the attempts did, in words: none started, since the file was never quiet long enough; some gave way, and the
+ * next waits for its quiet; or one is running now.
+ */
+function attemptsSaid(waiting: Waiting): string {
+  if (waiting.kind === "running") {
+    return waiting.gaveWay === 0
+      ? "its VACUUM has not finished; it is running now"
+      : `its VACUUM gave way ${times(waiting.gaveWay)}; it is running again now`;
+  }
+  const quiet = duration(waiting.quietMs);
+  if (waiting.gaveWay === 0) return `no other connection left the file alone for the ${quiet} its VACUUM waits for`;
+  return `its VACUUM gave way ${times(waiting.gaveWay)}, and runs again once no other connection has written to the file `
+    + `for ${quiet}`;
+}
+
+/** "once", or "<count> times". */
+function times(count: number): string {
+  return count === 1 ? "once" : `${count} times`;
 }
 
 /** ", <free> of its <size> free for new history,", or nothing when the sizes cannot be read. */

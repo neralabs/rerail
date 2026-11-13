@@ -8,7 +8,7 @@
  * has not committed, the lock is free, this cuts the WAL back from the pages that `VACUUM` wrote (`cutWal`), and the
  * write that waited goes through. Each attempt starts once no other connection has committed to the file for a while,
  * twice as long after each one that gave way, up to `LONGEST_QUIET_MS`, so the `VACUUM` runs in the first quiet moment
- * long enough for it; once it has waited `noticeMs` it says so, once.
+ * long enough for it; once it has waited `noticeMs` it says so, once, with what its attempts did meanwhile.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -69,9 +69,25 @@ export interface GivingWay {
   readonly signal: AbortSignal | undefined;
   /** Why the next attempt may not run (too little free disk), read before each one; undefined when it may. */
   readonly blocked: () => string | undefined;
-  /** Called once if no attempt has committed `noticeMs` after the first wait began, with the quiet the next one needs. */
-  readonly waitedLong: (quietMs: number) => void;
+  /** Called once if no attempt has committed `noticeMs` after the first wait began, with what the attempts did. */
+  readonly waitedLong: (waiting: Waiting) => void;
   readonly noticeMs: number;
+}
+
+/**
+ * What the attempts of a `VACUUM` that gives way did from the first wait on: how many gave way (to the watched thread,
+ * or to another connection that held the lock), and whether the next waits for its quiet or one is running.
+ */
+export type Waiting =
+  | { readonly kind: "waiting"; readonly gaveWay: number; readonly quietMs: number }
+  | { readonly kind: "running"; readonly gaveWay: number };
+
+/** The attempts so far, as `vacuumGivingWay` counts them. */
+interface Attempts {
+  gaveWay: number;
+  /** The quiet the next attempt waits for. */
+  quietMs: number;
+  running: boolean;
 }
 
 /** The `VACUUM` did not run to its end, for the reason its message gives; the file is as it was. */
@@ -118,30 +134,41 @@ export function watchThread(port: MessagePort): ThreadWatch {
  * what `vacuum-process.ts` reported when `VACUUM` failed.
  */
 export async function vacuumGivingWay(client: Database.Database, path: string, way: GivingWay): Promise<void> {
-  let quiet = FIRST_QUIET_MS;
-  const notice = setTimeout(() => way.waitedLong(quiet), way.noticeMs);
+  const attempts: Attempts = { gaveWay: 0, quietMs: FIRST_QUIET_MS, running: false };
+  const notice = setTimeout(() => way.waitedLong(waitingOf(attempts)), way.noticeMs);
   try {
     for (;;) {
-      const attempt = await nextAttempt(client, path, way, quiet);
+      const attempt = await nextAttempt(client, path, way, attempts);
       if (attempt === "shrunk") return;
-      quiet = Math.min(2 * quiet, LONGEST_QUIET_MS);
-      process.stderr.write(notRunLine(path, attempt, quiet));
+      attempts.gaveWay += 1;
+      attempts.quietMs = Math.min(2 * attempts.quietMs, LONGEST_QUIET_MS);
+      process.stderr.write(notRunLine(path, attempt, attempts.quietMs));
     }
   } finally {
     clearTimeout(notice);
   }
 }
 
+/** What `attempts` did so far, as `GivingWay.waitedLong` hears it. */
+function waitingOf({ gaveWay, quietMs, running }: Attempts): Waiting {
+  return running ? { kind: "running", gaveWay } : { kind: "waiting", gaveWay, quietMs };
+}
+
 /**
- * Waits for `quietMs` of quiet, then runs one attempt unless `way` stops or blocks it, or no free page is left to give
- * back.
+ * Waits for the quiet `attempts` names, then runs one attempt unless `way` stops or blocks it, or no free page is left
+ * to give back; `attempts` says it runs until it ends.
  */
-async function nextAttempt(client: Database.Database, path: string, way: GivingWay, quietMs: number): Promise<Attempt> {
-  if (!(await quietFor(client, quietMs, way.signal))) throw new VacuumNotRun(STOPPED);
+async function nextAttempt(client: Database.Database, path: string, way: GivingWay, attempts: Attempts): Promise<Attempt> {
+  if (!(await quietFor(client, attempts.quietMs, way.signal))) throw new VacuumNotRun(STOPPED);
   const blocked = way.blocked();
   if (blocked !== undefined) throw new VacuumNotRun(blocked);
   if (pragmaNumber(client, "freelist_count") === 0) return "shrunk";
-  return stoppedOr(await vacuumOnce(client, path, way), way.signal);
+  attempts.running = true;
+  try {
+    return stoppedOr(await vacuumOnce(client, path, way), way.signal);
+  } finally {
+    attempts.running = false;
+  }
 }
 
 /** `attempt`, unless a stop ended it before it committed. */

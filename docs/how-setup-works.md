@@ -565,10 +565,11 @@ no process has written to the database for 2 s, and that process gives way to th
 has not answered for half a second before the `VACUUM` has committed, the daemon ends the process, SQLite drops the
 unfinished `VACUUM`, and the write that was waiting goes through. A `VACUUM` that has committed holds the lock no more,
 and runs to its end. The next try waits for a quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
-try has committed an hour after the first wait began, `daemon.log` says so once, with the free space and `rerail
-scrub`, and the daemon keeps waiting. Stopping the daemon ends a running `VACUUM` at once. Another process that writes
-while a `VACUUM` runs (a `rerail` command, or a daemon of another Rerail version sharing the database) waits for it as
-for any write, up to 5 s, then fails with `database is locked`.
+try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
+start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
+Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a `rerail`
+command, or a daemon of another Rerail version sharing the database) waits for it as for any write, up to 5 s, then
+fails with `database is locked`.
 
 The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
 another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a
