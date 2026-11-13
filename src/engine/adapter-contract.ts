@@ -182,8 +182,7 @@ export interface AdapterSession {
 
 /**
  * Host hook payloads are untyped JSON; nonblank text is the accepted value of a text field. A key that orders events
- * (`requiredKey`) may come as text or as a whole number, as Claude Code sends MessageDisplay's `index`. A field that can
- * be blank text, such as MessageDisplay's `delta`, needs a reader of its own.
+ * (`requiredKey`) may come as text or as a whole number, as Claude Code sends MessageDisplay's `index`.
  */
 export function hookText(host: string) {
   return {
