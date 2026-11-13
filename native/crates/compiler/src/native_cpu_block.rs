@@ -1067,7 +1067,7 @@ impl Emit<'_, '_> {
         let mut inputs: Vec<usize> = Vec::new();
         for &m in &inner {
             for o in native.insts[m].operands() {
-                if !inner.contains(&o) && !(plan.lanes[o] && plan.lanes[m]) && !inputs.contains(&o) {
+                if !(inner.contains(&o) || (plan.lanes[o] && plan.lanes[m]) || inputs.contains(&o)) {
                     inputs.push(o);
                 }
             }

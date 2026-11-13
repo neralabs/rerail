@@ -392,12 +392,12 @@ fn jsonc_comments_equal_tree_sitter() {
         let Some(tree) = tree_sitter_json_with(&bytes, true) else { continue };
         let mut parent: Vec<usize> = vec![usize::MAX; tree.len()];
         let mut open: Vec<usize> = Vec::new();
-        for i in 0..tree.len() {
+        for (i, p) in parent.iter_mut().enumerate() {
             while open.last().is_some_and(|&o| i >= o + tree[o].4) {
                 open.pop();
             }
             if let Some(&o) = open.last() {
-                parent[i] = o;
+                *p = o;
             }
             open.push(i);
         }
@@ -542,7 +542,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
             let len = 1 + rng.below(300) as usize;
             while f.len() < len {
                 // Mostly ASCII, so that some blocks are all ASCII and others not.
-                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { &pieces[..2][rng.below(2) as usize] };
+                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { pieces[..2][rng.below(2) as usize] };
                 f.extend_from_slice(p);
             }
             files.push(f);

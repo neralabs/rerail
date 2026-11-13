@@ -60,12 +60,12 @@ fn rr_census() {
     let members = token_local::members(p);
     let n = p.ops.len();
     let (mut carried, mut positional, mut anchored, mut free) = (0, 0, 0, 0);
-    for x in 0..n {
+    for (x, f) in facts.iter().enumerate() {
         if token_local::carried(p, &members, x) {
             carried += 1;
         } else if token_local::positional(&p.ops[x]) {
             positional += 1;
-        } else if !facts[x].anchors.is_empty() {
+        } else if !f.anchors.is_empty() {
             anchored += 1;
         } else {
             free += 1;
@@ -74,11 +74,11 @@ fn rr_census() {
     eprintln!("{n} operations: {carried} carried, {positional} byte tests and positions, {anchored} local and anchored, {free} local, not anchored");
     // Where the unanchored local operations come from, by statement.
     let mut stmts: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
-    for x in 0..n {
+    for (x, f) in facts.iter().enumerate() {
         let e = stmts.entry(c.origin.get(x).map_or("?", String::as_str)).or_default();
         if token_local::carried(p, &members, x) {
             e.1 += 1;
-        } else if !token_local::positional(&p.ops[x]) && facts[x].anchors.is_empty() {
+        } else if !token_local::positional(&p.ops[x]) && f.anchors.is_empty() {
             e.0 += 1;
         }
     }
@@ -92,8 +92,7 @@ fn rr_census() {
     eprintln!("outputs: {kinds:?}");
     // The anchored values read by no carried value, by the outputs they reach.
     let mut by: std::collections::BTreeMap<String, usize> = Default::default();
-    for x in 0..n {
-        let f = &facts[x];
+    for (x, f) in facts.iter().enumerate() {
         if f.local.is_some() && !f.anchors.is_empty() && !token_local::positional(&p.ops[x]) {
             let reach = if f.carried_readers.is_empty() { "no carried reader" } else { "a carried reader" };
             let outs: Vec<&str> = f.outputs.iter().map(|&k| kinds[k].as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();

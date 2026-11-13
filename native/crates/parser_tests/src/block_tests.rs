@@ -5,7 +5,9 @@
 //! straight bit operations.
 
 // The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
-pub use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
+pub use rerail_compiler::clif_text::{body_of, carried_words, hot_loop, opcode, state_bits};
+#[cfg(target_arch = "aarch64")]
+pub use rerail_compiler::clif_text::{carried_params, loop_costs, machine_loop, sink_params};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::block::BlockRun;
@@ -84,7 +86,7 @@ fn eq_equals_reference_on_every_executor() {
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
             for (name, got) in executors(&p, &bytes) {
-                assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
+                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
     }
@@ -317,7 +319,8 @@ fn not_equals_reference_on_every_executor() {
 
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
-    let cases: [(&str, fn(u64, u64) -> u64); 4] =
+    type BinOp = fn(u64, u64) -> u64;
+    let cases: [(&str, BinOp); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     for (name, f) in cases {
         // Each operator on the two masks, and on a mask with itself.
@@ -985,7 +988,9 @@ fn fnv(indexes: &[u32]) -> u64 {
 /// Every executor's run with the extract pass: the outputs and each extract's positions.
 fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     let block = &p.block_programs[0];
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut out = vec![
         // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
         ("cpu interpreter".to_owned(), block.run(bytes)),
@@ -1141,6 +1146,7 @@ fn stage1_equals_simdjson_on_every_executor() {
         let runs: Vec<(String, BlockRun)> = if len < 200_000 {
             extract_executors(&p, &bytes)
         } else {
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
             let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
             #[cfg(target_os = "macos")]
             {
@@ -1279,6 +1285,7 @@ fn within_lowers_to_straight_bit_operations() {
 
 
 /// Stage 1's loop's stack loads and stores (a ratchet, to reach 0).
+#[cfg(target_arch = "aarch64")]
 const STAGE1_LOOP_STACK: usize = 9;
 
 /// Stage 1 compiles to a loop with little stack traffic and no vector `mvn`: its values and

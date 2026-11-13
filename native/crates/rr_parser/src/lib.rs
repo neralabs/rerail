@@ -635,7 +635,7 @@ pub mod tests {
             let mut of: Vec<usize> = (0..states.len()).collect();
             let mut members: Vec<BTreeSet<usize>> = code.clone();
             let mut order: Vec<((usize, usize), u64)> = weights.iter().map(|(&k, &n)| (k, n)).collect();
-            order.sort_by(|a, b| b.1.cmp(&a.1));
+            order.sort_by_key(|b| std::cmp::Reverse(b.1));
             // Weights between clusters, merged as clusters merge: repeat until nothing merges.
             loop {
                 let mut between: HashMap<(usize, usize), u64> = HashMap::new();
@@ -646,7 +646,7 @@ pub mod tests {
                     }
                 }
                 let mut cand: Vec<((usize, usize), u64)> = between.into_iter().collect();
-                cand.sort_by(|a, b| b.1.cmp(&a.1));
+                cand.sort_by_key(|b| std::cmp::Reverse(b.1));
                 let mut merged = false;
                 for ((x, y), _) in cand {
                     if members[x].len() + members[y].len() > cap && members[x].union(&members[y]).count() > cap {
@@ -916,24 +916,24 @@ pub mod tests {
         let insts = &p.tier2.word_insts;
         let tokens: u64 = (0..runs.len()).filter(|&pc| matches!(native.structural[pc].operation, rerail_compiler::native_ir::StructuralOperation::Token { .. })).map(|pc| runs[pc]).sum();
         let mut by: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
-        for pc in 0..runs.len() {
+        for (pc, &r) in runs.iter().enumerate() {
             let op = format!("{:?}", native.structural[pc].operation);
             let e = by.entry(op.split([' ', '{', '(']).next().unwrap_or("").to_owned()).or_default();
-            e.0 += runs[pc];
-            e.1 += runs[pc] * u64::from(insts.get(pc).copied().unwrap_or(0));
+            e.0 += r;
+            e.1 += r * u64::from(insts.get(pc).copied().unwrap_or(0));
         }
         let mut v: Vec<_> = by.into_iter().collect();
-        v.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        v.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let total: u64 = v.iter().map(|x| x.1.1).sum();
         let pushes = rerail_compiler::native_cpu_stream::push_targets(&native);
         // The switches as run: their runs of bytes, weighted by how often each switch runs.
         let (mut sw_runs, mut sw_n) = (0u64, 0u64);
-        for pc in 0..runs.len() {
+        for (pc, &r) in runs.iter().enumerate() {
             if let rerail_compiler::native_ir::StructuralOperation::Switch { table } = native.structural[pc].operation {
                 let t = &native.switches[usize::from(table)].targets;
                 let n = 1 + t.windows(2).filter(|w| w[0] != w[1]).count() as u64;
-                sw_runs += runs[pc] * n;
-                sw_n += runs[pc];
+                sw_runs += r * n;
+                sw_n += r;
             }
         }
         eprintln!("{} places a RETURN can go back to (a compare tree {} deep); a switch as run has {:.1} runs of bytes ({:.1} compares deep)", pushes.len(), (pushes.len() as f64).log2().ceil(), sw_runs as f64 / sw_n.max(1) as f64, (sw_runs as f64 / sw_n.max(1) as f64).log2());
@@ -1053,7 +1053,7 @@ pub mod tests {
             }
             let all: u64 = by.values().sum();
             let mut v: Vec<_> = by.into_iter().collect();
-            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.sort_by_key(|b| std::cmp::Reverse(b.1));
             eprintln!("{:.2} words a token: {}", all as f64 / tokens.max(1) as f64, v.iter().take(14).map(|(k, w)| format!("{k} {:.2}", *w as f64 / tokens.max(1) as f64)).collect::<Vec<_>>().join(", "));
         }
         // The whole corpus's traffic, for the crossings off the sample too.

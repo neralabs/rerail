@@ -126,7 +126,6 @@ pub fn windows_peak_working_set() -> u64 {
 }
 
 /// Prints the stages' times under `title` and clears them.
-
 pub fn report(title: &str) {
     if !*ON {
         return;
@@ -323,7 +322,7 @@ pub mod heap {
             *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|b| std::cmp::Reverse(b.1));
         v
     }
 

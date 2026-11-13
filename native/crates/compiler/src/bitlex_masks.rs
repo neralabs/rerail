@@ -1837,7 +1837,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut kinds = vec![0u8; 256];
     let mut classes: HashMap<Vec<u16>, u8> = HashMap::new();
     let mut sigs: Vec<Vec<u16>> = Vec::new();
-    for b in 0..256 {
+    for (b, kind) in kinds.iter_mut().enumerate() {
         let sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
         let n = classes.len();
         let k = *classes.entry(sig.clone()).or_insert(n as u8);
@@ -1847,7 +1847,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if classes.len() > 256 {
             return Err("more than 256 kinds of first byte".into());
         }
-        kinds[b] = k;
+        *kind = k;
     }
     // Numbered so a switch on the kind has few ranges of one target (its compare tree is
     // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each
@@ -1890,6 +1890,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
 ///   - the modes the states are entered in follow, from the root's start in mode 0, by the
 ///     arms (a mark takes no bytes), the calls and the returns (the mode is the stream's, not
 ///     the stack's: a return lands in every state the level is called to return to).
+///
 /// A row a state can meet in none of its modes is no candidate at a byte it shares.
 fn row_modes(
     low: &mut Lowering,

@@ -632,6 +632,7 @@ pub struct Lanes<'a> {
 impl<'a> Lanes<'a> {
     /// `bytes`: the block's chunks at lag 0 (index 0: the 16 bytes before it), when already
     /// loaded. `general`: the body may run on a file's first or last block.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, ascii: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
         let c = f.ins().iconst(types::I8, 0);
         let zero16 = f.ins().splat(types::I8X16, c);
@@ -918,9 +919,9 @@ pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan,
     let back = plan.before || native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
     let mut bytes = [None; 5];
     let mut any: Option<Value> = None;
-    for c in (if back { 0 } else { 1 })..5 {
+    for (c, slot) in bytes.iter_mut().enumerate().skip(if back { 0 } else { 1 }) {
         let b = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 16 * c as i32 - 16);
-        bytes[c] = Some(b);
+        *slot = Some(b);
         any = Some(match any {
             None => b,
             Some(x) => f.ins().bor(x, b),

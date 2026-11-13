@@ -20,6 +20,7 @@
 //!   - **The search.** The value under the values chosen so far; when it turns on an unchosen
 //!     one, each way of it in turn. Then the equations of the chosen carried values, likewise.
 //!     A budget of tries per byte: past it, the byte may have a bit (sound, less sharp).
+//!
 //! The carried values an equation may choose are those the value reads (its cone, closed under
 //! the equations' operands): an equation reaching outside them tells only what its operands do.
 //!

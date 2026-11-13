@@ -1,6 +1,8 @@
 //! cranelift-jit's API on wasm32. A browser gives a module no executable memory, so `JITBuilder::new` fails
 //! with a backend error, the transducer's callers take their interpreter path, and no `JITModule` is ever made
 //! (it is uninhabited: every method is unreachable by construction).
+// `ModuleResult` is cranelift-jit's own API, whose error type is cranelift's.
+#![allow(clippy::result_large_err)]
 use cranelift_codegen::{Context, ir, isa};
 use cranelift_control::ControlPlane;
 use cranelift_module::*;
