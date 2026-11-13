@@ -128,6 +128,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+        BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
@@ -1341,6 +1342,7 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
+            BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.
             BlockInst::Load(k) => format!("out[f.slot_base + ({offset}) / 64u * SLOTS{p} + {k}u]"),

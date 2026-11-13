@@ -58,6 +58,98 @@ pub enum NExpr {
     Sub(Box<NExpr>, Box<NExpr>),
 }
 
+/// `regions H { K = O .. C … }`: kinds of region that hide each other, as strings, comments
+/// and quoted literals do. A region opens at a byte of its opener `O` not hidden, and its fill
+/// (`f_K`) runs from there up to, not including, the next byte of its closer `C`. The bytes it
+/// hides (`H`) run from the byte after its opener through its closer's last byte. Taken left
+/// to right: the regions' fixed point, `rounds until settled` (`body`).
+#[derive(Clone, Debug)]
+pub struct Regions {
+    /// The hidden bytes' name: the carry.
+    pub hidden: String,
+    pub kinds: Vec<Region>,
+}
+
+/// A kind of region (`Regions`).
+#[derive(Clone, Debug)]
+pub struct Region {
+    /// Its name `K`: the openers taken are `o_K`, the fill `f_K`.
+    pub kind: String,
+    pub opener: Expr,
+    pub closer: Expr,
+    /// `bytes N`: the closer's bytes, from its first (1 to 3).
+    pub bytes: u8,
+    /// `outside`: the closer is not the region's (a line comment's newline). One byte.
+    pub outside: bool,
+    /// `else E bytes M`: an opener with no byte of the closer after it anywhere in the file
+    /// opens no region; it is `E`, `M` bytes from the opener's first, hidden after it.
+    pub empty: Option<(String, u8)>,
+}
+
+impl Regions {
+    /// The `rounds until settled` body the regions mean:
+    ///
+    /// ```text
+    /// mask K_later = next(back_fill(C, empty))       # a kind with `else`
+    /// carry H      = empty
+    /// mask o_K     = O & ~H [& K_later]
+    /// mask E       = O & ~H & ~K_later                # with `else E`
+    /// mask f_K     = fill(o_K, C)
+    /// next H       = prev(f_K) | … | prev(f_K, N)     # `outside`: prev(f_K) & ~C
+    ///              | prev(E) | … | prev(E, M - 1)
+    /// ```
+    pub fn body(&self) -> Vec<Stmt> {
+        let name = |s: &str| Expr::Name(s.to_string());
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
+        let prev = |e: &str, k: u8| if k == 1 { call("prev", vec![Arg::E(name(e))]) } else { call("prev", vec![Arg::E(name(e)), Arg::N(u64::from(k))]) };
+        let mut out = Vec::new();
+        for r in self.kinds.iter().filter(|r| r.empty.is_some()) {
+            let later = call("next", vec![Arg::E(call("back_fill", vec![Arg::E(r.closer.clone()), Arg::E(Expr::Empty)]))]);
+            out.push(Stmt::Mask(r.later(), later));
+        }
+        out.push(Stmt::Carry(self.hidden.clone(), Expr::Empty));
+        let mut hide: Option<Expr> = None;
+        let mut or = |e: Expr| hide = Some(match hide.take() {
+            Some(h) => Expr::Or(Box::new(h), Box::new(e)),
+            None => e,
+        });
+        for r in &self.kinds {
+            let open = and(r.opener.clone(), not(name(&self.hidden)));
+            let o = format!("o_{}", r.kind);
+            let f = format!("f_{}", r.kind);
+            match &r.empty {
+                Some((e, m)) => {
+                    out.push(Stmt::Mask(o.clone(), and(open.clone(), name(&r.later()))));
+                    out.push(Stmt::Mask(e.clone(), and(open, not(name(&r.later())))));
+                    for k in 1..*m {
+                        or(prev(e, k));
+                    }
+                }
+                None => out.push(Stmt::Mask(o.clone(), open)),
+            }
+            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closer.clone())])));
+            if r.outside {
+                or(and(prev(&f, 1), not(r.closer.clone())));
+            } else {
+                for k in 1..=r.bytes {
+                    or(prev(&f, k));
+                }
+            }
+        }
+        out.push(Stmt::Next(self.hidden.clone(), hide.unwrap_or(Expr::Empty)));
+        out
+    }
+}
+
+impl Region {
+    /// The name of its `else`'s mask: whether a byte of the closer comes after a byte.
+    pub fn later(&self) -> String {
+        format!("{}_later", self.kind)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum UClass {
     Table(String, String),
@@ -174,7 +266,10 @@ pub enum Stmt {
     /// without it, every round runs. Either way the values are the same. With no `n`
     /// (`rounds until settled`), the fixed point itself: the body must be strictly causal
     /// (`strictly_causal`), so it always settles, a byte more each round at least.
-    Rounds { n: Option<usize>, settle: bool, body: Vec<Stmt> },
+    ///
+    /// `regions H { … }` is one too: its body is made from its regions (`Regions::body`), and
+    /// `regions` keeps them, for a backend that walks them (a CPU's micro-lexers) instead.
+    Rounds { n: Option<usize>, settle: bool, body: Vec<Stmt>, regions: Option<Regions> },
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
@@ -798,6 +893,39 @@ impl P {
     }
 
     // --- statements ---
+    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] … }` (`Regions`).
+    fn regions(&mut self) -> R<Regions> {
+        let hidden = self.ident()?;
+        self.want_p("{")?;
+        self.nls();
+        let mut kinds = Vec::new();
+        while !self.eat_p("}") {
+            let kind = self.ident()?;
+            self.want_p("=")?;
+            let opener = self.expr()?;
+            self.want_p("..")?;
+            let closer = self.expr()?;
+            let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
+            let outside = self.eat_kw("outside");
+            let empty = if self.eat_kw("else") {
+                let e = self.ident()?;
+                self.want_kw("bytes")?;
+                Some((e, self.int()?))
+            } else {
+                None
+            };
+            if !(1..=3).contains(&bytes) || (outside && bytes != 1) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
+                return self.err("a closer of 1 to 3 bytes (`outside`: 1), an `else` of 1 to 3");
+            }
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)) });
+            self.nls();
+        }
+        if kinds.is_empty() {
+            return self.err("a region");
+        }
+        Ok(Regions { hidden, kinds })
+    }
+
     fn block(&mut self) -> R<Vec<Stmt>> {
         self.want_p("{")?;
         self.nls();
@@ -962,7 +1090,7 @@ impl P {
             "rounds" => {
                 let n = if self.eat_kw("until") {
                     self.want_kw("settled")?;
-                    return Ok(Stmt::Rounds { n: None, settle: true, body: self.block()? });
+                    return Ok(Stmt::Rounds { n: None, settle: true, body: self.block()?, regions: None });
                 } else {
                     self.int()? as usize
                 };
@@ -970,7 +1098,11 @@ impl P {
                 if settle {
                     self.want_kw("settled")?;
                 }
-                Stmt::Rounds { n: Some(n), settle, body: self.block()? }
+                Stmt::Rounds { n: Some(n), settle, body: self.block()?, regions: None }
+            }
+            "regions" => {
+                let regions = self.regions()?;
+                Stmt::Rounds { n: None, settle: true, body: regions.body(), regions: Some(regions) }
             }
             "reject" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
