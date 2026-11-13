@@ -85,12 +85,24 @@ export async function recordedPid(home: string): Promise<number | undefined> {
   return (await readDaemonState(join(home, DAEMON_STATE_FILE)))?.pid;
 }
 
+/** What each daemon `daemonProcess` started wrote to stderr, whole once it has closed. */
+const errorsOf = new WeakMap<ChildProcess, Promise<string>>();
+
 /** A daemon process of this checkout's build in `home`, started as a start launches one, with `args` after its own. */
 export function daemonProcess(home: string, env: NodeJS.ProcessEnv, args: readonly string[] = []): ChildProcess {
   const entry = join(packageRoot, "dist", "cli", "daemon-entry.js");
-  return spawn(process.execPath, [entry, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", ...args], {
-    cwd: home, env, stdio: "ignore", windowsHide: true,
+  const child = spawn(process.execPath, [entry, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", ...args], {
+    cwd: home, env, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
   });
+  let errors = "";
+  child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
+  errorsOf.set(child, once(child, "close").then(() => errors, () => errors));
+  return child;
+}
+
+/** What `daemon`, started by {@link daemonProcess}, wrote to stderr, once it has exited: why it stopped, when it did. */
+export async function exitMessage(daemon: ChildProcess): Promise<string> {
+  return await (errorsOf.get(daemon) ?? Promise.resolve(""));
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 } from "../../src/runtime/daemon-control.js";
 import {
   daemonProcess,
+  exitMessage,
   freePort,
   launchers,
   olderDaemon,
@@ -34,6 +35,8 @@ import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
 const originalRerailHome = process.env.RERAIL_HOME;
+/** What a daemon that finds its home's lock held says as it exits (`HomeDaemonConflictError`). */
+const HOME_TAKEN = /rerail daemon: Another Rerail daemon(?: \(pid \d+\))? runs in /u;
 
 /** The daemons started in `home` that still run. */
 function liveDaemons(home: string): number[] {
@@ -133,7 +136,10 @@ describe("the daemons of a Rerail home", () => {
     // The others stop before they open anything; give every one the time a start takes.
     await until(() => running().length === 1, 20_000).catch(() => undefined);
     expect(running().map(daemon => daemon.pid)).toEqual([await recordedPid(home)]);
-    expect(daemons.filter(daemon => daemon.exitCode !== null).every(daemon => daemon.exitCode !== 0)).toBe(true);
+    const stopped = daemons.filter(daemon => daemon.exitCode !== null);
+    expect(stopped.every(daemon => daemon.exitCode !== 0)).toBe(true);
+    // Each stopped on the home's lock. On macOS and Linux the engine socket's own check stops a second daemon too.
+    for (const daemon of stopped) expect(await exitMessage(daemon)).toMatch(HOME_TAKEN);
   }, 120_000);
 
   it("waits for a busy daemon whose daemon.json went missing, and uses it, where a start would launch a second", async () => {
@@ -166,6 +172,7 @@ describe("the daemons of a Rerail home", () => {
     others.push(second);
     const ended = await Promise.race([once(second, "exit").then(([code]) => `exited ${String(code)}`), delay(7_000).then(() => "still running")]);
     expect(ended).toMatch(/^exited [1-9]/u);
+    expect(await exitMessage(second)).toMatch(HOME_TAKEN);
     expect(await recordedPid(home)).toBe(first.pid);
     await until(() => !existsSync(`${busy}.held`));
     expect((await findRunningDaemon(home))?.state).toMatchObject({ pid: first.pid, port });
