@@ -50,7 +50,7 @@ function promptEvent(input: ClaudeHookInput, descriptor: AdapterSession): Adapte
 function batchDelta(input: ClaudeHookInput): string {
   const { delta } = input;
   if (delta === undefined) throw new Error("Claude hook omitted delta");
-  if (typeof delta !== "string") throw new Error(`Claude hook delta must be text, not ${typeof delta}`);
+  if (typeof delta !== "string") throw new Error(`Claude hook delta must be text, not ${delta === null ? "null" : typeof delta}`);
   return delta;
 }
 

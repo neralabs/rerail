@@ -73,6 +73,7 @@ describe("lifecycle event adapters", () => {
     }
     expect(() => claudeHookEvents(batch)).toThrow("Claude hook omitted delta");
     expect(() => claudeHookEvents({ ...batch, delta: 7 })).toThrow("Claude hook delta must be text, not number");
+    expect(() => claudeHookEvents({ ...batch, delta: null })).toThrow("Claude hook delta must be text, not null");
   });
 
   it("maps one Codex stop hook to ordered assistant and turn events", async () => {
