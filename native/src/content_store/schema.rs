@@ -694,6 +694,14 @@ END;
 CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
     part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
     types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
+-- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
+-- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
+-- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
+-- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
+CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
 -- How many runs each space has counted.
 CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
 -- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.

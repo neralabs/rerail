@@ -666,6 +666,7 @@ impl ContentStore {
                         let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
                         if frames > 0 {
                             frames_gone = tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+                            tx.execute("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
                             tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
                         }
                     }

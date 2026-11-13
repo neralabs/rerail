@@ -282,9 +282,10 @@ fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std:
 /// file content and path, whose first read is its path.
 const MEMO_RELS: [&str; 2] = ["local", "local_out"];
 
+
 /// The frames of `rel` (a memo relation) in `space`, each path's newest (the last used): relation, path and part.
 fn newest_by_path(connection: &rusqlite::Connection, space: &[u8; 32], rel: &str) -> StoreResult<Vec<(Rel, String, i64)>> {
-    let mut st = connection.prepare_cached("SELECT ident, part, reads, used FROM frames WHERE space = ?1 AND rel = ?2")?;
+    let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
     let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
     let mut by: HashMap<([u8; 32], String), (i64, i64)> = HashMap::new();
     for row in rows {
@@ -659,7 +660,7 @@ impl ContentStore {
     pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize) -> StoreResult<usize> {
         let gone: Vec<(Rel, i64)> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare_cached("SELECT ident, part, reads, used FROM frames WHERE space = ?1 AND rel = ?2")?;
+            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
             let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
             let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
             for row in rows {
@@ -693,10 +694,16 @@ impl ContentStore {
             // orders it once, without rebuilding SQL and temporary sets per chunk.
             if !parts.is_empty() {
                 let parts: rusqlite::vtab::array::Array = std::rc::Rc::new(parts.iter().copied().map(rusqlite::types::Value::from).collect());
-                t.prepare_cached("UPDATE frames SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN rarray(?5)")?
+                // Marked in `frame_part_used`: the frames' records, with their rows, are not rewritten.
+                t.prepare_cached("UPDATE frame_part_used SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN rarray(?5)")?
                     .execute(params![&space[..], rel.name, &rel.ident[..], run, parts])?;
             }
-            t.execute("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4", params![&space[..], rel.name, &rel.ident[..], run - keep])?;
+            // The parts no run used in the last `keep`, forgotten with their use.
+            let gone = "SELECT part FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4";
+            t.prepare_cached(&format!("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN ({gone})"))?
+                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
+            t.prepare_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4")?
+                .execute(params![&space[..], rel.name, &rel.ident[..], run - keep])?;
             Ok(())
         })
     }
@@ -708,6 +715,7 @@ impl ContentStore {
         }
         self.immediate_transaction_once(|t| {
             let n = t.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+            t.execute("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
             t.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
             Ok(n)
         })
@@ -919,11 +927,24 @@ impl ContentStore {
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
+            // Each frame's use, apart from its record (`frame_part_used`): three values a frame, so 300 a statement.
+            for batch in puts.iter().chain(delta_puts.iter()).collect::<Vec<_>>().chunks(300) {
+                let values = (0..batch.len()).map(|i| format!("(?1,?{},?{},?{},?2)", 3 + 3 * i, 4 + 3 * i, 5 + 3 * i)).collect::<Vec<_>>().join(",");
+                let sql = format!("INSERT INTO frame_part_used(space,rel,ident,part,used) VALUES {values} \
+                    ON CONFLICT(space,rel,ident,part) DO UPDATE SET used=excluded.used");
+                let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), run.into()];
+                for p in batch {
+                    args.extend([p.rel.name.clone().into(), p.rel.ident.to_vec().into(), p.part.into()]);
+                }
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+            }
             lap(&format!("{} puts, {} deltas", puts.len(), delta_puts.len()));
             // A relation with a delta after its frame: the frame's digest and reads are the relation's now.
             for (rel, digest, reads) in heads {
-                t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6, used = ?7 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
-                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, *digest as i64, encode_reads(reads), run])?;
+                t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, *digest as i64, encode_reads(reads)])?;
+                t.prepare_cached("UPDATE frame_part_used SET used = ?5 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, run])?;
             }
             // A retagged frame is not written (decision 0117 step 5): its rows, digest and stored reads stay, and the
             // space's confirmations name it with its reads' hash now, one row for the space. A frame put, given a
@@ -958,6 +979,9 @@ impl ContentStore {
                     DELETE FROM frames WHERE (space,rel,ident,part) IN (SELECT ?1,rel,ident,part FROM demanded)");
                 let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into()];
                 for (rel,part) in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into(),(*part).into()]); }
+                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args.clone()))?;
+                let sql=format!("WITH demanded(rel,ident,part) AS (VALUES {values}) \
+                    DELETE FROM frame_part_used WHERE (space,rel,ident,part) IN (SELECT ?1,rel,ident,part FROM demanded)");
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
             lap(&format!("{} gone", gone.len()));
@@ -982,7 +1006,7 @@ impl ContentStore {
                 // Collected: a frame put [`RUNS`] runs ago or before, whose relation no run since used.
                 let live: HashSet<u64> = runs.iter().filter(|(r, _)| *r > run - RUNS).flat_map(|(_, k)| k.iter().copied()).chain(keys.iter().copied()).collect();
                 let old: Vec<(String, Vec<u8>)> = {
-                    let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frames WHERE space = ?1 AND used <= ?2")?;
+                    let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frame_part_used WHERE space = ?1 AND used <= ?2")?;
                     st.query_map(params![&space[..], run - RUNS], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
                 };
                 let dead: Vec<(String, Vec<u8>)> = old.into_iter().filter(|(name, ident)| {
@@ -990,13 +1014,15 @@ impl ContentStore {
                 }).collect();
                 for batch in dead.chunks(READ_BATCH) {
                     let values = (0..batch.len()).map(|i| format!("(?{},?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(",");
-                    let sql = format!("WITH dead(rel,ident) AS (VALUES {values}) \
-                        DELETE FROM frames WHERE (space,rel,ident) IN (SELECT ?1,rel,ident FROM dead) AND used <= ?2");
+                    // The old parts of the dead relations, by their use (`frame_part_used`), forgotten with it.
+                    let old = format!("WITH dead(rel,ident) AS (VALUES {values}) SELECT u.space, u.rel, u.ident, u.part FROM frame_part_used u \
+                        JOIN dead d ON u.rel = d.rel AND u.ident = d.ident WHERE u.space = ?1 AND u.used <= ?2");
                     let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (run - RUNS).into()];
                     for (name, ident) in batch {
                         args.extend([name.clone().into(), ident.clone().into()]);
                     }
-                    t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+                    t.prepare_cached(&format!("DELETE FROM frames WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args.clone()))?;
+                    t.prepare_cached(&format!("DELETE FROM frame_part_used WHERE (space,rel,ident,part) IN ({old})"))?.execute(rusqlite::params_from_iter(args))?;
                 }
                 lap(&format!("{} relations' old frames collected", dead.len()));
             }
@@ -1121,6 +1147,33 @@ fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A store made before `frame_part_used` (decision 0138) gets each frame's use from `frames.used` at its next
+    /// open, and its frames are marked and collected by it as any other.
+    #[test]
+    fn a_store_made_before_the_frames_use_table_gets_it_from_its_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let relation = rel("local", 1);
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let puts: Vec<_> = (0..3).map(|part| Put { rel: relation.clone(), part, digest: 7, reads: vec![], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
+            store.keep_frames(&[42; 32], &puts, &[], None).unwrap();
+            // As an older binary leaves it: no table of the frames' use.
+            store.connection.lock().unwrap().execute_batch("DROP TABLE frame_part_used").unwrap();
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
+        assert_eq!(held, 3, "every frame's use, from `frames.used`");
+        // Part 0 is used in two more runs; parts 1 and 2 are not, and go once two runs have passed.
+        store.use_frame_parts(&[42; 32], &relation, &[0], 0, 2).unwrap();
+        store.use_frame_parts(&[42; 32], &relation, &[0], 1, 2).unwrap();
+        store.use_frame_parts(&[42; 32], &relation, &[0], 2, 2).unwrap();
+        assert!(store.frame_rows(&[42; 32], &relation, 0).unwrap().is_some());
+        assert!(store.frame_rows(&[42; 32], &relation, 1).unwrap().is_none(), "an unused part expires");
+        let held: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frame_part_used", [], |r| r.get(0)).unwrap();
+        assert_eq!(held, 1, "a frame forgotten takes its use with it");
+    }
 
     #[test]
     fn frame_part_usage_is_one_bulk_update_and_preserves_retention() {

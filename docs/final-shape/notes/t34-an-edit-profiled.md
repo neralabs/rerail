@@ -133,3 +133,7 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     writes the memo's entries at about 35 MB/s of its CPU (1.7 s for the first 2 of 7 jobs). Splitting the frames job
     alone would not help (all of it is queued at once, when the cross part ends): the direction is each stratum's
     frame queued as the stratum finishes, so the writer works while the cross part runs, and a cheaper memo entry.
+    Done (decision 0138): the writer's two misplaced costs moved. Marking a memo entry used rewrote its rows (a
+    `WITHOUT ROWID` record with its rows in it): 2.9 s of a cold run's writer, now a row of `frame_part_used`. The
+    WAL's checkpoints ran in the writer's commits (3.0 s): now beside it, `PASSIVE`, on a thread of its own. A cold
+    run after a rebuild passed under the default cap with the queue never full (load 13). (see git log)
