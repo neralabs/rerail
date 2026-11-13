@@ -3394,3 +3394,20 @@ fn dropping_unreached_clauses_prunes_to_the_same_program_other_packs() {
     assert!(n > 20, "{n} programs compared");
 }
 
+
+/// What only the engine reads is reached: a library's request rule, whose head nothing reads but whose body reads
+/// the file system (`py_listed(d) :- py_file_at(_, _, d, _), dir_entry(d, _, _)`), and a rule deriving one of the
+/// engine's relations (`load(f, q, "python")`). Dropped, a run loading modules listed no directory and loaded
+/// nothing (`the_cone_of_requests_is_kept_while_its_reads_and_answers_are`).
+#[test]
+fn dropping_unreached_clauses_keeps_what_the_engine_reads() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("engine-reads");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let p = parse_file(&rule).unwrap();
+    let heads: std::collections::BTreeSet<&str> = p.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    assert!(heads.contains("load"), "load's rule is kept");
+    assert!(heads.contains("py_listed"), "the request rule is kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}

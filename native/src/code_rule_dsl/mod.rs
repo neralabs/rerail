@@ -1591,6 +1591,12 @@ mod literal {
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
     // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    pub mod program_text {
+        pub use rerail_logic::code_rule_dsl::logic::program_text::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
+    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
     pub mod liveness {
         pub use rerail_logic::code_rule_dsl::logic::liveness::*;
         #[cfg(test)]

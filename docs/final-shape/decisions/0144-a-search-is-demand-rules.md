@@ -1,4 +1,4 @@
-# 0107: A search is demand rules
+# 0144: A search is demand rules
 
 Status: draft (2026-11-10), for review. It replaces 0083 §4's "a search is a program kind" with ordinary rules,
 as 0103 did for caches.
