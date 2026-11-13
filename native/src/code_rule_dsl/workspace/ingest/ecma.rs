@@ -142,7 +142,7 @@ impl ContextChanges {
 fn refresh_manifest_context(
     project: &EcmaProject,
     state: &WorkspaceState,
-    inputs: &mut Vec<FileInput>,
+    inputs: &mut [FileInput],
     unhosted: &HashSet<String>,
     removed: &[String],
 ) -> (Vec<Stale>, ContextChanges) {

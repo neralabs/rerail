@@ -400,7 +400,7 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
                 continue;
             }
             let Some(row) = a.args.iter().map(constant).collect::<Option<Vec<Value>>>() else { continue };
-            let present = prog.facts.get(a.rel.as_str()).is_some_and(|f| f.iter().any(|r| *r == row));
+            let present = prog.facts.get(a.rel.as_str()).is_some_and(|f| f.contains(&row));
             if present != a.neg {
                 drop.push(i);
             } else {
@@ -927,11 +927,10 @@ fn computed(rules: &[&Rule]) -> bool {
 fn domain_read(def: &Rule, read: &Atom, reader: &[Literal]) -> bool {
     let mut as_read: BTreeMap<&str, &Term> = BTreeMap::new();
     for (h, r) in def.head.args.iter().zip(&read.args) {
-        if let Term::Var(v) = h {
-            if as_read.insert(v, r).is_some_and(|t| t != r) {
+        if let Term::Var(v) = h
+            && as_read.insert(v, r).is_some_and(|t| t != r) {
                 return false;
             }
-        }
     }
     def.body.iter().all(|l| {
         let Literal::Atom(a) = l else { return false };
@@ -1124,7 +1123,7 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     }
     match l {
         Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, to)).collect(), ..a.clone() }),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op: *op, r: term(r, to) },
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op, r: term(r, to) },
         other => other.clone(),
     }
 }
@@ -1528,7 +1527,7 @@ fn rename_var(l: &Literal, from: &str, to: &str) -> Literal {
     }
     match l {
         Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, from, to)).collect(), ..a.clone() }),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, from, to), op: *op, r: term(r, from, to) },
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, from, to), op, r: term(r, from, to) },
         other => other.clone(),
     }
 }

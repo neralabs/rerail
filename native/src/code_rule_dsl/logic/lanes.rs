@@ -26,6 +26,7 @@ static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
     let all = Executor::new();
+    #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))] // SME extends it on Apple silicon
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if all.lanes().contains(&rerail_accel::Lane::Sme) {

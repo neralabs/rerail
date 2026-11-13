@@ -124,9 +124,8 @@ pub fn apply(
     else {
         return Ok(None);
     };
-    if r.pool_consumers > 1 {
-        if let Some(result) = super::super::pool::recalled(w, &r.groups)? { return Ok(result); }
-    }
+    if r.pool_consumers > 1
+        && let Some(result) = super::super::pool::recalled(w, &r.groups)? { return Ok(result); }
     let result = apply_once(r, shared, w, delta)?;
     if r.pool_consumers > 1 { super::super::pool::remember(w, &r.groups, &result, r.keys())?; }
     Ok(result)

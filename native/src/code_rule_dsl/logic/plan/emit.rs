@@ -54,9 +54,8 @@ impl Emitted {
         let rewrite = |query: &mut Query| {
             for block in query.ctes.iter_mut().flat_map(|c| &mut c.arms).chain([&mut query.body]) {
                 block.relations_mut(&mut |relation| {
-                    if let Relation::Derived { rel, .. } = relation {
-                        if let Some(private) = names.get(rel) { *rel = private.clone(); }
-                    }
+                    if let Relation::Derived { rel, .. } = relation
+                        && let Some(private) = names.get(rel) { *rel = private.clone(); }
                 });
                 block.sqlite_order();
             }

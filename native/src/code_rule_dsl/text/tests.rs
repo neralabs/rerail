@@ -115,6 +115,7 @@ fn the_vocabulary_engine_agrees_with_each_regex() {
 }
 
 /// A random tree of spans over `len` bytes: each node's children split part of its span.
+#[allow(clippy::single_range_in_vec_init)]
 fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
     let mut out = vec![0..len];
     let mut at = 0;

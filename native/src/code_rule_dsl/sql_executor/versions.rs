@@ -571,14 +571,13 @@ impl Source for Mutable {
                     "null in versioned integer relation",
                 ));
             }
-            if let Some(&strict) = state.schema.positive.get(&c) {
-                if v.is_none_or(|v| if strict { v <= 0 } else { v < 0 }) {
+            if let Some(&strict) = state.schema.positive.get(&c)
+                && v.is_none_or(|v| if strict { v <= 0 } else { v < 0 }) {
                     return Err(constraint(
                         ffi::SQLITE_CONSTRAINT_CHECK,
                         "invalid support count",
                     ));
                 }
-            }
         }
         let existing = Node::get(&state.primary, &values[..state.schema.keys]).cloned();
         if existing.as_ref().is_some_and(|r| Some(r.id) != old) && !replace {
@@ -919,13 +918,12 @@ impl Store {
             for undo in self.undo.write().iter_mut() {
                 let existing = !undo.created.iter().any(|(_, id)| *id == table.id)
                     || undo.removed.keys().any(|(_, n)| n == name);
-                if existing {
-                    if let Some(binding) = self.modules.get(name) {
+                if existing
+                    && let Some(binding) = self.modules.get(name) {
                         undo.bindings
                             .entry(name.clone())
                             .or_insert_with(|| binding.clone());
                     }
-                }
             }
             self.modules.unregister(db, name).map_err(error)?;
             self.slots.borrow_mut().remove(name);

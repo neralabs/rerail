@@ -142,7 +142,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
                 let want = stream::run(&words, bytes, &block.run(bytes)).map_err(|r| r.pc);
                 assert_eq!(parser.parse(bytes).map_err(|r| r.pc), want, "{name}: {:?}", String::from_utf8_lossy(bytes));
                 if let Err(pc) = want {
-                    inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| (pc as usize) < shared.skipped.len() && shared.skipped[pc as usize]));
+                    inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| pc < shared.skipped.len() && shared.skipped[pc]));
                 }
             }
         }

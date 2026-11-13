@@ -1461,13 +1461,13 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
     // Entered other than by falling from a plain word before it.
     let mut entered = vec![false; n + 1];
     entered[0] = true;
-    for pc in 0..n {
+    for (pc, w) in words.iter().enumerate() {
         let mut next = successors(native, pushes, pc);
-        if matches!(words[pc].operation, Op::Token { .. }) {
+        if matches!(w.operation, Op::Token { .. }) {
             next.push(pc + 1);
         }
         for t in next {
-            if !(t == pc + 1 && plain(&words[pc].operation)) {
+            if !(t == pc + 1 && plain(&w.operation)) {
                 entered[t] = true;
             }
         }
@@ -1623,7 +1623,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     // Each word's phase (`stream::phases`): where every `TOKEN` knows whether it takes a token,
     // no flag says so, and a word after a `SPAN` reads its token's end from its record.
     let phase_of = phases(native, &pushes);
-    let flagged = phase_of.iter().any(|&p| p == crate::stream::TAKEN | crate::stream::UNTAKEN);
+    let flagged = phase_of.contains(&(crate::stream::TAKEN | crate::stream::UNTAKEN));
     let taken = |pc: usize| !flagged && phase_of[pc] == crate::stream::TAKEN;
     let end_at = |pc: usize| if flagged { EndAt::Field } else if taken(pc) { EndAt::Taken } else { EndAt::Untaken };
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
@@ -1754,11 +1754,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     incoming[cut.of[t] as usize].insert(t);
                 }
             }
-            if let Some(&(b, _)) = shared_all.at.get(&pc) {
-                if cut.of[shared_all.bodies[b].start] != cut.of[pc] {
+            if let Some(&(b, _)) = shared_all.at.get(&pc)
+                && cut.of[shared_all.bodies[b].start] != cut.of[pc] {
                     incoming[cluster_of(n_words + b)].insert(n_words + b);
                 }
-            }
         }
     }
     let index: Vec<std::collections::HashMap<usize, usize>> = incoming.iter().map(|s| s.iter().enumerate().map(|(i, &g)| (g, i)).collect()).collect();
@@ -2343,10 +2342,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         for (k, &b) in reps.iter().enumerate() {
                             t[k] = s.targets[usize::from(b)];
                         }
-                        for k in 0..reps.len() {
+                        for (k, tk) in t.iter_mut().enumerate().take(reps.len()) {
                             if s.words.iter().any(|&(w, _)| word_kinds.get(usize::from(w)).is_some_and(|&x| usize::from(x) == k)) {
-                                by_word.push((k, t[k]));
-                                t[k] = BY_WORD + k as u16;
+                                by_word.push((k, *tk));
+                                *tk = BY_WORD + k as u16;
                             }
                         }
                         ByteSwitch { targets: t, ..s.clone() }

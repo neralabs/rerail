@@ -21,7 +21,7 @@ pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
     }
     Ok((u64_at(header, header::NODES)?, u64_at(header, header::CODES)?))
 }
-const _: () = assert!(HEADER == HEADER_BYTES && HEADER % COLUMN_ALIGN == 0);
+const _: () = assert!(HEADER == HEADER_BYTES && HEADER.is_multiple_of(COLUMN_ALIGN));
 
 /// Where an image's columns and tables are, as byte offsets from the image's start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

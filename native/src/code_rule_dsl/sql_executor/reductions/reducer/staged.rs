@@ -99,7 +99,7 @@ impl Batch {
             return Ok(changed.clone());
         }
         // Unsupported storage keeps the established publication boundary.
-        if !w.versions.is_some_and(|s|s.available(&r.groups).is_some())
+        if w.versions.is_none_or(|s| s.available(&r.groups).is_none())
             || r.combined.is_none() && !counts::eligible(r)
         {
             return r.apply(w, changes).map(|result| result.map(|(keys,_)|keys));

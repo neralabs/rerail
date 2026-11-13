@@ -366,6 +366,7 @@ impl Wave {
         let metal = cfg!(target_os = "macos")
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut found = None;
         let (candidates, views) = if metal {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every

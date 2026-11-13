@@ -974,7 +974,8 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     let _ = writeln!(out, "        {body}\n    }}\n}}\n");
 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
-    out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
+    // A crate that includes the registry without the adapters (`rerail_lang`) never expands it.
+    out.push_str("#[allow(unused_macros)]\nmacro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
     for (family, _, ids) in &families {
         // the adapter by its module (`adapter::python::Python`): a crate whose `adapter` re-exports the modules,
         // not their types, expands it too (the test kit, `adapter/kit.rs`, includes `with_adapter.rs`)

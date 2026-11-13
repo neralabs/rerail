@@ -58,7 +58,6 @@ pub fn evaluate(template: &Template, w: &Work<'_>) -> Result<Option<Buffers>> {
         }
         outputs.push(name);
     }
-    drop(add);
     // The existing bulk-publication threshold also bounds the minimum work that amortizes
     // connection setup and result transport. Small transitions keep cached owner preparation.
     if sources

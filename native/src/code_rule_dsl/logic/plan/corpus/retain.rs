@@ -857,7 +857,7 @@ impl Layered {
     }
 
     /// Kept row `r`'s live place, unless it is dead.
-    fn from_kept(&self, r: usize) -> Option<usize> {
+    fn live_place(&self, r: usize) -> Option<usize> {
         let k = self.dead.partition_point(|&(s, _)| (s as usize) <= r);
         if k > 0 && r < (self.dead[k - 1].0 + self.dead[k - 1].1) as usize {
             return None;
@@ -899,7 +899,7 @@ impl Source for Layered {
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let live = self.live_kept();
-        let mut out: Vec<usize> = self.kept.lookup(column, values)?.into_iter().filter_map(|r| self.from_kept(r)).collect();
+        let mut out: Vec<usize> = self.kept.lookup(column, values)?.into_iter().filter_map(|r| self.live_place(r)).collect();
         out.extend(self.added.lookup(column, values)?.into_iter().map(|r| r + live));
         Some(out)
     }

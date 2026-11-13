@@ -55,10 +55,10 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
 
 fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
     words.truncate(n.div_ceil(64));
-    if n % 64 != 0 {
-        if let Some(last) = words.last_mut() {
-            *last &= (1u64 << (n % 64)) - 1;
-        }
+    if !n.is_multiple_of(64)
+        && let Some(last) = words.last_mut()
+    {
+        *last &= (1u64 << (n % 64)) - 1;
     }
     words
 }
@@ -183,6 +183,7 @@ fn every_total_is_one_flag_on_every_executor() {
     assert!(want.iter().any(|w| w[0] == 0) && want.iter().any(|w| w[0] == 1), "both kinds of file");
     let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
     let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
     #[cfg(target_os = "macos")]
     {
@@ -769,7 +770,9 @@ fn json_loop_keeps_values_in_registers() {
 /// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
 /// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
 /// with no end for a one-byte token would save it).
+#[cfg(target_arch = "aarch64")]
 const JSON_LOOP: usize = 690;
+#[cfg(target_arch = "aarch64")]
 const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -781,6 +784,7 @@ const JSON_LOOP_STACK: usize = 4;
 /// A tier-1 program's violations: more string state than simdjson's (one `escaped`, one
 /// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
 /// past the byte before (a token start looks one byte back, as simdjson's `follows`).
+#[cfg_attr(not(target_arch = "aarch64"), allow(dead_code))]
 fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
     use rerail_compiler::block::BlockOp::*;
     let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();

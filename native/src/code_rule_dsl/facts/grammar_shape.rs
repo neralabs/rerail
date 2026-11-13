@@ -101,11 +101,10 @@ pub fn single_field(kind: &str, field: &str) -> bool {
     let names = |key: &str| -> BTreeSet<String> { grammar[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect() };
     let (inline, supertypes) = (names("inline"), names("supertypes"));
     fn aliased(e: &Value, out: &mut BTreeSet<String>) {
-        if e["type"] == "ALIAS" && e["named"] == true {
-            if let Some(v) = e["value"].as_str() {
+        if e["type"] == "ALIAS" && e["named"] == true
+            && let Some(v) = e["value"].as_str() {
                 out.insert(v.to_owned());
             }
-        }
         if let Some(c) = e.get("content") {
             aliased(c, out);
         }
@@ -116,7 +115,7 @@ pub fn single_field(kind: &str, field: &str) -> bool {
     // At most `MANY`: 0, 1 or several of the field.
     const MANY: u8 = 2;
     fn count(e: &Value, field: &str, rules: &Value, inline: &BTreeSet<String>, supertypes: &BTreeSet<String>, seen: &mut Vec<String>) -> u8 {
-        let mut c = |e: &Value, seen: &mut Vec<String>| count(e, field, rules, inline, supertypes, seen);
+        let c = |e: &Value, seen: &mut Vec<String>| count(e, field, rules, inline, supertypes, seen);
         match e["type"].as_str().unwrap_or("") {
             "FIELD" => (u8::from(e["name"] == field) + c(&e["content"], seen)).min(MANY),
             "SEQ" => e["members"].as_array().into_iter().flatten().map(|m| c(m, seen)).fold(0, |a, b| (a + b).min(MANY)),

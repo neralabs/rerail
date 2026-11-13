@@ -124,8 +124,8 @@ fn closure_is_reachability() {
                 }
                 todo.extend(&dst[off[v as usize] as usize..off[v as usize + 1] as usize]);
             }
-            for t in 0..n {
-                assert_eq!(got.get(s, t), seen[t], "n {n}: {s} -> {t}");
+            for (t, &reached) in seen.iter().enumerate() {
+                assert_eq!(got.get(s, t), reached, "n {n}: {s} -> {t}");
             }
         }
     }

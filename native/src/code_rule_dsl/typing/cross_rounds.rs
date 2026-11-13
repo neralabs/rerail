@@ -45,7 +45,6 @@ pub(crate) const UNCONVERGED: &str = "unconverged";
 pub use crate::code_rule_dsl::logic::front::PRAGMA;
 
 /// The rounds `prog` declares (`PRAGMA`), if it declares them.
-
 pub(crate) fn declared(prog: &Program) -> Option<usize> {
     prog.settings.iter().filter(|(key, _)| key == "pragma").find_map(|(_, text)| {
         let words: Vec<&str> = text.split('"').map(str::trim).filter(|w| !w.is_empty()).collect();

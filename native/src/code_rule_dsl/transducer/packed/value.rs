@@ -1009,7 +1009,7 @@ impl ByteNfa {
     ) -> Result<bool, Error> {
         let (mut current, mut next, mut pending) = (Vec::new(), Vec::new(), Vec::new());
         let mut seen = vec![0_u32; self.states.len()];
-        let mut generation = 1;
+        let generation = 1;
         if self.add_state(
             self.start,
             0,
@@ -1025,12 +1025,11 @@ impl ByteNfa {
         )? {
             return Ok(true);
         }
-        for (at, &byte) in bytes.iter().enumerate() {
+        for (generation, (at, &byte)) in (generation + 1..).zip(bytes.iter().enumerate()) {
             if current.is_empty() {
                 break;
             }
             next.clear();
-            generation += 1;
             for &state in &current {
                 let NfaState::Bytes(ranges) = &self.states[state as usize] else {
                     continue;

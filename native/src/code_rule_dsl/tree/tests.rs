@@ -43,6 +43,7 @@
     }
 
     /// Each named node's parts: kind, span, and whether a token.
+    #[allow(clippy::type_complexity)]
     fn parts<D: Doc>(root: Node<'_, D>) -> Vec<(String, Vec<(String, std::ops::Range<usize>, bool)>)> {
         root.dfs()
             .filter(|node| node.is_named())

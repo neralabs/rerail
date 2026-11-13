@@ -222,7 +222,7 @@ fn candidate_contract_lowers_before_projection_and_roundtrips() {
     for name in RULES {
         let p=rr::parse(&tools::flatten(&root.join(name)).unwrap()).unwrap();
         assert!(p.natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
-        let needed=front::needed(&p,p.outputs.iter().cloned().collect());
+        let needed=front::needed(&p,p.outputs.to_vec());
         assert!(!needed.contains("text")&&!needed.contains("py_attribute")&&!needed.contains("py_exec_context"),"broad scalar dependencies remain for {name}");
         let local=crate::code_rule_dsl::typing::file_local::split(&p);
         assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));

@@ -249,6 +249,7 @@ pub fn hold(path: &Path) -> Hold {
 }
 
 /// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).
+#[allow(clippy::type_complexity)]
 static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64)>>> = std::sync::LazyLock::new(Default::default);
 
 /// Each kind of job written so far in this process: count, bytes and the writer's CPU, costliest first.
@@ -336,7 +337,7 @@ impl ContentStore {
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c))| (*w, *j, *b, *c)).collect();
-                rows.sort_by(|a, b| b.2.cmp(&a.2));
+                rows.sort_by_key(|b| std::cmp::Reverse(b.2));
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
@@ -410,7 +411,7 @@ impl ContentStore {
                                 *store.holder.lock() = holder.clone();
                                 bytes += *b;
                                 let c0 = thread_cpu();
-                                let _span = super::hazards::span(*what);
+                                let _span = super::hazards::span(what);
                                 outcomes.push(
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                         .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
@@ -518,6 +519,7 @@ impl ContentStore {
 
     /// The writer's work by what each job writes, `(what, jobs, bytes, writer CPU)`, costliest first; the most bytes
     /// queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
+    #[allow(clippy::type_complexity)]
     pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64)>, usize, (usize, f64)) {
         let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
         let s = w.shared.state.lock().expect("the writer's state");

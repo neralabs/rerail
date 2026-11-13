@@ -160,10 +160,15 @@ fn head(plan: &str) -> String {
     name.to_owned()
 }
 
+/// A profiled path and the plan it ran (or a part and its head relation).
+type PathPlan = (String, String);
+/// A head's CPU, work and plans.
+type HeadTotal = (f64, u64, usize);
+
 /// The native joins summed by part and head relation: CPU (while profiling, per probe) and work (rows into every
 /// step); written to the report and as `heads.tsv`.
-pub fn by_head(r: &mut String, native: &[(&(String, String), &Vec<(u64, u64)>)], cpu: &BTreeMap<(String, String), f64>) -> String {
-    let mut heads: BTreeMap<(String, String), (f64, u64, usize)> = BTreeMap::new();
+pub fn by_head(r: &mut String, native: &[(&PathPlan, &Vec<(u64, u64)>)], cpu: &BTreeMap<PathPlan, f64>) -> String {
+    let mut heads: BTreeMap<PathPlan, HeadTotal> = BTreeMap::new();
     for ((p, plan), steps) in native {
         let part = kind(&format!("{p}/engine run (joins)"));
         let e = heads.entry((part, head(plan))).or_default();
@@ -172,7 +177,7 @@ pub fn by_head(r: &mut String, native: &[(&(String, String), &Vec<(u64, u64)>)],
         e.2 += 1;
     }
     let (all_cpu, all_work) = heads.values().fold((0.0, 0u64), |(c, w), e| (c + e.0, w + e.1));
-    let mut rows: Vec<(&(String, String), &(f64, u64, usize))> = heads.iter().collect();
+    let mut rows: Vec<(&PathPlan, &HeadTotal)> = heads.iter().collect();
     rows.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(b.1.1.cmp(&a.1.1)));
     let _ = writeln!(r, "\n== Native joins by head relation ({all_cpu:.2} s CPU in the probes, {all_work} work in all; a copy lowering made counts as its relation)");
     let _ = writeln!(r, "{:>9} {:>6} {:>13} {:>6}  part / head", "cpu s", "%", "work", "plans");

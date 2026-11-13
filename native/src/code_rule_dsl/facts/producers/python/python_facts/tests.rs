@@ -42,7 +42,7 @@
         };
         binding
     }
-    fn text<'a>(source: &'a str, target: Option<Target>) -> &'a str {
+    fn text(source: &str, target: Option<Target>) -> &str {
         let (start, end) = target.expect("binding target").range;
         &source[start..end]
     }

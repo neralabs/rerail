@@ -319,7 +319,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
     let program = CLOSURE.replace(".input edge", "edge(1, 2). edge(2, 3). edge(3, 4).");
     for (name, modes) in [("sql", ""), ("native", "program")] {
         let report = crate::code_rule_dsl::tools::logic(
-            &[program.clone()],
+            std::slice::from_ref(&program),
             &root,
             None,
             &dir.path().join(name),

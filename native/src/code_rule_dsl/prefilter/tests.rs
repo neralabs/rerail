@@ -196,7 +196,8 @@ fn no_relation_stores_a_row_per_node() {
         let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);
         nodes += doc.transducer_len();
     }
-    for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
+    {
+        let source = "import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n";
         nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");

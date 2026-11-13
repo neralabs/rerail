@@ -297,8 +297,8 @@ fn origins<'t>(
         out.push(unparen(value));
     }
     if let Some(site) = binding.site.and_then(find) {
-        if site.kind() == "assignment" {
-            if let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
+        if site.kind() == "assignment"
+            && let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
                 let list = |node: &Node<'_, TapeDoc>| {
                     matches!(
                         node.kind().as_ref(),
@@ -324,13 +324,11 @@ fn origins<'t>(
                 let target = elements(&left)
                     .iter()
                     .rposition(|child| child.kind() == "identifier" && child.text() == owner.text());
-                if let Some(target) = target.filter(|_| list(&left) && list(&right)) {
-                    if let Some(value) = elements(&right).get(target) {
+                if let Some(target) = target.filter(|_| list(&left) && list(&right))
+                    && let Some(value) = elements(&right).get(target) {
                         out.push(unparen(value.clone()));
                     }
-                }
             }
-        }
         if with_context
             && site.kind() == "as_pattern"
             && site.parent().is_some_and(|p| p.kind() == "with_item")
@@ -624,11 +622,10 @@ fn execute_sql<'t>(
             if matches!(value.kind().as_ref(), "identifier" | "attribute") {
                 value_demand.insert(v);
             }
-            if reading == 0 && value.kind() == "call" {
-                if let (Some(callee), Some(arguments)) =
+            if reading == 0 && value.kind() == "call"
+                && let (Some(callee), Some(arguments)) =
                     (value.field("function"), value.field("arguments"))
-                {
-                    if matches!(callee.kind().as_ref(), "identifier" | "attribute")
+                    && matches!(callee.kind().as_ref(), "identifier" | "attribute")
                         && arguments.kind() == "argument_list"
                         && callee
                             .next()
@@ -640,8 +637,6 @@ fn execute_sql<'t>(
                             constructs.push(&[owner.doc as i64, id(v), id(callee)]);
                         }
                     }
-                }
-            }
         }
     }
     metrics.origin_rows = origin_rows.len();

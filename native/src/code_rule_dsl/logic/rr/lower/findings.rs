@@ -63,8 +63,7 @@ impl Lowerer {
         let mut rest = finding.message.as_str();
         // `{{` and `}}` are a brace of the text (O111), as the converter writes a literal one (`convert::policy`).
         let mut text = String::new();
-        loop {
-            let Some(start) = rest.find(['{', '}']) else { break };
+        while let Some(start) = rest.find(['{', '}']) {
             text.push_str(&rest[..start]);
             let brace = &rest[start..start + 1];
             if rest[start + 1..].starts_with(brace) {

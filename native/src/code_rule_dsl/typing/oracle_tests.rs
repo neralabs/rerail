@@ -1607,7 +1607,7 @@ ats(s, p, l) :- struct__at(s, p, l).
         let _ = std::fs::remove_file(format!("{full_store}.phases"));
         // SAFETY: the spike's thread is the only one running between runs.
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(&run);
+        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(run);
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
         r
     };

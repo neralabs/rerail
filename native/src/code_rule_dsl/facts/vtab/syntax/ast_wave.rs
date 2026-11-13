@@ -111,6 +111,7 @@ const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
 const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
 
 /// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const METAL_FELL_BACK: &str = "ast matcher wave fell back to the CPU (its Metal run failed)";
 
 impl MatcherWave {

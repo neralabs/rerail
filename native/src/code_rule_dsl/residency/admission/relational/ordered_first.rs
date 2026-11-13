@@ -181,7 +181,7 @@ impl syntax::Source for Output {
             0 => ctx.set_result(&self.scopes[row]),
             1 => ctx.set_result(&self.roots[row]),
             2 => ctx.set_result(&self.sinks[row]),
-            _ => ctx.set_result(&self.locations[row]),
+            _ => ctx.set_result(self.locations[row]),
         }
     }
     fn charge(&self, count: usize) -> rusqlite::Result<()> {

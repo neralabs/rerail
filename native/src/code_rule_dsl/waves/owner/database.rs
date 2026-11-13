@@ -49,11 +49,10 @@ impl Database {
         self.profiler().map(|p| p.scope(fields()))
     }
     pub fn profile_checkpoint(&self) {
-        if let Some(profiler) = &self.profiler {
-            if let Err(error) = profiler.checkpoint(self) {
+        if let Some(profiler) = &self.profiler
+            && let Err(error) = profiler.checkpoint(self) {
                 eprintln!("SQL profile checkpoint failed: {error}");
             }
-        }
     }
     /// Forget execution bookkeeping after a standalone SQL session drops its generated objects.
     pub fn reset_execution(&self) {

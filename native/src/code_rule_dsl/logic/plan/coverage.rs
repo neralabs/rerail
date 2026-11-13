@@ -276,7 +276,9 @@ fn sorted(mut v: Vec<String>) -> Vec<String> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<String>, bool, Vec<(String, placement::Ran)>), String> {
+    // A run's rows of `rel`, whether it ran natively, and where its strata ran.
+    type ProbeRun = (Vec<String>, bool, Vec<(String, placement::Ran)>);
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<ProbeRun, String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));

@@ -19,6 +19,7 @@
 
 use crate::kernel::Kernel;
 use crate::lanes::Lane;
+#[cfg(target_os = "macos")]
 use crate::score::Sample;
 
 /// A launch's cost on a lane, as the model predicts it: its one-launch job's wall and host CPU seconds.

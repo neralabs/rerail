@@ -6,37 +6,39 @@ use super::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 fn input(state: &State) -> Input {
-    let mut i = Input::default();
-    i.spans = state
-        .spans
-        .iter()
-        .map(|(p, s)| Span {
-            path: p.clone(),
-            own_cpu: s.own,
-            calls: s.calls,
-        })
-        .collect();
-    i.sql = state
-        .sql
-        .iter()
-        .map(|((p, q), s)| Sql {
-            path: p.clone(),
-            text: q.clone(),
-            runs: s.runs,
-            vm: s.vm,
-            autoindex: s.autoindex,
-        })
-        .collect();
-    i.joins = state
-        .native
-        .iter()
-        .map(|((p, q), steps)| Join {
-            path: p.clone(),
-            plan: q.clone(),
-            steps: steps.clone(),
-            cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
-        })
-        .collect();
+    let mut i = Input {
+        spans: state
+            .spans
+            .iter()
+            .map(|(p, s)| Span {
+                path: p.clone(),
+                own_cpu: s.own,
+                calls: s.calls,
+            })
+            .collect(),
+        sql: state
+            .sql
+            .iter()
+            .map(|((p, q), s)| Sql {
+                path: p.clone(),
+                text: q.clone(),
+                runs: s.runs,
+                vm: s.vm,
+                autoindex: s.autoindex,
+            })
+            .collect(),
+        joins: state
+            .native
+            .iter()
+            .map(|((p, q), steps)| Join {
+                path: p.clone(),
+                plan: q.clone(),
+                steps: steps.clone(),
+                cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
+            })
+            .collect(),
+        ..Input::default()
+    };
     let reasons: Vec<_> = state
         .decisions
         .keys()
@@ -56,8 +58,8 @@ fn input(state: &State) -> Input {
             "candidate spike rewrite" => i.late_candidate_rewrite = true,
             "composed input work" => {
                 let w: Vec<_> = text.split_whitespace().collect();
-                if w.len() == 10 {
-                    if let (Ok(filters), Ok(batches), Ok(rows)) = (
+                if w.len() == 10
+                    && let (Ok(filters), Ok(batches), Ok(rows)) = (
                         w[1].parse::<u64>(),
                         w[3].parse::<u64>(),
                         w[5].parse::<u64>(),
@@ -76,7 +78,6 @@ fn input(state: &State) -> Input {
                             });
                         }
                     }
-                }
             }
             "projection demand" => {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {

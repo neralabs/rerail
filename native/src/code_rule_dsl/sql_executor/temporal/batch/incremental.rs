@@ -279,9 +279,7 @@ pub fn affected(
             })
         })
         .collect::<Option<Vec<_>>>();
-    let Some(atoms) = atoms else {
-        return None;
-    };
+    let atoms = atoms?;
     // Both queries use the original atom order. Anchoring can then move a pivot
     // without changing which columns its signed input supplies.
     let mut affected = Vec::new();

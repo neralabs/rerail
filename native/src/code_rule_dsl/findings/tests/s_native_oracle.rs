@@ -260,6 +260,7 @@ impl<'a> Native<'a> {
 }
 
 /// P's `anchor_plans` over the policy's AST clauses, with each P plan keyed by its W plan.
+#[allow(clippy::type_complexity)]
 fn anchor_plans(
     rule: &crate::code_rule_dsl::model::CompiledCodeRule,
 ) -> (

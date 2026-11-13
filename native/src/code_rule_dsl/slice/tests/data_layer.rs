@@ -64,6 +64,7 @@ fn with_options(document: &mut serde_json::Value, options: &serde_json::Map<Stri
 }
 
 /// Each policy split into what the slice runs (compiled) and the clauses it refused, with reasons.
+#[allow(clippy::type_complexity)]
 fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, String)>), String> {
     let mut document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut refused = Vec::new();

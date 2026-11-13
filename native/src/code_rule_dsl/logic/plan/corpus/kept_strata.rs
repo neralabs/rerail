@@ -234,7 +234,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
         let reads = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string()));
         let natives = scc.iter().filter_map(|r| prog.natives.get(r)).flat_map(|n| n.reads().into_iter().map(str::to_owned).collect::<Vec<_>>());
         let tree = rules.iter().any(|r| r.body.iter().any(|l| matches!(l, crate::code_rule_dsl::logic::front::Literal::Nearest { .. })));
-        let tree = tree.then(|| super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>()).unwrap_or_default();
+        let tree = if tree { super::retain::TREE.iter().map(|r| (*r).to_owned()).collect::<Vec<_>>() } else { Default::default() };
         for r in reads.chain(natives).chain(tree) {
             if scc.contains(&r) {
                 continue;
@@ -380,7 +380,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
         // The inputs it was derived from, each with its digest: one not digested this run leaves it unkept.
-        let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
+        let Some(reads) = part.cones.get(rel).and_then(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()) else { continue };
         let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
         let digest = crate::code_rule_dsl::logic::plan::rows_digest(width, &rows, n);

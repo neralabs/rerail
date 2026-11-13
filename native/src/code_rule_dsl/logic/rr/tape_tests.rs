@@ -316,7 +316,7 @@ fn statements_from_the_tape_are_the_parsers() {
                 pending.push(path);
                 continue;
             }
-            if !path.extension().is_some_and(|e| e == "rr") {
+            if path.extension().is_none_or(|e| e != "rr") {
                 continue;
             }
             let src = std::fs::read_to_string(&path).unwrap();

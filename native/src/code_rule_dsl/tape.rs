@@ -1378,7 +1378,7 @@ impl TapeImage {
                 }
                 None => SENTINEL,
             };
-            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
+            let flags = (u8::from(node.extra) * CODE_EXTRA) | (u8::from(node.error) * CODE_ERROR) | (u8::from(node.missing) * CODE_MISSING);
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {

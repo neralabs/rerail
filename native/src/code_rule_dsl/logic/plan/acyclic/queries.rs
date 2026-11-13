@@ -176,11 +176,10 @@ fn inline(
             }
         }
         rewrite(&mut inner, |expr| {
-            if let E::Qualified { alias, .. } = expr {
-                if let Some(new) = aliases.get(alias) {
+            if let E::Qualified { alias, .. } = expr
+                && let Some(new) = aliases.get(alias) {
                     *alias = new.clone();
                 }
-            }
         });
         for item in &mut inner.from {
             item.alias = aliases[&item.alias].clone();

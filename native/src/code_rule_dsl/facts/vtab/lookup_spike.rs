@@ -48,7 +48,6 @@ fn run<const TRACE: bool>(r: &Relation, column: usize, keys: &[i64], mut mode: M
     match mode {
         Mode::Point => {
             work.point=1;
-            drop(value);
             for &key in keys {
                 let lo=index.partition_point(|&row| {if TRACE {reads+=1;} r.value(row as usize,column)<key});
                 let hi=index.partition_point(|&row| {if TRACE {reads+=1;} r.value(row as usize,column)<=key});

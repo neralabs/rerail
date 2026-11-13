@@ -23,11 +23,10 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
     drop(span);
-    if profiling {
-        if let Some(directory) = super::logic::profile::directory() {
+    if profiling
+        && let Some(directory) = super::logic::profile::directory() {
             super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
-    }
     result
 }
 
@@ -442,25 +441,6 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     Ok(text)
 }
 
-
-#[cfg(test)]
-mod settings_tests {
-    #[test]
-    fn settings_become_env_facts_for_a_program_that_declares_env() {
-        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
-        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
-        let program = ".decl env(key: symbol, value: symbol)\n";
-        let with = super::with_settings(program, &settings);
-        assert!(with.contains("env(\"quote\", \"a\\\"b\").") && with.contains("env(\"python.version\", \"3.13\")."), "{with}");
-        // A program that does not declare `env` is unchanged.
-        assert_eq!(super::with_settings(".decl envy(x: symbol)\n", &settings), ".decl envy(x: symbol)\n");
-    }
-}
-
 // ---------------------------------------------------------------- the command line
 //
 //   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
@@ -836,4 +816,23 @@ fn policy(file: &str) -> Result<(String, String, String), String> {
 
 fn read(file: &str) -> Result<String, String> {
     std::fs::read_to_string(file).map_err(|error| format!("{file}: {error}"))
+}
+
+
+#[cfg(test)]
+mod settings_tests {
+    #[test]
+    fn settings_become_env_facts_for_a_program_that_declares_env() {
+        let root = std::env::temp_dir().join(format!("rerail-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("rerail.env"), "# comment\npython.version = 3.12\nquote=a\"b\n").unwrap();
+        let settings = super::settings(&root, &["python.version=3.13".into()]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(settings, vec![("quote".into(), "a\"b".into()), ("python.version".into(), "3.13".into())]);
+        let program = ".decl env(key: symbol, value: symbol)\n";
+        let with = super::with_settings(program, &settings);
+        assert!(with.contains("env(\"quote\", \"a\\\"b\").") && with.contains("env(\"python.version\", \"3.13\")."), "{with}");
+        // A program that does not declare `env` is unchanged.
+        assert_eq!(super::with_settings(".decl envy(x: symbol)\n", &settings), ".decl envy(x: symbol)\n");
+    }
 }

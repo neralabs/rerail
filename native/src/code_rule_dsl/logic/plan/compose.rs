@@ -135,11 +135,10 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     }
     let mut frame_counts = BTreeMap::<String, usize>::new();
     for (rel, op) in &prog.natives {
-        if needed.contains(rel) {
-            if let super::super::front::Native::Python { input, .. } | super::super::front::Native::PythonCandidates {input,..} = op {
+        if needed.contains(rel)
+            && let super::super::front::Native::Python { input, .. } | super::super::front::Native::PythonCandidates {input,..} = op {
                 *frame_counts.entry(input.clone()).or_default() += 1;
             }
-        }
     }
     let mut frames = BTreeMap::new();
     let mut frame_defs = Vec::new();
@@ -333,7 +332,6 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
             dependencies,
         );
     }
-    drop(add);
     defs.extend(frame_defs);
     if defs.iter().any(|d| d.contains("rdl_int")) {
         defs.insert(
@@ -402,11 +400,10 @@ fn count_reads(block: &mut Select, reads: &mut BTreeMap<String, usize>) {
 /// Apply physical relation names through joins, aggregates and correlated subqueries.
 fn bind_names(block: &mut Select, names: &HashMap<String, String>) {
     for item in &mut block.from {
-        if let Relation::Derived { rel, delta: false } | Relation::Input { rel, .. } = &item.relation {
-            if let Some(table) = names.get(rel) {
+        if let Relation::Derived { rel, delta: false } | Relation::Input { rel, .. } = &item.relation
+            && let Some(table) = names.get(rel) {
                 item.relation = Relation::Bound { rel: rel.clone(), table: ident(table).into_owned() };
             }
-        }
     }
     let ons = block.from.iter_mut().flat_map(|item| match &mut item.join {
         Join::On(on) => on.iter_mut().collect::<Vec<_>>(), Join::Cross => Vec::new(),

@@ -192,7 +192,7 @@ class Facades:
         `my_dir`: where the inline module's plain `mod x;` children are (the original's directory for them)."""
         c = self.c
         if n.owner in ALLOW.get(c, ()):
-            lines.append(f'{indent}pub use {ident(n.owner)}::{n.path[len("crate::"):]}::*;\n')
+            lines.append(f'{self.reexport(indent)}pub use {ident(n.owner)}::{n.path[len("crate::"):]}::*;\n')
         globbed = self.v(n.owner, n) if n.owner in ALLOW.get(c, ()) else set()
         for k in sorted(n.children, key=lambda k: k.name):
             self.child(k, indent, my_dir, lines, globbed=globbed)
@@ -226,7 +226,12 @@ class Facades:
             lines.append(f'{indent}}}\n')
         elif k.owner in ALLOW.get(c, ()):
             # pub: the module's glob in the crates above carries it
-            lines.append(f'{cfg}{indent}pub use {ident(k.owner)}::{k.path[len("crate::"):]};\n')
+            lines.append(f'{cfg}{self.reexport(indent)}pub use {ident(k.owner)}::{k.path[len("crate::"):]};\n')
+
+    def reexport(self, indent):
+        """The engine's re-exports need not be read (its modules are private, its lib build reads less than its tests);
+        the crates' own lib.rs allows `unused_imports` whole."""
+        return f'{indent}#[allow(unused_imports)]\n{indent}' if self.c == ENGINE else indent
 
 
 def emit_crate(c, nodes, v):

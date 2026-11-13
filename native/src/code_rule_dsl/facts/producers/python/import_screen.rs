@@ -112,9 +112,7 @@ impl Imports {
                     Some(_name) => {
                         // `import a.b` binds a to a, not to a.b.
                         let Some(head) = item
-                            .children()
-                            .filter(named)
-                            .next()
+                            .children().find(named)
                             .and_then(|head| identifier(&head))
                         else {
                             self.opaque = true;
@@ -294,8 +292,7 @@ impl Imports {
                 _=>None,
             }
         };
-        let mut out=Self::default();
-        out.opaque=f.syntax_errors;
+        let mut out=Self { opaque:f.syntax_errors, ..Self::default() };
         for name in ["import_statement","import_from_statement","future_import_statement"] {
             let code=catalog.kind_id(name); if code==0 {continue;}
             for &n in f.of_kind(kind_atom(facts_tag(f),code)) {

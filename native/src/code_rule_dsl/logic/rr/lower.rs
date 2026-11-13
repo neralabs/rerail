@@ -1730,7 +1730,7 @@ impl Lowerer {
         let [c, f, r, o, STerm::Var(input), STerm::Var(targets), STerm::Str(context), STerm::Str(member)] = args.as_slice() else { return false };
         let cols = [c, f, r, o];
         let distinct: BTreeSet<_> = cols.iter().filter_map(|t| if let STerm::Var(x) = t { Some(x) } else { None }).collect();
-        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols.into_iter()) || self.prog.natives.contains_key(&h.rel) {
+        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols) || self.prog.natives.contains_key(&h.rel) {
             return false;
         }
         if !crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS.contains(&context.as_str()) {
@@ -2197,7 +2197,7 @@ impl Lowerer {
             // The scalar fallback treats an uncompiled matcher as false. A literal in
             // a policy must therefore be validated before it reaches that fallback.
             if op == "rx" && let STerm::Str(re) = p {
-                crate::code_rule_dsl::logic::strings::Matcher::new("rx", &[re.clone()])
+                crate::code_rule_dsl::logic::strings::Matcher::new("rx", std::slice::from_ref(re))
                     .map_err(|e| Error::Syntax(format!("match regex: {e}")))?;
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
@@ -2257,7 +2257,7 @@ impl Lowerer {
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
                 if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
-                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                    if self.prog.decls.get(name).is_none_or(|cols| cols.len() != 1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
@@ -2632,8 +2632,7 @@ impl Lowerer {
         // Or left out: a group binding no asked variable (`root(a), (s = a ; within(s, a))` before `kind(s,
         // "string")` asked for s) only narrows what later groups bind, at the cost of its own rows.
         let mut left: BTreeSet<usize> = BTreeSet::new();
-        for k in 0..context.len() {
-            let g = groups[k];
+        for &g in &groups {
             if whole.contains(&g) || left.contains(&g) || projected.iter().any(|(p, _)| *p == g) {
                 continue;
             }

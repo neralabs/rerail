@@ -941,11 +941,10 @@ struct Cursor {
 impl Cursor {
     fn start_stream(&mut self) {
         if !self.cache_rows||self.direct.is_some() {return;}
-        if let Some(rows)=&self.selected {
-            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+        if let Some(rows)=&self.selected
+            && rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
                 self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
             }
-        }
         if self.selected.is_none()&&self.range.len()>128 {
             self.stream=self.source.row_stream(self.range.clone(),self.reverse);
             if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}

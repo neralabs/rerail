@@ -6,7 +6,9 @@
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
 use rerail_compiler::program::Words as Program;
-use rerail_compiler::{Error, block, block_native, native_cpu_block, native_ir};
+use rerail_compiler::{block, block_native, native_cpu_block, native_ir};
+#[cfg(target_os = "macos")]
+use rerail_compiler::Error;
 #[cfg(target_os = "macos")]
 use rerail_metal as metal_program_backend;
 
@@ -64,9 +66,13 @@ pub fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
     out
 }
 
+/// Each executor's outputs, with the executor's name.
+pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
+
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     native: block_native::BlockNative,
     cranelift: native_cpu_block::CompiledBlock,
 }
@@ -81,8 +87,10 @@ impl<'a> Executors<'a> {
     /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
     /// executor whose run would take more launches than the budget (`metal_launch_budget`):
     /// those are named in the second list.
-    pub fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
+    pub fn run(&self, bytes: &[u8], metal: bool) -> (Runs, Vec<String>) {
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut skipped = Vec::new();
         #[cfg(target_os = "macos")]
         if metal {

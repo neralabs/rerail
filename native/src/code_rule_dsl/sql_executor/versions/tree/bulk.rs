@@ -40,9 +40,7 @@ impl<V: Clone> Node<V> {
             old: &Link<V>,
             same: &F,
         ) -> Link<V> {
-            let Some(i) = at else {
-                return None;
-            };
+            let i = at?;
             let matched = old.as_ref().filter(|n| n.key == entries[i].0);
             let (before, after) = if let Some(n) = matched {
                 (n.left.clone(), n.right.clone())

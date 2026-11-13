@@ -487,7 +487,7 @@ fn compile_case(name: &str, source: &str) -> Result<Case, String> {
 
 fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
     words.truncate(n.div_ceil(64));
-    if n % 64 != 0
+    if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
     {
         *last &= (1u64 << (n % 64)) - 1;
@@ -611,6 +611,7 @@ fn executors_equal_the_interpreter(metal: bool) {
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
     #[cfg(target_os = "macos")]
@@ -645,6 +646,8 @@ fn executors_equal_the_interpreter(metal: bool) {
             }
         }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal;
     let mut differ: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     for (executor, got) in &runs {
         assert_eq!(got.len(), files.len(), "{executor}");
@@ -713,7 +716,7 @@ fn tree_inputs(p: &TreeParams, seed: u64) -> Vec<Vec<u8>> {
             Atoms::Keywords => &["true", "null", "truex", "nul", "q"],
             Atoms::Numbers => &["0", "-12", "3.5", "7.", "-", "1a", "00", "4.2.1"],
         };
-        out.push_str(*rng.pick(words));
+        out.push_str(rng.pick::<&str>(words));
     }
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     for _ in 0..40 {
@@ -889,6 +892,7 @@ fn a_file_on_every_executor() {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
     let want = case.program.block_programs[0].interpret(&bytes);
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let native = native_ir::lower(&case.program, 0, 0).expect("lowers").block_programs.remove(0);
     for (name, k) in &case.checked {
         eprintln!("{name:>8} interpreter {:x?}", want[*k]);

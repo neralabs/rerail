@@ -663,7 +663,7 @@ impl<'a> Reader<'a> {
             gates.push((k, (text(&row[1])?, Gate { src, rel: text(&row[2])?, level: int(&row[3])? as usize, quiet: indexed(quiet.get(&k))?, deps: indexed(deps.get(&k))? })));
         }
         prog.gates = ordered(gates);
-        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
+        prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(bad)?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
@@ -822,7 +822,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
         }
         fn len(&mut self) -> Result<usize, String> {
-            usize::try_from(self.u64()?).map_err(|e| bad(e))
+            usize::try_from(self.u64()?).map_err(bad)
         }
     }
     let mut at = At(bytes, 0);
@@ -830,7 +830,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     let mut table = Vec::with_capacity(count.min(1 << 20));
     for _ in 0..count {
         let n = at.len()?;
-        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
+        table.push(std::str::from_utf8(at.take(n)?).map_err(bad)?.to_owned());
     }
     let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
     let mut facts = Facts::new();
@@ -856,6 +856,22 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
         return Err(bad("bytes after the facts"));
     }
     Ok(facts)
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }
 
 #[cfg(test)]
@@ -956,20 +972,4 @@ pub mod tests {
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
-}
-
-/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
-/// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
-    use sha2::Digest as _;
-    struct Hashing(sha2::Sha256);
-    impl std::fmt::Write for Hashing {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
-            self.0.update(s.as_bytes());
-            Ok(())
-        }
-    }
-    let mut out = Hashing(sha2::Sha256::new());
-    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
-    out.0.finalize().into()
 }

@@ -447,7 +447,7 @@ impl Within {
                     continue;
                 }
                 let (sizes, depths) = *columns.get_or_insert_with(|| (p.sizes(), p.depths()));
-                if !until.is_some_and(|u| l <= u) {
+                if until.is_none_or(|u| l > u) {
                     until = Some(l + sizes[l as usize]);
                 }
                 let (s, d) = (i64::from(sizes[l as usize]), i64::from(depths[l as usize]));

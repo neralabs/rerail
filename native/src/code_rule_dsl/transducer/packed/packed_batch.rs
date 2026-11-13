@@ -922,7 +922,7 @@ impl PackedBatch {
                 Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let capacities = self
+        self
             .tasks
             .iter()
             .map(|task| {
@@ -1017,8 +1017,7 @@ impl PackedBatch {
                     properties,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>();
-        capacities
+            .collect::<Result<Vec<_>, Error>>()
     }
 
     /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are

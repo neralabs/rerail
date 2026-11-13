@@ -612,9 +612,9 @@ fn split_in(
     // Python fact operators preserve each demanded node's document. Their proof rules must still
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
-        crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
+        crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !(constants.contains(targets) || prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
-            !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
+            !(constants.contains(t) || prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
     let mut local: BTreeSet<String> = derived.iter().filter(|r| match was(r) { Some(p) => p.local.contains(**r), None => !cross_native(r) }).map(|r| (*r).to_owned()).collect();
@@ -1138,13 +1138,10 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
             continue;
         }
         let at = |name: &str| columns.iter().position(|c| *c == name);
-        match (rel.as_str(), at("p"), at("c")) {
-            ("child" | "field", Some(p), Some(c)) => {
-                let other = (0..columns.len()).find(|&i| i != p && i != c);
-                keys.insert(rel.clone(), std::iter::once(vec![c]).chain(other.map(|o| vec![p, o])).collect());
-                continue;
-            }
-            _ => {}
+        if let ("child" | "field", Some(p), Some(c)) = (rel.as_str(), at("p"), at("c")) {
+            let other = (0..columns.len()).find(|&i| i != p && i != c);
+            keys.insert(rel.clone(), std::iter::once(vec![c]).chain(other.map(|o| vec![p, o])).collect());
+            continue;
         }
         let Some(k) = at("n") else { continue };
         let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(t.as_str(), "node" | "loc" | "span") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
@@ -1252,8 +1249,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base:
         let source = |a: &Atom, tainted: &BTreeSet<String>| !a.neg && !key.contains_key(a.rel.as_str()) && (tainted.contains(a.rel.as_str()) || (is_base(&a.rel) && reaches_nodes(&a.rel)));
         for (rel, native) in &cross.natives {
             for r in native.reads() {
-                if key.contains_key(r) && semi.remove(&root(r)) {
-                }
+                if key.contains_key(r) { semi.remove(&root(r)); }
                 if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
                     tainted.insert(rel.clone());
                 }
@@ -1293,8 +1289,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base:
                 tainted.insert(rule.head.rel.to_string());
             }
         }
-        if cross.outputs.iter().any(|o| tainted.contains(o)) && semi.remove("node") {
-        }
+        if cross.outputs.iter().any(|o| tainted.contains(o)) { semi.remove("node"); }
         if semi.len() == semi_before && tainted.len() == tainted_before {
             break;
         }

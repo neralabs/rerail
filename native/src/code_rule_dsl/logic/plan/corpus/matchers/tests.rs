@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
-use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
-use std::collections::{BTreeSet, HashMap};
+use crate::code_rule_dsl::logic::front::{Literal, Term};
+use std::collections::BTreeSet;
 
 /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node
 /// to its document only where the rule reads the document; an atom with captures is left as written.
@@ -139,7 +139,7 @@ fn a_nested_file_path_is_the_documents() {
     let policy = root.with_extension("policy.rr");
     let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
     std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
     let mut hits: Vec<(String, i64)> = report["diagnostics"]

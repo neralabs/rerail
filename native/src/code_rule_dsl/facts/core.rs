@@ -148,6 +148,7 @@ pub struct Token {
     pub end: u32,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).

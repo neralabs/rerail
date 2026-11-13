@@ -225,11 +225,9 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
             .map(|job| work(job, &mut grammars))
             .collect()
     } else {
-        (|| {
-            jobs.into_par_iter()
-                .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
-                .collect()
-        })()
+        jobs.into_par_iter()
+            .map_init(BTreeMap::new, |grammars, job| work(job, grammars))
+            .collect()
     })
 }
 

@@ -70,11 +70,10 @@ fn gaps() -> Vec<Gap> {
         let mut named: Vec<Vec<(u32, String)>> = vec![Vec::new(); t.len()];
         let mut toks: Vec<Vec<Tok>> = (0..t.len()).map(|_| Vec::new()).collect();
         for (i, n) in t.iter().enumerate() {
-            if let Some(p) = n.parent {
-                if !n.extra && n.kind < FIRST_ANONYMOUS {
+            if let Some(p) = n.parent
+                && !n.extra && n.kind < FIRST_ANONYMOUS {
                     named[p as usize].push((n.start, label(n)));
                 }
-            }
             let _ = i;
         }
         // The nodes on the path from the root to the last node started, by preorder.

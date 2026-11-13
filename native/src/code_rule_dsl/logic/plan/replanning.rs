@@ -90,11 +90,10 @@ impl Watch {
     }
     pub fn rows(&mut self, rel: usize, rows: i64) {
         let old = self.rows[rel].replace(rows);
-        if old.is_none_or(|old| (old == 0) != (rows == 0)) {
-            if let Some(version) = self.versions[rel].first() {
+        if old.is_none_or(|old| (old == 0) != (rows == 0))
+            && let Some(version) = self.versions[rel].first() {
                 for &p in &version.readers { self.dirty[p] = true; }
             }
-        }
     }
     pub fn delta(&mut self, rel: usize, rows: i64) {
         self.deltas[rel] = rows;

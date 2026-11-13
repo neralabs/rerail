@@ -24,7 +24,7 @@ fn blob(n: u8) -> [u8; 32] {
 fn root(store: &ContentStore, n: u8, a: u8) -> HashKey {
     let entry = GitTreeEntry { name: "a.py".to_owned(), mode: 0o100644, target: HashKey::git_sha1([a; 20]) };
     let tree = GitTree { id: HashKey::git_sha1([n; 20]), prefix: String::new(), entries: vec![entry] };
-    store.put_git_trees_bulk(&[tree.clone()]).unwrap();
+    store.put_git_trees_bulk(std::slice::from_ref(&tree)).unwrap();
     tree.id
 }
 

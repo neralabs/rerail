@@ -838,7 +838,7 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     let name = |v: &String| to.get(v).cloned().unwrap_or_else(|| v.clone());
     match l {
         Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, to)).collect(), ..a.clone() }),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op: *op, r: term(r, to) },
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op, r: term(r, to) },
         Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
         other => other.clone(),
     }
@@ -1232,11 +1232,9 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                             if let Literal::Atom(a) = l
                                 && !a.neg
                                 && let Some(k) = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))
-                            {
-                                if let Some(&d) = model.ndv.get(&(a.rel.to_string(), k)) {
+                                && let Some(&d) = model.ndv.get(&(a.rel.to_string(), k)) {
                                     ndv = ndv.min(d);
                                 }
-                            }
                         }
                     }
                     model.ndv.insert((rel.clone(), c), ndv.max(1.0));

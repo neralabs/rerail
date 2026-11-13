@@ -865,7 +865,7 @@ fn violation(when: &str, what: &str) -> ! {
 pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
             let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
             strict_statement("sqlite", &text);
@@ -874,7 +874,7 @@ pub fn strict_on_every_connection() {
     }
     unsafe extern "C" fn opened(db: *mut ffi::sqlite3, _: *mut *mut std::ffi::c_char, _: *const ffi::sqlite3_api_routines) -> std::ffi::c_int {
         // SAFETY: SQLite calls this with a connection it has just opened.
-        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe { ffi::sqlite3_trace_v2(db, ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::null_mut()) };
         ffi::SQLITE_OK
     }
     if strict() {
@@ -1117,6 +1117,7 @@ pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String
 }
 
 /// Decisions a reused step made when it ran (`decisions_since`), stated for this run.
+#[allow(dead_code)] // decision 0063's counterpart of `decisions_since`; nothing calls it now
 pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) {
     if !on() {
         return;
@@ -1157,7 +1158,9 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.3} {:>5} {:>6} {:>6} {:>10}  {}", ms(t.cpu), ms(g.host()), ms(g.gpu), ms(t.gpu_estimate), g.runs, g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
-        let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
+        // A reason's strata, their CPU, and each stratum's CPU and key.
+        type ByReason<'k> = (u64, f64, Vec<(f64, &'k str)>);
+        let mut by: BTreeMap<&str, ByReason<'_>> = BTreeMap::new();
         for (key, t) in &refused {
             let e = by.entry(t.refused.as_deref().unwrap_or("")).or_default();
             e.0 += 1;

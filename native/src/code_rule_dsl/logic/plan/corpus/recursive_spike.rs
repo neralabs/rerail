@@ -269,11 +269,10 @@ impl Eval<'_> {
                 let mut set = vec![false; rule.slots];
                 for (a, v) in args.iter().zip(row) {
                     match a {
-                        Arg::Slot(s) if set[*s] => {
-                            if slots[*s] != *v {
+                        Arg::Slot(s) if set[*s]
+                            && slots[*s] != *v => {
                                 return;
                             }
-                        }
                         Arg::Slot(s) => {
                             slots[*s] = *v;
                             set[*s] = true;
@@ -596,7 +595,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
     let mut plans = vec![plan(BTreeSet::new(), None)?, plan(head_bound, None)?];
     // A negated seed (a row of the negated relation gone or new) binds the slots the rule binds elsewhere, and keeps
     // its literal: another row of that relation can still block the negation (`!opaque_dec($f, _)`).
-    let bound_slots: BTreeSet<usize> = lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. })).flat_map(|l| lit_slots(l)).collect();
+    let bound_slots: BTreeSet<usize> = lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. })).flat_map(&lit_slots).collect();
     for (i, l) in lits.iter().enumerate() {
         plans.push(match l {
             Lit::Atom { neg: true, .. } => plan(lit_slots(l).into_iter().filter(|s| bound_slots.contains(s)).collect(), None)?,
@@ -1968,7 +1967,7 @@ pub(in crate::code_rule_dsl) fn run(
                 kept_extra += usize::from(derived && !kept);
                 kept_missing += usize::from(kept && !derived);
                 if kept && !derived && kept_missing <= 6 && std::env::var_os("RERAIL_SPIKE_RECURSIVE_DIFF").is_some() {
-                    eprintln!("recursive spike:     kept, not derived over the old inputs: {}{:?}", c.ev.names[rel], c.ev.stores[rel].row(id as u32));
+                    eprintln!("recursive spike:     kept, not derived over the old inputs: {}{:?}", c.ev.names[rel], c.ev.stores[rel].row(id));
                 }
             }
         }

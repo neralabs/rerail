@@ -579,8 +579,7 @@ fn the_wave_program_is_a_compiled_plan() {
         store
             .candidate_transaction(false, |db| {
                 let mut statement = db.prepare("SELECT plan, decisions FROM compiled_plans WHERE compiler = 2 AND decisions <> '' ORDER BY plan")?;
-                let found = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>();
-                found
+                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()
             })
             .unwrap()
     };

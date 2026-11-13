@@ -111,8 +111,7 @@ impl ContentStore {
                 "overlay publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let identities = (|| {
-            publications
+        let identities = publications
                 .par_iter()
                 .map(|publication| {
                     validate_relative_path(publication.path)?;
@@ -129,8 +128,7 @@ impl ContentStore {
                         publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
-                .collect::<StoreResult<Vec<_>>>()
-        })()?;
+                .collect::<StoreResult<Vec<_>>>()?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
@@ -158,8 +156,7 @@ impl ContentStore {
         let initial_objects = existing.clone();
         // Source and tape are always independent Zstandard frames.
         // Hashing, lookup, compression, and validation finish before the transaction starts.
-        let mut prepared: Vec<PreparedOverlayPublication<'_>> = (|| {
-            identities
+        let mut prepared: Vec<PreparedOverlayPublication<'_>> = identities
                 .into_par_iter()
                 .zip(existing.into_par_iter())
                 .map(
@@ -194,8 +191,7 @@ impl ContentStore {
                         ))
                     },
                 )
-                .collect::<StoreResult<Vec<_>>>()
-        })()?;
+                .collect::<StoreResult<Vec<_>>>()?;
         let reused_sources = prepared.iter().filter(|item| item.2.is_some()).count();
         let reused_tapes = prepared.iter().filter(|item| item.5.is_some()).count();
         let compressed_sources = prepared.len() - reused_sources;

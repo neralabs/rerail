@@ -107,7 +107,6 @@ const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
-/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -178,7 +177,7 @@ impl Drop for WriteLockSection {
 
 /// Returns `(write sections entered, SHA-256 digests computed inside them)` on this thread
 /// since the last call, and resets both.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     (
         WRITE_LOCK_SECTIONS.with(|sections| sections.replace(0)),
@@ -639,6 +638,7 @@ pub struct ContentStore {
     decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
+    #[allow(clippy::type_complexity)]
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,

@@ -267,7 +267,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             }
         }
         let mut blockers: Vec<_> = blockers.into_iter().collect();
-        blockers.sort_by(|a, b| b.1.cmp(&a.1));
+        blockers.sort_by_key(|b| std::cmp::Reverse(b.1));
         format!(
             "{} of {} cross-file relations could be declared (a node column, reading only each other): {}; kept out by {}",
             closed.len(),

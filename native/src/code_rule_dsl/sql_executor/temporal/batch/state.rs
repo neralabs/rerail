@@ -191,11 +191,10 @@ impl Arena {
             .schedule
             .get(self.cursor)
             .ok_or_else(|| sql_error("SQL wave strata have no ready rule"))?;
-        if let Some((prior, choice)) = self.selection {
-            if prior == handle {
+        if let Some((prior, choice)) = self.selection
+            && prior == handle {
                 return Ok(choice as i64);
             }
-        }
         let choice = if stage >= self.plan.rules.len() {
             self.fold_stage(stage - self.plan.rules.len())?
                 .unwrap_or(stage)

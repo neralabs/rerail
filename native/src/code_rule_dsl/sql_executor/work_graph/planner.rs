@@ -237,8 +237,10 @@ impl Plan {
                     });
                 }
             } else {
-                let mut chunk = Group::default();
-                chunk.partitioned = true;
+                let mut chunk = Group {
+                    partitioned: true,
+                    ..Group::default()
+                };
                 for id in component {
                     if chunk.fits(&[id], request).is_none() && !chunk.nodes.is_empty() {
                         groups.push(chunk);

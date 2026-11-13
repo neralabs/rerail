@@ -193,7 +193,7 @@ impl syntax::Source for Published {
         self.charge(1)?;
         match column {
             0 => ctx.set_result(&self.paths[self.output.files[row] as usize]),
-            1 => ctx.set_result(&i64::from(self.output.nodes[row])),
+            1 => ctx.set_result(i64::from(self.output.nodes[row])),
             c => ctx.set_result(&self.output.values[c - 2][row]),
         }
     }

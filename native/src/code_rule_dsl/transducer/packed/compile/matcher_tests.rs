@@ -192,7 +192,7 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
         lowered - mismatched.len(),
         tapes.len(),
     );
-    slowest.sort_by(|left, right| right.0.cmp(&left.0));
+    slowest.sort_by_key(|right| std::cmp::Reverse(right.0));
     eprintln!("S1 time: W's matcher {oracle_time:?}, lowered {lowered_time:?}; slowest lowered: {:?}", &slowest[..slowest.len().min(5)]);
     for mismatch in &mismatched {
         eprintln!("  mismatch {mismatch}");

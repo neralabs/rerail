@@ -181,6 +181,8 @@ pub struct Line<'a> {
 }
 
 impl Line<'_> {
+    // A missing operand is an error, not the end of a sequence: no `Iterator`.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Token, String> {
         self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
     }

@@ -49,9 +49,7 @@ impl CallRules for Python {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables { table, module, .. }) = tables() else {
-            return None;
-        };
+        let FileTables { table, module, .. } = tables()?;
         Some(crate::code_rule_dsl::calls::summary::python::callee_at(
             &table,
             module.as_deref(),

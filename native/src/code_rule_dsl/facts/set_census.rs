@@ -266,6 +266,7 @@ fn thread_cpu() -> f64 {
 /// Decision 0045 step 2: the operations the prefilter's set programs run, on the dense sets (0024)
 /// and on the containers (`space::NodeSet`), over the same repository. Thread CPU time, building
 /// excluded; every result is checked equal between the two.
+#[allow(clippy::single_range_in_vec_init)]
 #[test]
 #[ignore = "a measurement over a repository on disk (RERAIL_SET_CENSUS_ROOT)"]
 fn set_operations() {

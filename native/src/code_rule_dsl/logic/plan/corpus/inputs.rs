@@ -401,7 +401,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => f.kind.to_string() }
 }
 
 fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
@@ -479,7 +479,6 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
             program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n), Value::Str(id)]));
             if base.is_none() {
-                return;
             }
         }
         Err(detail) => {

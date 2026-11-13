@@ -163,6 +163,8 @@ fn lookups_agree_with_scans() {
             |r| r.get(0),
         )
         .unwrap();
+    // `+` on every column reference hides the constraint from xBestIndex: SQLite scans and filters.
+    let column = regex::Regex::new(r"\b(n|p|c|d|kind|par|idx) ").unwrap();
     for (rel, filter) in [
         ("node", format!("n = {n}")),
         ("node", "d = 2".to_owned()),
@@ -191,8 +193,7 @@ fn lookups_agree_with_scans() {
             out
         };
         let indexed = key(&format!("SELECT * FROM {rel} WHERE {filter}"));
-        // `+` on every column reference hides the constraint from xBestIndex: SQLite scans and filters.
-        let hidden = regex::Regex::new(r"\b(n|p|c|d|kind|par|idx) ").unwrap().replace_all(&filter, "+$1 ");
+        let hidden = column.replace_all(&filter, "+$1 ");
         let scanned = key(&format!("SELECT * FROM {rel} WHERE {hidden}"));
         assert!(!indexed.is_empty() || filter.contains("0, 7"), "{rel} {filter}: no rows");
         assert_eq!(indexed, scanned, "{rel} {filter}");
@@ -746,7 +747,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
     // Counting and source/line access never allocate token spans.
-    for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
+    for (i, &span) in expected.iter().enumerate().skip(tokens) { assert_eq!(p.span(p.len()+i as u32),span); }
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
     for l in 0..p.core.len() {
