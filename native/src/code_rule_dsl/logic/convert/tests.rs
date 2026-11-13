@@ -1292,6 +1292,9 @@ const SAMPLED: usize = 2;
 /// few threads, each keeping its own prepared programs.
 #[test]
 fn a_sample_of_the_replay_gives_the_recorded_findings() {
+    // Every check's sampled events through its prepared programs: about 11 minutes on CI's 4-vCPU runner (2 cores,
+    // hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let start = std::time::Instant::now();
     let baseline = Baseline::read().unwrap_or_else(|e| panic!("{e}"));
     let events = events();

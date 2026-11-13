@@ -161,6 +161,9 @@ fn compare(rule: &std::path::Path, adjust: &Adjust, files: &[(String, String)], 
 /// `reference_rows`, which its relational stages read.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
+    // Every event of the two policies, each run and compared with W's graph: about 11 minutes on CI's 4-vCPU runner (2
+    // cores, hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("references");
     let mut seen = Seen::default();
     let mut skipped = 0;

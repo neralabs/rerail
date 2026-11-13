@@ -296,10 +296,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
-    // The program a run read, by the digest of the text it prints as (`remember_lowered`), and a text's include seed:
-    // functions of the program's own text, as a compiled rule's code is, not a run's result kept.
-    ("code_rule_dsl/logic/rr.rs", "LOWERED"),
-    ("code_rule_dsl/logic/rr.rs", "SEEDS"),
     ("content_store/atoms.rs", "CANONICAL"),
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),

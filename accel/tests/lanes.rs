@@ -549,7 +549,9 @@ fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
     let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
     let started=std::time::Instant::now();
     while !running.ready() {
-        assert!(started.elapsed()<std::time::Duration::from_secs(5));
+        // A guard against a batch that never completes, not a time limit: the pool this batch queues on is shared
+        // with the other tests here, which on a two-core runner hold it for many seconds.
+        assert!(started.elapsed()<std::time::Duration::from_secs(120), "the batch never completed");
         if !rerail_accel::exec::on_pool() || !rerail_accel::exec::help_once() {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }

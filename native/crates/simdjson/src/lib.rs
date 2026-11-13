@@ -556,7 +556,9 @@ mod tests {
             match (a, b) {
                 (Ok(a), Ok(b)) => {
                     use sha2::Digest;
-                    assert_eq!(a.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src))), "the digest of {:?}", String::from_utf8_lossy(src));
+                    // Stage 2 is the ARM64 kernel's; elsewhere `tape` is the index writer's, which computes no digest.
+                    let digest = if cfg!(target_arch = "aarch64") { Some(<[u8; 32]>::from(sha2::Sha256::digest(src))) } else { None };
+                    assert_eq!(a.digest, digest, "the digest of {:?}", String::from_utf8_lossy(src));
                     assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{:?}", String::from_utf8_lossy(src));
                     true
                 }

@@ -3,12 +3,30 @@
 
 use crate::code_rule_dsl::logic::profile::{self, report};
 
+/// Spins until the calling thread has had `seconds` of CPU: by the wall clock, a loaded machine (a CI runner's two
+/// cores) gives it less, and the CPU the tests measure falls short.
 fn burn(seconds: f64) {
-    let start = std::time::Instant::now();
+    let start = thread_cpu();
     let mut x = 0u64;
-    while start.elapsed().as_secs_f64() < seconds {
+    while thread_cpu() - start < seconds {
         x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
     }
+}
+
+/// The calling thread's CPU seconds.
+#[cfg(unix)]
+fn thread_cpu() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: fills `t` with the calling thread's CPU time.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+}
+
+/// Without a thread clock, the wall clock's seconds since first asked.
+#[cfg(not(unix))]
+fn thread_cpu() -> f64 {
+    static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+    START.elapsed().as_secs_f64()
 }
 
 /// Work a span starts on threads that open no span of their own (rayon's, a helper thread) is in the report: the
