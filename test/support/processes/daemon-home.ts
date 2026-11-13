@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -32,15 +33,19 @@ export async function freePort(): Promise<number> {
 const DAEMONS_FILE = "test-daemons.txt";
 const LAUNCHERS_FILE = "test-launchers.txt";
 const OLDER_DAEMON_FILE = "older-daemon.mjs";
+/** How long a daemon holds its event loop once asked ({@link holdEventLoop}), as a long check holds a busy daemon's. */
+const BUSY_MS = 8_000;
 
 /**
  * The environment of the Rerail processes a test starts in `home`, through which the test sees every one of them: each
  * daemon (`dist/cli/daemon-entry.js`, or the older build's `olderDaemon`) adds its pid to a file in `home`, and so does
  * each `rerail daemon start`, the launcher an autostart runs. Processes those start inherit it. With `busy`, a daemon's
- * event loop can be held: once the file `busy` appears, holding a number of milliseconds, the daemon removes it, makes
- * `<busy>.held`, and spins that long without returning to its event loop, then removes `<busy>.held`. With
- * `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`, and spins as
- * many milliseconds as it held right after that listen, before it can write daemon.json, then removes the `.held` file.
+ * event loop can be held ({@link holdEventLoop}): once the file `busy` appears, the daemon removes it, makes
+ * `<busy>.held`, and spins {@link BUSY_MS} without returning to its event loop, then removes `<busy>.held`. The daemon
+ * looks only for the file, never at what it holds: it polls, and could read a file the test has created and not yet
+ * written. With `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`,
+ * and spins as many milliseconds as it held right after that listen, before it can write daemon.json, then removes the
+ * `.held` file; a test writes it before any daemon starts.
  */
 export function watchedEnvironment(home: string, busy?: string, slowStart?: string): NodeJS.ProcessEnv {
   const script = join(home, "watch.cjs");
@@ -54,10 +59,9 @@ const busy = ${JSON.stringify(busy ?? null)};
 if (daemon && busy !== null) {
   setInterval(() => {
     if (!fs.existsSync(busy)) return;
-    const ms = Number(fs.readFileSync(busy, "utf8"));
     fs.rmSync(busy, { force: true });
     fs.writeFileSync(busy + ".held", "");
-    const end = Date.now() + ms;
+    const end = Date.now() + ${BUSY_MS};
     while (Date.now() < end);
     fs.rmSync(busy + ".held", { force: true });
   }, 20).unref();
@@ -83,6 +87,15 @@ if (daemon && slowStart !== null) {
 `);
   const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
   return { ...process.env, RERAIL_HOME: home, NODE_OPTIONS: [process.env.NODE_OPTIONS, preload].filter(Boolean).join(" ") };
+}
+
+/**
+ * Holds the event loop of the daemon started with `busy` ({@link watchedEnvironment}) for {@link BUSY_MS}, as a long
+ * check holds a busy daemon's; resolves once it is held. Its socket and port stay bound meanwhile.
+ */
+export async function holdEventLoop(busy: string): Promise<void> {
+  await writeFile(busy, "");
+  await until(() => existsSync(`${busy}.held`));
 }
 
 function recorded(home: string, file: string): number[] {

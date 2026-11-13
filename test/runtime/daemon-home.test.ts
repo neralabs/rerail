@@ -23,6 +23,7 @@ import {
   daemonProcess,
   exitMessage,
   freePort,
+  holdEventLoop,
   launchers,
   olderDaemon,
   packageRoot,
@@ -198,8 +199,7 @@ describe("the daemons of a Rerail home", () => {
     env = watchedEnvironment(home, busy);
     const first = (await startDaemon(control(), { dev: true, env })).daemon.state;
     // Its event loop is held for 8 s, as a long check holds a busy daemon's; its socket and port stay bound.
-    await writeFile(busy, "8000");
-    await until(() => existsSync(`${busy}.held`));
+    await holdEventLoop(busy);
     await rm(stateFile);
     const again = await startDaemon(control(), { dev: true, env });
     expect(again.started).toBe(false);
@@ -212,8 +212,7 @@ describe("the daemons of a Rerail home", () => {
     const busy = join(home, "busy");
     env = watchedEnvironment(home, busy);
     const first = (await startDaemon(control(), { dev: true, env })).daemon.state;
-    await writeFile(busy, "8000");
-    await until(() => existsSync(`${busy}.held`));
+    await holdEventLoop(busy);
     await cli(["start", "--dev"]);
     await until(() => !existsSync(`${busy}.held`), 20_000);
     const { live, recorded } = await settled();
@@ -244,8 +243,7 @@ describe("the daemons of a Rerail home", () => {
     env = watchedEnvironment(home, busy);
     const first = (await startDaemon(control(), { dev: true, env })).daemon.state;
     expect(first.port).toBe(port);
-    await writeFile(busy, "8000");
-    await until(() => existsSync(`${busy}.held`));
+    await holdEventLoop(busy);
     // A second daemon process in the same home, as a start whose wait for a slow daemon ran out launches one.
     const second = daemonProcess(home, env);
     others.push(second);
