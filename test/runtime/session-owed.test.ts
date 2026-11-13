@@ -1,11 +1,38 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
+import type { FileDigests } from "../../src/runtime/owed-ledger.js";
 import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../src/runtime/runtime.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+/** The next look at whether an owed item's files changed (`changedFiles`), held while a test sets it (`holdNextLook`). */
+const looks = vi.hoisted(() => ({ hold: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../../src/runtime/owed-ledger.js", async importOriginal => {
+  const actual = await importOriginal<{ changedFiles: (root: string, digests: FileDigests) => Promise<string[]> }>();
+  return {
+    ...actual,
+    changedFiles: async (root: string, digests: FileDigests) => {
+      const hold = looks.hold;
+      looks.hold = undefined;
+      await hold?.();
+      return await actual.changedFiles(root, digests);
+    },
+  };
+});
+
+/** Holds the next look at an owed item's files until `release`; `entered` settles once it has begun. */
+function holdNextLook() {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  looks.hold = async () => {
+    entered.resolve();
+    await released.promise;
+  };
+  return { entered: entered.promise, release: () => released.resolve() };
+}
 
 /**
  * The suspended sessions an engine service keeps for its runtimes (`suspendedSessions` in engine-service.ts): the idle
@@ -28,6 +55,7 @@ function keptSuspensions(): SuspendedSessions {
 
 const directories: string[] = [];
 afterEach(async () => {
+  looks.hold = undefined;
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
@@ -51,10 +79,10 @@ const BAD = "export const a = 1;\nconst bad = 2;\n";
  * A Claude Code session in a checkout holding `a.ts`, whose rule check steers on an edit that writes `bad` into it, and
  * when the test asks (`steer`, `hold`), as a check that finishes after the boundary that waited for it does. `reopen`
  * makes the runtime a daemon would make after a restart, over the same records. An evaluator opened after the first
- * opens once `reopened` settles, as one whose rules compile again does. The session is Claude Code's unless `host` says
- * otherwise.
+ * opens once `reopened` settles, as one whose rules compile again does, and fails to open when `failsToOpen` says so of
+ * its number (the first is 1). The session is Claude Code's unless `host` says otherwise.
  */
-async function owingSession(options: { reopened?: Promise<void>; host?: "claude-code" | "omp" } = {}) {
+async function owingSession(options: { reopened?: Promise<void>; host?: "claude-code" | "omp"; failsToOpen?: (evaluator: number) => boolean } = {}) {
   // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-owed-")));
   directories.push(root);
@@ -80,8 +108,12 @@ async function owingSession(options: { reopened?: Promise<void>; host?: "claude-
       delivery = steerDelivery;
       evaluators += 1;
       const opening = evaluators > 1 ? options.reopened : undefined;
+      const fails = options.failsToOpen?.(evaluators) === true;
       return {
-        openWorkspace: async () => await opening,
+        openWorkspace: async () => {
+          await opening;
+          if (fails) throw new Error("evaluator unavailable");
+        },
         acceptsPath: path => path.endsWith(".ts"),
         auditGeneratedEdits: async (sessionId, batch) => {
           const bad = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => edit.path);
@@ -338,6 +370,71 @@ describe("what a session owes its agent while it is closed", () => {
       expect(ledger).not.toContain(SECRET);
       expect(ledger).not.toContain("Do not write bad.");
       expect((await owing.prompt("after-restart")).map(delivery => delivery.content)).toEqual([`Move \`const key = "${REDACTED}"\` to the environment.`]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // An evaluator that could not open as the session opened again can take none of the findings its ledger gave back.
+  // They counted as owed all the same, so each idle close kept the session in memory until the day's limit.
+  it("suspends at the idle limit a session whose evaluator failed as it opened again, and keeps the findings it owed for its next open", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession({ failsToOpen: evaluator => evaluator === 2 });
+    const { sessionId } = owing.session;
+    try {
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      expect(await owing.prompt("next-morning")).toEqual([]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect(await owing.runtime.closeIdleSession(sessionId)).toMatchObject({ kind: "suspended" });
+      // The next open's evaluator opens, and the digest at the end of the agent's run lists the finding.
+      expect(await owing.prompt("later")).toEqual([]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The session took what it owed out of memory, then read each file it names: a close in between, as a daemon's stop,
+  // found nothing owed and kept nothing, and the answer dropped what the closed session could no longer give.
+  it("keeps what a session owed when its runtime closes while it is being given out", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    const { sessionId } = owing.session;
+    try {
+      await owing.steer();
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      // A scan opens the session with no event, so what its ledger gave back stays in memory, its evaluator open.
+      await owing.runtime.resumeSession(owing.session);
+      await owing.runtime.codeRulesOpened(sessionId);
+      const look = holdNextLook();
+      // A native host's poll collects it, and the runtime closes before the files are read.
+      const collecting = owing.runtime.collectDeliveries(sessionId);
+      await look.entered;
+      const closing = owing.reopen();
+      look.release();
+      const collected = await collecting;
+      await closing;
+      const next = await owing.prompt("after-restart");
+      expect([...collected, ...next].map(delivery => delivery.content)).toEqual([STEER]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // A later build's `owed` entry this build cannot read was skipped, and the entry before it taken back: its steer went
+  // out again, though the later build had given it out.
+  it("owes nothing after an owed entry it cannot read, so no steer an earlier entry listed goes out again", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      await appendFile(owing.ledger, `${JSON.stringify({ type: "owed", steers: [{ delivery: { strategy: "later" } }], findings: [] })}\n`);
+      expect(await owing.prompt("after-downgrade")).toEqual([]);
     } finally {
       await owing.runtime.dispose();
     }

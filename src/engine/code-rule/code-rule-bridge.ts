@@ -926,6 +926,8 @@ export class CodeRuleBridge {
   /** The most of `#texts` first-sight text may take (`FIRST_SIGHT_TEXT_BYTES`), and how much it takes now. */
   readonly #firstSightTextBytes: number;
   #firstSightBytes = 0;
+  /** The most `#texts` may take (`MAX_SESSION_TEXT_BYTES`). */
+  readonly #sessionTextBytes: number;
 
   constructor(
     cwd: string,
@@ -945,6 +947,8 @@ export class CodeRuleBridge {
       worktreeWalkGapMs?: number;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
+      /** `MAX_SESSION_TEXT_BYTES` by default. */
+      sessionTextBytes?: number;
       /** Where the session's walks stood when its runtime suspended it: its first walk goes on from there, not from a baseline. */
       resume?: SessionWalkResume;
       /**
@@ -968,6 +972,7 @@ export class CodeRuleBridge {
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
+    this.#sessionTextBytes = options.sessionTextBytes ?? MAX_SESSION_TEXT_BYTES;
   }
 
   /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
@@ -2496,7 +2501,7 @@ export class CodeRuleBridge {
     this.#textBytes += bytes;
     if (origin === "first-sight") this.#firstSightBytes += bytes;
     for (const [oldest, entry] of this.#texts) {
-      if (this.#textBytes <= MAX_SESSION_TEXT_BYTES) break;
+      if (this.#textBytes <= this.#sessionTextBytes) break;
       this.#dropText(oldest, entry);
     }
   }

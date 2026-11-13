@@ -453,6 +453,65 @@ describe("the engine service's idle close", () => {
     }
   });
 
+  // An open a scan asks for can fail (the session's folder gone, its evaluator failing). The scan stayed queued, with a
+  // line in the daemon's log only, until the session's next event or the daemon's stop.
+  it("fails a scan asked for a quiet session it cannot open again, saying why", async () => {
+    let made = 0;
+    const { clock, service, start, databasePath } = await idleService({
+      createAuditor: () => {
+        made += 1;
+        if (made > 1) throw new Error("evaluator unavailable");
+        return quietAuditor();
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      await service.resumeSession("a");
+      expect(made).toBe(2);
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id))
+        .toMatchObject({ status: "failed", error: expect.stringMatching(/evaluator unavailable/u) });
+    } finally {
+      controls.close();
+    }
+  });
+
+  // The end opens the suspended session to close it. A scan asked for meanwhile found the session live, so the API asked
+  // the service to open it again; that open waited behind the end, then opened the ended session as if it were quiet:
+  // its record read as live and owned until the daemon stopped, and no end would come for it.
+  it("leaves a quiet session ended when a scan is asked for it while its end opens it", async () => {
+    const hold = { on: false, entered: Promise.withResolvers<void>(), released: Promise.withResolvers<void>() };
+    const { clock, service, session, send, start, ended, live, databasePath } = await idleService({
+      beforeSessionPublish: async () => {
+        if (!hold.on) return;
+        hold.on = false;
+        hold.entered.resolve();
+        await hold.released.promise;
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    hold.on = true;
+    const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+    await hold.entered.promise;
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      expect(controls.requestAudit("a", { scope: "repository" })).toMatchObject({ status: "queued", error: null });
+      const resuming = service.resumeSession("a");
+      hold.released.resolve();
+      await Promise.all([ending, resuming]);
+    } finally {
+      controls.close();
+    }
+    expect(ended("a")).not.toBeNull();
+    expect(live("a")).toBe(false);
+  });
+
   it("ends a quiet session's record when its end comes, also from a repository stopped since", async () => {
     const { first, second, clock, service, session, send, start, ended, databasePath } = await idleService();
     await start("a");
@@ -519,6 +578,27 @@ describe("the engine service's idle close", () => {
     await service.close();
     expect(ended("a")).not.toBeNull();
     expect(live("a")).toBe(false);
+  });
+
+  // The service's stop ended its quiet sessions one after another and stopped at the first that failed (a database
+  // busy past its wait): each one after it stayed open and owned, with nothing left to end it.
+  it("ends every other quiet session's record when the service stops and ending one fails", async () => {
+    const { second, clock, service, start, ended } = await idleService();
+    await start("a");
+    await start("b", second);
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const interrupt = vi.spyOn(SqliteAuditControlStore.prototype, "interrupt").mockImplementationOnce(() => {
+      throw new Error("database is locked");
+    });
+    services.splice(services.indexOf(service), 1);
+    try {
+      await service.close();
+    } finally {
+      interrupt.mockRestore();
+    }
+    // Which of the two ends first depends on which close finished first.
+    expect([ended("a"), ended("b")].filter(at => at !== null)).toHaveLength(1);
   });
 
   // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded

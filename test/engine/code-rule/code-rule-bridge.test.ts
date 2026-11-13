@@ -1118,6 +1118,36 @@ describe("CodeRuleBridge", () => {
       { mode: "session", edits: [{ path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nlater\n" }] },
     ]);
   });
+
+  // The open session holds a source as its own until the text budget drops its text. A source held before a suspension
+  // stayed held after the budget dropped its text: another writer's change to it was checked as the open session would
+  // not have, and every later suspension carried it on.
+  it("lets go of a source held before a suspension once the session's text budget drops its text, as the open session does", async () => {
+    const root = await workspace();
+    const [held, other] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(held, "before\n");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(held, "mine\n");
+    await first.finish("edit-0");
+    const resume = await first.walkResume();
+    await first.close();
+    expect([...resume?.held.keys() ?? []]).toEqual(["src/a.py"]);
+    // Room for the five bytes of a.py's text, read back as the session opens again, and not for b.py's nine as well.
+    const second = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), {
+      ...(resume === undefined ? {} : { resume }),
+      sessionTextBytes: 8,
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { path: "src/b.py" });
+    await writeFile(other, "mine too\n");
+    await second.finish("edit-1");
+
+    expect([...(await second.walkResume())?.held.keys() ?? []]).toEqual([]);
+  });
 });
 
 describe("ledgerPreimage", () => {
