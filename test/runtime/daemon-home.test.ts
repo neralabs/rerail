@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,6 +11,7 @@ import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { LOCKS_DIR } from "../../src/engine/index.js";
 import {
   type DaemonState,
+  AUTOSTART_CLAIM_FILE,
   DAEMON_STATE_FILE,
   findRunningDaemon,
   processAlive,
@@ -128,6 +129,55 @@ describe("the daemons of a Rerail home", () => {
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
   }, 120_000);
 
+  /** `rerail daemon <args>` from this checkout's build, in a process of its own, as a person or a launcher runs it. */
+  async function cli(args: readonly string[]): Promise<void> {
+    const child = spawn(process.execPath, [join(packageRoot, "dist", "cli", "cli.js"), "daemon", ...args], {
+      cwd: packageRoot, env, stdio: "ignore", windowsHide: true,
+    });
+    others.push(child);
+    await once(child, "exit");
+  }
+
+  /** The daemons still running in the home a moment after the last start ended, and the pid daemon.json names. */
+  async function settled(): Promise<{ live: number[]; recorded: number | undefined }> {
+    await delay(2_500);
+    return { live: liveDaemons(home), recorded: await recordedPid(home) };
+  }
+
+  it("leaves one daemon, which daemon.json names, after hooks, starts and daemon processes all come at once", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const hooks = Array.from({ length: 6 }, () => hookFindingNoDaemon());
+    await Promise.all(hooks.map(async hook => await hook.ready));
+    for (const hook of hooks) hook.go();
+    const direct = Array.from({ length: 4 }, () => daemonProcess(home, env));
+    others.push(...direct);
+    await Promise.all(Array.from({ length: 4 }, async () => await cli(["start", "--dev"])));
+    await Promise.all(hooks.map(async hook => await hook.exited));
+    await until(() => launchers(home).every(pid => !processAlive(pid)), 90_000);
+    await until(() => direct.every(daemon => daemon.exitCode !== null) || liveDaemons(home).length <= 1, 20_000).catch(() => undefined);
+    const { live, recorded } = await settled();
+    expect(live).toHaveLength(1);
+    expect(recorded).toBe(live[0]);
+  }, 180_000);
+
+  it("leaves a start to the hooks that find a claim left from before a restart, and they leave one daemon", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    // The launcher it names is gone, and it was made ten minutes ago, past any start's time.
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    await writeFile(claim, String(DEAD_PID));
+    const long = new Date(Date.now() - 600_000);
+    await utimes(claim, long, long);
+    const hooks = Array.from({ length: 10 }, () => hookFindingNoDaemon());
+    await Promise.all(hooks.map(async hook => await hook.ready));
+    for (const hook of hooks) hook.go();
+    await Promise.all(hooks.map(async hook => await hook.exited));
+    await until(async () => await findRunningDaemon(home) !== undefined && launchers(home).every(pid => !processAlive(pid)), 90_000);
+    const { live, recorded } = await settled();
+    expect(launchers(home).length).toBeGreaterThanOrEqual(1);
+    expect(live).toHaveLength(1);
+    expect(recorded).toBe(live[0]);
+  }, 150_000);
+
   it.each([2, 5, 20])("%i daemons started at the same moment leave one running, which daemon.json names", async count => {
     const daemons = Array.from({ length: count }, () => daemonProcess(home, env, ["--port", "0"]));
     others.push(...daemons);
@@ -156,6 +206,35 @@ describe("the daemons of a Rerail home", () => {
     expect(again.daemon.state.pid).toBe(first.pid);
     expect(liveDaemons(home)).toEqual([first.pid]);
   }, 60_000);
+
+  it("leaves a busy daemon that daemon.json names to a start, which starts nothing beside it", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const busy = join(home, "busy");
+    env = watchedEnvironment(home, busy);
+    const first = (await startDaemon(control(), { dev: true, env })).daemon.state;
+    await writeFile(busy, "8000");
+    await until(() => existsSync(`${busy}.held`));
+    await cli(["start", "--dev"]);
+    await until(() => !existsSync(`${busy}.held`), 20_000);
+    const { live, recorded } = await settled();
+    expect(live).toEqual([first.pid]);
+    expect(recorded).toBe(first.pid);
+  }, 90_000);
+
+  it("leaves the next start to use a daemon slow to come up after the first start's wait ran out, never a second", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    // The daemon spins 21 s right after it first listens, before it can write daemon.json: past a start's 15 s wait.
+    await writeFile(slowStart, "21000");
+    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow();
+    const second = await startDaemon(control(), { dev: true, env });
+    await until(() => !existsSync(`${slowStart}.held`), 40_000);
+    const { live, recorded } = await settled();
+    expect(live).toHaveLength(1);
+    expect(recorded).toBe(live[0]);
+    expect(second).toMatchObject({ started: false, daemon: { state: { pid: live[0] } } });
+  }, 120_000);
 
   it("leaves a daemon started beside a busy one to exit, and keeps the record and the port with the busy one", async () => {
     // The port both daemons prefer, as 4737 is on a person's machine: the one the home remembers.
@@ -203,10 +282,23 @@ describe("the daemons of a Rerail home", () => {
     expect(liveDaemons(home)).toEqual([]);
   }, 60_000);
 
-  it("gives way at once to the next start after its daemon was killed outright", async () => {
+  /** What a daemon killed outright leaves, or what happens to it after: its lock released, its records left. */
+  const afterKill: Array<[string, (other: number) => Promise<void>]> = [
+    ["as the kill left it", async () => undefined],
+    ["with its daemon.json gone", async () => await rm(stateFile, { force: true })],
+    ["with its holder record naming another process that runs", async other => {
+      await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: other }));
+    }],
+  ];
+
+  it.each(afterKill)("gives way at once to the next start after its daemon was killed outright, %s", async (_case, after) => {
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+    others.push(other);
+    await once(other, "spawn");
     const first = (await startDaemon(control(), options())).daemon.state;
     process.kill(first.pid, "SIGKILL");
     await until(() => !processAlive(first.pid));
+    await after(other.pid!);
     const asked = Date.now();
     expect(await stopDaemon(home)).toBe("not-running");
     const next = await startDaemon(control(), options());

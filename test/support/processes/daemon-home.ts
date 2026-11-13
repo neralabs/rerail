@@ -38,9 +38,11 @@ const OLDER_DAEMON_FILE = "older-daemon.mjs";
  * daemon (`dist/cli/daemon-entry.js`, or the older build's `olderDaemon`) adds its pid to a file in `home`, and so does
  * each `rerail daemon start`, the launcher an autostart runs. Processes those start inherit it. With `busy`, a daemon's
  * event loop can be held: once the file `busy` appears, holding a number of milliseconds, the daemon removes it, makes
- * `<busy>.held`, and spins that long without returning to its event loop, then removes `<busy>.held`.
+ * `<busy>.held`, and spins that long without returning to its event loop, then removes `<busy>.held`. With
+ * `slowStart`, the first daemon to listen while that file is there removes it, makes `<slowStart>.held`, and spins as
+ * many milliseconds as it held right after that listen, before it can write daemon.json, then removes the `.held` file.
  */
-export function watchedEnvironment(home: string, busy?: string): NodeJS.ProcessEnv {
+export function watchedEnvironment(home: string, busy?: string, slowStart?: string): NodeJS.ProcessEnv {
   const script = join(home, "watch.cjs");
   writeFileSync(script, `const fs = require("node:fs");
 const entry = process.argv[1] ?? "";
@@ -59,6 +61,24 @@ if (daemon && busy !== null) {
     while (Date.now() < end);
     fs.rmSync(busy + ".held", { force: true });
   }, 20).unref();
+}
+const slowStart = ${JSON.stringify(slowStart ?? null)};
+if (daemon && slowStart !== null) {
+  const listen = require("node:net").Server.prototype.listen;
+  require("node:net").Server.prototype.listen = function (...args) {
+    let ms = 0;
+    try {
+      ms = Number(fs.readFileSync(slowStart, "utf8"));
+      fs.rmSync(slowStart);
+      fs.writeFileSync(slowStart + ".held", "");
+    } catch {}
+    if (ms > 0) setImmediate(() => {
+      const end = Date.now() + ms;
+      while (Date.now() < end);
+      fs.rmSync(slowStart + ".held", { force: true });
+    });
+    return listen.apply(this, args);
+  };
 }
 `);
   const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
