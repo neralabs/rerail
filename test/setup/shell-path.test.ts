@@ -79,6 +79,11 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     expect(existsSync(join(home, ".zshrc"))).toBe(false);
   });
 
+  it("writes the block when a set-up recorded PATH and the running PATH lacks the directory", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    expect(await addLauncherToPath({ ...options, handledBefore: true })).toEqual({ status: "changed", locations: [join(home, ".zshrc")] });
+  });
+
   it("replaces a block written for another Rerail home", async () => {
     const { home, options } = await machine("/bin/zsh");
     const zshrc = join(home, ".zshrc");
