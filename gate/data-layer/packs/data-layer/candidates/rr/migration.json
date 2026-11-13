@@ -356,7 +356,10 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "sha256": "9e7cdbc9b36a272bed5d65a5072133735a208ef3a90532efc13ca51753e3359f"
+      "sha256": "d70da7cc31b5bed4b4172a95cf291ce59b15c752cecfc6207e2e01c8a578c4f2",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rr",
@@ -4836,7 +4839,16 @@
       "legacySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "ruleSha256": "9e7cdbc9b36a272bed5d65a5072133735a208ef3a90532efc13ca51753e3359f"
+      "ruleSha256": "d70da7cc31b5bed4b4172a95cf291ce59b15c752cecfc6207e2e01c8a578c4f2",
+      "migrationProgress": {
+        "status": "kernel-progress; full rule remains draft",
+        "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-kernel-progress.json.gz",
+        "sha256": "8cbe9a03be7bcf794d5b627875bf82d8087733a421b9af354fbb81c712d47d7e",
+        "helperSnapshotCases": 197,
+        "tapeSnapshotCases": 142,
+        "tapeFailures": 1,
+        "fullMigrationAcceptance": false
+      }
     },
     {
       "check": "plan_scope_ownership",

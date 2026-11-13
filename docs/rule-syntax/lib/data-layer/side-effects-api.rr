@@ -1,0 +1,26 @@
+.violation SideEffectsConfiguration(at:span,key:symbol,value:symbol) code "PSE_CONFIG" "Plan-scope collector configuration"
+SideEffectsConfiguration(@place("",0),k,v) :- option("entryPoint","_pse_configuration"),pse_config(k,v).
+.violation SideEffectsFact(at:span,ordinal:number,source_code:symbol,file_path:symbol,line_number:number,source_message:symbol,severity:symbol) code "PSE_FACT" "{source_message}"
+SideEffectsFact(@place("",0),i,c,p,l,m,s) :- option("entryPoint","_pse_collect"),pse_finding(n,c,m,s),pse_order(n,i),pse_line(n,l),option("psePath",p).
+.violation SideEffectsState(at:span,present:number,write:number) code "PSE_STATE" "Plan-scope seed state"
+SideEffectsState(@place("",0),0,0) :- option("entryPoint",e),(e="_pse_collect";e="_pse_initial"),!pse_seed().
+SideEffectsState(@place("",0),1,0) :- option("entryPoint",e),(e="_pse_collect";e="_pse_initial"),pse_seed(),!pse_write(-1).
+SideEffectsState(@place("",0),1,1) :- option("entryPoint",e),(e="_pse_collect";e="_pse_initial"),pse_seed(),pse_write(-1).
+.violation SideEffectsReadName(at:span,name:symbol) code "PSE_READ_NAME" "Seed eager-read name"
+SideEffectsReadName(@place("",0),s) :- option("entryPoint","_pse_collect"),pse_eager_name(-1,_,s).
+// Normal production diagnostics retain the AST node location; collector facts retain traversal order.
+.violation PSE_010(at:node) code "PSE-010" "resolved_value is forbidden inside plan-scope construction."
+PSE_010(n) :- !option("entryPoint",_),pse_finding(n,"PSE-010",_,_).
+.violation PSE_020(at:node,name:symbol) code "PSE-020" "{name}() is eager resolution inside plan-scope construction."
+PSE_020(n,s) :- !option("entryPoint",_),pse_finding(n,"PSE-020",_,_),pse_call_name(n,s).
+.violation PSE_030(at:node,name:symbol) code "PSE-030" "{name}() is raw database execution inside plan-scope construction."
+PSE_030(n,s) :- !option("entryPoint",_),pse_finding(n,"PSE-030",_,_),pse_call_name(n,s).
+.violation PSE_040(at:node,name:symbol) code "PSE-040" "Nested legacy callback API {name}() is forbidden inside plan scopes."
+PSE_040(n,s) :- !option("entryPoint",_),pse_finding(n,"PSE-040",_,_),pse_call_name(n,s).
+.violation PSE_050(at:node,name:symbol) code "PSE-050" "Python side-effect call {name}() is forbidden inside plan scopes."
+PSE_050(n,s) :- !option("entryPoint",_),pse_finding(n,"PSE-050",_,_),pse_call_name(n,s).
+// The direct source fact API gets selected specs, so it deliberately bypasses discovery triggers.
+SideEffectsFact(@place("",0),i,c,p,l,m,s) :- option("entryPoint","_pse_source"),pse_finding(n,c,m,s),pse_order(n,i),pse_line(n,l),option("psePath",p),docof(n,d),!syntax_error(d,_,_).
+.violation SideEffectsParse(at:span,present:number,detail:symbol) code "PSE_PARSE" "Source parse status"
+SideEffectsParse(@place("",0),1,"") :- option("entryPoint","_pse_source"),doc(d,_,_),!syntax_error(d,_,_).
+SideEffectsParse(@place("",0),0,cat("SyntaxError: ",m," (",name,", line ",to_string(l),")")) :- option("entryPoint","_pse_source"),doc(d,_,_),syntax_error(d,l,m),file_name(d,name).

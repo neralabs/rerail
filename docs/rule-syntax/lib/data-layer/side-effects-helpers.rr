@@ -1,0 +1,33 @@
+// Pure syntax helpers share the detector's supplied-AST relations.
+.decl pse_receiver_component(n:node,component:node,name:symbol)
+pse_receiver_component(n,n,s) :- pse_name(n,s).
+pse_receiver_component(n,n,s) :- pse_attr(n,_,s).
+pse_receiver_component(n,t,s) :- pse_receiver_step(n,c),pse_receiver_component(c,t,s).
+.decl pse_helper_bool(name:symbol)
+pse_helper_bool("_is_plan_scope_item"). pse_helper_bool("_is_write_plan_scope_item").
+pse_helper_bool("_is_allowed_scope_execute"). pse_helper_bool("_is_typed_eager_read_call").
+pse_helper_bool("_looks_like_python_side_effect"). pse_helper_bool("_branches_on_eager_read").
+.decl pse_helper_true(name:symbol)
+pse_helper_true("_is_plan_scope_item") :- pse_edge(0,"context_expr",c),pse_call_name(c,s),pse_constant("PLAN_OPENERS",s).
+pse_helper_true("_is_write_plan_scope_item") :- pse_edge(0,"context_expr",c),pse_call_name(c,s),pse_constant("WRITE_PLAN_OPENERS",s).
+pse_helper_true("_is_allowed_scope_execute") :- pse_allowed(0).
+pse_helper_true("_is_typed_eager_read_call") :- pse_read(0).
+pse_helper_true("_looks_like_python_side_effect") :- pse_effect(0).
+pse_helper_true("_branches_on_eager_read") :- pse_seed(),pse_read(0).
+pse_helper_true("_branches_on_eager_read") :- pse_seed(),pse_reference(0,s),option_item("pseSeedEagerNames",_,s).
+.decl pse_helper_scalar(name:symbol,value:symbol)
+pse_helper_scalar("_call_name",@json_str(s)) :- pse_leaf(0,s).
+pse_helper_scalar("_call_name","null") :- !pse_leaf(0,_).
+pse_helper_scalar("_scope_name",@json_str(s)) :- pse_alias(0,s).
+pse_helper_scalar("_scope_name","null") :- !pse_alias(0,_).
+pse_helper_scalar(h,"true") :- pse_helper_bool(h),pse_helper_true(h).
+pse_helper_scalar(h,"false") :- pse_helper_bool(h),!pse_helper_true(h).
+.violation SideEffectsHelperValue(at:span,value_json:symbol) code "PSE_HELPER_VALUE" "Syntax helper value"
+SideEffectsHelperValue(@place("",0),v) :- option("entryPoint","_pse_helper"),option("pseHelper",h),pse_helper_scalar(h,v).
+.violation SideEffectsHelperKind(at:span,kind:symbol) code "PSE_HELPER_KIND" "Syntax helper collection kind"
+SideEffectsHelperKind(@place("",0),"list") :- option("entryPoint","_pse_helper"),option("pseHelper","_receiver_tokens").
+SideEffectsHelperKind(@place("",0),"set") :- option("entryPoint","_pse_helper"),option("pseHelper",h),(h="_assigned_names";h="_referenced_names").
+.violation SideEffectsHelperName(at:span,ordinal:number,name:symbol) code "PSE_HELPER_NAME" "Syntax helper collection item"
+SideEffectsHelperName(@place("",0),0-t,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_receiver_tokens"),pse_receiver_component(0,t,s).
+SideEffectsHelperName(@place("",0),0,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_assigned_names"),pse_assigned(0,s).
+SideEffectsHelperName(@place("",0),0,s) :- option("entryPoint","_pse_helper"),option("pseHelper","_referenced_names"),pse_reference(0,s).

@@ -1,0 +1,113 @@
+// Exact plan-scope collector predicates over native tape or caller-supplied AST columns.
+// Scope membership includes with headers. Functions and classes do not reset the collector.
+#include "python/ast.rr"
+.decl pse_graph()
+pse_graph() :- option("pseGraph","1").
+.decl pse_kind(n:node,tag:symbol)
+pse_kind(n,k) :- pse_graph(),option_item("astKinds",n,k).
+.decl pse_edge(p:node,field:symbol,c:node)
+pse_edge(to_number(p),f,n) :- pse_graph(),option_item("astParents",n,p),p!="-1",option_item("astFields",n,f).
+.decl pse_name(n:node,name:symbol)
+pse_name(n,name) :- pse_kind(n,"Name"),option_item("astIds",n,name).
+pse_name(n,@nfkc(name)) :- !pse_graph(),ast_name(n,name).
+.decl pse_attr(n:node,obj:node,name:symbol)
+pse_attr(n,o,name) :- pse_kind(n,"Attribute"),pse_edge(n,"value",o),option_item("astAttrs",n,name).
+pse_attr(n,o,@nfkc(name)) :- !pse_graph(),kind(n,"attribute"),field(n,"object",v),unparen(v,o),field(n,"attribute",a),text(a,name).
+.decl pse_call(n:node,fn:node)
+pse_call(n,f) :- pse_kind(n,"Call"),pse_edge(n,"func",f).
+pse_call(n,f) :- !pse_graph(),kind(n,"call"),field(n,"function",v),unparen(v,f).
+.decl pse_leaf(n:node,name:symbol)
+pse_leaf(n,s) :- pse_name(n,s).
+pse_leaf(n,s) :- pse_attr(n,_,s).
+.decl pse_call_name(n:node,name:symbol)
+pse_call_name(n,s) :- pse_call(n,f),pse_leaf(f,s).
+.decl pse_order(n:node,i:number)
+pse_order(n,n) :- pse_kind(n,_).
+pse_order(n,i) :- !pse_graph(),visit_index(n,i).
+.decl pse_line(n:node,line_number:number)
+pse_line(n,to_number(v)) :- pse_graph(),option_item("astLines",n,v).
+pse_line(n,l) :- !pse_graph(),line(n,l).
+
+.decl pse_with(w:node)
+pse_with(w) :- pse_kind(w,k),(k="With";k="AsyncWith").
+pse_with(w) :- !pse_graph(),kind(w,"with_statement").
+.decl pse_item(w:node,it:node,call:node)
+pse_item(w,it,c) :- pse_with(w),pse_edge(w,"items",it),pse_edge(it,"context_expr",c),pse_call(c,_).
+pse_item(w,it,c) :- !pse_graph(),pse_with(w),child(w,cl,_),kind(cl,"with_clause"),child(cl,it,_),field(it,"value",v),unparen(v,c),pse_call(c,_).
+pse_item(w,it,c) :- !pse_graph(),pse_with(w),child(w,cl,_),kind(cl,"with_clause"),child(cl,it,_),field(it,"value",v),kind(v,"as_pattern"),child(v,raw,0),unparen(raw,c),pse_call(c,_).
+.decl pse_plan(w:node)
+pse_plan(w) :- pse_item(w,_,c),pse_call_name(c,s),pse_constant("PLAN_OPENERS",s).
+.decl pse_write(w:node)
+pse_write(w) :- pse_item(w,_,c),pse_call_name(c,s),pse_constant("WRITE_PLAN_OPENERS",s).
+pse_write(-1) :- option("pseSeedWrite","1").
+.decl pse_alias(it:node,name:symbol)
+pse_alias(it,name) :- pse_edge(it,"optional_vars",v),pse_name(v,name).
+pse_alias(it,name) :- !pse_graph(),field(it,"value",ap),kind(ap,"as_pattern"),field(ap,"alias",v),kind(v,"as_pattern_target"),child(v,raw,0),unparen(raw,n),pse_name(n,name).
+.decl pse_scope_name(w:node,name:symbol)
+pse_scope_name(w,s) :- pse_item(w,it,c),pse_call_name(c,n),pse_constant("PLAN_OPENERS",n),pse_alias(it,s).
+pse_scope_name(-1,s) :- option_item("pseSeedNames",_,s).
+.decl pse_seed()
+pse_seed() :- option("pseSeedWrite","1").
+pse_seed() :- option_item("pseSeedNames",_,_).
+.decl pse_interest(n:node)
+pse_interest(n) :- pse_call(n,_).
+pse_interest(n) :- pse_attr(n,_,_).
+pse_interest(n) :- pse_assign(n,_,_).
+pse_interest(n) :- pse_if(n,_).
+.decl pse_scope(n:node,w:node)
+pse_scope(n,n) :- pse_graph(),pse_plan(n).
+pse_scope(n,w) :- pse_edge(p,_,n),!pse_plan(n),pse_scope(p,w).
+pse_scope(n,-1) :- pse_kind(n,_),!pse_edge(_,_,n),!pse_plan(n),pse_seed().
+pse_scope(n,w) :- !pse_graph(),pse_interest(n),nearest(n,w,pse_plan).
+pse_scope(n,-1) :- !pse_graph(),pse_interest(n),!nearest(n,_,pse_plan),pse_seed().
+
+// Receiver tokens follow only the receiver chain, never call arguments or subscript indices.
+.decl pse_receiver_step(n:node,c:node)
+pse_receiver_step(n,o) :- pse_attr(n,o,_).
+pse_receiver_step(n,f) :- pse_call(n,f).
+pse_receiver_step(n,v) :- pse_kind(n,"Subscript"),pse_edge(n,"value",v).
+pse_receiver_step(n,v) :- !pse_graph(),kind(n,"subscript"),field(n,"value",raw),unparen(raw,v).
+.decl pse_receiver_token(n:node,name:symbol)
+pse_receiver_token(n,s) :- pse_name(n,s).
+pse_receiver_token(n,s) :- pse_attr(n,_,s).
+pse_receiver_token(n,s) :- pse_receiver_step(n,c),pse_receiver_token(c,s).
+.decl pse_effect(n:node)
+pse_effect(n) :- pse_call(n,f),pse_name(f,"open").
+pse_effect(n) :- pse_call(n,f),pse_attr(f,o,s),pse_constant("SIDE_EFFECT_CALLS",s),pse_receiver_token(o,t),pse_constant("SIDE_EFFECT_RECEIVERS",@lower(t)).
+.decl pse_allowed(n:node)
+pse_allowed(n) :- pse_call(n,f),pse_attr(f,o,"execute"),pse_name(o,s),pse_scope(n,w),pse_scope_name(w,s).
+
+// Assignments add names monotonically to the current write scope. Starred targets add no names.
+.decl pse_unpack(n:node)
+pse_unpack(n) :- pse_kind(n,k),(k="Tuple";k="List").
+pse_unpack(n) :- !pse_graph(),kind(n,k),(k="tuple";k="list";k="tuple_pattern";k="list_pattern";k="pattern_list";k="expression_list").
+.decl pse_assigned(n:node,name:symbol)
+pse_assigned(n,s) :- pse_name(n,s).
+pse_assigned(n,s) :- pse_unpack(n),pse_edge(n,"elts",c),pse_assigned(c,s).
+pse_assigned(n,s) :- !pse_graph(),pse_unpack(n),child(n,raw,_),unparen(raw,c),pse_assigned(c,s).
+.decl pse_assign(n:node,target:node,value:node)
+pse_assign(n,t,v) :- pse_kind(n,"Assign"),pse_edge(n,"targets",t),pse_edge(n,"value",v).
+pse_assign(n,t,v) :- pse_kind(n,"AnnAssign"),pse_edge(n,"target",t),pse_edge(n,"value",v).
+pse_assign(n,t,v) :- !pse_graph(),assign_target(n,rawt),unparen(rawt,t),assign_value(n,rawv),unparen(rawv,v).
+.decl pse_read(n:node)
+pse_read(n) :- pse_call_name(n,s),pse_constant("TYPED_EAGER_QUERY_TERMINALS",s).
+.decl pse_eager_name(w:node,n:node,name:symbol)
+pse_eager_name(w,n,s) :- pse_assign(n,t,v),pse_read(v),pse_scope(n,w),pse_write(w),pse_assigned(t,s).
+.decl pse_if(n:node,test:node)
+pse_if(n,t) :- pse_kind(n,"If"),pse_edge(n,"test",t).
+pse_if(n,t) :- !pse_graph(),py_if(n,raw,_),unparen(raw,t).
+.decl pse_reference(t:node,name:symbol)
+pse_reference(t,s) :- pse_name(t,s).
+pse_reference(t,s) :- pse_edge(t,_,c),pse_reference(c,s).
+pse_reference(t,s) :- !pse_graph(),pse_if(_,t),within(n,t),pse_name(n,s).
+.decl pse_audit(n:node)
+pse_audit(n) :- pse_if(n,t),pse_scope(n,w),pse_write(w),pse_read(t).
+pse_audit(n) :- pse_if(n,t),pse_scope(n,w),pse_write(w),pse_reference(t,s),pse_eager_name(w,a,s),pse_order(a,ai),pse_order(n,ni),ai<ni.
+
+.decl pse_finding(n:node,code:symbol,message:symbol,severity:symbol)
+pse_finding(n,"PSE-010",cat(s," is forbidden inside plan-scope construction."),"error") :- pse_attr(n,_,s),pse_constant("EAGER_VALUE_ATTRS",s),pse_scope(n,_).
+pse_finding(n,"PSE-020",cat(s,"() is eager resolution inside plan-scope construction."),"error") :- pse_call_name(n,s),pse_constant("EAGER_CALLS",s),pse_scope(n,_),!pse_allowed(n).
+pse_finding(n,"PSE-030",cat(s,"() is raw database execution inside plan-scope construction."),"error") :- pse_call_name(n,s),pse_constant("RAW_DB_CALLS",s),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s).
+pse_finding(n,"PSE-040",cat("Nested legacy callback API ",s,"() is forbidden inside plan scopes."),"error") :- pse_call(n,f),pse_attr(f,_,s),pse_constant("LEGACY_CALLBACK_METHODS",s),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s).
+pse_finding(n,"PSE-050",cat("Python side-effect call ",s,"() is forbidden inside plan scopes."),"error") :- pse_call_name(n,s),pse_effect(n),pse_scope(n,_),!pse_allowed(n),!pse_constant("EAGER_CALLS",s),!pse_constant("RAW_DB_CALLS",s),!pse_constant("LEGACY_CALLBACK_METHODS",s).
+pse_finding(n,"PSE-AUDIT-010","Read-then-Python-branch write orchestration inside a write plan. Prefer SQL-visible ConditionalStep, GuardedInsert, or upsert forms.","audit") :- pse_audit(n).

@@ -10,6 +10,30 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## Plan-scope side-effects: kernel checkpoint before hub integration
+
+The draft no longer resolves import aliases or removes eager-read names after rebinding.
+Native relations preserve receiver spelling, nested plan ownership, assignment order, duplicate receiver tokens, and audit state.
+The generated constants come from the pinned linter. Runtime decisions remain in Datalog.
+
+All 197 source-recorded syntax helper cases pass through snapshot execution, with no source semantic callbacks.
+Direct native parsing passes 141 of 142 source-recorded collector cases.
+The remaining case returns Ruff's expected-token diagnostic instead of Python's exact syntax-error message.
+A focused Rust test reproduces that formatter defect against the current native source.
+The earlier supplied-tree ladder also passes all fifteen seeded and supplied-tree cases.
+
+The [kernel receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-kernel-progress.json.gz) retains 382 native calls and exact consumed programs.
+It records the earlier tape revision separately from the helper revision. It does not claim migration acceptance.
+All 747 existing Python tooling tests pass in 95.557 seconds.
+Two larger helper partitions reached the 110-second deadline. Complete smaller partitions replace those incomplete reports in the receipt.
+
+The rule remains a draft. Incremental collector callbacks, public scanners, DTO reporting, CLI behavior, production, historical inputs, updates, and controls remain open.
+The full original suite and both interfaces still require final acceptance on one engine cohort.
+The inventory remains twenty-two admissions, seventy-seven drafts, and one absent translation.
+
+The next step adopts the committed serverplan-quality integration hub before further engine or rule changes.
+Earlier receipts retain their original engine provenance; integration does not relabel them as newer-engine acceptance.
+
 ## Unresolved forward references: component failures
 
 Fifty source-recorded contracts cover metadata, registered extraction, caller-supplied syntax trees, state, and raw plugin reporting.
