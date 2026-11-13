@@ -24,8 +24,17 @@ air002_dag_site(n) :- kind(n, "aliased_import"), field(n, "name", c2),
 
 // dag_callee(n): the JSON util `dag-callee`, used where the JSON says `matches: "dag-callee"`
 .decl air002_dag_callee(n: node)
-air002_dag_callee(n) :- kind(n, "attribute"), sym_of(n, q1), match("(airflow)(\\.|$).*", q1),
-    field(n, "attribute", c2), glob("{DAG,dag}", c2).
-air002_dag_callee(n) :- kind(n, "identifier"), sym_of(n, q3), match("(airflow)(\\.|$).*", q3),
-    ref_site(n, b4), air002_dag_site(b4).
-air002_dag_callee(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), air002_dag_callee(c5).
+air002_dag_callee(n) :- air002_demand_dag_callee(n), kind(n, "attribute"),
+    sym_of(n, q1), match("(airflow)(\\.|$).*", q1), field(n, "attribute", c2),
+    glob("{DAG,dag}", c2).
+air002_dag_callee(n) :- air002_demand_dag_callee(n), kind(n, "identifier"),
+    sym_of(n, q3), match("(airflow)(\\.|$).*", q3), ref_site(n, b4),
+    (st5 = b4 ; within(b4, st5)), air002_dag_site(st5).
+air002_dag_callee(n) :- air002_demand_dag_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _), air002_dag_callee(c6).
+
+// demand_dag_callee: the nodes dag_callee is asked at (its recursion looks at every descendant)
+.decl air002_demand_dag_callee(n: node)
+air002_demand_dag_callee(c1) :- kind(n, "call"), field(n, "function", c1).
+air002_demand_dag_callee(c6) :- air002_demand_dag_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _).

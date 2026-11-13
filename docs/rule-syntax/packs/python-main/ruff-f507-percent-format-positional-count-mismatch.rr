@@ -12,6 +12,6 @@
 .violation F507(at: node) "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError."
     suppress noqa "F507"
 F507(n) :- n ~ `$S % $R`,
-    ( ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"not": {"kind": "pair"}}}})
-    ; ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"any": [{"kind": "star"}, {"kind": "placeholder", "not": {"has": {"kind": "mapping_key"}}}]}}})
+    ( ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"not": {"kind": "pair"}}}}})
+    ; ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"any": [{"kind": "star"}, {"kind": "placeholder", "not": {"has": {"kind": "mapping_key"}}}]}}}})
     ).

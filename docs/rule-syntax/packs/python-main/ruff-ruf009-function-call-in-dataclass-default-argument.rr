@@ -122,10 +122,11 @@ ruf009_newtype_call(n) :- ruf009_demand_newtype_call(n), kind(n, "parenthesized_
 // newtype_name(n): the JSON util `newtype-name`, used where the JSON says `matches: "newtype-name"`
 .decl ruf009_newtype_name(n: node)
 ruf009_newtype_name(n) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
-    binding_value(b1, x2), ruf009_newtype_call(x2), kind(b1, "assignment"),
-    count : { child(b1, c3, _), (kind(c3, "type") ; kind(c3, "pattern_list") ; kind(c3, "tuple_pattern") ; kind(c3, "list_pattern")) } = 0.
-ruf009_newtype_name(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
-    ruf009_newtype_name(c4).
+    binding_value(b1, x2), ruf009_newtype_call(x2), (st3 = b1 ; within(b1, st3)),
+    kind(st3, "assignment"),
+    count : { child(st3, c4, _), (kind(c4, "type") ; kind(c4, "pattern_list") ; kind(c4, "tuple_pattern") ; kind(c4, "list_pattern")) } = 0.
+ruf009_newtype_name(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    ruf009_newtype_name(c5).
 
 // descriptor_class(n): the JSON util `descriptor-class`, used where the JSON says `matches: "descriptor-class"`
 .decl ruf009_descriptor_class(n: node)
@@ -136,9 +137,10 @@ ruf009_descriptor_class(n) :- kind(n, "class_definition"), child(n, c1, _), kind
 
 // descriptor_name(n): the JSON util `descriptor-name`, used where the JSON says `matches: "descriptor-name"`
 .decl ruf009_descriptor_name(n: node)
-ruf009_descriptor_name(n) :- kind(n, "identifier"), ref_site(n, b1), ruf009_descriptor_class(b1).
-ruf009_descriptor_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
-    ruf009_descriptor_name(c2).
+ruf009_descriptor_name(n) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), ruf009_descriptor_class(st2).
+ruf009_descriptor_name(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf009_descriptor_name(c3).
 
 // stdlib_name(n): the JSON util `stdlib-name`, used where the JSON says `matches: "stdlib-name"`
 .decl ruf009_stdlib_name(n: node)
@@ -236,9 +238,10 @@ ruf009_frozen_class(n) :- kind(n, "class_definition"), child(p1, n, _),
 
 // frozen_name_ref(n): the JSON util `frozen-name-ref`, used where the JSON says `matches: "frozen-name-ref"`
 .decl ruf009_frozen_name_ref(n: node)
-ruf009_frozen_name_ref(n) :- kind(n, "identifier"), ref_site(n, b1), ruf009_frozen_class(b1).
-ruf009_frozen_name_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
-    ruf009_frozen_name_ref(c2).
+ruf009_frozen_name_ref(n) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), ruf009_frozen_class(st2).
+ruf009_frozen_name_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf009_frozen_name_ref(c3).
 
 // exempt_callee(n): the JSON util `exempt-callee`, used where the JSON says `matches: "exempt-callee"`
 .decl ruf009_exempt_callee(n: node)
@@ -1170,7 +1173,7 @@ ruf009_tok_has_23(n) :- node_text(n, g3), !child(n, _, _),
 ruf009_demand_newtype_call(c9) :- ruf009_demand_newtype_call(n), kind(n, "parenthesized_expression"),
     child(n, c9, _).
 ruf009_demand_newtype_call(x2) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
-    binding_value(b1, x2), kind(b1, "assignment").
+    binding_value(b1, x2), (st3 = b1 ; within(b1, st3)), kind(st3, "assignment").
 
 // demand_class_var_import_follows: the nodes class_var_import_follows is asked at (it looks at every ancestor of every node)
 .decl ruf009_demand_class_var_import_follows(n: node)

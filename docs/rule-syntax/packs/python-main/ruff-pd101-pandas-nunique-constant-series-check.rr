@@ -22,8 +22,8 @@ pd101_relevant_name(n) :- kind(n, "identifier"),
     ; ref_site(n, b2), site_form(b2, "parameter"), !glob("{self,cls}", n)
     ),
 
-    count : { ref_site(n, b4), site_scope(b4, "module"), within(b4, p5), pd101_dunder_all_statement(p5) } = 0,
-    count : { ref_site(n, b6), site_scope(b6, "comprehension"), inside(b6, p7, "with_clause"), node(_, p7, _, _, _) } = 0.
+    count : { ref_site(n, b4), site_scope(b4, "module"), (st5 = b4 ; within(b4, st5)), within(st5, p6), pd101_dunder_all_statement(p6) } = 0,
+    count : { ref_site(n, b7), site_scope(b7, "comprehension"), (st8 = b7 ; within(b7, st8)), inside(st8, p9, "with_clause"), node(_, p9, _, _, _) } = 0.
 
 // series_receiver(n): the JSON util `series-receiver`, used where the JSON says `matches: "series-receiver"`
 .decl pd101_series_receiver(n: node)

@@ -12,7 +12,7 @@
 .violation F524(at: node) "`.format` call is missing argument(s) for placeholder(s)"
     suppress noqa "F524"
 F524(n) :- n ~ `$S.format($$$A)`,
-    ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
 F524(n) :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "generator_expression"), field(n, "function", c2), kind(c2, "attribute"),
     field(c2, "attribute", c3), glob("format", c3), field(n, "function", c4),

@@ -43,47 +43,48 @@ npy201_fallback(n, NEW) :- node(_, NAME, _, _, _), kind(n, "attribute"), npy201_
     node(_, c5, _, _, _), TID = c5, value(TID, NEW), text(NAME, t1_td),
     NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
 npy201_fallback(n, NEW) :- node(_, NAME, _, _, _), kind(n, "identifier"), ref_site(n, b8),
-    npy201_in_handler(b8), within_stop(b8, p9, "try_statement"), kind(p9, "try_statement"),
-    npy201_catches_import_error(p9), field(p9, "body", c10),
-    has(c10, c11, "import_from_statement"), has(c11, c12, "dotted_name"),
-    npy201_statement_name(c12, q13),
-    ( q13 = "ast.literal_eval"
-    ; q13 = "inspect.getsource"
-    ; q13 = "numpy.all"
-    ; q13 = "numpy.any"
-    ; q13 = "numpy.asmatrix"
-    ; q13 = "numpy.bytes_"
-    ; q13 = "numpy.char.chararray"
-    ; q13 = "numpy.char.compare_chararrays"
-    ; q13 = "numpy.clongdouble"
-    ; q13 = "numpy.complex128"
-    ; q13 = "numpy.complex64"
-    ; q13 = "numpy.cumprod"
-    ; q13 = "numpy.exceptions.AxisError"
-    ; q13 = "numpy.exceptions.ComplexWarning"
-    ; q13 = "numpy.exceptions.DTypePromotionError"
-    ; q13 = "numpy.exceptions.ModuleDeprecationWarning"
-    ; q13 = "numpy.exceptions.RankWarning"
-    ; q13 = "numpy.exceptions.TooHardError"
-    ; q13 = "numpy.exceptions.VisibleDeprecationWarning"
-    ; q13 = "numpy.float64"
-    ; q13 = "numpy.inf"
-    ; q13 = "numpy.issubdtype"
-    ; q13 = "numpy.lib.add_docstring"
-    ; q13 = "numpy.lib.add_newdoc"
-    ; q13 = "numpy.lib.array_utils.byte_bounds"
-    ; q13 = "numpy.lib.npyio.DataSource"
-    ; q13 = "numpy.lib.tracemalloc_domain"
-    ; q13 = "numpy.longdouble"
-    ; q13 = "numpy.nan"
-    ; q13 = "numpy.prod"
-    ; q13 = "numpy.rec.format_parser"
-    ; q13 = "numpy.round"
-    ; q13 = "numpy.str_"
-    ; q13 = "numpy.trapezoid"
-    ; q13 = "numpy.vstack"
+    (st9 = b8 ; within(b8, st9)), npy201_in_handler(st9),
+    within_stop(st9, p10, "try_statement"), kind(p10, "try_statement"),
+    npy201_catches_import_error(p10), field(p10, "body", c11),
+    has(c11, c12, "import_from_statement"), has(c12, c13, "dotted_name"),
+    npy201_statement_name(c13, q14),
+    ( q14 = "ast.literal_eval"
+    ; q14 = "inspect.getsource"
+    ; q14 = "numpy.all"
+    ; q14 = "numpy.any"
+    ; q14 = "numpy.asmatrix"
+    ; q14 = "numpy.bytes_"
+    ; q14 = "numpy.char.chararray"
+    ; q14 = "numpy.char.compare_chararrays"
+    ; q14 = "numpy.clongdouble"
+    ; q14 = "numpy.complex128"
+    ; q14 = "numpy.complex64"
+    ; q14 = "numpy.cumprod"
+    ; q14 = "numpy.exceptions.AxisError"
+    ; q14 = "numpy.exceptions.ComplexWarning"
+    ; q14 = "numpy.exceptions.DTypePromotionError"
+    ; q14 = "numpy.exceptions.ModuleDeprecationWarning"
+    ; q14 = "numpy.exceptions.RankWarning"
+    ; q14 = "numpy.exceptions.TooHardError"
+    ; q14 = "numpy.exceptions.VisibleDeprecationWarning"
+    ; q14 = "numpy.float64"
+    ; q14 = "numpy.inf"
+    ; q14 = "numpy.issubdtype"
+    ; q14 = "numpy.lib.add_docstring"
+    ; q14 = "numpy.lib.add_newdoc"
+    ; q14 = "numpy.lib.array_utils.byte_bounds"
+    ; q14 = "numpy.lib.npyio.DataSource"
+    ; q14 = "numpy.lib.tracemalloc_domain"
+    ; q14 = "numpy.longdouble"
+    ; q14 = "numpy.nan"
+    ; q14 = "numpy.prod"
+    ; q14 = "numpy.rec.format_parser"
+    ; q14 = "numpy.round"
+    ; q14 = "numpy.str_"
+    ; q14 = "numpy.trapezoid"
+    ; q14 = "numpy.vstack"
     ),
-    node(_, c12, _, _, _), IID = c12, value(IID, NEW), text(NAME, t1_td),
+    node(_, c13, _, _, _), IID = c13, value(IID, NEW), text(NAME, t1_td),
     NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
 
 // catches_import_error(n): the JSON util `catches-import-error`, used where the JSON says `matches: "catches-import-error"`
@@ -693,11 +694,12 @@ npy201_demand_in_handler(n) :- node(_, NEW, _, _, _), kind(n, "attribute"),
     npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
     sym_of(c3, q4), npy201_set_4(q4), field(c3, "attribute", c5), kind(c5, "identifier"),
     node(_, c5, _, _, _), TID = c5, value(TID, t6), value(NEW, t6).
-npy201_demand_in_handler(b8) :- node(_, NEW, _, _, _), kind(n, "identifier"), ref_site(n, b8),
-    within_stop(b8, p9, "try_statement"), kind(p9, "try_statement"),
-    npy201_catches_import_error(p9), field(p9, "body", c10),
-    has(c10, c11, "import_from_statement"), has(c11, c12, "dotted_name"),
-    npy201_statement_name(c12, q13), node(_, c12, _, _, _), IID = c12, value(IID, t14), value(NEW, t14).
+npy201_demand_in_handler(st9) :- node(_, NEW, _, _, _), kind(n, "identifier"),
+    ref_site(n, b8), (st9 = b8 ; within(b8, st9)),
+    within_stop(st9, p10, "try_statement"), kind(p10, "try_statement"),
+    npy201_catches_import_error(p10), field(p10, "body", c11),
+    has(c11, c12, "import_from_statement"), has(c12, c13, "dotted_name"),
+    npy201_statement_name(c13, q14), node(_, c13, _, _, _), IID = c13, value(IID, t15), value(NEW, t15).
 npy201_demand_in_handler(n) :- within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
     npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
     sym_of(c3, q4), npy201_set_4(q4).

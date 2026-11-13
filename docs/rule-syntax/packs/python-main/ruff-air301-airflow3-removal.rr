@@ -40,12 +40,12 @@ air301_head_site(n, q1) :- air301_head_site_case(q1, s1, s2), kind(n, "aliased_i
 // head_of_of(n, key): 5 copies of one rule set (`authmgr-head`, `backend-head`, `handler-head` and 2 more), folded into one: row `key` of
 // head_of_of_case gives the strings each copy had.
 .decl air301_head_of_of(n: node, air301_key: symbol)
-air301_head_of_of(n, q1) :- air301_class_case(q1), kind(n, "identifier"), ref_site(n, b1),
-    air301_head_site(b1, q1).
-air301_head_of_of(n, q1) :- air301_class_case(q1), kind(n, "attribute"), field(n, "object", c2),
-    air301_head_of_of(c2, q1).
-air301_head_of_of(n, q1) :- air301_class_case(q1), kind(n, "parenthesized_expression"),
-    child(n, c3, _), air301_head_of_of(c3, q1).
+air301_head_of_of(n, q1) :- air301_demand_head_of_of(n), air301_class_case(q1), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_head_site(st2, q1).
+air301_head_of_of(n, q1) :- air301_demand_head_of_of(n), air301_class_case(q1), kind(n, "attribute"),
+    field(n, "object", c3), air301_head_of_of(c3, q1).
+air301_head_of_of(n, q1) :- air301_demand_head_of_of(n), air301_class_case(q1),
+    kind(n, "parenthesized_expression"), child(n, c4, _), air301_head_of_of(c4, q1).
 
 // chain(n, key): 5 copies of one rule set (`authmgr-chain`, `backend-chain`, `handler-chain` and 2 more), folded into one: row `key` of
 // chain_case gives the strings each copy had.
@@ -60,18 +60,18 @@ air301_chain(n, q1) :- air301_chain_case(q1, s1), kind(n, "parenthesized_express
 // callee_of(n, key): 5 copies of one rule set (`authmgr-callee`, `backend-callee`, `handler-callee` and 2 more), folded into one: row `key` of
 // callee_of_case gives the strings each copy had.
 .decl air301_callee_of(n: node, air301_key: symbol)
-air301_callee_of(n, q2) :- air301_callee_of_case(q2, s1),
+air301_callee_of(n, q2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
     (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), match(s1, q1).
-air301_callee_of(n, q2) :- air301_callee_of_case(q2, s1), kind(n, "identifier"), ref_site(n, b2),
-    air301_site(b2, q2).
-air301_callee_of(n, q2) :- air301_callee_of_case(q2, s1), kind(n, "attribute"),
-    sym_of(n, q3), match("(airflow\\.providers)(\\.|$).*", q3),
+air301_callee_of(n, q2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1), kind(n, "identifier"),
+    ref_site(n, b2), (st3 = b2 ; within(b2, st3)), air301_site(st3, q2).
+air301_callee_of(n, q2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1), kind(n, "attribute"),
+    sym_of(n, q4), match("(airflow\\.providers)(\\.|$).*", q4),
     ( field(n, "object", c1), air301_chain(c1, q2)
     ; field(n, "object", c2), air301_head_of_of(c2, q2)
     ).
 
-air301_callee_of(n, q2) :- air301_callee_of_case(q2, s1), kind(n, "parenthesized_expression"),
-    child(n, c6, _), air301_callee_of(c6, q2).
+air301_callee_of(n, q2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
+    kind(n, "parenthesized_expression"), child(n, c7, _), air301_callee_of(c7, q2).
 
 // last(n, key): 5 copies of one rule set (`authmgr-last`, `backend-last`, `handler-last` and 2 more), folded into one: row `key` of
 // last_case gives the strings each copy had.
@@ -79,12 +79,13 @@ air301_callee_of(n, q2) :- air301_callee_of_case(q2, s1), kind(n, "parenthesized
 air301_last(n, q1) :- air301_last_case(q1, s1), kind(n, "attribute"), field(n, "attribute", c1),
     suffix(s1, c1).
 air301_last(n, q1) :- air301_last_case(q1, s1), kind(n, "identifier"), ref_site(n, b2),
-    ( kind(b2, "dotted_name"), suffix(s1, b2), child(p1, b2, _), kind(p1, "import_from_statement")
-    ; kind(b2, "aliased_import"), field(b2, "name", c1), suffix(s1, c1)
+    (st3 = b2 ; within(b2, st3)),
+    ( kind(st3, "dotted_name"), suffix(s1, st3), child(p1, st3, _), kind(p1, "import_from_statement")
+    ; kind(st3, "aliased_import"), field(st3, "name", c1), suffix(s1, c1)
     ).
 
-air301_last(n, q1) :- air301_last_case(q1, s1), kind(n, "parenthesized_expression"), child(n, c5, _),
-    air301_last(c5, q1).
+air301_last(n, q1) :- air301_last_case(q1, s1), kind(n, "parenthesized_expression"), child(n, c6, _),
+    air301_last(c6, q1).
 
 // class(n, key): 5 copies of one rule set (`authmgr-class`, `backend-class`, `handler-class` and 2 more), folded into one: row `key` of
 // class_case gives the strings each copy had.
@@ -100,11 +101,14 @@ air301_dag_site(n) :- kind(n, "aliased_import"), field(n, "name", c2),
 
 // dag_callee(n): the JSON util `dag-callee`, used where the JSON says `matches: "dag-callee"`
 .decl air301_dag_callee(n: node)
-air301_dag_callee(n) :- kind(n, "attribute"), sym_of(n, q1), match("(airflow)(\\.|$).*", q1),
-    field(n, "attribute", c2), glob("{DAG,dag}", c2).
-air301_dag_callee(n) :- kind(n, "identifier"), sym_of(n, q3), match("(airflow)(\\.|$).*", q3),
-    ref_site(n, b4), air301_dag_site(b4).
-air301_dag_callee(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), air301_dag_callee(c5).
+air301_dag_callee(n) :- air301_demand_dag_callee(n), kind(n, "attribute"),
+    sym_of(n, q1), match("(airflow)(\\.|$).*", q1), field(n, "attribute", c2),
+    glob("{DAG,dag}", c2).
+air301_dag_callee(n) :- air301_demand_dag_callee(n), kind(n, "identifier"),
+    sym_of(n, q3), match("(airflow)(\\.|$).*", q3), ref_site(n, b4),
+    (st5 = b4 ; within(b4, st5)), air301_dag_site(st5).
+air301_dag_callee(n) :- air301_demand_dag_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _), air301_dag_callee(c6).
 
 // task_name(n): the JSON util `task-name`, used where the JSON says `matches: "task-name"`
 .decl air301_task_name(n: node)
@@ -118,17 +122,18 @@ air301_task_callee(n) :- air301_task_name(n).
 
 // sdk_variable(n): the JSON util `sdk-variable`, used where the JSON says `matches: "sdk-variable"`
 .decl air301_sdk_variable(n: node)
-air301_sdk_variable(n) :- kind(n, "attribute"),
+air301_sdk_variable(n) :- air301_demand_sdk_variable(n), kind(n, "attribute"),
     sym_of(n, q1), match("(airflow\\.sdk)(\\.|$).*", q1), field(n, "attribute", c2),
     glob("Variable", c2).
-air301_sdk_variable(n) :- kind(n, "identifier"),
+air301_sdk_variable(n) :- air301_demand_sdk_variable(n), kind(n, "identifier"),
     sym_of(n, q3), match("(airflow\\.sdk)(\\.|$).*", q3), ref_site(n, b4),
-    ( kind(b4, "dotted_name"), glob("Variable", b4), child(p1, b4, _), kind(p1, "import_from_statement")
-    ; kind(b4, "aliased_import"), field(b4, "name", c1), match(".*(^|\\.)Variable", c1)
+    (st5 = b4 ; within(b4, st5)),
+    ( kind(st5, "dotted_name"), glob("Variable", st5), child(p1, st5, _), kind(p1, "import_from_statement")
+    ; kind(st5, "aliased_import"), field(st5, "name", c1), match(".*(^|\\.)Variable", c1)
     ).
 
-air301_sdk_variable(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
-    air301_sdk_variable(c7).
+air301_sdk_variable(n) :- air301_demand_sdk_variable(n), kind(n, "parenthesized_expression"),
+    child(n, c8, _), air301_sdk_variable(c8).
 
 // variable_get(n): the JSON util `variable-get`, used where the JSON says `matches: "variable-get"`
 .decl air301_variable_get(n: node)
@@ -149,21 +154,22 @@ air301_tail_obj(n, q1) :- air301_tail_obj_case(q1, s1), kind(n, "parenthesized_e
 // tail(n, key): 3 copies of one rule set (`tail-branch-datetime`, `tail-branch-weekday`, `tail-trigger-dagrun`), folded into one: row `key` of
 // tail_case gives the strings each copy had.
 .decl air301_tail(n: node, air301_key: symbol)
-air301_tail(n, q1) :- air301_tail_case(q1, s1, s2), kind(n, "attribute"), field(n, "attribute", c1),
-    glob(s1, c1),
+air301_tail(n, q1) :- air301_demand_tail(n), air301_tail_case(q1, s1, s2), kind(n, "attribute"),
+    field(n, "attribute", c1), glob(s1, c1),
     ( field(n, "object", c2), air301_tail_obj(c2, q1)
-    ; field(n, "object", c3), kind(c3, "identifier"), ref_site(c3, b1), kind(b1, "aliased_import"), field(b1, "name", c4), match(s2, c4)
+    ; field(n, "object", c3), kind(c3, "identifier"), ref_site(c3, b1), (st1 = b1 ; within(b1, st1)), kind(st1, "aliased_import"), field(st1, "name", c4), match(s2, c4)
     ).
 
-air301_tail(n, q1) :- air301_tail_case(q1, s1, s2), kind(n, "identifier"), ref_site(n, b6),
-    inside(b6, p7, "import_from_statement"), field(p7, "module_name", c8),
-    kind(c8, "dotted_name"), match(s2, c8),
-    ( kind(b6, "dotted_name"), glob(s1, b6)
-    ; kind(b6, "aliased_import"), field(b6, "name", c1), glob(s1, c1)
+air301_tail(n, q1) :- air301_demand_tail(n), air301_tail_case(q1, s1, s2), kind(n, "identifier"),
+    ref_site(n, b7), (st8 = b7 ; within(b7, st8)),
+    inside(st8, p9, "import_from_statement"), field(p9, "module_name", c10),
+    kind(c10, "dotted_name"), match(s2, c10),
+    ( kind(st8, "dotted_name"), glob(s1, st8)
+    ; kind(st8, "aliased_import"), field(st8, "name", c1), glob(s1, c1)
     ).
 
-air301_tail(n, q1) :- air301_tail_case(q1, s1, s2), kind(n, "parenthesized_expression"),
-    child(n, c10, _), air301_tail(c10, q1).
+air301_tail(n, q1) :- air301_demand_tail(n), air301_tail_case(q1, s1, s2),
+    kind(n, "parenthesized_expression"), child(n, c12, _), air301_tail(c12, q1).
 
 // import_error(n): the JSON util `import-error`, used where the JSON says `matches: "import-error"`
 .decl air301_import_error(n: node)
@@ -345,32 +351,35 @@ air301_assigned_get_current_context(n) :- air301_demand_assigned_get_current_con
 // ctx_var(n): the JSON util `ctx-var`, used where the JSON says `matches: "ctx-var"`
 .decl air301_ctx_var(n: node)
 air301_ctx_var(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_only(b1), air301_alt_54(b1), inside(b1, p1, "parameters"), node(_, p1, _, _, _)
-    ; ref_site(n, b2), air301_assigned_get_current_context(b2)
+    ( ref_site(n, b1), site_only(b1), (st1 = b1 ; within(b1, st1)), air301_alt_54(st1), inside(st1, p1, "parameters"), node(_, p1, _, _, _)
+    ; ref_site(n, b2), (st2 = b2 ; within(b2, st2)), air301_assigned_get_current_context(st2)
     ).
 
 
 // operator_base(n): the JSON util `operator-base`, used where the JSON says `matches: "operator-base"`
 .decl air301_operator_base(n: node)
-air301_operator_base(n) :- kind(n, "attribute"),
+air301_operator_base(n) :- air301_demand_operator_base(n), kind(n, "attribute"),
     sym_of(n, q1), match("(airflow)(\\.|$).*", q1), field(n, "attribute", c2),
     glob("BaseOperator", c2).
-air301_operator_base(n) :- kind(n, "identifier"),
+air301_operator_base(n) :- air301_demand_operator_base(n), kind(n, "identifier"),
     sym_of(n, q3), match("(airflow)(\\.|$).*", q3), ref_site(n, b4),
-    ( kind(b4, "dotted_name"), glob("BaseOperator", b4), child(p1, b4, _), kind(p1, "import_from_statement")
-    ; kind(b4, "aliased_import"), field(b4, "name", c1), match(".*(^|\\.)BaseOperator", c1)
+    (st5 = b4 ; within(b4, st5)),
+    ( kind(st5, "dotted_name"), glob("BaseOperator", st5), child(p1, st5, _), kind(p1, "import_from_statement")
+    ; kind(st5, "aliased_import"), field(st5, "name", c1), match(".*(^|\\.)BaseOperator", c1)
     ).
 
-air301_operator_base(n) :- kind(n, "identifier"), ref_site(n, b7),
-    kind(b7, "class_definition"), air301_operator_class(b7).
-air301_operator_base(n) :- kind(n, "subscript"), field(n, "value", c8), air301_operator_base(c8).
-air301_operator_base(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
-    air301_operator_base(c9).
+air301_operator_base(n) :- air301_demand_operator_base(n), kind(n, "identifier"), ref_site(n, b8),
+    (st9 = b8 ; within(b8, st9)), kind(st9, "class_definition"), air301_operator_class(st9).
+air301_operator_base(n) :- air301_demand_operator_base(n), kind(n, "subscript"),
+    field(n, "value", c10), air301_operator_base(c10).
+air301_operator_base(n) :- air301_demand_operator_base(n), kind(n, "parenthesized_expression"),
+    child(n, c11, _), air301_operator_base(c11).
 
 // operator_class(n): the JSON util `operator-class`, used where the JSON says `matches: "operator-class"`
 .decl air301_operator_class(n: node)
-air301_operator_class(n) :- kind(n, "class_definition"), field(n, "superclasses", c1),
-    kind(c1, "argument_list"), child(c1, c2, _), air301_operator_base(c2).
+air301_operator_class(n) :- air301_demand_operator_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
+    air301_operator_base(c2).
 
 // execute_method(n): the JSON util `execute-method`, used where the JSON says `matches: "execute-method"`
 .decl air301_execute_method(n: node)
@@ -409,13 +418,14 @@ air301_ctx_key_dag_run(n) :- kind(n, "parenthesized_expression"), child(n, c9, _
 
 // from_dag_run(n): the JSON util `from-dag_run`, used where the JSON says `matches: "from-dag_run"`
 .decl air301_from_dag_run(n: node)
-air301_from_dag_run(n) :- air301_ctx_key_dag_run(n).
-air301_from_dag_run(n) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
-    binding_value(b1, x2), air301_ctx_key_dag_run(x2).
-air301_from_dag_run(n) :- kind(n, "identifier"), ref_site(n, b3), site_only(b3),
-    kind(b3, "as_pattern"), child(b3, c4, _), air301_ctx_key_dag_run(c4).
-air301_from_dag_run(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    air301_from_dag_run(c5).
+air301_from_dag_run(n) :- air301_demand_from_dag_run(n), air301_ctx_key_dag_run(n).
+air301_from_dag_run(n) :- air301_demand_from_dag_run(n), kind(n, "identifier"), ref_site(n, b1),
+    site_only(b1), binding_value(b1, x2), air301_ctx_key_dag_run(x2).
+air301_from_dag_run(n) :- air301_demand_from_dag_run(n), kind(n, "identifier"), ref_site(n, b3),
+    site_only(b3), (st4 = b3 ; within(b3, st4)), kind(st4, "as_pattern"),
+    child(st4, c5, _), air301_ctx_key_dag_run(c5).
+air301_from_dag_run(n) :- air301_demand_from_dag_run(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _), air301_from_dag_run(c6).
 
 // ctx_key_inlet_events(n): the JSON util `ctx-key-inlet_events`, used where the JSON says `matches: "ctx-key-inlet_events"`
 .decl air301_ctx_key_inlet_events(n: node)
@@ -431,13 +441,14 @@ air301_ctx_key_inlet_events(n) :- kind(n, "parenthesized_expression"), child(n, 
 
 // from_inlet_events(n): the JSON util `from-inlet_events`, used where the JSON says `matches: "from-inlet_events"`
 .decl air301_from_inlet_events(n: node)
-air301_from_inlet_events(n) :- air301_ctx_key_inlet_events(n).
-air301_from_inlet_events(n) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
-    binding_value(b1, x2), air301_ctx_key_inlet_events(x2).
-air301_from_inlet_events(n) :- kind(n, "identifier"), ref_site(n, b3), site_only(b3),
-    kind(b3, "as_pattern"), child(b3, c4, _), air301_ctx_key_inlet_events(c4).
-air301_from_inlet_events(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    air301_from_inlet_events(c5).
+air301_from_inlet_events(n) :- air301_demand_from_inlet_events(n), air301_ctx_key_inlet_events(n).
+air301_from_inlet_events(n) :- air301_demand_from_inlet_events(n), kind(n, "identifier"),
+    ref_site(n, b1), site_only(b1), binding_value(b1, x2), air301_ctx_key_inlet_events(x2).
+air301_from_inlet_events(n) :- air301_demand_from_inlet_events(n), kind(n, "identifier"),
+    ref_site(n, b3), site_only(b3), (st4 = b3 ; within(b3, st4)),
+    kind(st4, "as_pattern"), child(st4, c5, _), air301_ctx_key_inlet_events(c5).
+air301_from_inlet_events(n) :- air301_demand_from_inlet_events(n),
+    kind(n, "parenthesized_expression"), child(n, c6, _), air301_from_inlet_events(c6).
 
 // ctx_key_slot(n): the JSON util `ctx-key-slot`, used where the JSON says `matches: "ctx-key-slot"`
 .decl air301_ctx_key_slot(n: node)
@@ -634,11 +645,12 @@ air301_new_attribute_of(n, q1) :- air301_new_attribute_of_case(q1, s1), kind(n, 
 
 // guarded(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded(n: node)
-air301_guarded(n) :- kind(n, "identifier"), ref_site(n, b1), air301_import_guard_ctx(b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3), air301_new_import_of(c4, "new_import").
-air301_guarded(n) :- kind(n, "attribute"), air301_attribute_guard_ctx(n), air301_up_8(n, p5),
-    field(p5, "body", c6), within(c7, c6), air301_new_attribute_of(c7, "new_attribute").
+air301_guarded(n) :- kind(n, "identifier"), ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    air301_import_guard_ctx(st2), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import").
+air301_guarded(n) :- kind(n, "attribute"), air301_attribute_guard_ctx(n), air301_up_8(n, p6),
+    field(p6, "body", c7), within(c8, c7), air301_new_attribute_of(c8, "new_attribute").
 
 // quoted_renamed_api_connexion_security_requires_access_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -658,12 +670,13 @@ AIR301_renamed_auth_managers_base_auth_manager_baseauthmanager(N, n) :- air301_q
 // guarded_renamed_auth_managers_base_auth_manager_baseauthmanager(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_auth_managers_base_auth_manager_baseauthmanager(n: node)
 air301_guarded_renamed_auth_managers_base_auth_manager_baseauthmanager(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_auth_managers_base_auth_manager_baseauthmanager").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_auth_managers_base_auth_manager_baseauthmanager").
 air301_guarded_renamed_auth_managers_base_auth_manager_baseauthmanager(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_auth_managers_base_auth_manager_baseauthmanager").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_auth_managers_base_auth_manager_baseauthmanager").
 
 // quoted_renamed_auth_managers_base_auth_manager_baseauthmanager(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -683,12 +696,13 @@ AIR301_renamed_auth_managers_models_resource_details_datasetdetails(N, n) :- air
 // guarded_renamed_auth_managers_models_resource_details_datasetdetails(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_auth_managers_models_resource_details_datasetdetails(n: node)
 air301_guarded_renamed_auth_managers_models_resource_details_datasetdetails(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_auth_managers_models_resource_details_datasetdetails").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_auth_managers_models_resource_details_datasetdetails").
 air301_guarded_renamed_auth_managers_models_resource_details_datasetdetails(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_auth_managers_models_resource_details_datasetdetails").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_auth_managers_models_resource_details_datasetdetails").
 
 // quoted_renamed_auth_managers_models_resource_details_datasetdetails(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -708,12 +722,13 @@ AIR301_renamed_datasets_manager_datasetmanager(N, n) :- air301_quoted_renamed_da
 // guarded_renamed_datasets_manager_datasetmanager(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_datasets_manager_datasetmanager(n: node)
 air301_guarded_renamed_datasets_manager_datasetmanager(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_datasetmanager").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_datasetmanager").
 air301_guarded_renamed_datasets_manager_datasetmanager(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_datasetmanager").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_datasetmanager").
 
 // quoted_renamed_datasets_manager_datasetmanager(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -733,12 +748,13 @@ AIR301_renamed_datasets_manager_dataset_manager(N, n) :- air301_quoted_renamed_d
 // guarded_renamed_datasets_manager_dataset_manager(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_datasets_manager_dataset_manager(n: node)
 air301_guarded_renamed_datasets_manager_dataset_manager(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_dataset_manager").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_dataset_manager").
 air301_guarded_renamed_datasets_manager_dataset_manager(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_dataset_manager").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_dataset_manager").
 
 // quoted_renamed_datasets_manager_dataset_manager(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -758,12 +774,13 @@ AIR301_renamed_datasets_manager_resolve_dataset_manager(N, n) :- air301_quoted_r
 // guarded_renamed_datasets_manager_resolve_dataset_manager(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_datasets_manager_resolve_dataset_manager(n: node)
 air301_guarded_renamed_datasets_manager_resolve_dataset_manager(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_resolve_dataset_manager").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_resolve_dataset_manager").
 air301_guarded_renamed_datasets_manager_resolve_dataset_manager(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_resolve_dataset_manager").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_resolve_dataset_manager").
 
 // quoted_renamed_datasets_manager_resolve_dataset_manager(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -783,12 +800,13 @@ AIR301_renamed_lineage_hook_datasetlineageinfo(N, n) :- air301_quoted_renamed_li
 // guarded_renamed_lineage_hook_datasetlineageinfo(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_lineage_hook_datasetlineageinfo(n: node)
 air301_guarded_renamed_lineage_hook_datasetlineageinfo(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_lineage_hook_datasetlineageinfo").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_lineage_hook_datasetlineageinfo").
 air301_guarded_renamed_lineage_hook_datasetlineageinfo(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_lineage_hook_datasetlineageinfo").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_lineage_hook_datasetlineageinfo").
 
 // quoted_renamed_lineage_hook_datasetlineageinfo(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -808,12 +826,13 @@ AIR301_renamed_listeners_spec_dataset_on_dataset_created(N, n) :- air301_quoted_
 // guarded_renamed_listeners_spec_dataset_on_dataset_created(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_listeners_spec_dataset_on_dataset_created(n: node)
 air301_guarded_renamed_listeners_spec_dataset_on_dataset_created(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_listeners_spec_dataset_on_dataset_created").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_listeners_spec_dataset_on_dataset_created").
 air301_guarded_renamed_listeners_spec_dataset_on_dataset_created(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_listeners_spec_dataset_on_dataset_created").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_listeners_spec_dataset_on_dataset_created").
 
 // quoted_renamed_listeners_spec_dataset_on_dataset_created(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -833,12 +852,13 @@ AIR301_renamed_listeners_spec_dataset_on_dataset_changed(N, n) :- air301_quoted_
 // guarded_renamed_listeners_spec_dataset_on_dataset_changed(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_listeners_spec_dataset_on_dataset_changed(n: node)
 air301_guarded_renamed_listeners_spec_dataset_on_dataset_changed(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_listeners_spec_dataset_on_dataset_changed").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_listeners_spec_dataset_on_dataset_changed").
 air301_guarded_renamed_listeners_spec_dataset_on_dataset_changed(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_listeners_spec_dataset_on_dataset_changed").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_listeners_spec_dataset_on_dataset_changed").
 
 // quoted_renamed_listeners_spec_dataset_on_dataset_changed(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -858,12 +878,13 @@ AIR301_renamed_metrics_validators_allowlistvalidator(N, n) :- air301_quoted_rena
 // guarded_renamed_metrics_validators_allowlistvalidator(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_metrics_validators_allowlistvalidator(n: node)
 air301_guarded_renamed_metrics_validators_allowlistvalidator(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_metrics_validators_allowlistvalidator").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_metrics_validators_allowlistvalidator").
 air301_guarded_renamed_metrics_validators_allowlistvalidator(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_metrics_validators_allowlistvalidator").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_metrics_validators_allowlistvalidator").
 
 // quoted_renamed_metrics_validators_allowlistvalidator(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -883,12 +904,13 @@ AIR301_renamed_metrics_validators_blocklistvalidator(N, n) :- air301_quoted_rena
 // guarded_renamed_metrics_validators_blocklistvalidator(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_metrics_validators_blocklistvalidator(n: node)
 air301_guarded_renamed_metrics_validators_blocklistvalidator(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_metrics_validators_blocklistvalidator").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_metrics_validators_blocklistvalidator").
 air301_guarded_renamed_metrics_validators_blocklistvalidator(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_metrics_validators_blocklistvalidator").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_metrics_validators_blocklistvalidator").
 
 // quoted_renamed_metrics_validators_blocklistvalidator(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -908,12 +930,13 @@ AIR301_renamed_secrets_local_filesystem_load_connections(N, n) :- air301_quoted_
 // guarded_renamed_secrets_local_filesystem_load_connections(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_secrets_local_filesystem_load_connections(n: node)
 air301_guarded_renamed_secrets_local_filesystem_load_connections(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_secrets_local_filesystem_load_connections").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_secrets_local_filesystem_load_connections").
 air301_guarded_renamed_secrets_local_filesystem_load_connections(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_secrets_local_filesystem_load_connections").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_secrets_local_filesystem_load_connections").
 
 // quoted_renamed_secrets_local_filesystem_load_connections(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -933,12 +956,13 @@ AIR301_renamed_security_permissions_resource_dataset(N, n) :- air301_quoted_rena
 // guarded_renamed_security_permissions_resource_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_security_permissions_resource_dataset(n: node)
 air301_guarded_renamed_security_permissions_resource_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_security_permissions_resource_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_security_permissions_resource_dataset").
 air301_guarded_renamed_security_permissions_resource_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_security_permissions_resource_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_security_permissions_resource_dataset").
 
 // quoted_renamed_security_permissions_resource_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -958,12 +982,13 @@ AIR301_renamed_timetables_simple_datasettriggeredtimetable(N, n) :- air301_quote
 // guarded_renamed_timetables_simple_datasettriggeredtimetable(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_timetables_simple_datasettriggeredtimetable(n: node)
 air301_guarded_renamed_timetables_simple_datasettriggeredtimetable(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_timetables_simple_datasettriggeredtimetable").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_timetables_simple_datasettriggeredtimetable").
 air301_guarded_renamed_timetables_simple_datasettriggeredtimetable(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_timetables_simple_datasettriggeredtimetable").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_timetables_simple_datasettriggeredtimetable").
 
 // quoted_renamed_timetables_simple_datasettriggeredtimetable(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -983,12 +1008,13 @@ AIR301_renamed_utils_file_temporarydirectory(N, n) :- air301_quoted_renamed_util
 // guarded_renamed_utils_file_temporarydirectory(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_utils_file_temporarydirectory(n: node)
 air301_guarded_renamed_utils_file_temporarydirectory(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_utils_file_temporarydirectory").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_utils_file_temporarydirectory").
 air301_guarded_renamed_utils_file_temporarydirectory(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_utils_file_temporarydirectory").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_utils_file_temporarydirectory").
 
 // quoted_renamed_utils_file_temporarydirectory(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1008,12 +1034,13 @@ AIR301_renamed_providers_amazon_aws_datasets_s3_create_dataset(N, n) :- air301_q
 // guarded_renamed_providers_amazon_aws_datasets_s3_create_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_amazon_aws_datasets_s3_create_dataset(n: node)
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_create_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_create_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_create_dataset").
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_create_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_create_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_create_dataset").
 
 // quoted_renamed_providers_amazon_aws_datasets_s3_create_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1040,12 +1067,13 @@ air301_new_import_renamed_providers(n, q1) :- air301_new_import_renamed_provider
 // guarded_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n: node)
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_convert_dataset_to_openlineage").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_convert_dataset_to_openlineage").
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage").
 
 // quoted_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1065,12 +1093,13 @@ AIR301_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(N, n) :- air301_quo
 // guarded_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n: node)
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_sanitize_uri").
 air301_guarded_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_sanitize_uri").
 
 // quoted_renamed_providers_amazon_aws_datasets_s3_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1105,12 +1134,13 @@ AIR301_renamed_providers_common_io_datasets_file_create_dataset(N, n) :- air301_
 // guarded_renamed_providers_common_io_datasets_file_create_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_common_io_datasets_file_create_dataset(n: node)
 air301_guarded_renamed_providers_common_io_datasets_file_create_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_create_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_create_dataset").
 air301_guarded_renamed_providers_common_io_datasets_file_create_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_create_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_create_dataset").
 
 // quoted_renamed_providers_common_io_datasets_file_create_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1130,12 +1160,13 @@ AIR301_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(
 // guarded_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n: node)
 air301_guarded_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_convert_dataset_to_openlineage").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_convert_dataset_to_openlineage").
 air301_guarded_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage").
 
 // quoted_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1155,12 +1186,13 @@ AIR301_renamed_providers_common_io_datasets_file_sanitize_uri(N, n) :- air301_qu
 // guarded_renamed_providers_common_io_datasets_file_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_common_io_datasets_file_sanitize_uri(n: node)
 air301_guarded_renamed_providers_common_io_datasets_file_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_sanitize_uri").
 air301_guarded_renamed_providers_common_io_datasets_file_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_sanitize_uri").
 
 // quoted_renamed_providers_common_io_datasets_file_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1190,12 +1222,13 @@ air301_new_import_renamed_providers_of(n, q1) :- air301_new_import_renamed_provi
 // guarded_renamed_providers_google_datasets_bigquery_create_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_google_datasets_bigquery_create_dataset(n: node)
 air301_guarded_renamed_providers_google_datasets_bigquery_create_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "google_datasets_bigquery_create_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "google_datasets_bigquery_create_dataset").
 air301_guarded_renamed_providers_google_datasets_bigquery_create_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_bigquery_create_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_bigquery_create_dataset").
 
 // quoted_renamed_providers_google_datasets_bigquery_create_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1215,12 +1248,13 @@ AIR301_renamed_providers_google_datasets_gcs_create_dataset(N, n) :- air301_quot
 // guarded_renamed_providers_google_datasets_gcs_create_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_google_datasets_gcs_create_dataset(n: node)
 air301_guarded_renamed_providers_google_datasets_gcs_create_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_create_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_create_dataset").
 air301_guarded_renamed_providers_google_datasets_gcs_create_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_create_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_create_dataset").
 
 // quoted_renamed_providers_google_datasets_gcs_create_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1240,12 +1274,13 @@ AIR301_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(N, n
 // guarded_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n: node)
 air301_guarded_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_convert_dataset_to_openlineage").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_convert_dataset_to_openlineage").
 air301_guarded_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage").
 
 // quoted_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1265,12 +1300,13 @@ AIR301_renamed_providers_google_datasets_gcs_sanitize_uri(N, n) :- air301_quoted
 // guarded_renamed_providers_google_datasets_gcs_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_google_datasets_gcs_sanitize_uri(n: node)
 air301_guarded_renamed_providers_google_datasets_gcs_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_sanitize_uri").
 air301_guarded_renamed_providers_google_datasets_gcs_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_sanitize_uri").
 
 // quoted_renamed_providers_google_datasets_gcs_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1290,12 +1326,13 @@ AIR301_renamed_providers_mysql_datasets_mysql_sanitize_uri(N, n) :- air301_quote
 // guarded_renamed_providers_mysql_datasets_mysql_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_mysql_datasets_mysql_sanitize_uri(n: node)
 air301_guarded_renamed_providers_mysql_datasets_mysql_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "mysql_datasets_mysql_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "mysql_datasets_mysql_sanitize_uri").
 air301_guarded_renamed_providers_mysql_datasets_mysql_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_mysql_datasets_mysql_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_mysql_datasets_mysql_sanitize_uri").
 
 // quoted_renamed_providers_mysql_datasets_mysql_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1315,12 +1352,13 @@ AIR301_renamed_providers_postgres_datasets_postgres_sanitize_uri(N, n) :- air301
 // guarded_renamed_providers_postgres_datasets_postgres_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_postgres_datasets_postgres_sanitize_uri(n: node)
 air301_guarded_renamed_providers_postgres_datasets_postgres_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "postgres_datasets_postgres_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "postgres_datasets_postgres_sanitize_uri").
 air301_guarded_renamed_providers_postgres_datasets_postgres_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_postgres_datasets_postgres_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_postgres_datasets_postgres_sanitize_uri").
 
 // quoted_renamed_providers_postgres_datasets_postgres_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1340,12 +1378,13 @@ AIR301_renamed_providers_openlineage_utils_utils_datasetinfo(N, n) :- air301_quo
 // guarded_renamed_providers_openlineage_utils_utils_datasetinfo(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_openlineage_utils_utils_datasetinfo(n: node)
 air301_guarded_renamed_providers_openlineage_utils_utils_datasetinfo(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_providers_openlineage_utils_utils_datasetinfo").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_providers_openlineage_utils_utils_datasetinfo").
 air301_guarded_renamed_providers_openlineage_utils_utils_datasetinfo(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_openlineage_utils_utils_datasetinfo").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_openlineage_utils_utils_datasetinfo").
 
 // quoted_renamed_providers_openlineage_utils_utils_datasetinfo(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1365,12 +1404,13 @@ AIR301_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(N, n)
 // guarded_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n: node)
 air301_guarded_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
 air301_guarded_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
 
 // quoted_renamed_providers_openlineage_utils_utils_translate_airflow_dataset(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1390,12 +1430,13 @@ AIR301_renamed_providers_trino_datasets_trino_sanitize_uri(N, n) :- air301_quote
 // guarded_renamed_providers_trino_datasets_trino_sanitize_uri(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_renamed_providers_trino_datasets_trino_sanitize_uri(n: node)
 air301_guarded_renamed_providers_trino_datasets_trino_sanitize_uri(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "trino_datasets_trino_sanitize_uri").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "trino_datasets_trino_sanitize_uri").
 air301_guarded_renamed_providers_trino_datasets_trino_sanitize_uri(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_trino_datasets_trino_sanitize_uri").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_trino_datasets_trino_sanitize_uri").
 
 // quoted_renamed_providers_trino_datasets_trino_sanitize_uri(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1437,12 +1478,13 @@ AIR301_moved_to_sdk_notifications_basenotifier_basenotifier(N, n) :- air301_quot
 // guarded_moved_to_sdk_notifications_basenotifier_basenotifier(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_notifications_basenotifier_basenotifier(n: node)
 air301_guarded_moved_to_sdk_notifications_basenotifier_basenotifier(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_notifications_basenotifier_basenotifier").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_notifications_basenotifier_basenotifier").
 air301_guarded_moved_to_sdk_notifications_basenotifier_basenotifier(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_notifications_basenotifier_basenotifier").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_notifications_basenotifier_basenotifier").
 
 // quoted_moved_to_sdk_notifications_basenotifier_basenotifier(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1473,12 +1515,13 @@ air301_new_import_of_of(n, q1) :- air301_new_import_of_of_case(q1, s1, s2),
 // guarded_moved_to_sdk_operators_python_get_current_context(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_operators_python_get_current_context(n: node)
 air301_guarded_moved_to_sdk_operators_python_get_current_context(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_operators_python_get_current_context").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_operators_python_get_current_context").
 air301_guarded_moved_to_sdk_operators_python_get_current_context(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_operators_python_get_current_context").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_operators_python_get_current_context").
 
 // quoted_moved_to_sdk_operators_python_get_current_context(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1498,12 +1541,13 @@ AIR301_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(N, n) :- air
 // guarded_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n: node)
 air301_guarded_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
 air301_guarded_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
 
 // quoted_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1523,12 +1567,13 @@ AIR301_moved_to_sdk_utils_helpers_chain(N, n) :- air301_quoted_moved_to_sdk_util
 // guarded_moved_to_sdk_utils_helpers_chain(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_utils_helpers_chain(n: node)
 air301_guarded_moved_to_sdk_utils_helpers_chain(n) :- kind(n, "identifier"), ref_site(n, b1),
-    air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_utils_helpers_chain").
+    (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_utils_helpers_chain").
 air301_guarded_moved_to_sdk_utils_helpers_chain(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_helpers_chain").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_helpers_chain").
 
 // quoted_moved_to_sdk_utils_helpers_chain(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1548,12 +1593,13 @@ AIR301_moved_to_sdk_utils_helpers_cross_downstream(N, n) :- air301_quoted_moved_
 // guarded_moved_to_sdk_utils_helpers_cross_downstream(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_utils_helpers_cross_downstream(n: node)
 air301_guarded_moved_to_sdk_utils_helpers_cross_downstream(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_utils_helpers_cross_downstream").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_utils_helpers_cross_downstream").
 air301_guarded_moved_to_sdk_utils_helpers_cross_downstream(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_helpers_cross_downstream").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_helpers_cross_downstream").
 
 // quoted_moved_to_sdk_utils_helpers_cross_downstream(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1573,12 +1619,13 @@ AIR301_moved_to_sdk_utils_log_secrets_masker(N, n) :- air301_quoted_moved_to_sdk
 // guarded_moved_to_sdk_utils_log_secrets_masker(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_to_sdk_utils_log_secrets_masker(n: node)
 air301_guarded_moved_to_sdk_utils_log_secrets_masker(n) :- kind(n, "identifier"),
-    ref_site(n, b1), air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_utils_log_secrets_masker").
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_utils_log_secrets_masker").
 air301_guarded_moved_to_sdk_utils_log_secrets_masker(n) :- kind(n, "attribute"),
-    air301_attribute_guard_ctx(n), air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_log_secrets_masker").
+    air301_attribute_guard_ctx(n), air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_log_secrets_masker").
 
 // quoted_moved_to_sdk_utils_log_secrets_masker(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1605,12 +1652,13 @@ air301_old_name_of(n, q1) :- air301_old_name_of_case(q1, s1),
 // guarded_moved_base_hook(n): the JSON util `guarded`, used where the JSON says `matches: "guarded"`
 .decl air301_guarded_moved_base_hook(n: node)
 air301_guarded_moved_base_hook(n) :- kind(n, "identifier"), ref_site(n, b1),
-    air301_import_guard_ctx(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_base_hook").
+    (st2 = b1 ; within(b1, st2)), air301_import_guard_ctx(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_base_hook").
 air301_guarded_moved_base_hook(n) :- kind(n, "attribute"), air301_attribute_guard_ctx(n),
-    air301_up_8(n, p5), field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_base_hook").
+    air301_up_8(n, p6), field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_base_hook").
 
 // quoted_moved_base_hook(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
 //   N: metavariable this relation binds for the calling rule
@@ -1773,7 +1821,7 @@ AIR301_context_key_conf(n, "`apply_defaults` is applied automatically in Airflow
 .violation AIR301_removed_method_dataset_to_asset(at: node, a: node, b: symbol, detail: symbol) code "AIR301" "`{a}` was removed in Airflow 3; {detail} `{b}` instead."
     suppress noqa "AIR301"
 AIR301_removed_method_dataset_to_asset(A, n, B, "call") :- kind(n, "attribute"),
-    air301_alt_248(n, A), field(p17, "function", n), kind(p17, "call"), text(A, t1),
+    air301_alt_248(n, A), field(p22, "function", n), kind(p22, "call"), text(A, t1),
     B = @replace_all(t1, "dataset", "asset").
 AIR301_removed_method_dataset_to_asset(A, n, B, "use") :- kind(n, "attribute"),
     air301_alt_257(n, A), text(A, t1), B = @replace_all(t1, "dataset", "asset").
@@ -1784,17 +1832,18 @@ AIR301_removed_method_dataset_to_asset(A, n, B, "use") :- kind(n, "attribute"),
 .violation AIR301_removed_method_get_conn_uri(at: node, a: node, detail: symbol) code "AIR301" "{detail} instead."
     suppress noqa "AIR301"
 AIR301_removed_method_get_conn_uri(A, n, "`get_connections` was removed in Airflow 3; call `get_connection`") :- kind(n, "attribute"),
-    air301_alt_263(n, A), field(p10, "function", n), kind(p10, "call").
+    air301_alt_263(n, A), field(p13, "function", n), kind(p13, "call").
 AIR301_removed_method_get_conn_uri(A, n, "`get_conn_uri` was removed in Airflow 3; call `get_conn_value`") :- kind(n, "attribute"),
     field(n, "attribute", c1), glob("get_conn_uri", c1), node(_, c1, _, _, _), A = c1,
     within_stop(c2, n, air301_stop_238), field(_, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), air301_assigned_backend_class(b3), field(p4, "function", n),
-    kind(p4, "call"),
-    count : { air301_stop_238_within(c5, n), field(_, "object", c5), kind(c5, "identifier"), ref_site(c5, b6), air301_assigned_cls_local_backend(b6) } = 0.
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), air301_assigned_backend_class(st4),
+    field(p5, "function", n), kind(p5, "call"),
+    count : { air301_stop_238_within(c6, n), field(_, "object", c6), kind(c6, "identifier"), ref_site(c6, b7), (st8 = b7 ; within(b7, st8)), air301_assigned_cls_local_backend(st8) } = 0.
 AIR301_removed_method_get_conn_uri(A, n, "`create_dagrun` was removed in Airflow 3 with no replacement; trigger runs through the REST API or `airflow dags trigger`") :- kind(n, "attribute"),
     field(n, "attribute", c1), glob("create_dagrun", c1), node(_, c1, _, _, _), A = c1,
     within_stop(c2, n, air301_stop_238), field(_, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), air301_assigned_cls_dag(b3), field(p4, "function", n), kind(p4, "call").
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), air301_assigned_cls_dag(st4),
+    field(p5, "function", n), kind(p5, "call").
 
 // AIR301_context_key_removed(n): a finding at node n, from clause `context-key-removed`.
 // Each rule below is one way the JSON `rule` can match.
@@ -1846,9 +1895,10 @@ air301_demand_alt_39(c1) :- air301_demand_assigned_authmgr_class(n), kind(n, "as
 // demand_assigned_authmgr_class: the nodes assigned_authmgr_class is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_authmgr_class(n: node)
 air301_demand_assigned_authmgr_class(n) :- air301_demand_alt_39(n).
-air301_demand_assigned_authmgr_class(b15) :- field(n, "attribute", c13),
-    glob("is_authorized_dataset", c13), node(_, c13, _, _, _), A = c13, within_stop(c14, n, air301_stop_238),
-    field(_, "object", c14), kind(c14, "identifier"), ref_site(c14, b15).
+air301_demand_assigned_authmgr_class(st20) :- field(n, "attribute", c17),
+    glob("is_authorized_dataset", c17), node(_, c17, _, _, _), A = c17, within_stop(c18, n, air301_stop_238),
+    field(_, "object", c18), kind(c18, "identifier"), ref_site(c18, b19),
+    (st20 = b19 ; within(b19, st20)).
 
 // demand_alt_45: the nodes alt_45 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_45(n: node)
@@ -1857,14 +1907,15 @@ air301_demand_alt_45(c1) :- air301_demand_assigned_backend_class(n), kind(n, "as
 
 // demand_assigned_backend_class: the nodes assigned_backend_class is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_backend_class(n: node)
-air301_demand_assigned_backend_class(b3) :- kind(n, "attribute"), field(n, "attribute", c1),
+air301_demand_assigned_backend_class(st4) :- kind(n, "attribute"), field(n, "attribute", c1),
     glob("get_conn_uri", c1), node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238),
     field(_, "object", c2), kind(c2, "identifier"), ref_site(c2, b3),
-    field(p4, "function", n), kind(p4, "call").
+    (st4 = b3 ; within(b3, st4)), field(p5, "function", n), kind(p5, "call").
 air301_demand_assigned_backend_class(n) :- air301_demand_alt_45(n).
-air301_demand_assigned_backend_class(b6) :- field(n, "attribute", c4),
-    glob("get_connections", c4), node(_, c4, _, _, _), A = c4, within_stop(c5, n, air301_stop_238),
-    field(_, "object", c5), kind(c5, "identifier"), ref_site(c5, b6).
+air301_demand_assigned_backend_class(st8) :- field(n, "attribute", c5),
+    glob("get_connections", c5), node(_, c5, _, _, _), A = c5, within_stop(c6, n, air301_stop_238),
+    field(_, "object", c6), kind(c6, "identifier"), ref_site(c6, b7),
+    (st8 = b7 ; within(b7, st8)).
 
 // demand_alt_47: the nodes alt_47 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_47(n: node)
@@ -1874,9 +1925,34 @@ air301_demand_alt_47(c1) :- air301_demand_assigned_hook_class(n), kind(n, "assig
 // demand_assigned_hook_class: the nodes assigned_hook_class is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_hook_class(n: node)
 air301_demand_assigned_hook_class(n) :- air301_demand_alt_47(n).
-air301_demand_assigned_hook_class(b9) :- field(n, "attribute", c7),
-    glob("get_connections", c7), node(_, c7, _, _, _), A = c7, within_stop(c8, n, air301_stop_238),
-    field(_, "object", c8), kind(c8, "identifier"), ref_site(c8, b9).
+air301_demand_assigned_hook_class(st12) :- field(n, "attribute", c9),
+    glob("get_connections", c9), node(_, c9, _, _, _), A = c9, within_stop(c10, n, air301_stop_238),
+    field(_, "object", c10), kind(c10, "identifier"), ref_site(c10, b11),
+    (st12 = b11 ; within(b11, st12)).
+
+// demand_from_dag_run: the nodes from_dag_run is asked at (its recursion looks at every descendant)
+.decl air301_demand_from_dag_run(n: node)
+air301_demand_from_dag_run(c6) :- air301_demand_from_dag_run(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _).
+air301_demand_from_dag_run(c2) :- kind(n, "identifier"), glob("external_trigger", n),
+    air301_in_task(n), field(p1, "attribute", n), kind(p1, "attribute"),
+    field(p1, "object", c2).
+
+// demand_from_inlet_events: the nodes from_inlet_events is asked at (its recursion looks at every descendant)
+.decl air301_demand_from_inlet_events(n: node)
+air301_demand_from_inlet_events(c6) :- air301_demand_from_inlet_events(n),
+    kind(n, "parenthesized_expression"), child(n, c6, _).
+air301_demand_from_inlet_events(c2) :- within_stop(n, p1, air301_stop_238), field(_, "subscript", n),
+    kind(p1, "subscript"), field(p1, "value", c2).
+air301_demand_from_inlet_events(c11) :- air301_alt_64(n), air301_up_7(n, p7), field(p8, "arguments", p7),
+    kind(p8, "call"), field(p8, "function", c9), kind(c9, "attribute"),
+    field(c9, "attribute", c10), glob("get", c10), field(c9, "object", c11).
+
+// demand_callee_of: the nodes callee_of is asked at (its recursion looks at every descendant)
+.decl air301_demand_callee_of(n: node)
+air301_demand_callee_of(c7) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
+    kind(n, "parenthesized_expression"), child(n, c7, _).
+air301_demand_callee_of(n) :- air301_class_case(q1), air301_last(n, q1).
 
 // demand_alt_29: the nodes alt_29 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_29(n: node)
@@ -1886,19 +1962,28 @@ air301_demand_alt_29(c1) :- air301_demand_dataset_tail(n), kind(n, "attribute"),
 // demand_dataset_tail: the nodes dataset_tail is asked at (its recursion looks at every descendant)
 .decl air301_demand_dataset_tail(n: node)
 air301_demand_dataset_tail(n) :- air301_demand_alt_29(n).
-air301_demand_dataset_tail(c11) :- field(n, "attribute", c10),
-    glob("{iter_datasets,iter_dataset_aliases}", c10), node(_, c10, _, _, _), A = c10,
-    within_stop(c11, n, air301_stop_238), field(_, "object", c11).
+air301_demand_dataset_tail(c14) :- field(n, "attribute", c13),
+    glob("{iter_datasets,iter_dataset_aliases}", c13), node(_, c13, _, _, _), A = c13,
+    within_stop(c14, n, air301_stop_238), field(_, "object", c14).
+
+// demand_head_of_of: the nodes head_of_of is asked at (its recursion looks at every descendant)
+.decl air301_demand_head_of_of(n: node)
+air301_demand_head_of_of(c3) :- air301_demand_head_of_of(n), air301_class_case(q1), kind(n, "attribute"),
+    field(n, "object", c3).
+air301_demand_head_of_of(c4) :- air301_demand_head_of_of(n), air301_class_case(q1),
+    kind(n, "parenthesized_expression"), child(n, c4, _).
+air301_demand_head_of_of(c2) :- air301_demand_callee_of(n), air301_callee_of_case(q2, s1),
+    kind(n, "attribute"), sym_of(n, q4), match("(airflow\\.providers)(\\.|$).*", q4),
+    field(n, "object", c2).
 
 // demand_in_task: the nodes in_task is asked at (it looks at every ancestor of every node)
 .decl air301_demand_in_task(n: node)
 air301_demand_in_task(n) :- air301_ctx_key_slot(n), air301_key(n, "removed"), node(_, n, _, _, _), S = n, text(S, t1).
 air301_demand_in_task(n) :- air301_ctx_key_slot(n), air301_key(n, "conf"), node(_, n, _, _, _), S = n.
 air301_demand_in_task(n) :- air301_ctx_key_slot(n), air301_key(n, "renamed"), node(_, n, _, _, _), S = n.
-air301_demand_in_task(n) :- air301_inlet_key_slot(n), air301_plain_string(n).
+air301_demand_in_task(n) :- air301_plain_string(n).
 air301_demand_in_task(n) :- kind(n, "identifier"), glob("external_trigger", n),
-    field(p1, "attribute", n), kind(p1, "attribute"), field(p1, "object", c2),
-    air301_from_dag_run(c2).
+    field(p1, "attribute", n), kind(p1, "attribute"), field(p1, "object", c2).
 
 // demand_alt_27: the nodes alt_27 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_27(n: node)
@@ -1908,8 +1993,8 @@ air301_demand_alt_27(c1) :- air301_demand_assigned_cls_datasets_any(n), kind(n, 
 // demand_assigned_cls_datasets_any: the nodes assigned_cls_datasets_any is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_datasets_any(n: node)
 air301_demand_assigned_cls_datasets_any(n) :- air301_demand_alt_27(n).
-air301_demand_assigned_cls_datasets_any(b1) :- air301_demand_alt_29(n), kind(n, "identifier"),
-    ref_site(n, b1).
+air301_demand_assigned_cls_datasets_any(st2) :- air301_demand_alt_29(n), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)).
 
 // demand_alt_31: the nodes alt_31 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_31(n: node)
@@ -1919,10 +2004,10 @@ air301_demand_alt_31(c1) :- air301_demand_assigned_cls_dataset_manager(n), kind(
 // demand_assigned_cls_dataset_manager: the nodes assigned_cls_dataset_manager is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_dataset_manager(n: node)
 air301_demand_assigned_cls_dataset_manager(n) :- air301_demand_alt_31(n).
-air301_demand_assigned_cls_dataset_manager(b3) :- field(n, "attribute", c1),
+air301_demand_assigned_cls_dataset_manager(st4) :- field(n, "attribute", c1),
     glob("{register_dataset_change,create_datasets,notify_dataset_created,notify_dataset_changed,notify_dataset_alias_created}", c1),
     node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238), field(_, "object", c2),
-    kind(c2, "identifier"), ref_site(c2, b3).
+    kind(c2, "identifier"), ref_site(c2, b3), (st4 = b3 ; within(b3, st4)).
 
 // demand_alt_33: the nodes alt_33 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_33(n: node)
@@ -1932,10 +2017,10 @@ air301_demand_alt_33(c1) :- air301_demand_assigned_cls_lineage_collector(n), kin
 // demand_assigned_cls_lineage_collector: the nodes assigned_cls_lineage_collector is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_lineage_collector(n: node)
 air301_demand_assigned_cls_lineage_collector(n) :- air301_demand_alt_33(n).
-air301_demand_assigned_cls_lineage_collector(b6) :- field(n, "attribute", c4),
-    glob("{create_dataset,add_input_dataset,add_output_dataset,collected_datasets}", c4),
-    node(_, c4, _, _, _), A = c4, within_stop(c5, n, air301_stop_238), field(_, "object", c5),
-    kind(c5, "identifier"), ref_site(c5, b6).
+air301_demand_assigned_cls_lineage_collector(st8) :- field(n, "attribute", c5),
+    glob("{create_dataset,add_input_dataset,add_output_dataset,collected_datasets}", c5),
+    node(_, c5, _, _, _), A = c5, within_stop(c6, n, air301_stop_238), field(_, "object", c6),
+    kind(c6, "identifier"), ref_site(c6, b7), (st8 = b7 ; within(b7, st8)).
 
 // demand_alt_35: the nodes alt_35 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_35(n: node)
@@ -1945,14 +2030,14 @@ air301_demand_alt_35(c1) :- air301_demand_assigned_cls_providers_manager(n), kin
 // demand_assigned_cls_providers_manager: the nodes assigned_cls_providers_manager is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_providers_manager(n: node)
 air301_demand_assigned_cls_providers_manager(n) :- air301_demand_alt_35(n).
-air301_demand_assigned_cls_providers_manager(b9) :- field(n, "attribute", c7),
-    glob("initialize_providers_dataset_uri_resources", c7), node(_, c7, _, _, _), A = c7,
-    within_stop(c8, n, air301_stop_238), field(_, "object", c8), kind(c8, "identifier"),
-    ref_site(c8, b9).
-air301_demand_assigned_cls_providers_manager(b3) :- field(n, "attribute", c1),
+air301_demand_assigned_cls_providers_manager(st12) :- field(n, "attribute", c9),
+    glob("initialize_providers_dataset_uri_resources", c9), node(_, c9, _, _, _), A = c9,
+    within_stop(c10, n, air301_stop_238), field(_, "object", c10), kind(c10, "identifier"),
+    ref_site(c10, b11), (st12 = b11 ; within(b11, st12)).
+air301_demand_assigned_cls_providers_manager(st4) :- field(n, "attribute", c1),
     glob("{dataset_factories,dataset_uri_handlers,dataset_to_openlineage_converters}", c1),
     node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238), field(_, "object", c2),
-    kind(c2, "identifier"), ref_site(c2, b3).
+    kind(c2, "identifier"), ref_site(c2, b3), (st4 = b3 ; within(b3, st4)).
 
 // demand_alt_37: the nodes alt_37 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_37(n: node)
@@ -1962,10 +2047,10 @@ air301_demand_alt_37(c1) :- air301_demand_assigned_cls_dataset(n), kind(n, "assi
 // demand_assigned_cls_dataset: the nodes assigned_cls_dataset is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_dataset(n: node)
 air301_demand_assigned_cls_dataset(n) :- air301_demand_alt_37(n).
-air301_demand_assigned_cls_dataset(b1) :- field(n, "attribute", c10),
-    glob("{iter_datasets,iter_dataset_aliases}", c10), node(_, c10, _, _, _), A = c10,
-    within_stop(c11, n, air301_stop_238), field(_, "object", c11), kind(c11, "identifier"),
-    ref_site(c11, b1).
+air301_demand_assigned_cls_dataset(st1) :- field(n, "attribute", c13),
+    glob("{iter_datasets,iter_dataset_aliases}", c13), node(_, c13, _, _, _), A = c13,
+    within_stop(c14, n, air301_stop_238), field(_, "object", c14), kind(c14, "identifier"),
+    ref_site(c14, b1), (st1 = b1 ; within(b1, st1)).
 
 // demand_alt_41: the nodes alt_41 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_41(n: node)
@@ -1975,9 +2060,10 @@ air301_demand_alt_41(c1) :- air301_demand_assigned_cls_lineage_info(n), kind(n, 
 // demand_assigned_cls_lineage_info: the nodes assigned_cls_lineage_info is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_lineage_info(n: node)
 air301_demand_assigned_cls_lineage_info(n) :- air301_demand_alt_41(n).
-air301_demand_assigned_cls_lineage_info(b6) :- field(n, "attribute", c4), glob("dataset", c4),
-    node(_, c4, _, _, _), A = c4, within_stop(c5, n, air301_stop_238), field(_, "object", c5),
-    kind(c5, "identifier"), ref_site(c5, b6).
+air301_demand_assigned_cls_lineage_info(st8) :- field(n, "attribute", c5),
+    glob("dataset", c5), node(_, c5, _, _, _), A = c5, within_stop(c6, n, air301_stop_238),
+    field(_, "object", c6), kind(c6, "identifier"), ref_site(c6, b7),
+    (st8 = b7 ; within(b7, st8)).
 
 // demand_alt_43: the nodes alt_43 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_43(n: node)
@@ -1986,16 +2072,17 @@ air301_demand_alt_43(c1) :- air301_demand_assigned_cls_local_backend(n), kind(n,
 
 // demand_assigned_cls_local_backend: the nodes assigned_cls_local_backend is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_local_backend(n: node)
-air301_demand_assigned_cls_local_backend(b6) :- kind(n, "attribute"),
+air301_demand_assigned_cls_local_backend(st8) :- kind(n, "attribute"),
     field(n, "attribute", c1), glob("get_conn_uri", c1), node(_, c1, _, _, _), A = c1,
     within_stop(c2, n, air301_stop_238), field(_, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), field(p4, "function", n), kind(p4, "call"),
-    within_stop(c5, n, air301_stop_238), field(_, "object", c5), kind(c5, "identifier"),
-    ref_site(c5, b6).
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), field(p5, "function", n),
+    kind(p5, "call"), within_stop(c6, n, air301_stop_238), field(_, "object", c6),
+    kind(c6, "identifier"), ref_site(c6, b7), (st8 = b7 ; within(b7, st8)).
 air301_demand_assigned_cls_local_backend(n) :- air301_demand_alt_43(n).
-air301_demand_assigned_cls_local_backend(b3) :- field(n, "attribute", c1),
+air301_demand_assigned_cls_local_backend(st4) :- field(n, "attribute", c1),
     glob("get_connections", c1), node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238),
-    field(_, "object", c2), kind(c2, "identifier"), ref_site(c2, b3).
+    field(_, "object", c2), kind(c2, "identifier"), ref_site(c2, b3),
+    (st4 = b3 ; within(b3, st4)).
 
 // demand_alt_49: the nodes alt_49 is asked at (its recursion looks at every descendant)
 .decl air301_demand_alt_49(n: node)
@@ -2004,10 +2091,10 @@ air301_demand_alt_49(c1) :- air301_demand_assigned_cls_dag(n), kind(n, "assignme
 
 // demand_assigned_cls_dag: the nodes assigned_cls_dag is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_cls_dag(n: node)
-air301_demand_assigned_cls_dag(b3) :- kind(n, "attribute"), field(n, "attribute", c1),
+air301_demand_assigned_cls_dag(st4) :- kind(n, "attribute"), field(n, "attribute", c1),
     glob("create_dagrun", c1), node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238),
     field(_, "object", c2), kind(c2, "identifier"), ref_site(c2, b3),
-    field(p4, "function", n), kind(p4, "call").
+    (st4 = b3 ; within(b3, st4)), field(p5, "function", n), kind(p5, "call").
 air301_demand_assigned_cls_dag(n) :- air301_demand_alt_49(n).
 
 // demand_alt_53: the nodes alt_53 is asked at (its recursion looks at every descendant)
@@ -2017,308 +2104,367 @@ air301_demand_alt_53(c1) :- air301_demand_assigned_get_current_context(n), kind(
 
 // demand_assigned_get_current_context: the nodes assigned_get_current_context is asked at (its recursion looks at every descendant)
 .decl air301_demand_assigned_get_current_context(n: node)
-air301_demand_assigned_get_current_context(b2) :- kind(n, "identifier"), ref_site(n, b2).
+air301_demand_assigned_get_current_context(st2) :- kind(n, "identifier"), ref_site(n, b2),
+    (st2 = b2 ; within(b2, st2)).
 air301_demand_assigned_get_current_context(n) :- air301_demand_alt_53(n).
 
 // demand_attribute_guard_ctx: the nodes attribute_guard_ctx is asked at (it looks at every ancestor of every node)
 .decl air301_demand_attribute_guard_ctx(n: node)
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6), air301_new_attribute_of(c7, "new_attribute").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7), air301_new_attribute_of(c8, "new_attribute").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_auth_managers_base_auth_manager_baseauthmanager").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_auth_managers_base_auth_manager_baseauthmanager").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_auth_managers_models_resource_details_datasetdetails").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_auth_managers_models_resource_details_datasetdetails").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_datasetmanager").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_datasetmanager").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_dataset_manager").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_dataset_manager").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_datasets_manager_resolve_dataset_manager").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_datasets_manager_resolve_dataset_manager").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_lineage_hook_datasetlineageinfo").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_lineage_hook_datasetlineageinfo").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_listeners_spec_dataset_on_dataset_created").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_listeners_spec_dataset_on_dataset_created").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_listeners_spec_dataset_on_dataset_changed").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_listeners_spec_dataset_on_dataset_changed").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_metrics_validators_allowlistvalidator").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_metrics_validators_allowlistvalidator").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_metrics_validators_blocklistvalidator").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_metrics_validators_blocklistvalidator").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_secrets_local_filesystem_load_connections").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_secrets_local_filesystem_load_connections").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_security_permissions_resource_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_security_permissions_resource_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_timetables_simple_datasettriggeredtimetable").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_timetables_simple_datasettriggeredtimetable").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_utils_file_temporarydirectory").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_utils_file_temporarydirectory").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_create_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_create_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_convert_dataset_to_openlineage").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_amazon_aws_datasets_s3_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_amazon_aws_datasets_s3_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_create_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_create_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_convert_dataset_to_openlineage").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_common_io_datasets_file_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_common_io_datasets_file_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_bigquery_create_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_bigquery_create_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_create_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_create_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_convert_dataset_to_openlineage").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_google_datasets_gcs_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_google_datasets_gcs_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_mysql_datasets_mysql_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_mysql_datasets_mysql_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_postgres_datasets_postgres_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_postgres_datasets_postgres_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_openlineage_utils_utils_datasetinfo").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_openlineage_utils_utils_datasetinfo").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_renamed_providers_trino_datasets_trino_sanitize_uri").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_renamed_providers_trino_datasets_trino_sanitize_uri").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_notifications_basenotifier_basenotifier").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_notifications_basenotifier_basenotifier").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_operators_python_get_current_context").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_operators_python_get_current_context").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_helpers_chain").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_helpers_chain").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_helpers_cross_downstream").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_helpers_cross_downstream").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_to_sdk_utils_log_secrets_masker").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_to_sdk_utils_log_secrets_masker").
 air301_demand_attribute_guard_ctx(n) :- kind(n, "attribute"),
-    within_stop(n, p5, "try_statement"), kind(p5, "try_statement"),
-    field(p5, "body", c6), within(c7, c6),
-    air301_new_attribute_of(c7, "new_attribute_moved_base_hook").
+    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
+    field(p6, "body", c7), within(c8, c7),
+    air301_new_attribute_of(c8, "new_attribute_moved_base_hook").
+
+// demand_dag_callee: the nodes dag_callee is asked at (its recursion looks at every descendant)
+.decl air301_demand_dag_callee(n: node)
+air301_demand_dag_callee(c6) :- air301_demand_dag_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _).
+air301_demand_dag_callee(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("concurrency", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _), kind(p2, "argument_list"),
+    child(p3, p2, _), kind(p3, "call"), field(p3, "function", c4).
+air301_demand_dag_callee(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("fail_stop", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _), kind(p2, "argument_list"),
+    child(p3, p2, _), kind(p3, "call"), field(p3, "function", c4).
+air301_demand_dag_callee(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("schedule_interval", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _),
+    kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"),
+    field(p3, "function", c4).
+air301_demand_dag_callee(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("timetable", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _), kind(p2, "argument_list"),
+    child(p3, p2, _), kind(p3, "call"), field(p3, "function", c4).
+air301_demand_dag_callee(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("{default_view,orientation}", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _),
+    kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"),
+    field(p3, "function", c4).
 
 // demand_import_guard_ctx: the nodes import_guard_ctx is asked at (it looks at every ancestor of every node)
 .decl air301_demand_import_guard_ctx(n: node)
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3), air301_new_import_of(c4, "new_import").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_auth_managers_base_auth_manager_baseauthmanager").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_auth_managers_models_resource_details_datasetdetails").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_datasetmanager").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_dataset_manager").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_datasets_manager_resolve_dataset_manager").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_lineage_hook_datasetlineageinfo").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_listeners_spec_dataset_on_dataset_created").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_listeners_spec_dataset_on_dataset_changed").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_metrics_validators_allowlistvalidator").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_metrics_validators_blocklistvalidator").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_secrets_local_filesystem_load_connections").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_security_permissions_resource_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_timetables_simple_datasettriggeredtimetable").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_renamed_utils_file_temporarydirectory").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_create_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_convert_dataset_to_openlineage").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "amazon_aws_datasets_s3_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_create_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_convert_dataset_to_openlineage").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "common_io_datasets_file_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "google_datasets_bigquery_create_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_create_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_convert_dataset_to_openlineage").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers(c4, "google_datasets_gcs_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "mysql_datasets_mysql_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "postgres_datasets_postgres_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_providers_openlineage_utils_utils_datasetinfo").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_renamed_providers_of(c4, "trino_datasets_trino_sanitize_uri").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_notifications_basenotifier_basenotifier").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_operators_python_get_current_context").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_utils_helpers_chain").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of_of(c4, "moved_to_sdk_utils_helpers_cross_downstream").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_to_sdk_utils_log_secrets_masker").
-air301_demand_import_guard_ctx(b1) :- kind(n, "identifier"), ref_site(n, b1),
-    within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), within(c4, c3),
-    air301_new_import_of(c4, "new_import_moved_base_hook").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_auth_managers_base_auth_manager_baseauthmanager").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_auth_managers_models_resource_details_datasetdetails").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_datasetmanager").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_dataset_manager").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_datasets_manager_resolve_dataset_manager").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_lineage_hook_datasetlineageinfo").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_listeners_spec_dataset_on_dataset_created").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_listeners_spec_dataset_on_dataset_changed").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_metrics_validators_allowlistvalidator").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_metrics_validators_blocklistvalidator").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_secrets_local_filesystem_load_connections").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_security_permissions_resource_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_timetables_simple_datasettriggeredtimetable").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_renamed_utils_file_temporarydirectory").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_create_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_convert_dataset_to_openlineage").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "amazon_aws_datasets_s3_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_create_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_convert_dataset_to_openlineage").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "common_io_datasets_file_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "google_datasets_bigquery_create_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_create_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_convert_dataset_to_openlineage").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers(c5, "google_datasets_gcs_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "mysql_datasets_mysql_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "postgres_datasets_postgres_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_providers_openlineage_utils_utils_datasetinfo").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "renamed_providers_openlineage_utils_utils_translate_airflow_dataset").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_renamed_providers_of(c5, "trino_datasets_trino_sanitize_uri").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_notifications_basenotifier_basenotifier").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_operators_python_get_current_context").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_sensors_base_sensor_operator_basesensoroperator").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_utils_helpers_chain").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of_of(c5, "moved_to_sdk_utils_helpers_cross_downstream").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_to_sdk_utils_log_secrets_masker").
+air301_demand_import_guard_ctx(st2) :- kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), within_stop(st2, p3, "try_statement"),
+    kind(p3, "try_statement"), field(p3, "body", c4), within(c5, c4),
+    air301_new_import_of(c5, "new_import_moved_base_hook").
+
+// demand_operator_base: the nodes operator_base is asked at (its recursion looks at every descendant)
+.decl air301_demand_operator_base(n: node)
+air301_demand_operator_base(c10) :- air301_demand_operator_base(n), kind(n, "subscript"),
+    field(n, "value", c10).
+air301_demand_operator_base(c11) :- air301_demand_operator_base(n),
+    kind(n, "parenthesized_expression"), child(n, c11, _).
+air301_demand_operator_base(c2) :- air301_demand_operator_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _).
+
+// demand_operator_class: the nodes operator_class is asked at (its recursion looks at every descendant)
+.decl air301_demand_operator_class(n: node)
+air301_demand_operator_class(st9) :- air301_demand_operator_base(n), kind(n, "identifier"),
+    ref_site(n, b8), (st9 = b8 ; within(b8, st9)), kind(st9, "class_definition").
+air301_demand_operator_class(p2) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("execute", c1), within_stop(n, p2, air301_stop_273), kind(p2, "class_definition").
+
+// demand_tail: the nodes tail is asked at (its recursion looks at every descendant)
+.decl air301_demand_tail(n: node)
+air301_demand_tail(c12) :- air301_demand_tail(n), air301_tail_case(q1, s1, s2),
+    kind(n, "parenthesized_expression"), child(n, c12, _).
+air301_demand_tail(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("execution_date", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _), kind(p2, "argument_list"),
+    child(p3, p2, _), kind(p3, "call"), field(p3, "function", c4).
+air301_demand_tail(c4) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("use_task_execution_day", c1), node(_, c1, _, _, _), K = c1, child(p2, n, _),
+    kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"),
+    field(p3, "function", c4).
+
+// demand_sdk_variable: the nodes sdk_variable is asked at (its recursion looks at every descendant)
+.decl air301_demand_sdk_variable(n: node)
+air301_demand_sdk_variable(c8) :- air301_demand_sdk_variable(n), kind(n, "parenthesized_expression"),
+    child(n, c8, _).
+air301_demand_sdk_variable(c2) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("get", c1), field(n, "object", c2).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl air301_up_1(n: node, p: node)
@@ -2647,7 +2793,7 @@ air301_alt_27(n) :- air301_demand_alt_27(n), air301_assigned_cls_datasets_any(n)
 // alt_29(n): the JSON `any`: n matches if any one of these rules does
 .decl air301_alt_29(n: node)
 air301_alt_29(n) :- air301_demand_alt_29(n), kind(n, "identifier"), ref_site(n, b1),
-    air301_assigned_cls_datasets_any(b1).
+    (st2 = b1 ; within(b1, st2)), air301_assigned_cls_datasets_any(st2).
 air301_alt_29(n) :- air301_demand_alt_29(n), air301_dataset_tail(n).
 
 // alt_31(n): the JSON `any`: n matches if any one of these rules does
@@ -3263,25 +3409,29 @@ air301_alt_239(n) :- air301_class(n, "op").
 air301_alt_248(n, A) :- field(n, "attribute", c1),
     glob("{register_dataset_change,create_datasets,notify_dataset_created,notify_dataset_changed,notify_dataset_alias_created}", c1),
     node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238), field(_, "object", c2),
-    kind(c2, "identifier"), ref_site(c2, b3), air301_assigned_cls_dataset_manager(b3).
-air301_alt_248(n, A) :- field(n, "attribute", c4),
-    glob("{create_dataset,add_input_dataset,add_output_dataset,collected_datasets}", c4),
-    node(_, c4, _, _, _), A = c4, within_stop(c5, n, air301_stop_238), field(_, "object", c5),
-    kind(c5, "identifier"), ref_site(c5, b6), air301_assigned_cls_lineage_collector(b6).
-air301_alt_248(n, A) :- field(n, "attribute", c7),
-    glob("initialize_providers_dataset_uri_resources", c7), node(_, c7, _, _, _), A = c7,
-    within_stop(c8, n, air301_stop_238), field(_, "object", c8), kind(c8, "identifier"),
-    ref_site(c8, b9), air301_assigned_cls_providers_manager(b9).
-air301_alt_248(n, A) :- field(n, "attribute", c10),
-    glob("{iter_datasets,iter_dataset_aliases}", c10), node(_, c10, _, _, _), A = c10,
-    within_stop(c11, n, air301_stop_238), field(_, "object", c11),
-    ( kind(c11, "identifier"), ref_site(c11, b1), air301_assigned_cls_dataset(b1)
-    ; air301_dataset_tail(c11)
+    kind(c2, "identifier"), ref_site(c2, b3), (st4 = b3 ; within(b3, st4)),
+    air301_assigned_cls_dataset_manager(st4).
+air301_alt_248(n, A) :- field(n, "attribute", c5),
+    glob("{create_dataset,add_input_dataset,add_output_dataset,collected_datasets}", c5),
+    node(_, c5, _, _, _), A = c5, within_stop(c6, n, air301_stop_238), field(_, "object", c6),
+    kind(c6, "identifier"), ref_site(c6, b7), (st8 = b7 ; within(b7, st8)),
+    air301_assigned_cls_lineage_collector(st8).
+air301_alt_248(n, A) :- field(n, "attribute", c9),
+    glob("initialize_providers_dataset_uri_resources", c9), node(_, c9, _, _, _), A = c9,
+    within_stop(c10, n, air301_stop_238), field(_, "object", c10), kind(c10, "identifier"),
+    ref_site(c10, b11), (st12 = b11 ; within(b11, st12)),
+    air301_assigned_cls_providers_manager(st12).
+air301_alt_248(n, A) :- field(n, "attribute", c13),
+    glob("{iter_datasets,iter_dataset_aliases}", c13), node(_, c13, _, _, _), A = c13,
+    within_stop(c14, n, air301_stop_238), field(_, "object", c14),
+    ( kind(c14, "identifier"), ref_site(c14, b1), (st1 = b1 ; within(b1, st1)), air301_assigned_cls_dataset(st1)
+    ; air301_dataset_tail(c14)
     ).
 
-air301_alt_248(n, A) :- field(n, "attribute", c13), glob("is_authorized_dataset", c13),
-    node(_, c13, _, _, _), A = c13, within_stop(c14, n, air301_stop_238), field(_, "object", c14),
-    kind(c14, "identifier"), ref_site(c14, b15), air301_assigned_authmgr_class(b15).
+air301_alt_248(n, A) :- field(n, "attribute", c17), glob("is_authorized_dataset", c17),
+    node(_, c17, _, _, _), A = c17, within_stop(c18, n, air301_stop_238), field(_, "object", c18),
+    kind(c18, "identifier"), ref_site(c18, b19), (st20 = b19 ; within(b19, st20)),
+    air301_assigned_authmgr_class(st20).
 
 // alt_257(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable this relation binds for the calling rule
@@ -3289,23 +3439,24 @@ air301_alt_248(n, A) :- field(n, "attribute", c13), glob("is_authorized_dataset"
 air301_alt_257(n, A) :- field(n, "attribute", c1),
     glob("{dataset_factories,dataset_uri_handlers,dataset_to_openlineage_converters}", c1),
     node(_, c1, _, _, _), A = c1, within_stop(c2, n, air301_stop_238), field(_, "object", c2),
-    kind(c2, "identifier"), ref_site(c2, b3), air301_assigned_cls_providers_manager(b3).
-air301_alt_257(n, A) :- field(n, "attribute", c4), glob("dataset", c4), node(_, c4, _, _, _), A = c4,
-    within_stop(c5, n, air301_stop_238), field(_, "object", c5), kind(c5, "identifier"),
-    ref_site(c5, b6), air301_assigned_cls_lineage_info(b6).
+    kind(c2, "identifier"), ref_site(c2, b3), (st4 = b3 ; within(b3, st4)),
+    air301_assigned_cls_providers_manager(st4).
+air301_alt_257(n, A) :- field(n, "attribute", c5), glob("dataset", c5), node(_, c5, _, _, _), A = c5,
+    within_stop(c6, n, air301_stop_238), field(_, "object", c6), kind(c6, "identifier"),
+    ref_site(c6, b7), (st8 = b7 ; within(b7, st8)), air301_assigned_cls_lineage_info(st8).
 
 // alt_263(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable this relation binds for the calling rule
 .decl air301_alt_263(n: node, a: loc)
 air301_alt_263(n, A) :- field(n, "attribute", c1), glob("get_connections", c1), node(_, c1, _, _, _), A = c1,
     within_stop(c2, n, air301_stop_238), field(_, "object", c2), kind(c2, "identifier"),
-    ref_site(c2, b3), air301_assigned_cls_local_backend(b3).
-air301_alt_263(n, A) :- field(n, "attribute", c4), glob("get_connections", c4), node(_, c4, _, _, _), A = c4,
-    within_stop(c5, n, air301_stop_238), field(_, "object", c5), kind(c5, "identifier"),
-    ref_site(c5, b6), air301_assigned_backend_class(b6).
-air301_alt_263(n, A) :- field(n, "attribute", c7), glob("get_connections", c7), node(_, c7, _, _, _), A = c7,
-    within_stop(c8, n, air301_stop_238), field(_, "object", c8), kind(c8, "identifier"),
-    ref_site(c8, b9), air301_assigned_hook_class(b9).
+    ref_site(c2, b3), (st4 = b3 ; within(b3, st4)), air301_assigned_cls_local_backend(st4).
+air301_alt_263(n, A) :- field(n, "attribute", c5), glob("get_connections", c5), node(_, c5, _, _, _), A = c5,
+    within_stop(c6, n, air301_stop_238), field(_, "object", c6), kind(c6, "identifier"),
+    ref_site(c6, b7), (st8 = b7 ; within(b7, st8)), air301_assigned_backend_class(st8).
+air301_alt_263(n, A) :- field(n, "attribute", c9), glob("get_connections", c9), node(_, c9, _, _, _), A = c9,
+    within_stop(c10, n, air301_stop_238), field(_, "object", c10), kind(c10, "identifier"),
+    ref_site(c10, b11), (st12 = b11 ; within(b11, st12)), air301_assigned_hook_class(st12).
 
 // alt_270(n): the JSON `any`: n matches if any one of these rules does
 .decl air301_alt_270(n: node)

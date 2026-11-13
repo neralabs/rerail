@@ -205,43 +205,44 @@ c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p8), field(_, "body", n),
     field(_, "body", p8), (kind(p9, "function_definition") ; kind(p9, "lambda")),
     node(_, p9, _, _, _), F = p9, within(c10, p9), c416_kind_name(c10, KN), !site_form(c10, "except"),
     !site_form(c10, "annotation"),
-    (site_scope(c10, "function") ; site_scope(c10, "lambda")), within(c10, p11),
-    (kind(p11, "function_definition") ; kind(p11, "lambda")), node(_, p11, _, _, _), G = p11,
-    text(G, t12), text(F, t12), text(W, t1_td),
+    (site_scope(c10, "function") ; site_scope(c10, "lambda")),
+    (st11 = c10 ; within(c10, st11)), within(st11, p12),
+    (kind(p12, "function_definition") ; kind(p12, "lambda")), node(_, p12, _, _, _), G = p12,
+    text(G, t13), text(F, t13), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
-c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p14), field(_, "body", n),
-    (kind(p14, "function_definition") ; kind(p14, "lambda")), node(_, p14, _, _, _), F = p14,
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p15), field(_, "body", n),
+    (kind(p15, "function_definition") ; kind(p15, "lambda")), node(_, p15, _, _, _), F = p15,
     c416_alt_13(n, F, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p26, "lambda"), field(_, "body", n),
-    child(p26, c27, _), kind(c27, "lambda_parameters"), within(c28, c27),
-    c416_kind_name(c28, KN), site_scope(c28, "lambda"), text(W, t1_td),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p29, "lambda"), field(_, "body", n),
+    child(p29, c30, _), kind(c30, "lambda_parameters"), within(c31, c30),
+    c416_kind_name(c31, KN), site_scope(c31, "lambda"), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p29, "class_definition"),
-    field(_, "body", n), node(_, p29, _, _, _), F = p29,
-    count : { within_stop(n, p30, "class_definition"), field(_, "body", n), (kind(p30, "function_definition") ; kind(p30, "lambda")) } = 0,
-    count : { child(p31, n, _), c416_comp(p31) } = 0,
-    count : { within_stop(n, p32, "class_definition"), c416_not_first_iter(p32), child(p33, p32, _), c416_comp(p33) } = 0,
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p32, "class_definition"),
+    field(_, "body", n), node(_, p32, _, _, _), F = p32,
+    count : { within_stop(n, p33, "class_definition"), field(_, "body", n), (kind(p33, "function_definition") ; kind(p33, "lambda")) } = 0,
+    count : { child(p34, n, _), c416_comp(p34) } = 0,
+    count : { within_stop(n, p35, "class_definition"), c416_not_first_iter(p35), child(p36, p35, _), c416_comp(p36) } = 0,
     c416_alt_14(n, F, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), child(n, c45, _), kind(c45, "for_in_clause"),
-    has(c45, c46, "named_expression"), field(_, "right", c46), field(c46, "name", c47),
-    c416_kind_name(c47, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), child(p48, n, _), c416_comp_binds(p48, KN),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), child(n, c50, _), kind(c50, "for_in_clause"),
+    has(c50, c51, "named_expression"), field(_, "right", c51), field(c51, "name", c52),
+    c416_kind_name(c52, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), child(p53, n, _), c416_comp_binds(p53, KN),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p49), c416_not_first_iter(p49),
-    child(p50, p49, _), c416_comp_binds(p50, KN), text(W, t1_td),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p54), c416_not_first_iter(p54),
+    child(p55, p54, _), c416_comp_binds(p55, KN), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), within_stop(n, p51, c416_stop_15),
-    kind(p51, "block"), child(p52, p51, _), kind(p52, "except_clause"),
-    child(p52, c53, _), kind(c53, "as_pattern"), child(c53, c54, _),
-    kind(c54, "as_pattern_target"), child(c54, c55, _), c416_kind_name(c55, KN),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within_stop(n, p56, c416_stop_15),
+    kind(p56, "block"), child(p57, p56, _), kind(p57, "except_clause"),
+    child(p57, c58, _), kind(c58, "as_pattern"), child(c58, c59, _),
+    kind(c59, "as_pattern_target"), child(c59, c60, _), c416_kind_name(c60, KN),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p56), field(_, "body", n),
-    (kind(p56, "function_definition") ; kind(p56, "class_definition")),
-    within(c57, p56), field(_, "type_parameters", c57), c416_kind_name(c57, KN),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p61), field(_, "body", n),
+    (kind(p61, "function_definition") ; kind(p61, "class_definition")),
+    within(c62, p61), field(_, "type_parameters", c62), c416_kind_name(c62, KN),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
-c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p58, "type_alias_statement"),
-    field(_, "right", n), within(c59, p58), field(_, "left", c59), c416_kind_name(c59, KN),
-    site_form(c59, "typeParameter"), text(W, t1_td),
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p63, "type_alias_statement"),
+    field(_, "right", n), within(c64, p63), field(_, "left", c64), c416_kind_name(c64, KN),
+    site_form(c64, "typeParameter"), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict").
 
 // list_comprehension_in_annotation(n): the JSON util `list-comprehension-in-annotation`, used where the JSON says `matches: "list-comprehension-in-annotation"`
@@ -482,13 +483,13 @@ c416_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
 // tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl c416_tok_precedes_5(n: node)
 .stored c416_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-c416_tok_precedes_5(n) :- precedes(n, s11), glob("as", s11).
-c416_tok_precedes_5(n) :- child(p14, n, _), node(_, n, _, _, en17),
-    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
-c416_tok_precedes_5(n) :- structural_after(n, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
-c416_tok_precedes_5(n) :- precedes(n, o15), structural_after(o15, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+c416_tok_precedes_5(n) :- precedes(n, s14), glob("as", s14).
+c416_tok_precedes_5(n) :- child(p17, n, _), node(_, n, _, _, en20),
+    token(p17, _, t15, st19, _), st19 >= en20, match("as", t15).
+c416_tok_precedes_5(n) :- structural_after(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+c416_tok_precedes_5(n) :- precedes(n, o18), structural_after(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
 
 // tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl c416_tok_has_6(n: node)
@@ -566,21 +567,23 @@ c416_alt_1(n) :- c416_alt_1_u7(n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl c416_alt_3(n: node)
-c416_alt_3(n) :- ref_site(n, b1),
-    ( kind(b1, "dictionary_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
-    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "dictionary_splat_pattern")
+c416_alt_3(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ( kind(st2, "dictionary_splat_pattern"), child(p1, st2, _), kind(p1, "parameters")
+    ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
     ).
 
-c416_alt_3(n) :- ref_site(n, b5), binding_value(b5, x6), c416_dict_init(x6),
-    count : { child(b5, c7, _), kind(c7, "type") } = 0.
-c416_alt_3(n) :- ref_site(n, b8), kind(b8, "as_pattern"), child(p9, b8, _),
-    kind(p9, "with_item"), child(b8, c10, _), c416_dict_init(c10), c416_tok_precedes_5(c10),
-    child(b8, c18, _), kind(c18, "as_pattern_target"), child(c18, c19, _),
-    c416_plain_target(c19).
-c416_alt_3(n) :- ref_site(n, b20), site_annotation(b20, o21), c416_dict_ann(o21),
-    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
-c416_alt_3(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
-    kind(c24, "type"), child(c24, c25, _), c416_dict_ann(c25).
+c416_alt_3(n) :- ref_site(n, b6), binding_value(b6, x7), c416_dict_init(x7),
+    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+c416_alt_3(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
+    kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
+    child(st11, c13, _), c416_dict_init(c13), c416_tok_precedes_5(c13), child(st11, c21, _),
+    kind(c21, "as_pattern_target"), child(c21, c22, _), c416_plain_target(c22).
+c416_alt_3(n) :- ref_site(n, b23), site_annotation(b23, o24), c416_dict_ann(o24),
+    (st25 = b23 ; within(b23, st25)),
+    count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
+c416_alt_3(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
+    kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),
+    child(c29, c30, _), c416_dict_ann(c30).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 .decl c416_alt_5(n: node)
@@ -610,16 +613,18 @@ c416_alt_11(n) :- kind(n, "for_in_clause"), match("async\\b.*", n).
 c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), precedes(s1, n),
     within(c2, s1), c416_kind_name(c2, KN), !site_form(c2, "except"),
     !site_form(c2, "annotation"),
-    (site_scope(c2, "function") ; site_scope(c2, "lambda")), within(c2, p3),
-    (kind(p3, "function_definition") ; kind(p3, "lambda")), node(_, p3, _, _, _), G = p3,
-    text(G, t4), text(F, t4), text(W, t1_td),
+    (site_scope(c2, "function") ; site_scope(c2, "lambda")),
+    (st3 = c2 ; within(c2, st3)), within(st3, p4),
+    (kind(p4, "function_definition") ; kind(p4, "lambda")), node(_, p4, _, _, _), G = p4,
+    text(G, t5), text(F, t5), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
-c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p6),
-    precedes(s7, p6), within(c8, s7), c416_kind_name(c8, KN), !site_form(c8, "except"),
-    !site_form(c8, "annotation"),
-    (site_scope(c8, "function") ; site_scope(c8, "lambda")), within(c8, p9),
-    (kind(p9, "function_definition") ; kind(p9, "lambda")), node(_, p9, _, _, _), G = p9,
-    text(G, t10), text(F, t10), text(W, t1_td),
+c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p7),
+    precedes(s8, p7), within(c9, s8), c416_kind_name(c9, KN), !site_form(c9, "except"),
+    !site_form(c9, "annotation"),
+    (site_scope(c9, "function") ; site_scope(c9, "lambda")),
+    (st10 = c9 ; within(c9, st10)), within(st10, p11),
+    (kind(p11, "function_definition") ; kind(p11, "lambda")), node(_, p11, _, _, _), G = p11,
+    text(G, t12), text(F, t12), text(W, t1_td),
     KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
 
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
@@ -628,13 +633,15 @@ c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p6)
 c416_alt_14(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), precedes(s1, n),
     within(c2, s1), c416_kind_name(c2, KN), !site_form(c2, "except"),
     !site_form(c2, "annotation"), site_scope(c2, "class"),
-    inside(c2, p3, "class_definition"), node(_, p3, _, _, _), G = p3, text(G, t4), text(F, t4),
-    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
-c416_alt_14(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p6),
-    precedes(s7, p6), within(c8, s7), c416_kind_name(c8, KN), !site_form(c8, "except"),
-    !site_form(c8, "annotation"), site_scope(c8, "class"),
-    inside(c8, p9, "class_definition"), node(_, p9, _, _, _), G = p9, text(G, t10), text(F, t10),
-    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+    (st3 = c2 ; within(c2, st3)), inside(st3, p4, "class_definition"), node(_, p4, _, _, _), G = p4,
+    text(G, t5), text(F, t5), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+c416_alt_14(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p7),
+    precedes(s8, p7), within(c9, s8), c416_kind_name(c9, KN), !site_form(c9, "except"),
+    !site_form(c9, "annotation"), site_scope(c9, "class"),
+    (st10 = c9 ; within(c9, st10)), inside(st10, p11, "class_definition"), node(_, p11, _, _, _), G = p11,
+    text(G, t12), text(F, t12), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
 
 // alt_17(n): the JSON `any`: n matches if any one of these rules does
 //   KN: metavariable of the calling rule, passed in (bound by the caller)

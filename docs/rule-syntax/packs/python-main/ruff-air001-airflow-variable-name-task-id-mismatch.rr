@@ -55,9 +55,12 @@ air001_ops_head_site(n) :- kind(n, "aliased_import"), child(p4, n, _),
 
 // ops_head(n): the JSON util `ops-head`, used where the JSON says `matches: "ops-head"`
 .decl air001_ops_head(n: node)
-air001_ops_head(n) :- kind(n, "identifier"), ref_site(n, b1), air001_ops_head_site(b1).
-air001_ops_head(n) :- kind(n, "attribute"), field(n, "object", c2), air001_ops_head(c2).
-air001_ops_head(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air001_ops_head(c3).
+air001_ops_head(n) :- air001_demand_ops_head(n), kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), air001_ops_head_site(st2).
+air001_ops_head(n) :- air001_demand_ops_head(n), kind(n, "attribute"), field(n, "object", c3),
+    air001_ops_head(c3).
+air001_ops_head(n) :- air001_demand_ops_head(n), kind(n, "parenthesized_expression"),
+    child(n, c4, _), air001_ops_head(c4).
 
 // ops_chain(n): the JSON util `ops-chain`, used where the JSON says `matches: "ops-chain"`
 .decl air001_ops_chain(n: node)
@@ -67,13 +70,15 @@ air001_ops_chain(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air
 
 // ops_callee(n): the JSON util `ops-callee`, used where the JSON says `matches: "ops-callee"`
 .decl air001_ops_callee(n: node)
-air001_ops_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+air001_ops_callee(n) :- air001_demand_ops_callee(n), (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), match("(airflow\\.operators)(\\.|$).*", q1).
-air001_ops_callee(n) :- kind(n, "identifier"), ref_site(n, b2), air001_ops_site(b2).
-air001_ops_callee(n) :- kind(n, "attribute"),
-    sym_of(n, q3), match("(airflow\\.providers)(\\.|$).*", q3),
+air001_ops_callee(n) :- air001_demand_ops_callee(n), kind(n, "identifier"), ref_site(n, b2),
+    (st3 = b2 ; within(b2, st3)), air001_ops_site(st3).
+air001_ops_callee(n) :- air001_demand_ops_callee(n), kind(n, "attribute"),
+    sym_of(n, q4), match("(airflow\\.providers)(\\.|$).*", q4),
     (field(n, "object", c1), air001_ops_chain(c1) ; field(n, "object", c2), air001_ops_head(c2)).
-air001_ops_callee(n) :- kind(n, "parenthesized_expression"), child(n, c6, _), air001_ops_callee(c6).
+air001_ops_callee(n) :- air001_demand_ops_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c7, _), air001_ops_callee(c7).
 
 // operator_call(n): the JSON util `operator-call`, used where the JSON says `matches: "operator-call"`
 //   TID: metavariable this relation binds for the calling rule
@@ -149,6 +154,24 @@ air001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
 air001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
     match("(?s)^(?:.*(?:,).*)$", g3).
 air001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_ops_callee: the nodes ops_callee is asked at (its recursion looks at every descendant)
+.decl air001_demand_ops_callee(n: node)
+air001_demand_ops_callee(c7) :- air001_demand_ops_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c7, _).
+air001_demand_ops_callee(c1) :- kind(n, "call"), field(n, "function", c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
+    kind(c3, "keyword_argument"), field(c3, "name", c4), glob("task_id", c4),
+    field(c3, "value", c5), air001_str_lit(c5), node(_, c5, _, _, _), TID = c5.
+
+// demand_ops_head: the nodes ops_head is asked at (its recursion looks at every descendant)
+.decl air001_demand_ops_head(n: node)
+air001_demand_ops_head(c3) :- air001_demand_ops_head(n), kind(n, "attribute"),
+    field(n, "object", c3).
+air001_demand_ops_head(c4) :- air001_demand_ops_head(n), kind(n, "parenthesized_expression"),
+    child(n, c4, _).
+air001_demand_ops_head(c2) :- air001_demand_ops_callee(n), kind(n, "attribute"), sym_of(n, q4),
+    match("(airflow\\.providers)(\\.|$).*", q4), field(n, "object", c2).
 
 // demand_from_ops_module: the nodes from_ops_module is asked at (it looks at every ancestor of every node)
 .decl air001_demand_from_ops_module(n: node)

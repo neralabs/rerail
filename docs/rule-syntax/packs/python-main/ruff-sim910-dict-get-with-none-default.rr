@@ -253,13 +253,13 @@ sim910_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4
 // tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim910_tok_precedes_5(n: node)
 .stored sim910_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim910_tok_precedes_5(n) :- precedes(n, s11), glob("as", s11).
-sim910_tok_precedes_5(n) :- child(p14, n, _), node(_, n, _, _, en17),
-    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
-sim910_tok_precedes_5(n) :- structural_after(n, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
-sim910_tok_precedes_5(n) :- precedes(n, o15), structural_after(o15, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+sim910_tok_precedes_5(n) :- precedes(n, s14), glob("as", s14).
+sim910_tok_precedes_5(n) :- child(p17, n, _), node(_, n, _, _, en20),
+    token(p17, _, t15, st19, _), st19 >= en20, match("as", t15).
+sim910_tok_precedes_5(n) :- structural_after(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+sim910_tok_precedes_5(n) :- precedes(n, o18), structural_after(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
 
 // tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim910_tok_follows_6(n: node)
@@ -283,21 +283,23 @@ sim910_alt_1(n) :- sim910_alt_1_u7(n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl sim910_alt_3(n: node)
-sim910_alt_3(n) :- ref_site(n, b1),
-    ( kind(b1, "dictionary_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
-    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "dictionary_splat_pattern")
+sim910_alt_3(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ( kind(st2, "dictionary_splat_pattern"), child(p1, st2, _), kind(p1, "parameters")
+    ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
     ).
 
-sim910_alt_3(n) :- ref_site(n, b5), binding_value(b5, x6), sim910_dict_init(x6),
-    count : { child(b5, c7, _), kind(c7, "type") } = 0.
-sim910_alt_3(n) :- ref_site(n, b8), kind(b8, "as_pattern"), child(p9, b8, _),
-    kind(p9, "with_item"), child(b8, c10, _), sim910_dict_init(c10), sim910_tok_precedes_5(c10),
-    child(b8, c18, _), kind(c18, "as_pattern_target"), child(c18, c19, _),
-    sim910_plain_target(c19).
-sim910_alt_3(n) :- ref_site(n, b20), site_annotation(b20, o21), sim910_dict_ann(o21),
-    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
-sim910_alt_3(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
-    kind(c24, "type"), child(c24, c25, _), sim910_dict_ann(c25).
+sim910_alt_3(n) :- ref_site(n, b6), binding_value(b6, x7), sim910_dict_init(x7),
+    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+sim910_alt_3(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
+    kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
+    child(st11, c13, _), sim910_dict_init(c13), sim910_tok_precedes_5(c13), child(st11, c21, _),
+    kind(c21, "as_pattern_target"), child(c21, c22, _), sim910_plain_target(c22).
+sim910_alt_3(n) :- ref_site(n, b23), site_annotation(b23, o24), sim910_dict_ann(o24),
+    (st25 = b23 ; within(b23, st25)),
+    count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
+sim910_alt_3(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
+    kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),
+    child(c29, c30, _), sim910_dict_ann(c30).
 
 // stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim910_stop_5(n: node)

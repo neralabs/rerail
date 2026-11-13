@@ -36,8 +36,10 @@ ruf006_loop_assign(n) :- kind(n, "assignment"), field(n, "right", c1), ruf006_al
 
 // loop_ref(n): the JSON util `loop-ref`, used where the JSON says `matches: "loop-ref"`
 .decl ruf006_loop_ref(n: node)
-ruf006_loop_ref(n) :- kind(n, "identifier"), ref_site(n, b1), ruf006_loop_assign(b1).
-ruf006_loop_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf006_loop_ref(c2).
+ruf006_loop_ref(n) :- ruf006_demand_loop_ref(n), kind(n, "identifier"), ref_site(n, b1),
+    (st2 = b1 ; within(b1, st2)), ruf006_loop_assign(st2).
+ruf006_loop_ref(n) :- ruf006_demand_loop_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), ruf006_loop_ref(c3).
 
 // loop_create(n): the JSON util `loop-create`, used where the JSON says `matches: "loop-create"`
 .decl ruf006_loop_create(n: node)
@@ -103,6 +105,13 @@ ruf006_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
 ruf006_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
     match("(?s)^(?:.*(?:,).*)$", g4).
 ruf006_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// demand_loop_ref: the nodes loop_ref is asked at (its recursion looks at every descendant)
+.decl ruf006_demand_loop_ref(n: node)
+ruf006_demand_loop_ref(c3) :- ruf006_demand_loop_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _).
+ruf006_demand_loop_ref(c2) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("create_task", c1), field(n, "object", c2).
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl ruf006_up_1(n: node, p: node)

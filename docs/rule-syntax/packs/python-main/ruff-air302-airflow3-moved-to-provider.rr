@@ -84,8 +84,8 @@ air302_attribute_fallback(n) :- air302_demand_attribute_fallback(n), inside(n, p
 //   N, ORIG: metavariables this relation binds for the calling rule
 .decl air302_moved_bare(n: node, n_mv: loc, orig: loc)
 air302_moved_bare(n, N, ORIG) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, air302_alt_2(n, ORIG), !air302_alt_4(n).
-air302_moved_bare(n, N, ORIG) :- kind(n, "attribute"), field(n, "attribute", c8), node(_, c8, _, _, _), N = c8,
-    node(_, c8, _, _, _), ORIG = c8.
+air302_moved_bare(n, N, ORIG) :- kind(n, "attribute"), field(n, "attribute", c10), node(_, c10, _, _, _), N = c10,
+    node(_, c10, _, _, _), ORIG = c10.
 
 // replacement(n): the JSON util `replacement`, used where the JSON says `matches: "replacement"`
 .decl air302_replacement(n: node)
@@ -2481,43 +2481,47 @@ air302_demand_quoted_common_sql_5(n) :- air302_demand_alt_98(n).
 // demand_attribute_fallback: the nodes attribute_fallback is asked at (it looks at every ancestor of every node)
 .decl air302_demand_attribute_fallback(n: node)
 air302_demand_attribute_fallback(n) :- air302_demand_alt_6(n, ORIG), kind(n, "attribute"),
-    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
-    field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement(c8),
-    field(c8, "attribute", c9), text(c9, t_orig2), text(ORIG, t_orig2), @doc(c9) = @doc(ORIG).
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement(c9),
+    field(c9, "attribute", c10), text(c10, t_orig2), text(ORIG, t_orig2), @doc(c10) = @doc(ORIG).
 air302_demand_attribute_fallback(n) :- air302_demand_alt_7(n, ORIG), kind(n, "attribute"),
-    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
-    field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement_1(c8),
-    field(c8, "attribute", c9), text(c9, t_orig4), text(ORIG, t_orig4), @doc(c9) = @doc(ORIG).
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_1(c9),
+    field(c9, "attribute", c10), text(c10, t_orig4), text(ORIG, t_orig4), @doc(c10) = @doc(ORIG).
 air302_demand_attribute_fallback(n) :- air302_demand_alt_8(n, ORIG), kind(n, "attribute"),
-    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
-    field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement_2(c8),
-    field(c8, "attribute", c9), text(c9, t_orig6), text(ORIG, t_orig6), @doc(c9) = @doc(ORIG).
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_2(c9),
+    field(c9, "attribute", c10), text(c10, t_orig6), text(ORIG, t_orig6), @doc(c10) = @doc(ORIG).
 air302_demand_attribute_fallback(n) :- air302_alt_case(q1, s1, s2), kind(n, "attribute"),
-    within_stop(n, p6, "try_statement"), kind(p6, "try_statement"),
-    field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement_of(c8, s1),
-    field(c8, "attribute", c9), glob(s2, c9).
+    within_stop(n, p7, "try_statement"), kind(p7, "try_statement"),
+    field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_of(c9, s1),
+    field(c9, "attribute", c10), glob(s2, c10).
 
 // demand_import_fallback: the nodes import_fallback is asked at (it looks at every ancestor of every node)
 .decl air302_demand_import_fallback(n: node)
-air302_demand_import_fallback(b1) :- air302_demand_alt_6(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), has(c3, c4, "dotted_name"), air302_replacement(c4),
-    air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"), text(c5, t_orig1),
-    text(ORIG, t_orig1), @doc(c5) = @doc(ORIG).
-air302_demand_import_fallback(b1) :- air302_demand_alt_7(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), has(c3, c4, "dotted_name"), air302_replacement_1(c4),
-    air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"), text(c5, t_orig3),
-    text(ORIG, t_orig3), @doc(c5) = @doc(ORIG).
-air302_demand_import_fallback(b1) :- air302_demand_alt_8(n, ORIG), kind(n, "identifier"),
-    ref_site(n, b1), within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), has(c3, c4, "dotted_name"), air302_replacement_2(c4),
-    air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"), text(c5, t_orig5),
-    text(ORIG, t_orig5), @doc(c5) = @doc(ORIG).
-air302_demand_import_fallback(b1) :- air302_alt_case(q1, s1, s2), kind(n, "identifier"),
-    ref_site(n, b1), within_stop(b1, p2, "try_statement"), kind(p2, "try_statement"),
-    field(p2, "body", c3), has(c3, c4, "dotted_name"), air302_replacement_of(c4, s1),
-    air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"), glob(s2, c5).
+air302_demand_import_fallback(st2) :- air302_demand_alt_6(n, ORIG), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig1),
+    text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
+air302_demand_import_fallback(st2) :- air302_demand_alt_7(n, ORIG), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_1(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig3),
+    text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
+air302_demand_import_fallback(st2) :- air302_demand_alt_8(n, ORIG), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_2(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), text(c6, t_orig5),
+    text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
+air302_demand_import_fallback(st2) :- air302_alt_case(q1, s1, s2), kind(n, "identifier"),
+    ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, s1),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
 
 // demand_seen_airflow: the nodes seen_airflow is asked at (it looks at every ancestor of every node)
 .decl air302_demand_seen_airflow(n: node)
@@ -2758,10 +2762,11 @@ air302_replacement_of_case("v1_volume_mount", "kubernetes.client.models.V1Volume
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable this relation binds for the calling rule
 .decl air302_alt_2(n: node, orig: loc)
-air302_alt_2(n, ORIG) :- ref_site(n, b1), kind(b1, "aliased_import"), field(b1, "name", c2),
-    child(c2, c3, _), kind(c3, "identifier"), node(_, c3, _, _, _), ORIG = c3,
-    count : { precedes(c3, s4), kind(s4, "identifier") } = 0.
-air302_alt_2(n, ORIG) :- count : { ref_site(n, b5), kind(b5, "aliased_import") } = 0,
+air302_alt_2(n, ORIG) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    kind(st2, "aliased_import"), field(st2, "name", c3), child(c3, c4, _),
+    kind(c4, "identifier"), node(_, c4, _, _, _), ORIG = c4,
+    count : { precedes(c4, s5), kind(s5, "identifier") } = 0.
+air302_alt_2(n, ORIG) :- count : { ref_site(n, b6), (st7 = b6, kind(st7, "aliased_import") ; inside(b6, st7, "aliased_import")) } = 0,
     node(_, n, _, _, _), ORIG = n.
 
 // stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
@@ -2778,49 +2783,52 @@ air302_alt_4(n) :- within_stop(n, p2, air302_stop_3), kind(p2, "delete_statement
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_6(n: node, orig: loc)
 air302_alt_6(n, ORIG) :- air302_demand_alt_6(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    air302_import_fallback(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), has(c3, c4, "dotted_name"),
-    air302_replacement(c4), air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"),
-    text(c5, t_orig1), text(ORIG, t_orig1), @doc(c5) = @doc(ORIG).
+    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig1), text(ORIG, t_orig1), @doc(c6) = @doc(ORIG).
 air302_alt_6(n, ORIG) :- air302_demand_alt_6(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
-    air302_up_3(n, p6), field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement(c8),
-    field(c8, "attribute", c9), text(c9, t_orig2), text(ORIG, t_orig2), @doc(c9) = @doc(ORIG).
+    air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement(c9),
+    field(c9, "attribute", c10), text(c10, t_orig2), text(ORIG, t_orig2), @doc(c10) = @doc(ORIG).
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_7(n: node, orig: loc)
 air302_alt_7(n, ORIG) :- air302_demand_alt_7(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    air302_import_fallback(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), has(c3, c4, "dotted_name"),
-    air302_replacement_1(c4), air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"),
-    text(c5, t_orig3), text(ORIG, t_orig3), @doc(c5) = @doc(ORIG).
+    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_1(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig3), text(ORIG, t_orig3), @doc(c6) = @doc(ORIG).
 air302_alt_7(n, ORIG) :- air302_demand_alt_7(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
-    air302_up_3(n, p6), field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement_1(c8),
-    field(c8, "attribute", c9), text(c9, t_orig4), text(ORIG, t_orig4), @doc(c9) = @doc(ORIG).
+    air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_1(c9),
+    field(c9, "attribute", c10), text(c10, t_orig4), text(ORIG, t_orig4), @doc(c10) = @doc(ORIG).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   ORIG: metavariable of the calling rule, passed in (bound by the caller)
 .decl air302_alt_8(n: node, orig: loc)
 air302_alt_8(n, ORIG) :- air302_demand_alt_8(n, ORIG), kind(n, "identifier"), ref_site(n, b1),
-    air302_import_fallback(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), has(c3, c4, "dotted_name"),
-    air302_replacement_2(c4), air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"),
-    text(c5, t_orig5), text(ORIG, t_orig5), @doc(c5) = @doc(ORIG).
+    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_2(c5),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"),
+    text(c6, t_orig5), text(ORIG, t_orig5), @doc(c6) = @doc(ORIG).
 air302_alt_8(n, ORIG) :- air302_demand_alt_8(n, ORIG), kind(n, "attribute"), air302_attribute_fallback(n),
-    air302_up_3(n, p6), field(p6, "body", c7), has(c7, c8, "attribute"), air302_replacement_2(c8),
-    field(c8, "attribute", c9), text(c9, t_orig6), text(ORIG, t_orig6), @doc(c9) = @doc(ORIG).
+    air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"), air302_replacement_2(c9),
+    field(c9, "attribute", c10), text(c10, t_orig6), text(ORIG, t_orig6), @doc(c10) = @doc(ORIG).
 
 // alt(n, key): 26 copies of one rule set (`alt_10`, `alt_11`, `alt_12` and 23 more), folded into one: row `key` of
 // alt_case gives the strings each copy had.
 .decl air302_alt(n: node, key: symbol)
 air302_alt(n, q1) :- air302_alt_case(q1, s1, s2), kind(n, "identifier"), ref_site(n, b1),
-    air302_import_fallback(b1), within_stop(b1, p2, "try_statement"),
-    kind(p2, "try_statement"), field(p2, "body", c3), has(c3, c4, "dotted_name"),
-    air302_replacement_of(c4, s1), air302_import_site(c4), child(c4, c5, _), kind(c5, "identifier"),
-    glob(s2, c5).
+    (st2 = b1 ; within(b1, st2)), air302_import_fallback(st2),
+    within_stop(st2, p3, "try_statement"), kind(p3, "try_statement"),
+    field(p3, "body", c4), has(c4, c5, "dotted_name"), air302_replacement_of(c5, s1),
+    air302_import_site(c5), child(c5, c6, _), kind(c6, "identifier"), glob(s2, c6).
 air302_alt(n, q1) :- air302_alt_case(q1, s1, s2), kind(n, "attribute"), air302_attribute_fallback(n),
-    air302_up_3(n, p6), field(p6, "body", c7), has(c7, c8, "attribute"),
-    air302_replacement_of(c8, s1), field(c8, "attribute", c9), glob(s2, c9).
+    air302_up_3(n, p7), field(p7, "body", c8), has(c8, c9, "attribute"),
+    air302_replacement_of(c9, s1), field(c9, "attribute", c10), glob(s2, c10).
 
 // alt_36(n): the JSON `any`: n matches if any one of these rules does
 //   N, ORIG: metavariables this relation binds for the calling rule

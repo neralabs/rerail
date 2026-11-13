@@ -5,7 +5,6 @@
 .mode steer
 .scope include "**/*.py"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
 
 #include "python/names.rr"
 
@@ -76,16 +75,18 @@ b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "a
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
     field(n, "object", c3), b615_segment(c3, q1).
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    glob(q1, n), count : { ref_site(n, b4), kind(b4, "aliased_import") } = 0.
+    glob(q1, n),
+    count : { ref_site(n, b4), (st5 = b4, kind(st5, "aliased_import") ; inside(b4, st5, "aliased_import")) } = 0.
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    ref_site(n, b5), kind(b5, "aliased_import"), field(b5, "name", c6),
-    child(c6, c7, _), kind(c7, "identifier"), glob(q1, c7).
+    ref_site(n, b6), (st7 = b6 ; within(b6, st7)), kind(st7, "aliased_import"),
+    field(st7, "name", c8), child(c8, c9, _), kind(c9, "identifier"), glob(q1, c9).
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    ref_site(n, b8), inside(b8, p9, "import_from_statement"),
-    field(p9, "module_name", c10), has(c10, c11, "identifier"), glob(q1, c11).
+    ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
+    inside(st11, p12, "import_from_statement"), field(p12, "module_name", c13),
+    has(c13, c14, "identifier"), glob(q1, c14).
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b12), site_form(b12, "import") } = 0,
-    within(n, p13), precedes(s14, p13), within(c15, s14), b615_writer(c15, q1, HEAD).
+    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b15), site_form(b15, "import") } = 0,
+    within(n, p16), precedes(s17, p16), within(c18, s17), b615_writer(c18, q1, HEAD).
 
 // named(n, key): 3 copies of one rule set (`named-from-pretrained`, `named-hub-download`, `named-load-dataset`), folded into one: row `key` of
 // named_case gives the strings each copy had.
@@ -93,20 +94,22 @@ b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "i
 b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "attribute"),
     field(n, "attribute", c1), glob(s2, c1), node(_, c1, _, _, _), API = c1.
 b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), glob(s2, n),
-    node(_, n, _, _, _), API = n, count : { ref_site(n, b2), kind(b2, "aliased_import") } = 0.
-b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), ref_site(n, b3),
-    kind(b3, "aliased_import"), field(b3, "name", c4), child(c4, c5, _),
-    kind(c5, "identifier"), child(p6, c5, _), b615_counted(c5),
-    k8 = count : { child(p6, s7, _), precedes(c5, s7), b615_counted(s7) }, k8 = 0,
-    glob(s2, c5), node(_, c5, _, _, _), API = c5.
+    node(_, n, _, _, _), API = n,
+    count : { ref_site(n, b2), (st3 = b2, kind(st3, "aliased_import") ; inside(b2, st3, "aliased_import")) } = 0.
+b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), ref_site(n, b4),
+    (st5 = b4 ; within(b4, st5)), kind(st5, "aliased_import"), field(st5, "name", c6),
+    child(c6, c7, _), kind(c7, "identifier"), child(p8, c7, _), b615_counted(c7),
+    k10 = count : { child(p8, s9, _), precedes(c7, s9), b615_counted(s9) }, k10 = 0,
+    glob(s2, c7), node(_, c7, _, _, _), API = c7.
 b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), node(_, n, _, _, _), CALLEE = n,
-    ref_site(n, b9), ast(b9, {"bindings": {"min": 2}}),
-    count : { ref_site(n, b10), site_form(b10, "import") } = 0, within(n, p11),
-    precedes(s12, p11), has(s12, c13, "aliased_import"), field(c13, "alias", c14),
-    node(_, c14, _, _, _), CALLEE = c14, field(c13, "name", c15), child(c15, c16, _),
-    kind(c16, "identifier"), child(p17, c16, _), b615_counted(c16),
-    k19 = count : { child(p17, s18, _), precedes(c16, s18), b615_counted(s18) }, k19 = 0,
-    glob(s2, c16), node(_, c16, _, _, _), API = c16.
+    ref_site(n, b11), binding(sc12, x13, b11, _),
+    k15 = count : { binding(sc12, x13, s14, _) }, k15 >= 2,
+    count : { ref_site(n, b16), site_form(b16, "import") } = 0, within(n, p17),
+    precedes(s18, p17), has(s18, c19, "aliased_import"), field(c19, "alias", c20),
+    node(_, c20, _, _, _), CALLEE = c20, field(c19, "name", c21), child(c21, c22, _),
+    kind(c22, "identifier"), child(p23, c22, _), b615_counted(c22),
+    k25 = count : { child(p23, s24, _), precedes(c22, s24), b615_counted(s24) }, k25 = 0,
+    glob(s2, c22), node(_, c22, _, _, _), API = c22.
 
 // hf_callee(n): the JSON util `hf-callee`, used where the JSON says `matches: "hf-callee"`
 .decl b615_hf_callee(n: node)

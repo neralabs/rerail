@@ -12,7 +12,7 @@
 .violation F523(at: node) "`.format` call has unused arguments"
     suppress noqa "F523"
 F523(n) :- n ~ `$S.format($$$A)`,
-    ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "unused": {"not": {"kind": "keyword_argument"}}}}).
+    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "unused": {"not": {"kind": "keyword_argument"}}}}}).
 F523(n) :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "generator_expression"), field(n, "function", c2), kind(c2, "attribute"),
     field(c2, "attribute", c3), glob("format", c3), field(n, "function", c4),

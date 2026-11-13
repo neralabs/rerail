@@ -62,11 +62,11 @@ ruf051_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
 .decl ruf051_dict_bound(n: node)
 ruf051_dict_bound(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1_3), site_only(b1_3), (kind(b1_3, "dictionary_splat_pattern"), child(p1_3, b1_3, _), kind(p1_3, "parameters") ; kind(b1_3, "typed_parameter"), child(p2_3, b1_3, _), kind(p2_3, "parameters"), child(b1_3, c1_3, _), kind(c1_3, "dictionary_splat_pattern"))
-    ; ref_site(n, b5_4), site_only(b5_4), binding_value(b5_4, x6_4), ruf051_dict_init(x6_4), count : { child(b5_4, c7_4, _), kind(c7_4, "type") } = 0
-    ; ref_site(n, b8_5), site_only(b8_5), kind(b8_5, "as_pattern"), within_stop(b8_5, p9_5, ruf051_stop_11), kind(p9_5, "with_item"), (child(b8_5, c1_1_5, _), ruf051_dict_init(c1_1_5), ruf051_tok_precedes_3(c1_1_5), child(b8_5, c9_1_5, _), kind(c9_1_5, "as_pattern_target"), child(c9_1_5, c10_1_5, _), ruf051_plain_target(c10_1_5) ; child(b8_5, c11_2_5, _), (kind(c11_2_5, "tuple") ; kind(c11_2_5, "list") ; kind(c11_2_5, "set")), precedes_stop(c11_2_5, s12_2_5, ruf051_stop_1), glob("as", s12_2_5), child(c11_2_5, c13_2_5, _), ruf051_dict_init(c13_2_5), node(_, c13_2_5, _, _, _), VE = c13_2_5, child(b8_5, c14_2_5, _), kind(c14_2_5, "as_pattern_target"), child(c14_2_5, c15_2_5, _), (kind(c15_2_5, "tuple") ; kind(c15_2_5, "list")), child(c15_2_5, c16_2_5, _), kind(c16_2_5, "identifier"), node(_, c16_2_5, _, _, _), TN = c16_2_5, text(TN, t17_2_5), text(RN, t17_2_5), value(TN, t19_2_5), value(VE, t19_2_5), @doc(TN) = @doc(RN) )
-    ; ref_site(n, b30_6), site_only(b30_6), site_annotation(b30_6, o31_6), ruf051_dict_ann(o31_6), count : { child(b30_6, c32_6, _), (kind(c32_6, "list_splat_pattern") ; kind(c32_6, "dictionary_splat_pattern")) } = 0
-    ; ref_site(n, b33_7), site_only(b33_7), kind(b33_7, "function_definition"), child(b33_7, c34_7, _), kind(c34_7, "type"), child(c34_7, c35_7, _), ruf051_dict_ann(c35_7)
+    ( ref_site(n, b1_3), site_only(b1_3), (st2_3 = b1_3 ; within(b1_3, st2_3)), (kind(st2_3, "dictionary_splat_pattern"), child(p1_3, st2_3, _), kind(p1_3, "parameters") ; kind(st2_3, "typed_parameter"), child(p2_3, st2_3, _), kind(p2_3, "parameters"), child(st2_3, c1_3, _), kind(c1_3, "dictionary_splat_pattern"))
+    ; ref_site(n, b6_4), site_only(b6_4), binding_value(b6_4, x7_4), ruf051_dict_init(x7_4), (st8_4 = b6_4 ; within(b6_4, st8_4)), count : { child(st8_4, c9_4, _), kind(c9_4, "type") } = 0
+    ; ref_site(n, b10_5), site_only(b10_5), (st11_5 = b10_5 ; within(b10_5, st11_5)), kind(st11_5, "as_pattern"), within_stop(st11_5, p12_5, ruf051_stop_11), kind(p12_5, "with_item"), (child(st11_5, c1_1_5, _), ruf051_dict_init(c1_1_5), ruf051_tok_precedes_3(c1_1_5), child(st11_5, c9_1_5, _), kind(c9_1_5, "as_pattern_target"), child(c9_1_5, c10_1_5, _), ruf051_plain_target(c10_1_5) ; child(st11_5, c11_2_5, _), (kind(c11_2_5, "tuple") ; kind(c11_2_5, "list") ; kind(c11_2_5, "set")), precedes_stop(c11_2_5, s12_2_5, ruf051_stop_1), glob("as", s12_2_5), child(c11_2_5, c13_2_5, _), ruf051_dict_init(c13_2_5), node(_, c13_2_5, _, _, _), VE = c13_2_5, child(st11_5, c14_2_5, _), kind(c14_2_5, "as_pattern_target"), child(c14_2_5, c15_2_5, _), (kind(c15_2_5, "tuple") ; kind(c15_2_5, "list")), child(c15_2_5, c16_2_5, _), kind(c16_2_5, "identifier"), node(_, c16_2_5, _, _, _), TN = c16_2_5, text(TN, t17_2_5), text(RN, t17_2_5), value(TN, t19_2_5), value(VE, t19_2_5), @doc(TN) = @doc(RN) )
+    ; ref_site(n, b33_6), site_only(b33_6), site_annotation(b33_6, o34_6), ruf051_dict_ann(o34_6), (st35_6 = b33_6 ; within(b33_6, st35_6)), count : { child(st35_6, c36_6, _), (kind(c36_6, "list_splat_pattern") ; kind(c36_6, "dictionary_splat_pattern")) } = 0
+    ; ref_site(n, b37_7), site_only(b37_7), (st38_7 = b37_7 ; within(b37_7, st38_7)), kind(st38_7, "function_definition"), child(st38_7, c39_7, _), kind(c39_7, "type"), child(c39_7, c40_7, _), ruf051_dict_ann(c40_7)
     ),
     node(_, n, _, _, _), RN = n.
 
@@ -250,13 +250,13 @@ ruf051_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4
 // tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf051_tok_precedes_2(n: node)
 .stored ruf051_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf051_tok_precedes_2(n) :- precedes(n, s11), glob("as", s11).
-ruf051_tok_precedes_2(n) :- child(p14, n, _), node(_, n, _, _, en17),
-    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
-ruf051_tok_precedes_2(n) :- structural_after(n, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
-ruf051_tok_precedes_2(n) :- precedes(n, o15), structural_after(o15, g13),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+ruf051_tok_precedes_2(n) :- precedes(n, s14), glob("as", s14).
+ruf051_tok_precedes_2(n) :- child(p17, n, _), node(_, n, _, _, en20),
+    token(p17, _, t15, st19, _), st19 >= en20, match("as", t15).
+ruf051_tok_precedes_2(n) :- structural_after(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+ruf051_tok_precedes_2(n) :- precedes(n, o18), structural_after(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
 
 // tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf051_tok_precedes_3(n: node)

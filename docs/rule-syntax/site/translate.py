@@ -74,6 +74,13 @@ def compact(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(", ", ": "))
 
 
+def ast_atom(prog, v, rule):
+    """`ast(v, {...})`: a JSON term the engine matches with main's matcher, as a whole matcher (`language` and
+    `rule`); the bare shorthand accepts no semantic term (`binds`, `resolves`, `formatArgs`)."""
+    prog.untranslated += 1
+    return f"ast({v}, {compact({'language': prog.lang, 'rule': rule})})"
+
+
 def mv(name):
     """A JSON metavariable reference ("$X", "X", "$$$X") as a Datalog variable."""
     return str(name).lstrip("$")
@@ -354,8 +361,7 @@ def lower(prog, rule, v, vs, skip=()):
         else:
             rest[k] = val
     if rest:
-        prog.untranslated += 1
-        lits.append(f"ast({v}, {compact(rest)})")
+        lits.append(ast_atom(prog, v, rest))
     if not lits:
         lits.append(f"node(_, {v}, _, _, _)")
     return lits
@@ -428,8 +434,14 @@ def site_filters(prog, filters, s, vs):
             lits.append(f"site_form({s}, {q(bv)})")
         elif bk == "form" and isinstance(bv, list):
             lits.append(one_of(prog, vs, f"site_form({s}, {{}})", bv, "f", "binding forms the JSON accepts"))
-        elif bk in ("site",):
-            lits.extend(lower(prog, bv, s, vs))
+        elif bk == "site" and isinstance(bv, dict) and set(bv) == {"kind"} and isinstance(bv["kind"], str):
+            # main's site is the statement that binds: the nearest ancestor of the kind (or the node itself)
+            st = vs.fresh("st")
+            lits.append(f"({st} = {s}, kind({st}, {q(bv['kind'])}) ; inside({s}, {st}, {q(bv['kind'])}))")
+        elif bk == "site":
+            st = vs.fresh("st")
+            lits.append(f"({st} = {s} ; within({s}, {st}))")
+            lits.extend(lower(prog, bv, st, vs))
         elif bk == "value":
             x = vs.fresh("x")
             lits.append(f"binding_value({s}, {x})")
@@ -446,9 +458,35 @@ def site_filters(prog, filters, s, vs):
             lits.append(f"!site_{snake(bk)}({s})")
         elif isinstance(bv, (str, int, float)):
             lits.append(f"site_{snake(bk)}({s}, {q(bv)})")
+        elif bk == "bindings" and isinstance(bv, dict) and set(bv) <= {"min", "max", "within"} and \
+                all(isinstance(bv.get(x, 0), int) for x in ("min", "max")):
+            # how many times the scope binds the name (inside the node `within` names, when it does)
+            sc, x, s2, k = vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"), vs.fresh("k")
+            inner = f"binding({sc}, {x}, {s2}, _)"
+            if "within" in bv:
+                inner += f", ({s2} = {mv(bv['within'])} ; within({s2}, {mv(bv['within'])}))"
+            lits.append(f"binding({sc}, {x}, {s}, _)")
+            lits.append(f"{k} = count : {{ {inner} }}")
+            if "min" in bv:
+                lits.append(f"{k} >= {bv['min']}")
+            if "max" in bv:
+                lits.append(f"{k} <= {bv['max']}")
+        elif bk == "redefines" and isinstance(bv, dict) and set(bv) <= {"form"}:
+            # the name rebinds one its scope bound earlier (of the form asked, when one is)
+            sc, x, s2 = vs.fresh("sc"), vs.fresh("x"), vs.fresh("s")
+            form = bv.get("form")
+            lits.append(f"binding({sc}, {x}, {s}, _)")
+            if isinstance(form, str):
+                lits.append(f"binding({sc}, {x}, {s2}, {q(form)})")
+            elif isinstance(form, list):
+                f = vs.fresh("f")
+                lits.append(f"binding({sc}, {x}, {s2}, {f})")
+                lits.append("(" + " ; ".join(f"{f} = {q(x_)}" for x_ in form) + ")")
+            else:
+                lits.append(f"binding({sc}, {x}, {s2}, _)")
+            lits.append(f"{s2} < {s}")
         else:
-            prog.untranslated += 1
-            lits.append(f"ast({s}, {compact({bk: bv})})")
+            lits.append(ast_atom(prog, s, {"binds": {bk: bv}}))
     return lits
 
 
@@ -945,8 +983,7 @@ def resolves(prog, r, v, vs):
         else:
             rest[k] = val
     if rest:
-        prog.untranslated += 1
-        lits.append(f"ast({v}, {compact({'resolves': rest})})")
+        lits.append(ast_atom(prog, v, {"resolves": rest}))
     return lits
 
 

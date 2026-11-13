@@ -86,21 +86,24 @@ ruf057_int_ann(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), ruf05
 // int_name(n): the JSON util `int-name`, used where the JSON says `matches: "int-name"`
 .decl ruf057_int_name(n: node)
 ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
-    count : { child(b1, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0,
-    site_annotation(b1, o3), ruf057_int_ann(o3), count : { within(n, p4), ruf057_int_param(p4) } = 0.
-ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b5), site_only(b5),
-    ( kind(b5, "assignment"), count : { field(b5, "type", c1), kind(c1, "type") } = 0
-    ; kind(b5, "named_expression")
+    (st2 = b1 ; within(b1, st2)),
+    count : { child(st2, c3, _), (kind(c3, "list_splat_pattern") ; kind(c3, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b1, o4), ruf057_int_ann(o4), count : { within(n, p5), ruf057_int_param(p5) } = 0.
+ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b6), site_only(b6),
+    (st7 = b6 ; within(b6, st7)),
+    ( kind(st7, "assignment"), count : { field(st7, "type", c1), kind(c1, "type") } = 0
+    ; kind(st7, "named_expression")
     ),
-    binding_value(b5, x7), ruf057_int_init(x7).
-ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b8), site_only(b8),
-    kind(b8, "as_pattern"), child(b8, c9, _), ruf057_int_init(c9), ruf057_tok_precedes_9(c9),
-    field(b8, "alias", c17), kind(c17, "as_pattern_target"), child(c17, c18, _),
-    kind(c18, "identifier").
-ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b19), site_only(b19),
-    kind(b19, "function_definition"), field(b19, "return_type", c20), ruf057_int_ann(c20),
-    count : { within(n, p21), ruf057_int_param(p21) } = 0.
-ruf057_int_name(n) :- kind(n, "parenthesized_expression"), child(n, c22, _), ruf057_int_name(c22).
+    binding_value(b6, x9), ruf057_int_init(x9).
+ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b10), site_only(b10),
+    (st11 = b10 ; within(b10, st11)), kind(st11, "as_pattern"), child(st11, c12, _),
+    ruf057_int_init(c12), ruf057_tok_precedes_9(c12), field(st11, "alias", c20),
+    kind(c20, "as_pattern_target"), child(c20, c21, _), kind(c21, "identifier").
+ruf057_int_name(n) :- kind(n, "identifier"), ref_site(n, b22), site_only(b22),
+    (st23 = b22 ; within(b22, st23)), kind(st23, "function_definition"),
+    field(st23, "return_type", c24), ruf057_int_ann(c24),
+    count : { within(n, p25), ruf057_int_param(p25) } = 0.
+ruf057_int_name(n) :- kind(n, "parenthesized_expression"), child(n, c26, _), ruf057_int_name(c26).
 
 // int_like(n): the JSON util `int-like`, used where the JSON says `matches: "int-like"`
 .decl ruf057_int_like(n: node)
@@ -261,13 +264,13 @@ ruf057_tok_follows_8(n) :- precedes(o14, n), structural_before(o14, g12),
 // tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf057_tok_precedes_9(n: node)
 .stored ruf057_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf057_tok_precedes_9(n) :- precedes(n, s10), glob("as", s10).
-ruf057_tok_precedes_9(n) :- child(p13, n, _), node(_, n, _, _, en16),
-    token(p13, _, t11, st15, _), st15 >= en16, match("as", t11).
-ruf057_tok_precedes_9(n) :- structural_after(n, g12),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g12).
-ruf057_tok_precedes_9(n) :- precedes(n, o14), structural_after(o14, g12),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g12).
+ruf057_tok_precedes_9(n) :- precedes(n, s13), glob("as", s13).
+ruf057_tok_precedes_9(n) :- child(p16, n, _), node(_, n, _, _, en19),
+    token(p16, _, t14, st18, _), st18 >= en19, match("as", t14).
+ruf057_tok_precedes_9(n) :- structural_after(n, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g15).
+ruf057_tok_precedes_9(n) :- precedes(n, o17), structural_after(o17, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g15).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf057_alt_1(n: node)

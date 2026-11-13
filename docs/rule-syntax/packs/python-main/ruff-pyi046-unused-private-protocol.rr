@@ -33,10 +33,10 @@ pyi046_protocol_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 .violation PYI046(at: node, name: loc) "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI046"
 PYI046_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
-    site_form(n, "definition"), kind(n, "class_definition"),
-    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
-    pyi046_protocol_base(c2), site_latest(n), !site_used(n),
-    (site_scope(n, "module") ; site_scope(n, "function")).
+    site_form(n, "definition"), (st1 = n ; within(n, st1)),
+    kind(st1, "class_definition"), field(st1, "superclasses", c2),
+    kind(c2, "argument_list"), child(c2, c3, _), pyi046_protocol_base(c3), site_latest(n),
+    !site_used(n), (site_scope(n, "module") ; site_scope(n, "function")).
 
 // PYI046_unused_private_protocol_stub(n): a finding at node n, from clause `unused-private-protocol-stub`.
 // Each rule below is one way the JSON `rule` can match.
@@ -45,9 +45,10 @@ PYI046_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
 .violation PYI046_unused_private_protocol_stub(at: node, name: loc) code "PYI046" "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI046"
 PYI046_unused_private_protocol_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
-    prefix("_", n), site_form(n, "definition"), kind(n, "class_definition"),
-    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
-    pyi046_protocol_base(c2), site_latest(n), !site_used(n).
+    prefix("_", n), site_form(n, "definition"), (st1 = n ; within(n, st1)),
+    kind(st1, "class_definition"), field(st1, "superclasses", c2),
+    kind(c2, "argument_list"), child(c2, c3, _), pyi046_protocol_base(c3), site_latest(n),
+    !site_used(n).
 
 // main's file condition {"notRegex": "\\.pyi$"}
 .decl PYI046_raw(at: node, name: loc)

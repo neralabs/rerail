@@ -12,4 +12,4 @@
 .violation F505(at: node) "`%`-format string is missing argument(s) for placeholder(s)"
     suppress noqa "F505"
 F505(n) :- n ~ `$S % $R`,
-    ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"kind": "placeholder", "has": {"kind": "mapping_key"}}}}).
+    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"kind": "placeholder", "has": {"kind": "mapping_key"}}}}}).

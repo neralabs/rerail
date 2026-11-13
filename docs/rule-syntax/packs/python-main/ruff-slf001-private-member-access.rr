@@ -203,9 +203,9 @@ slf001_plain_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sl
 // class_itself(n): the JSON util `class-itself`, used where the JSON says `matches: "class-itself"`
 .decl slf001_class_itself(n: node)
 slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), site_form(b1, "definition"),
-    kind(b1, "class_definition"), node(_, b1, _, _, _), DEF = b1, inside(n, p2, "class_definition"),
-    field(_, "body", n), node(_, p2, _, _, _), DEF = p2,
-    count : { slf001_stop_14_within(n, p3), (kind(p3, "list_comprehension") ; kind(p3, "set_comprehension") ; kind(p3, "dictionary_comprehension") ; kind(p3, "generator_expression")), count : { slf001_stop_14_within(p3, p4), (kind(p4, "function_definition") ; kind(p4, "lambda")) } = 0 } = 0.
+    (st2 = b1 ; within(b1, st2)), kind(st2, "class_definition"), node(_, st2, _, _, _), DEF = st2,
+    inside(n, p3, "class_definition"), field(_, "body", n), node(_, p3, _, _, _), DEF = p3,
+    count : { slf001_stop_14_within(n, p4), (kind(p4, "list_comprehension") ; kind(p4, "set_comprehension") ; kind(p4, "dictionary_comprehension") ; kind(p4, "generator_expression")), count : { slf001_stop_14_within(p4, p5), (kind(p5, "function_definition") ; kind(p5, "lambda")) } = 0 } = 0.
 
 // scope_node(n): the JSON util `scope-node`, used where the JSON says `matches: "scope-node"`
 .decl slf001_scope_node(n: node)
@@ -214,7 +214,7 @@ slf001_scope_node(n) :- (kind(n, "function_definition") ; kind(n, "lambda") ; ki
 // same_class_instance(n): the JSON util `same-class-instance`, used where the JSON says `matches: "same-class-instance"`
 .decl slf001_same_class_instance(n: node)
 slf001_same_class_instance(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_form(b1, "parameter"), slf001_receiver_parameter(b1)
+    ( ref_site(n, b1), site_form(b1, "parameter"), (st1 = b1 ; within(b1, st1)), slf001_receiver_parameter(st1)
     ; slf001_alt_18(n, CLS, SELFTAG), (text(SELFTAG, t1_1), text(CLS, t1_1), @doc(SELFTAG) = @doc(CLS) ; inside(n, p3_2, "class_definition"), field(_, "body", n), field(p3_2, "name", c4_2), text(c4_2, t_cls1_2), text(CLS, t_cls1_2), @doc(c4_2) = @doc(CLS) )
     ).
 
@@ -290,20 +290,22 @@ slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b1),
     (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
     slf001_same_class_value(x2, CLS, SELFTAG).
 slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), site_form(b3, "with"),
-    ( slf001_with_same_class_value(b3, CLS, SELFTAG)
-    ; within(b3, p1), slf001_with_same_class_value(p1, CLS, SELFTAG)
+    (st4 = b3 ; within(b3, st4)),
+    ( slf001_with_same_class_value(st4, CLS, SELFTAG)
+    ; within(st4, p1), slf001_with_same_class_value(p1, CLS, SELFTAG)
     ).
 
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b5), site_form(b5, "annotated"),
-    site_annotation(b5, o6), slf001_same_class_type(o6, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b7), site_form(b7, "parameter"),
-    ( kind(b7, "typed_default_parameter")
-    ; kind(b7, "typed_parameter"), child(b7, c1, _), kind(c1, "identifier")
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b6), site_form(b6, "annotated"),
+    site_annotation(b6, o7), slf001_same_class_type(o7, CLS, SELFTAG).
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b8), site_form(b8, "parameter"),
+    (st9 = b8 ; within(b8, st9)),
+    ( kind(st9, "typed_default_parameter")
+    ; kind(st9, "typed_parameter"), child(st9, c1, _), kind(c1, "identifier")
     ),
-    field(b7, "type", c9), slf001_same_class_type(c9, CLS, SELFTAG).
-slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b10), site_form(b10, "definition"),
-    kind(b10, "function_definition"), field(b10, "return_type", c11),
-    slf001_same_class_type(c11, CLS, SELFTAG).
+    field(st9, "type", c11), slf001_same_class_type(c11, CLS, SELFTAG).
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b12), site_form(b12, "definition"),
+    (st13 = b12 ; within(b12, st13)), kind(st13, "function_definition"),
+    field(st13, "return_type", c14), slf001_same_class_type(c14, CLS, SELFTAG).
 
 // alt_27(n): the JSON `any`: n matches if any one of these rules does
 .decl slf001_alt_27(n: node)

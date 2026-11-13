@@ -58,13 +58,7 @@ perf403_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), per
 
 // dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
 .decl perf403_dict_bound(n: node)
-perf403_dict_bound(n) :- kind(n, "identifier"),
-    ( ref_site(n, b1), site_only(b1), perf403_alt_2(b1)
-    ; ref_site(n, b2), site_only(b2), binding_value(b2, x1), perf403_dict_init(x1), count : { child(b2, c1, _), kind(c1, "type") } = 0
-    ; ref_site(n, b3), site_only(b3), site_annotation(b3, o1), perf403_dict_ann(o1), count : { child(b3, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0
-    ; ref_site(n, b4), site_only(b4), perf403_alt_3(b4)
-    ).
-
+perf403_dict_bound(n) :- kind(n, "identifier"), perf403_alt_4(n).
 
 // plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
 //   L: metavariable this relation binds for the calling rule
@@ -93,7 +87,7 @@ perf403_has_ref(n, L) :- perf403_demand_has_ref(n, L), within(c1, n), perf403_re
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
 .decl perf403_post_ref(n: node, for: loc)
 perf403_post_ref(n, FOR) :- perf403_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
-    node(_, b1, _, _, _), SITE = b1, text(SITE, t2), text(FOR, t2), @doc(SITE) = @doc(FOR).
+    (st2 = b1 ; within(b1, st2)), node(_, st2, _, _, _), SITE = st2, text(SITE, t3), text(FOR, t3), @doc(SITE) = @doc(FOR).
 
 // has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
 //   FOR: metavariable of the calling rule, passed in (bound by the caller)
@@ -325,12 +319,12 @@ perf403_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g
 // tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl perf403_tok_precedes_5(n: node)
 .stored perf403_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-perf403_tok_precedes_5(n) :- next_sibling(n, s13), glob("as", s13).
-perf403_tok_precedes_5(n) :- structural_after(n, g15), match("\\s*", g15), child(p16, n, _),
-    node(_, n, _, _, en19), o17 = en19 + strlen(g15), token(p16, _, t14, o17, _),
-    match("as", t14).
-perf403_tok_precedes_5(n) :- structural_after(n, g15),
-    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g15).
+perf403_tok_precedes_5(n) :- next_sibling(n, s17), glob("as", s17).
+perf403_tok_precedes_5(n) :- structural_after(n, g19), match("\\s*", g19), child(p20, n, _),
+    node(_, n, _, _, en23), o21 = en23 + strlen(g19), token(p20, _, t18, o21, _),
+    match("as", t18).
+perf403_tok_precedes_5(n) :- structural_after(n, g19),
+    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g19).
 
 // tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl perf403_tok_precedes_6(n: node)
@@ -448,6 +442,17 @@ perf403_alt_2(n) :- kind(n, "typed_parameter"), child(p2, n, _), kind(p2, "param
 perf403_alt_3(n) :- kind(n, "as_pattern"), child(n, c1, _), perf403_tok_precedes_6(c1), perf403_dict_init(c1).
 perf403_alt_3(n) :- kind(n, "function_definition"), field(n, "return_type", c9),
     kind(c9, "type"), child(c9, c10, _), perf403_dict_ann(c10).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl perf403_alt_4(n: node)
+perf403_alt_4(n) :- ref_site(n, b1), site_only(b1), (st2 = b1 ; within(b1, st2)), perf403_alt_2(st2).
+perf403_alt_4(n) :- ref_site(n, b6), site_only(b6), binding_value(b6, x7), perf403_dict_init(x7),
+    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+perf403_alt_4(n) :- ref_site(n, b10), site_only(b10), site_annotation(b10, o11), perf403_dict_ann(o11),
+    (st12 = b10 ; within(b10, st12)),
+    count : { child(st12, c13, _), (kind(c13, "list_splat_pattern") ; kind(c13, "dictionary_splat_pattern")) } = 0.
+perf403_alt_4(n) :- ref_site(n, b14), site_only(b14), (st15 = b14 ; within(b14, st15)),
+    perf403_alt_3(st15).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl perf403_alt_10(n: node)

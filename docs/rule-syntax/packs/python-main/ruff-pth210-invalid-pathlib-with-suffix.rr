@@ -153,17 +153,17 @@ pth210_set_1("pathlib.WindowsPath").
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl pth210_alt_3(n: node)
-pth210_alt_3(n) :- ref_site(n, b1), site_only(b1),
-    count : { kind(b1, "assignment"), field(b1, "type", c2), kind(c2, "type") } = 0,
-    binding_value(b1, x3), pth210_path_init(x3).
-pth210_alt_3(n) :- ref_site(n, b4), site_only(b4), kind(b4, "as_pattern"), child(b4, c5, _),
-    pth210_path_init(c5), child(b4, c6, _), kind(c6, "as_pattern_target"), child(c6, c7, _),
-    kind(c7, "identifier").
-pth210_alt_3(n) :- ref_site(n, b8), site_only(b8),
-    count : { child(b8, c9, _), (kind(c9, "list_splat_pattern") ; kind(c9, "dictionary_splat_pattern")) } = 0,
-    site_annotation(b8, o10), pth210_path_ann(o10).
-pth210_alt_3(n) :- ref_site(n, b11), site_only(b11), kind(b11, "function_definition"),
-    field(b11, "return_type", c12), pth210_path_ann(c12).
+pth210_alt_3(n) :- ref_site(n, b1), site_only(b1), (st2 = b1 ; within(b1, st2)),
+    count : { kind(st2, "assignment"), field(st2, "type", c3), kind(c3, "type") } = 0,
+    binding_value(b1, x4), pth210_path_init(x4).
+pth210_alt_3(n) :- ref_site(n, b5), site_only(b5), (st6 = b5 ; within(b5, st6)),
+    kind(st6, "as_pattern"), child(st6, c7, _), pth210_path_init(c7), child(st6, c8, _),
+    kind(c8, "as_pattern_target"), child(c8, c9, _), kind(c9, "identifier").
+pth210_alt_3(n) :- ref_site(n, b10), site_only(b10), (st11 = b10 ; within(b10, st11)),
+    count : { child(st11, c12, _), (kind(c12, "list_splat_pattern") ; kind(c12, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b10, o13), pth210_path_ann(o13).
+pth210_alt_3(n) :- ref_site(n, b14), site_only(b14), (st15 = b14 ; within(b14, st15)),
+    kind(st15, "function_definition"), field(st15, "return_type", c16), pth210_path_ann(c16).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl pth210_alt_4(n: node)

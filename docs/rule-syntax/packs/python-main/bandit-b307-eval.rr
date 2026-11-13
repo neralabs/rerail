@@ -16,12 +16,12 @@ B307(n) :- kind(n, "call"), field(n, "function", c1), b307_eval_callee(c1).
 
 // eval_callee(n): the JSON util `eval-callee`, used where the JSON says `matches: "eval-callee"`
 .decl b307_eval_callee(n: node)
-b307_eval_callee(n) :- kind(n, "identifier"), glob("eval", n),
-    count : { ref_site(n, b1), site_form(b1, "import"), b307_alias_to_other(b1) } = 0.
-b307_eval_callee(n) :- kind(n, "identifier"), ref_site(n, b2), site_form(b2, "import"),
-    b307_alias_to_eval(b2).
-b307_eval_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
-    b307_eval_callee(c3).
+b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "identifier"), glob("eval", n),
+    count : { ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b307_alias_to_other(st2) } = 0.
+b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "identifier"), ref_site(n, b3),
+    site_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b307_alias_to_eval(st4).
+b307_eval_callee(n) :- b307_demand_eval_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c5, _), b307_eval_callee(c5).
 
 // from_with_module(n): the JSON util `from-with-module`, used where the JSON says `matches: "from-with-module"`
 .decl b307_from_with_module(n: node)
@@ -40,3 +40,9 @@ b307_alias_to_eval(n) :- kind(n, "aliased_import"), field(n, "name", c1), glob("
 .decl b307_alias_to_other(n: node)
 b307_alias_to_other(n) :- kind(n, "aliased_import"), !b307_alias_to_eval(n).
 b307_alias_to_other(n) :- kind(n, "dotted_name"), child(p1, n, _), b307_from_with_module(p1).
+
+// demand_eval_callee: the nodes eval_callee is asked at (its recursion looks at every descendant)
+.decl b307_demand_eval_callee(n: node)
+b307_demand_eval_callee(c1) :- kind(n, "call"), field(n, "function", c1).
+b307_demand_eval_callee(c5) :- b307_demand_eval_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c5, _).

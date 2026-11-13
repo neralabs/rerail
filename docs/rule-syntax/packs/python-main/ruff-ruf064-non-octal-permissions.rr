@@ -43,15 +43,16 @@ ruf064_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // path_object(n): the JSON util `path-object`, used where the JSON says `matches: "path-object"`
 .decl ruf064_path_object(n: node)
-ruf064_path_object(n) :- ruf064_path_call(n).
-ruf064_path_object(n) :- kind(n, "identifier"), ref_site(n, b1), binding_value(b1, x2),
-    ruf064_path_value(x2).
-ruf064_path_object(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "as_pattern"),
-    child(p4, b3, _), kind(p4, "with_item"), child(b3, c5, _), ruf064_path_value(c5),
-    ruf064_tok_precedes_1(c5), child(b3, c13, _), kind(c13, "as_pattern_target"),
-    child(c13, c14, _), ruf064_plain_target(c14).
-ruf064_path_object(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
-    ruf064_path_object(c15).
+ruf064_path_object(n) :- ruf064_demand_path_object(n), ruf064_path_call(n).
+ruf064_path_object(n) :- ruf064_demand_path_object(n), kind(n, "identifier"), ref_site(n, b1),
+    binding_value(b1, x2), ruf064_path_value(x2).
+ruf064_path_object(n) :- ruf064_demand_path_object(n), kind(n, "identifier"), ref_site(n, b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "as_pattern"), child(p5, st4, _),
+    kind(p5, "with_item"), child(st4, c6, _), ruf064_path_value(c6), ruf064_tok_precedes_1(c6),
+    child(st4, c14, _), kind(c14, "as_pattern_target"), child(c14, c15, _),
+    ruf064_plain_target(c15).
+ruf064_path_object(n) :- ruf064_demand_path_object(n), kind(n, "parenthesized_expression"),
+    child(n, c16, _), ruf064_path_object(c16).
 
 // path_method(n): the JSON util `path-method`, used where the JSON says `matches: "path-method"`
 .decl ruf064_path_method(n: node)
@@ -154,13 +155,19 @@ RUF064(LIT, n) :- kind(n, "call"),
 // tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf064_tok_precedes_1(n: node)
 .stored ruf064_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-ruf064_tok_precedes_1(n) :- precedes(n, s6), glob("as", s6).
-ruf064_tok_precedes_1(n) :- child(p9, n, _), node(_, n, _, _, en12),
-    token(p9, _, t7, st11, _), st11 >= en12, match("as", t7).
-ruf064_tok_precedes_1(n) :- structural_after(n, g8),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
-ruf064_tok_precedes_1(n) :- precedes(n, o10), structural_after(o10, g8),
-    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+ruf064_tok_precedes_1(n) :- precedes(n, s7), glob("as", s7).
+ruf064_tok_precedes_1(n) :- child(p10, n, _), node(_, n, _, _, en13),
+    token(p10, _, t8, st12, _), st12 >= en13, match("as", t8).
+ruf064_tok_precedes_1(n) :- structural_after(n, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+ruf064_tok_precedes_1(n) :- precedes(n, o11), structural_after(o11, g9),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g9).
+
+// demand_path_object: the nodes path_object is asked at (its recursion looks at every descendant)
+.decl ruf064_demand_path_object(n: node)
+ruf064_demand_path_object(c16) :- ruf064_demand_path_object(n), kind(n, "parenthesized_expression"),
+    child(n, c16, _).
+ruf064_demand_path_object(c1) :- kind(n, "attribute"), field(n, "object", c1).
 
 // set_3: symbols from the JSON `resolves.import`
 .decl ruf064_set_3(v: symbol)

@@ -15,8 +15,8 @@
     suppress noqa "RUF018"
 RUF018(W, n, NAME) :- kind(n, "named_expression"), node(_, n, _, _, _), W = n, ruf018_in_assert(n),
     field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, ruf018_in_sc(n, SC),
-    ( inside(n, p1_5, "module"), has(p1_5, c2_5, "identifier"), !ruf018_in_assert(c2_5), (ref_site(c2_5, b1_3_5), kind(b1_3_5, "named_expression"), node(_, b1_3_5, _, _, _), S = b1_3_5, text(W, t2_3_5), text(S, t2_3_5), @doc(W) = @doc(S) ; ruf018_earlier_read(c2_5, NAME, SC, W))
-    ; ruf018_up_1(n, p6_6), has(p6_6, c7_6, "function_definition"), has(c7_6, c8_6, "nonlocal_statement"), child(c8_6, c9_6, _), kind(c9_6, "identifier"), text(c9_6, t_name6_6), text(NAME, t_name6_6), count : { has(p6_6, c10_6, "identifier"), text(c10_6, t_name7_6), text(NAME, t_name7_6), (bind_only(c10_6) ; aug_target(c10_6)), ruf018_in_sc(c10_6, SC), t12_6 = W, node(_, c10_6, _, s15_6, e16_6), node(_, W, _, s17_6, e18_6), e18_6 <= s15_6, line(c10_6, l14_6), end_line(t12_6, l13_6), k11_6 = l14_6 - l13_6, k11_6 >= 0, @doc(c10_6) = @doc(NAME) } = 0, @doc(c9_6) = @doc(NAME) ; ruf018_up_2(n, p19_7), field(n, "name", c20_7), site_latest(c20_7), site_exported(c20_7)
+    ( inside(n, p1_5, "module"), has(p1_5, c2_5, "identifier"), !ruf018_in_assert(c2_5), (ref_site(c2_5, b1_3_5), (st2_3_5 = b1_3_5 ; within(b1_3_5, st2_3_5)), kind(st2_3_5, "named_expression"), node(_, st2_3_5, _, _, _), S = st2_3_5, text(W, t3_3_5), text(S, t3_3_5), @doc(W) = @doc(S) ; ruf018_earlier_read(c2_5, NAME, SC, W))
+    ; ruf018_up_1(n, p7_6), has(p7_6, c8_6, "function_definition"), has(c8_6, c9_6, "nonlocal_statement"), child(c9_6, c10_6, _), kind(c10_6, "identifier"), text(c10_6, t_name6_6), text(NAME, t_name6_6), count : { has(p7_6, c11_6, "identifier"), text(c11_6, t_name7_6), text(NAME, t_name7_6), (bind_only(c11_6) ; aug_target(c11_6)), ruf018_in_sc(c11_6, SC), t13_6 = W, node(_, c11_6, _, s16_6, e17_6), node(_, W, _, s18_6, e19_6), e19_6 <= s16_6, line(c11_6, l15_6), end_line(t13_6, l14_6), k12_6 = l15_6 - l14_6, k12_6 >= 0, @doc(c11_6) = @doc(NAME) } = 0, @doc(c10_6) = @doc(NAME) ; ruf018_up_2(n, p20_7), field(n, "name", c21_7), site_latest(c21_7), site_exported(c21_7)
     ).
 
 
@@ -58,10 +58,10 @@ ruf018_earlier_read(n, NAME, SC, W) :- ruf018_demand_earlier_read(n, NAME, SC, W
     ; within_stop(n, p1, ruf018_stop_1), (kind(p1, "parameters") ; kind(p1, "lambda_parameters")), child(p2, p1, _), ruf018_in_sc(p2, SC)
     ),
 
-    ( ref_site(n, b1_1), site_stop_at_global(b1_1), (site_scope(b1_1, "function") ; site_scope(b1_1, "lambda") ; site_scope(b1_1, "module") ; site_scope(b1_1, "class")), ruf018_in_sc(b1_1, SC), !ruf018_alt_11(b1_1)
-    ; inside(n, p3_2, "module"), has(p3_2, c4_2, "assignment"), ruf018_in_sc(c4_2, SC), field(c4_2, "left", c5_2), text(c5_2, t_name5_2), text(NAME, t_name5_2), field(c4_2, "type", c6_2), kind(c6_2, "type"), count : { field(c4_2, "right", c7_2), match(".*[^\\s].*", c7_2) } = 0, t9_2 = R, node(_, c4_2, _, s12_2, e13_2), node(_, R, _, s14_2, e15_2), s14_2 >= e13_2, end_line(c4_2, l10_2), line(t9_2, l11_2), k8_2 = l11_2 - l10_2, k8_2 >= 0, @doc(c5_2) = @doc(NAME) ),
+    ( ref_site(n, b1_1), site_stop_at_global(b1_1), (site_scope(b1_1, "function") ; site_scope(b1_1, "lambda") ; site_scope(b1_1, "module") ; site_scope(b1_1, "class")), (st2_1 = b1_1 ; within(b1_1, st2_1)), ruf018_in_sc(st2_1, SC), !ruf018_alt_11(st2_1)
+    ; inside(n, p4_2, "module"), has(p4_2, c5_2, "assignment"), ruf018_in_sc(c5_2, SC), field(c5_2, "left", c6_2), text(c6_2, t_name5_2), text(NAME, t_name5_2), field(c5_2, "type", c7_2), kind(c7_2, "type"), count : { field(c5_2, "right", c8_2), match(".*[^\\s].*", c8_2) } = 0, t10_2 = R, node(_, c5_2, _, s13_2, e14_2), node(_, R, _, s15_2, e16_2), s15_2 >= e14_2, end_line(c5_2, l11_2), line(t10_2, l12_2), k9_2 = l12_2 - l11_2, k9_2 >= 0, @doc(c6_2) = @doc(NAME) ),
 
-    count : { inside(n, p26, "module"), within(c27, p26), ruf018_alt_4(c27, NAME), ruf018_in_sc(c27, SC), t9_8 = W, node(_, c27, _, s12_8, e13_8), node(_, W, _, s14_8, e15_8), s14_8 >= e13_8, end_line(c27, l10_8), line(t9_8, l11_8), k8_8 = l11_8 - l10_8, k8_8 >= 0, count : { t17_8 = R, node(_, c27, _, s20_8, e21_8), node(_, R, _, s22_8, e23_8), s22_8 >= e21_8, end_line(c27, l18_8), line(t17_8, l19_8), k16_8 = l19_8 - l18_8, k16_8 >= 0 } = 0 } = 0, @doc(n) = @doc(NAME).
+    count : { inside(n, p27, "module"), within(c28, p27), ruf018_alt_4(c28, NAME), ruf018_in_sc(c28, SC), t9_8 = W, node(_, c28, _, s12_8, e13_8), node(_, W, _, s14_8, e15_8), s14_8 >= e13_8, end_line(c28, l10_8), line(t9_8, l11_8), k8_8 = l11_8 - l10_8, k8_8 >= 0, count : { t17_8 = R, node(_, c28, _, s20_8, e21_8), node(_, R, _, s22_8, e23_8), s22_8 >= e21_8, end_line(c28, l18_8), line(t17_8, l19_8), k16_8 = l19_8 - l18_8, k16_8 >= 0 } = 0 } = 0, @doc(n) = @doc(NAME).
 
 // demand_earlier_read: the rows of earlier_read its callers ask for (the metavariable columns they pass in)
 .decl ruf018_demand_earlier_read(n: node, name: loc, sc: loc, w: loc)
@@ -71,11 +71,11 @@ ruf018_demand_earlier_read(c2_5, NAME, SC, W) :- kind(n, "named_expression"), no
 
 // demand_alt_4: the rows of alt_4 its callers ask for (the metavariable columns they pass in)
 .decl ruf018_demand_alt_4(n: node, name: loc)
-ruf018_demand_alt_4(c27, NAME) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
+ruf018_demand_alt_4(c28, NAME) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
-    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p26, "module"),
-    within(c27, p26), ruf018_in_sc(c27, SC), t9_8 = W, node(_, c27, _, s12_8, e13_8),
-    node(_, W, _, s14_8, e15_8), end_line(c27, l10_8), line(t9_8, l11_8), @doc(n) = @doc(NAME).
+    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p27, "module"),
+    within(c28, p27), ruf018_in_sc(c28, SC), t9_8 = W, node(_, c28, _, s12_8, e13_8),
+    node(_, W, _, s14_8, e15_8), end_line(c28, l10_8), line(t9_8, l11_8), @doc(n) = @doc(NAME).
 
 // demand_in_sc_past_class: the rows of in_sc_past_class its callers ask for (the metavariable columns they pass in)
 .decl ruf018_demand_in_sc_past_class(n: node, sc: loc)
@@ -87,14 +87,14 @@ ruf018_demand_in_sc_past_class(n, SC) :- ruf018_demand_earlier_read(n, NAME, SC,
 .decl ruf018_demand_in_sc(n: node)
 ruf018_demand_in_sc(n) :- kind(n, "named_expression"), node(_, n, _, _, _), W = n, ruf018_in_assert(n),
     field(n, "name", c1), node(_, c1, _, _, _), NAME = c1.
-ruf018_demand_in_sc(c10_6) :- kind(n, "named_expression"), node(_, n, _, _, _), W = n, ruf018_in_assert(n),
-    field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, ruf018_up_1(n, p6_6),
-    has(p6_6, c7_6, "function_definition"), has(c7_6, c8_6, "nonlocal_statement"),
-    child(c8_6, c9_6, _), kind(c9_6, "identifier"), text(c9_6, t_name6_6),
-    text(NAME, t_name6_6), has(p6_6, c10_6, "identifier"), text(c10_6, t_name7_6),
-    text(NAME, t_name7_6), (bind_only(c10_6) ; aug_target(c10_6)), t12_6 = W,
-    node(_, c10_6, _, s15_6, e16_6), node(_, W, _, s17_6, e18_6), line(c10_6, l14_6),
-    end_line(t12_6, l13_6), @doc(c9_6) = @doc(NAME), @doc(c10_6) = @doc(NAME).
+ruf018_demand_in_sc(c11_6) :- kind(n, "named_expression"), node(_, n, _, _, _), W = n, ruf018_in_assert(n),
+    field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, ruf018_up_1(n, p7_6),
+    has(p7_6, c8_6, "function_definition"), has(c8_6, c9_6, "nonlocal_statement"),
+    child(c9_6, c10_6, _), kind(c10_6, "identifier"), text(c10_6, t_name6_6),
+    text(NAME, t_name6_6), has(p7_6, c11_6, "identifier"), text(c11_6, t_name7_6),
+    text(NAME, t_name7_6), (bind_only(c11_6) ; aug_target(c11_6)), t13_6 = W,
+    node(_, c11_6, _, s16_6, e17_6), node(_, W, _, s18_6, e19_6), line(c11_6, l15_6),
+    end_line(t13_6, l14_6), @doc(c10_6) = @doc(NAME), @doc(c11_6) = @doc(NAME).
 ruf018_demand_in_sc(n) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
     node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), @doc(n) = @doc(NAME).
@@ -102,7 +102,7 @@ ruf018_demand_in_sc(p2) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
     node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), within_stop(n, p1, ruf018_stop_1),
     (kind(p1, "parameters") ; kind(p1, "lambda_parameters")), child(p2, p1, _), @doc(n) = @doc(NAME).
-ruf018_demand_in_sc(b1_1) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
+ruf018_demand_in_sc(st2_1) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
     node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), ref_site(n, b1_1),
     site_stop_at_global(b1_1),
@@ -110,20 +110,20 @@ ruf018_demand_in_sc(b1_1) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n,
     ; site_scope(b1_1, "lambda")
     ; site_scope(b1_1, "module")
     ; site_scope(b1_1, "class")
-    ), @doc(n) = @doc(NAME).
-
-ruf018_demand_in_sc(c4_2) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
+    ),
+    (st2_1 = b1_1 ; within(b1_1, st2_1)), @doc(n) = @doc(NAME).
+ruf018_demand_in_sc(c5_2) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
-    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p3_2, "module"),
-    has(p3_2, c4_2, "assignment"), field(c4_2, "left", c5_2), text(c5_2, t_name5_2),
-    text(NAME, t_name5_2), field(c4_2, "type", c6_2), kind(c6_2, "type"), t9_2 = R,
-    node(_, c4_2, _, s12_2, e13_2), node(_, R, _, s14_2, e15_2), end_line(c4_2, l10_2),
-    line(t9_2, l11_2), @doc(n) = @doc(NAME), @doc(c5_2) = @doc(NAME).
-ruf018_demand_in_sc(c27) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
+    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p4_2, "module"),
+    has(p4_2, c5_2, "assignment"), field(c5_2, "left", c6_2), text(c6_2, t_name5_2),
+    text(NAME, t_name5_2), field(c5_2, "type", c7_2), kind(c7_2, "type"), t10_2 = R,
+    node(_, c5_2, _, s13_2, e14_2), node(_, R, _, s15_2, e16_2), end_line(c5_2, l11_2),
+    line(t10_2, l12_2), @doc(n) = @doc(NAME), @doc(c6_2) = @doc(NAME).
+ruf018_demand_in_sc(c28) :- ruf018_demand_earlier_read(n, NAME, SC, W), text(n, t_name2),
     text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
-    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p26, "module"),
-    within(c27, p26), t9_8 = W, node(_, c27, _, s12_8, e13_8),
-    node(_, W, _, s14_8, e15_8), end_line(c27, l10_8), line(t9_8, l11_8), @doc(n) = @doc(NAME).
+    node(_, W, _, s7, e8), end_line(n, l3), line(t2, l4), inside(n, p27, "module"),
+    within(c28, p27), t9_8 = W, node(_, c28, _, s12_8, e13_8),
+    node(_, W, _, s14_8, e15_8), end_line(c28, l10_8), line(t9_8, l11_8), @doc(n) = @doc(NAME).
 
 // demand_in_assert: the nodes in_assert is asked at (it looks at every ancestor of every node)
 .decl ruf018_demand_in_assert(n: node)

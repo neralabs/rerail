@@ -438,12 +438,13 @@ ruf060_set_3("builtins.bytearray"). ruf060_set_3("builtins.str").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf060_alt_1(n: node)
-ruf060_alt_1(n) :- ref_site(n, b1), !kind(b1, "global_statement").
-ruf060_alt_1(n) :- docof(n, d3), modnode(d3, m4),
-    ( kind(n, "identifier"), !bind_only(n), miss(n, x2)
-    ; (kind(n, "string") ; kind(n, "concatenated_string")), ruf060_all_entry(n, x2), !bound_in(m4, x2)
+ruf060_alt_1(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    !kind(st2, "global_statement").
+ruf060_alt_1(n) :- docof(n, d4), modnode(d4, m5),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x3)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ruf060_all_entry(n, x3), !bound_in(m5, x3)
     ),
-    !builtin(x2), !star(m4).
+    !builtin(x3), !star(m5).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf060_alt_4(n: node)
