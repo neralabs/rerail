@@ -33,6 +33,7 @@ import {
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
+  relaunchDaemon,
   runningDaemonEngineEndpoint,
   startDaemon,
   startDaemonForPackage,
@@ -883,6 +884,26 @@ describe("launching the daemon", () => {
     expect(launches[0]!.cwd).toBe(home);
     const args = launches[0]!.args;
     expect(args[args.indexOf("--workspace-root") + 1]).toBe(resolve(repository));
+  });
+
+  // Every way Rerail starts the daemon but a hook's autostart (under "autostartDaemon"): `rerail daemon start` and
+  // set-up's start (startDaemon), a hook's start before it sends its settings (startDaemonForPackage), and the
+  // replacement a daemon starts near its heap limit (relaunchDaemon). Each must reach the native spawn, as the console
+  // probe above is started. The fake machine's Node spawn fails the test: Node's detached gives the daemon no console.
+  it.each(["startDaemon", "startDaemonForPackage", "relaunchDaemon"] as const)("on Windows starts the daemon through the native spawn, never Node's detached spawn (%s)", async start => {
+    const launches: NativeLaunch[] = [];
+    const machine = fakeMachine("win32", {
+      env: { RERAIL_HOME: home },
+      spawnDetached: launch => {
+        launches.push(launch);
+        return { pid: DEAD_PID };
+      },
+    });
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    if (start === "relaunchDaemon") relaunchDaemon(["daemon.js"], join(home, DAEMON_LOG_FILE), machine);
+    else await expect((start === "startDaemon" ? startDaemon : startDaemonForPackage)(control, { dev: true, port: 0 }, machine)).rejects.toThrow(/exited/u);
+    expect(launches).toHaveLength(1);
   });
 });
 
