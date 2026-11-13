@@ -1316,7 +1316,9 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     let sampled: Vec<(usize, Vec<String>, std::time::Duration, String)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {
-                s.spawn(|| {
+                // Named, so the test watchdog times the test, not each worker: on Linux an unnamed thread takes its
+                // creator's name, and the test's allowance is its own thread's.
+                std::thread::Builder::new().name("replay sample".into()).spawn_scoped(s, || {
                     let mut out = Vec::new();
                     while let Some(((group, check), ks)) = next() {
                         let begun = std::time::Instant::now();
@@ -1325,6 +1327,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
                     }
                     out
                 })
+                .expect("a sample thread")
             })
             .collect();
         workers.into_iter().flat_map(|w| w.join().expect("a sample thread")).collect()
