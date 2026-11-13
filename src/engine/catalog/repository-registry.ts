@@ -333,9 +333,10 @@ type ContainingCheckout = Pick<CheckoutRecord, "checkoutPath" | "createdAt">;
 
 /**
  * The order of a checkout's containing checkouts, nearest first: the longer path is nearer. Two paths of one length
- * that both hold it are one folder recorded under two spellings (on Windows, letter case). The one recorded first
- * comes first, as SQLite's row order gave it before every reader shared this order; rows recorded in the same
- * millisecond go by path, so the order never depends on how a reader got its rows.
+ * that both hold it are one folder recorded under two spellings (on Windows, letter case), or two folders when one
+ * row was recorded unresolved (a `.` segment, a trailing separator). The one recorded first comes first, as SQLite's
+ * row order gave it before every reader shared this order; rows recorded in the same millisecond go by path, so the
+ * order never depends on how a reader got its rows.
  */
 function nearestFirst(left: ContainingCheckout, right: ContainingCheckout): number {
   const nearer = right.checkoutPath.length - left.checkoutPath.length;
