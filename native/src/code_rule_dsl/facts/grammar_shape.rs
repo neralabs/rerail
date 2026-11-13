@@ -115,7 +115,7 @@ pub fn single_field(kind: &str, field: &str) -> bool {
     // At most `MANY`: 0, 1 or several of the field.
     const MANY: u8 = 2;
     fn count(e: &Value, field: &str, rules: &Value, inline: &BTreeSet<String>, supertypes: &BTreeSet<String>, seen: &mut Vec<String>) -> u8 {
-        let mut c = |e: &Value, seen: &mut Vec<String>| count(e, field, rules, inline, supertypes, seen);
+        let c = |e: &Value, seen: &mut Vec<String>| count(e, field, rules, inline, supertypes, seen);
         match e["type"].as_str().unwrap_or("") {
             "FIELD" => (u8::from(e["name"] == field) + c(&e["content"], seen)).min(MANY),
             "SEQ" => e["members"].as_array().into_iter().flatten().map(|m| c(m, seen)).fold(0, |a, b| (a + b).min(MANY)),

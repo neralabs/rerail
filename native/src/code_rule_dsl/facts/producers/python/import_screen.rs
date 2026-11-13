@@ -292,8 +292,7 @@ impl Imports {
                 _=>None,
             }
         };
-        let mut out=Self::default();
-        out.opaque=f.syntax_errors;
+        let mut out=Self { opaque:f.syntax_errors, ..Self::default() };
         for name in ["import_statement","import_from_statement","future_import_statement"] {
             let code=catalog.kind_id(name); if code==0 {continue;}
             for &n in f.of_kind(kind_atom(facts_tag(f),code)) {

@@ -1451,8 +1451,8 @@ pub mod tests {
         let space = space();
         let mut b = Builder::default();
         let mut model = BTreeSet::new();
-        for file in 0..4usize {
-            let (span, base) = (SPANS[file], space.base(file));
+        for (file, &span) in SPANS.iter().enumerate() {
+            let base = space.base(file);
             if shape % 3 == 2 {
                 let mut at = g.next() % 50;
                 while at < span {
@@ -1514,6 +1514,7 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn files_of_a_chunk_append_in_order() {
         // Files of one chunk inserted one by one: the shared chunk is merged, not rebuilt.
         let space = NodeSpace::new(vec![10, 10, 10]);

@@ -483,6 +483,7 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut backends = vec![ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
     #[cfg(target_os = "macos")]
     backends.extend([ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]);
@@ -512,9 +513,11 @@ fn the_backends_find_the_same_keys_on_real_files() {
     let dir = temp("phase4");
     let (paths, _) = sample(&dir);
     assert!((100..=300).contains(&paths.len()) || std::env::var_os("RERAIL_S7_FIXTURES").is_some(), "{} files", paths.len());
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
     #[cfg(target_os = "macos")]
     backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
+    #[allow(clippy::type_complexity)]
     let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
     for (name, backend) in backends {
         let store = ContentStore::open(&temp(&format!("phase4-{name}")).with_extension("sqlite")).unwrap();

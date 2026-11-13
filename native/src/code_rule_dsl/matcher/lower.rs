@@ -123,7 +123,7 @@ impl Fact {
             let mut bits = vec![0u64; nodes.div_ceil(64)];
             if tape.path().is_some_and(|path| condition.holds(path)) {
                 bits.iter_mut().for_each(|w| *w = !0);
-                if nodes % 64 != 0
+                if !nodes.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last &= (1 << (nodes % 64)) - 1;

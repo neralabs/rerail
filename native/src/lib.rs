@@ -13,8 +13,10 @@ extern crate rerail_engine as _;
 #[cfg(test)]
 mod build_identity;
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
-/// so `cargo test` checks how the build validates the language registry.
+/// so `cargo test` checks how the build validates the language registry (the build scripts' entry
+/// points go unused here).
 #[cfg(test)]
+#[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
@@ -55,6 +57,7 @@ static GLOBAL: Sampled = Sampled;
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[cfg_attr(test, allow(dead_code))]
 struct Sampled;
 
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]

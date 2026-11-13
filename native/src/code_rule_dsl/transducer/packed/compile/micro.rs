@@ -395,8 +395,8 @@ impl Micro {
     ) -> Result<(), Overflow> {
         self.walk(tape, tape.transducer_labels(), texts, start, ROOT_CAPTURES, frames, &mut |state: &State, label| {
             let mut captures = [(0_u16, NONE); ROOT_CAPTURES];
-            for at in 0..usize::from(state.captured) {
-                captures[at] = (state.labels[at], state.captures[at]);
+            for (at, slot) in captures.iter_mut().enumerate().take(usize::from(state.captured)) {
+                *slot = (state.labels[at], state.captures[at]);
             }
             out.push(RootRecord { start, label, captured: state.captured, captures });
             false

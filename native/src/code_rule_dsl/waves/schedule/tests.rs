@@ -178,7 +178,7 @@ fn a_program_reading_py_families_records_them_once() {
     for d in &docs {
         let name = derived_name(py, "/w", &d.path);
         assert!(store.binding(&name).unwrap().is_some(), "{name}");
-        let read = store.derivations_reading(&[d.core.clone()]).unwrap();
+        let read = store.derivations_reading(std::slice::from_ref(&d.core)).unwrap();
         assert!(read.iter().any(|r| r.output == name && r.producer == py.producer()), "{name}");
     }
 }

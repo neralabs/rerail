@@ -101,6 +101,7 @@ fn incremental_publication_equals_one_shot() {
 
 const FACTS: [FactTable<'static>; 1] = [FactTable { name: "calls", doc: "d", local: &["n"], values: &["callee", "arity"] }];
 
+#[allow(clippy::type_complexity)]
 fn fact_counts(db: &Connection) -> (Vec<(String, String, i64, i64, i64, i64)>, Vec<(String, String, String, i64, i64, i64)>) {
     let columns = db
         .prepare("SELECT tbl,col,rows,ndv,sq,sqd FROM fact_stats ORDER BY 1,2")

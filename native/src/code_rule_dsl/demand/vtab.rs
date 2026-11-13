@@ -885,6 +885,7 @@ impl PackedDemand {
             .flat_map(|range| {
                 // A range of several files fits (each was sized); a single file that could not be
                 // sized may not.
+                #[allow(clippy::single_range_in_vec_init)]
                 let groups = if range.len() == 1 && sizes[range.start] == u64::MAX {
                     crate::code_rule_dsl::prof::time("demand.groups", || self.program_groups(range))
                 } else {

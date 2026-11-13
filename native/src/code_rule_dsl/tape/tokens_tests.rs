@@ -4,7 +4,6 @@ use super::tokens::{TokenGrammar, grammar_json};
 use super::{Grammar, TapeDoc, TapeImage};
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::AstGrep;
-use ast_grep_core::language::Language as _;
 use std::sync::Arc;
 
 /// `source`'s tape, restored.

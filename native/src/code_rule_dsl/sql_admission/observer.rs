@@ -86,7 +86,11 @@ pub struct Observer {
     pub shared: Arc<Observed>,
 }
 impl Observer {
-    /// The observer must drop before the connection. A later profiler can adopt `shared`.
+    /// A later profiler can adopt `shared`.
+    ///
+    /// # Safety
+    ///
+    /// The observer must drop before the connection: it registers a raw pointer to itself with SQLite.
     pub unsafe fn install(
         db: &Connection,
         ledger: Arc<Ledger>,

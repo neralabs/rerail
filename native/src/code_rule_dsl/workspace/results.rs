@@ -481,15 +481,13 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     };
     // Each witness's violation is rendered and serialized on the worker pool, one at a time, so the
     // index never holds the violations as JSON values.
-    let mut entries = (|| {
-        witnesses
-            .par_iter()
-            .filter(|&&(rule, _, _)| allowed(rule))
-            .map(|&(code_rule, clause, witness)| {
-                page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
-            })
-            .collect::<Result<Vec<_>>>()
-    })()?;
+    let mut entries = witnesses
+        .par_iter()
+        .filter(|&&(rule, _, _)| allowed(rule))
+        .map(|&(code_rule, clause, witness)| {
+            page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
     for (&index, global) in &state.global_results {
         for violation in &global.violations {
             if allowed(&state.code_rules[index]) {

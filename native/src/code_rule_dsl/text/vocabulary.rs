@@ -46,6 +46,7 @@ pub struct Compiling {
 type Dfa = regex_automata::dfa::dense::DFA<Vec<u32>>;
 
 /// A group of automata searched together for every pattern that matches (`MatchKind::All`).
+#[allow(clippy::large_enum_variant)]
 enum Engine {
     /// Determinized, from the cache or built now. A string the DFA gives up on (a quit byte) is asked of `lazy`.
     Dfa(Dfa),

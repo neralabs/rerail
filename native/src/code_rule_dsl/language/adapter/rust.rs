@@ -767,9 +767,7 @@ impl CallRules for Rust {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables { table, .. }) = tables() else {
-            return None;
-        };
+        let FileTables { table, .. } = tables()?;
         Some(calls::rust::callee_at(node, summary, &table))
     }
 

@@ -125,6 +125,7 @@ impl Pending {
         ).proven
     }
 }
+#[allow(clippy::large_enum_variant)]
 pub enum Prepared {
     Reused(Option<(String, u64)>),
     Evaluate(Option<Pending>),

@@ -397,6 +397,7 @@ mod tests {
             TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
         )
     }
+    #[allow(clippy::type_complexity)]
     fn call_rows(
         facts: &PythonStructure,
         wanted: ContextKind,

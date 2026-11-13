@@ -79,7 +79,7 @@ fn equal_phase_outputs_share_validated_roots_without_weakening_keys_or_constrain
                 (1..1000).map(|i| vec![Some(i)]).collect(),
                 rows.clone(),
                 false,
-                &[a.clone()]
+                std::slice::from_ref(&a)
             )
             .is_err(),
         "root reuse must validate patch containment first"

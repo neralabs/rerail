@@ -30,7 +30,10 @@ pub(super) struct Native<'a> {
     /// CPU time publishing the input tapes into one reusable production index. W's anchor index
     /// is built per file while matching (`FileAnchorIndex::build`), so this is zero and `run`'s
     /// `prepare_ns` counts the index.
+    // As `s_native_oracle` keeps them; the report reads that oracle's.
+    #[allow(dead_code)]
     pub index_ns: u64,
+    #[allow(dead_code)]
     pub index_wall_ns: u64,
 }
 
@@ -42,6 +45,7 @@ pub(super) struct NativeRun {
     pub wall_ns: u64,
     /// Candidate preparation CPU excluding its nested SQL compilation; part of cpu_ns.
     pub prepare_ns: u64,
+    #[allow(dead_code)]
     pub compile_ns: u64,
     pub roots_matched: usize,
 }
