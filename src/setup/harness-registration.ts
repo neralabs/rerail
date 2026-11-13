@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants, existsSync } from "node:fs";
+import { constants, existsSync, realpathSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -36,6 +36,7 @@ import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
+import { programOnPath } from "../engine/system-programs.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -435,11 +436,15 @@ function isNodeExecutable(path: string): boolean {
 /** The arguments of a generated exec-form entry: the hook launcher, the recorded node and the hook. */
 const execHookArgs = z.tuple([z.string(), z.string(), z.string()]);
 
-/** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
+/**
+ * Node and hook script of a generated exec-form entry: `<node> <root>/<hook launcher> <recorded node> <root>/<hook>`,
+ * where `<node>` is `node` from PATH or the recorded node itself (`hookExecEntry`).
+ */
 function execHookTarget(context: Pick<Context, "platform">, command: string, args: unknown, executable: string): HookTarget | undefined {
   const parsed = execHookArgs.safeParse(args);
-  if (command !== "node" || !parsed.success) return undefined;
+  if (!parsed.success) return undefined;
   const [launcher, nodePath, script] = parsed.data;
+  if (command !== "node" && command !== nodePath) return undefined;
   const root = registeredRoot(script, executable, context.platform);
   return root !== undefined && launcher === pathsOf(context.platform).join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
 }
@@ -516,15 +521,33 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
 }
 
 /**
- * The same recorded-first, PATH-fallback order without a shell, for hosts that spawn exec-form hooks directly:
- * `node` from PATH starts the hook launcher, which hands the hook to the recorded node while that binary exists.
+ * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook launcher runs
+ * the hook under the recorded node, or under the node that started it once the recorded one is gone. The host starts
+ * the launcher with `node` from PATH only where that is the recorded node, so the launcher runs the hook in its own
+ * process and keeps the PATH fallback. Where PATH finds another node, or none, the recorded node starts the launcher:
+ * started by `node`, the launcher would start the recorded node as a second process on every hook event, and its
+ * fallback would run a node other than the recorded one.
  */
 function hookExecEntry(context: Context, executable: string): JsonObject {
   return {
     type: "command",
-    command: "node",
+    command: pathFindsNode(context.nodePath, context.platform) ? "node" : context.nodePath,
     args: [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)],
   };
+}
+
+/**
+ * Whether `node` on this process's PATH is the file at `nodePath`, found as a spawn without a shell finds it
+ * (`programOnPath`) and compared as the hook launcher compares them.
+ */
+function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
+  const found = programOnPath("node", { platform });
+  if (found === undefined) return false;
+  try {
+    return realpathSync.native(found) === realpathSync.native(nodePath);
+  } catch {
+    return false;
+  }
 }
 
 

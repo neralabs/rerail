@@ -386,7 +386,9 @@ Xcode installed.
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
 recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
-Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Claude
+Code's hooks on Windows fall back only when set-up found the recorded Node first on `PATH`; otherwise they start the
+recorded Node directly, so each hook event runs one Node rather than two.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
