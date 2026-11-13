@@ -2375,6 +2375,9 @@ fn run_observed(
     // Guest requests (decision 0055) and the file system's (decision 0065 §2a) are outputs, so the program keeps the
     // rules that make them.
     let world_requests: Vec<&str> = WORLD.iter().map(|(_, req)| *req).chain([world::LOAD]).collect();
+    // Stated keys use the same request producer as computed keys: one
+    // forwarding relation per family, preserving every row in the demand batch.
+    crate::code_rule_dsl::logic::answers::stated(&mut prog, &world_requests).map_err(|e| Error::Plan(e.to_string()))?;
     // Only when a rule the outputs need reads a guest: a library's `parsed(…)` in rules nothing reads asks for no
     // parse (lazy-architecture's included name rules asked for every string annotation of the corpus).
     let roots: Vec<String> = prog.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).cloned().collect();

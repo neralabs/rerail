@@ -36,7 +36,22 @@ pub(in crate::code_rule_dsl) fn produced(prog: &Program) -> BTreeMap<&str, &str>
 }
 
 /// Publish stated request rows through one producer per request family.
-pub(in crate::code_rule_dsl) fn stated(_prog: &mut Program, _requests: &[&str]) -> Result<(), Error> { Ok(()) }
+pub(in crate::code_rule_dsl) fn stated(prog: &mut Program, requests: &[&str]) -> Result<(), Error> {
+    for &request in requests {
+        if !prog.facts.contains_key(request) { continue; }
+        let seed = format!("rr_stated_{request}");
+        if prog.decls.contains_key(&seed) {
+            return Err(Error::Syntax(format!("reserved request seed {seed} is already declared")));
+        }
+        let cols = prog.decls.get(request).cloned().ok_or_else(|| Error::Syntax(format!("stated request {request} has no declaration")))?;
+        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("stated{i}"))).collect();
+        let rows = prog.facts.remove(request).expect("the stated rows");
+        prog.facts.insert(seed.clone(), rows);
+        prog.decls.insert(seed.clone(), cols);
+        prog.rules.push(Rule { head: atom(request.to_owned(), args.clone()), body: vec![Literal::Atom(atom(seed, args))] });
+    }
+    Ok(())
+}
 
 /// Gates the negations inside each component that holds a request (module docs). A program without answers is
 /// unchanged.
