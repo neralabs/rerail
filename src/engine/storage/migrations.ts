@@ -149,16 +149,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   {
     // On Windows this build keys a checkout, its settings, its audit settings and audit, and its presentation
     // preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
-    // a caller passed, such as `c:\` from VS Code. Each key of a folder that exists moves to that spelling, and rows
-    // that come to one key are merged (`path-key-spelling.ts`), so a checkout keeps its start state and settings.
-    // Audit settings are copied and also stay under the old key, since no reader lists them; where each audit ran moves
-    // to its folder's key whether or not a key held it, so the list of repository audits names each folder once.
-    // Elsewhere keys keep their spelling and the step moves nothing. No floor: a floor would refuse an older build the
-    // whole file. An older build that opens it after this step (after a downgrade, or on another agent host sharing the
-    // file) still reads its audit settings and finds a Git checkout under the spelling Git prints, as it always did.
-    // Under a moved spelling it no longer finds a presentation preference (it shows the default), a repository audit
-    // (it runs the audit again), or, for a folder outside Git spelt another way than by case alone (an 8.3 short name),
-    // the folder's own start state and settings.
+    // a caller passed, such as `c:\` from VS Code. The rows under each key of a folder that exists are copied to that
+    // spelling, and rows that come to one key are merged (`path-key-spelling.ts`), so a checkout keeps its start state
+    // and settings. The rows under the earlier spelling stay as they were, so an older build that opens the file after
+    // this step (after a downgrade, or on another agent host sharing the file) reads all it read before; the new table
+    // `path_key_spellings` records each spelling that moved, and this build's lists leave its rows out, so each folder
+    // is listed once. The audit history is never rewritten: the list of repository audits reads where an audit ran
+    // through that table. A folder that is gone, and a key on a network share, keep their spelling.
+    // Elsewhere keys keep their spelling and the step copies nothing. No floor: an older build ignores the new table.
     id: "path-keys-as-stored",
     up(database) {
       respellPathKeys(database, stored => currentPathKey(stored));

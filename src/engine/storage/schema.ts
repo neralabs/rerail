@@ -1,5 +1,5 @@
 import { inArray, sql, type SQL } from "drizzle-orm";
-import { blob, check, index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, sqliteTable, text, unique, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { ADAPTER_CAPABILITIES, type RerailHost, type SteerStrategy } from "../adapter-contract.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import {
@@ -653,6 +653,25 @@ export const schemaMigrations = sqliteTable("schema_migrations", {
   id: text("id").primaryKey(),
   appliedAt: integer("applied_at").notNull(),
 });
+
+/**
+ * Spellings of a folder's path that an earlier build stored as a key, each with the key this build gives the folder
+ * (`path-key-spelling.ts`). The `path-keys-as-stored` step copies the rows under such a spelling to `current` and keeps
+ * them, so an earlier build that shares the file still finds them; this build lists each folder once
+ * ({@link notAnEarlierSpelling}).
+ */
+export const pathKeySpellings = sqliteTable("path_key_spellings", {
+  stored: text("stored").primaryKey(),
+  current: text("current"),
+});
+
+/**
+ * `column` holds no earlier spelling of a folder that this build keys another way (`pathKeySpellings`): a row under one
+ * is a copy kept for an earlier build, which this build's lists leave out, so each folder is listed once.
+ */
+export function notAnEarlierSpelling(column: AnySQLiteColumn): SQL {
+  return sql`${column} NOT IN (SELECT ${pathKeySpellings.stored} FROM ${pathKeySpellings} WHERE ${pathKeySpellings.current} IS NOT NULL)`;
+}
 
 /**
  * The ids of the sessions recorded under any of `repositoryIds` (a repository key, its aliases and the

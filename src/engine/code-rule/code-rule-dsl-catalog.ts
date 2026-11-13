@@ -32,7 +32,7 @@ import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVer
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { checkouts, notAnEarlierSpelling, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -397,9 +397,12 @@ export class CheckoutCatalogs {
     return this.#recordedCheckoutsVersion();
   }
 
-  /** The recorded checkouts strictly inside `root` (physical paths), at any depth. */
+  /**
+   * The recorded checkouts strictly inside `root` (physical paths), at any depth; not a copy kept for an earlier build
+   * under another spelling of a folder (`notAnEarlierSpelling`), which on Windows can name `root` itself in another case.
+   */
   recordedCheckoutsWithin(root: string): string[] {
-    return this.database.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts).all()
+    return this.database.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts).where(notAnEarlierSpelling(checkouts.checkoutPath)).all()
       .map(row => row.checkoutPath)
       .filter(path => path !== root && withinCheckout(root, path));
   }

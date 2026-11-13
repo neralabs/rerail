@@ -226,26 +226,27 @@ preferences saved under the other spelling.
 
 A database an earlier version wrote can hold keys in the caller's spelling: a folder outside Git as it was typed, and
 the audit settings and presentation preferences of a session opened as `c:\…`. The first time this version opens the
-database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) moves each key to the
-spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule settings, its
-audit settings and audit, and its presentation preferences. Audit settings are copied rather than moved: no list shows
-them, so the row under the old spelling stays for an earlier version that opens the database later. Where each audit
-ran moves to its folder's key too, also where no key held that spelling (an earlier version wrote a Git checkout's
-audits under the session's spelling and its repository audit under Git's), so the list of repository audits shows each
-folder once. Two rows that come to one folder
-merge: the newer one stays (last seen, last saved, last started; of two presentation preferences, which keep no time,
-the one created later), and a start state either row held is kept. A folder that is gone keeps its key: the file system
-holds no spelling for it, and a session opened there as `c:\…` still finds its audit settings under that spelling. A
-folder Rerail cannot read keeps its key, and the database still opens. So does a folder on a network share
-(`\\host\share\…`), which the step does not look up: a host that does not answer would hold the database for about 21
-seconds. On macOS and Linux the step moves nothing.
+database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) copies the rows under
+each key to the spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule
+settings, its audit settings and audit, and its presentation preferences. The rows under the old spelling stay as they
+were, so an earlier version that opens the database later, after a downgrade or for a coding agent whose Rerail is still
+on that version, reads everything it read before. The step records each spelling it copied from in the table
+`path_key_spellings`, and this version's lists leave the copies under those spellings out, so each folder is listed
+once: repositories and their checkouts, the checkouts above and inside one, presentation preferences, and the list of
+repository audits, which also reads where each audit ran through that table (an earlier version wrote a Git checkout's
+audits under the session's spelling and its repository audit under Git's). Removing a presentation preference removes
+its copies too. The audit history itself is never rewritten. Two rows that come to one folder merge: the newer one stays
+(last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
+a start state either row held is kept.
 
-An earlier version that opens the database after the step, after a downgrade or for a coding agent whose Rerail is
-still on that version, looks keys up by the caller's spelling again. It still reads its audit settings, and finds a Git
-checkout under the spelling Git prints. Under a spelling the step moved, it shows the default presentation where a
-preference was saved, runs the folder's repository audit again, and, for a folder outside Git spelt otherwise than by
-case alone (an 8.3 short name such as `RUNNER~1`), reads the folder as stopped where it was started on its own. Rows it
-writes after the step stay under its spelling: the step runs once per database.
+A folder that is gone keeps its key: the file system holds no spelling for it, and a session opened there as `c:\…`
+still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database still
+opens. So does a folder on a network share (`\\host\share\…`), which the step does not look up: a host that does not
+answer would hold the database for about 21 seconds. On macOS and Linux the step copies nothing.
+
+Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
+runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version
+does not list.
 
 <details>
 <summary>Other places that compare Windows paths</summary>

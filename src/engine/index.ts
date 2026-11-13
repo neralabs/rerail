@@ -135,6 +135,7 @@ export {
   checkouts,
   events,
   libraryRules,
+  pathKeySpellings,
   policySessionOwners,
   presentationPreferences,
   repositories,

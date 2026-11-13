@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import { listRepositories, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { currentPathKey } from "../../../src/engine/storage/path-key-spelling.js";
@@ -48,8 +48,8 @@ function otherSpelling(folder: string): string {
   return join(dirname(folder), basename(folder).toUpperCase());
 }
 
-function rows(database: RerailDatabase, query: string): unknown[] {
-  return database.$client.prepare(query).all();
+function rows(database: RerailDatabase, query: string, ...parameters: string[]): unknown[] {
+  return database.$client.prepare(query).all(...parameters);
 }
 
 /**
@@ -113,6 +113,7 @@ function earlierBuildRecorded(folder: string, databasePath: string, stored: stri
     ["UPDATE audit_requests SET workspace_root = ?", stored],
     ["UPDATE presentation_preferences SET repository = ? WHERE repository <> ''", stored],
     ["DELETE FROM schema_migrations WHERE id = ?", STEP],
+    ["DROP TABLE IF EXISTS path_key_spellings"],
   ]);
 }
 
@@ -128,17 +129,13 @@ function recordsAt(folder: string, databasePath: string) {
     return {
       startState,
       checkouts: listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.checkoutPath)),
-      settings: rows(database, "SELECT owner_kind, owner_id, \"on\" FROM rule_settings ORDER BY owner_kind"),
+      settings: rows(database, `SELECT "on" FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?`, folder),
       auditSettings: controls.getWorkspaceSettings(folder),
-      // Every row, with the mode it holds: an earlier build looks its own up by the spelling it stored.
-      auditSettingsRows: rows(database, "SELECT workspace_root, json_extract(settings_json, '$.mode') AS mode FROM audit_settings ORDER BY workspace_root"),
       presence: preferences.effective(folder, "claude-code"),
-      preferences: rows(database, "SELECT repository, host, presence FROM presentation_preferences ORDER BY repository"),
-      repositoryAudits: rows(database, "SELECT workspace_root, status FROM repository_audits"),
+      preferences: preferences.list().map(({ repository, host, presence }) => ({ repository, host, presence })),
       // The list of repository audits the dashboard and `repository_audits_list` show, one entry per folder.
       repositoryAuditList: audits.listRepositoryAudits().repositories.map(({ workspaceRoot, repositoryAudit, audit }) =>
         ({ workspaceRoot, status: repositoryAudit?.status, auditId: audit?.auditId })),
-      auditHistory: rows(database, "SELECT workspace_root FROM audits UNION SELECT workspace_root FROM audit_requests"),
     };
   } finally {
     audits.close();
@@ -150,39 +147,84 @@ function recordsAt(folder: string, databasePath: string) {
 
 type Records = ReturnType<typeof recordsAt>;
 
-/**
- * What a checkout the earlier build recorded as `stored` keeps once its keys move to `folder`: every record, under
- * `folder`, and its audit settings under `stored` too, where the earlier build looks them up.
- */
-function kept(folder: string, stored: string, repositoryAudit: Omit<Records["repositoryAuditList"][number], "workspaceRoot">): Records {
+/** What a checkout the earlier build recorded as `stored` keeps under `folder`, its key in this build: every record. */
+function kept(folder: string, repositoryAudit: Omit<Records["repositoryAuditList"][number], "workspaceRoot">): Records {
   return {
     startState: "started",
     checkouts: [folder],
-    settings: [
-      { owner_kind: "checkout", owner_id: folder, on: 0 },
-      { owner_kind: "repository", owner_id: expect.stringMatching(/^clone:/u), on: 1 },
-    ],
+    settings: [{ on: 0 }],
     auditSettings: { scope: "ai-output", mode: "log", steerStrategy: "message" },
-    auditSettingsRows: [folder, stored].sort().map(root => ({ workspace_root: root, mode: "log" })),
     presence: "silent",
     preferences: [
       { repository: "", host: "", presence: "compact" },
       { repository: folder, host: "claude-code", presence: "silent" },
     ],
-    repositoryAudits: [{ workspace_root: folder, status: repositoryAudit.status }],
     repositoryAuditList: [{ workspaceRoot: folder, ...repositoryAudit }],
-    auditHistory: [{ workspace_root: folder }],
   };
 }
 
+/**
+ * What an earlier build reads for its checkout `stored`, by the key it looks each record up by: the spelling it stored.
+ * 0.1.4's stores look a checkout, its settings, its audit settings and audit, and its preferences up so.
+ */
+function earlierBuildReads(databasePath: string, stored: string) {
+  const client = new Database(databasePath, { readonly: true });
+  try {
+    const one = (query: string): unknown => client.prepare(query).get(stored);
+    return {
+      started: one("SELECT started FROM checkouts WHERE checkout_path = ?"),
+      setting: one("SELECT \"on\" FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?"),
+      auditSettings: one("SELECT json_extract(settings_json, '$.mode') AS mode FROM audit_settings WHERE workspace_root = ?"),
+      repositoryAudit: one("SELECT status FROM repository_audits WHERE workspace_root = ?"),
+      presence: one("SELECT presence FROM presentation_preferences WHERE repository = ? AND host = 'claude-code'"),
+      // The audit history is never rewritten.
+      audits: client.prepare("SELECT audit_id FROM audits WHERE workspace_root = ? ORDER BY audit_id").all(stored),
+    };
+  } finally {
+    client.close();
+  }
+}
+
+/** All the earlier build recorded for its checkout, as `earlierBuildRecorded` wrote it. */
+const EARLIER_BUILD_READS = {
+  started: { started: 1 },
+  setting: { on: 0 },
+  auditSettings: { mode: "log" },
+  repositoryAudit: { status: "completed" },
+  presence: { presence: "silent" },
+  audits: [{ audit_id: "audit-1" }],
+};
+
+function spellings(databasePath: string): unknown[] {
+  const client = new Database(databasePath, { readonly: true });
+  try {
+    return client.prepare("SELECT stored, current FROM path_key_spellings ORDER BY stored").all();
+  } finally {
+    client.close();
+  }
+}
+
 describe("path keys an earlier build stored under another spelling", () => {
-  it("keep a checkout recording, with its start state, settings, audit and presentation, once they move", async () => {
+  it("keep a checkout recording, with its start state, settings, audit and presentation, once they are copied", async () => {
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "completed", auditId: "audit-1" }));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "completed", auditId: "audit-1" }));
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }]);
+  });
+
+  // The step moved the rows to the new spelling, so an earlier build sharing the file (after a downgrade, or an older
+  // install's hooks) read the folder stopped, the default presentation and no repository audit, and ran it again.
+  it("leave every record where an earlier build sharing the file looks it up", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
   it("merge with rows this build already wrote for the folder: the newer row stays, and the start state is kept", async () => {
@@ -205,14 +247,14 @@ describe("path keys an earlier build stored under another spelling", () => {
       ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
       ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'compact')", folder],
       ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", stored],
-      ["DELETE FROM schema_migrations WHERE id = ?", STEP],
     ]);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "interrupted", auditId: "audit-2" }));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "interrupted", auditId: "audit-2" }));
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
-  it("list a folder once where only its audit history holds the earlier spelling", async () => {
+  it("list a folder once where only its audit history holds the earlier spelling, and leave that history as it was", async () => {
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
@@ -229,8 +271,34 @@ describe("path keys an earlier build stored under another spelling", () => {
 
     expect(recordsAt(folder, databasePath)).toMatchObject({
       repositoryAuditList: [{ workspaceRoot: folder, status: "completed", auditId: "audit-1" }],
-      auditHistory: [{ workspace_root: folder }],
     });
+    expect(earlierBuildReads(databasePath, stored)).toMatchObject({ audits: [{ audit_id: "audit-1" }] });
+  });
+
+  it("leave out of this build's lists the copies kept for an earlier build, and remove a preference's copies with it", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    // A checkout of the same repository inside the folder, which the earlier build recorded under its own spelling.
+    const [inner, storedInner] = [join(folder, "inner"), join(folder, "INNER")];
+    write(databasePath, [[`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
+      SELECT ?, repository_key, clone_id, NULL, created_at, last_seen_at FROM checkouts`, storedInner]]);
+    vi.mocked(currentPathKey).mockImplementation(path => ({ [stored]: folder, [storedInner]: inner })[path] ?? path);
+
+    const database = openRerailDatabase(databasePath);
+    try {
+      const { repositoryKey } = listRepositories(database).find(repository => repository.checkouts.length > 0)!;
+      expect(nestedCheckouts(database, { checkoutPath: folder, repositoryKey }).map(row => row.checkoutPath)).toEqual([inner]);
+    } finally {
+      database.$client.close();
+    }
+    const preferences = new SqlitePresentationPreferenceStore(databasePath);
+    try {
+      expect(preferences.remove(folder, "claude-code")).toBe(1);
+    } finally {
+      preferences.close();
+    }
+    expect(earlierBuildReads(databasePath, stored).presence).toBeUndefined();
   });
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
@@ -251,13 +319,14 @@ describe("path keys an earlier build stored under another spelling", () => {
       expect(rows(database, "SELECT owner_id FROM rule_settings WHERE owner_kind = 'checkout' ORDER BY owner_id"))
         .toEqual([stored, relative].sort().map(owner => ({ owner_id: owner })));
       expect(rows(database, "SELECT id FROM schema_migrations WHERE id = 'path-keys-as-stored'")).toEqual([{ id: STEP }]);
+      expect(rows(database, "SELECT stored FROM path_key_spellings")).toEqual([]);
       expect(vi.mocked(currentPathKey).mock.calls.map(([path]) => path)).toEqual([stored]);
     } finally {
       database.$client.close();
     }
   });
 
-  it.runIf(process.platform === "win32")("move, on Windows, from a lower-case drive letter and another case to the stored spelling", async () => {
+  it.runIf(process.platform === "win32")("copy, on Windows, from a lower-case drive letter and another case to the stored spelling", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     // A folder outside Git, whose row an earlier version keyed by the folder as the caller spelt it.
@@ -267,7 +336,8 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(actual.currentPathKey(stored)).toBe(folder);
     earlierBuildRecorded(folder, databasePath, stored);
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "completed", auditId: "audit-1" }));
+    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "completed", auditId: "audit-1" }));
+    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
   });
 
   it.runIf(process.platform === "win32")("stay, on Windows, on a network share, which the step never looks up", async () => {
@@ -326,6 +396,7 @@ describe("path keys an earlier build stored under another spelling", () => {
         UNION ALL SELECT workspace_root FROM audit_settings UNION ALL SELECT workspace_root FROM repository_audits
         UNION ALL SELECT repository FROM presentation_preferences WHERE repository <> ''
         UNION ALL SELECT workspace_root FROM audits UNION ALL SELECT workspace_root FROM audit_requests`)).toEqual(Array(7).fill({ key: stored }));
+      expect(rows(database, "SELECT stored FROM path_key_spellings")).toEqual([]);
     } finally {
       database.$client.close();
     }

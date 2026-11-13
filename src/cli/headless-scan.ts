@@ -242,9 +242,13 @@ function homeIsEligible(home: RerailDatabase, root: string): boolean {
 
 /**
  * The tables that say which rules run where, and the approvals: what a scan with the home's configuration copies into
- * its own database. Session history is never read.
+ * its own database, with the earlier spellings of folders, whose `checkouts` copies the scan leaves out as Rerail does.
+ * Session history is never read.
  */
-const CONFIGURATION_TABLES = ["rules", "rule_catalog_identities", "repositories", "checkouts", "rule_attachments", "rule_settings", "library_rules", "rule_approvals"] as const;
+const CONFIGURATION_TABLES = [
+  "rules", "rule_catalog_identities", "repositories", "checkouts", "rule_attachments", "rule_settings", "library_rules", "rule_approvals",
+  "path_key_spellings",
+] as const;
 
 /**
  * Copies `tables` from the home's database into the scan's, column by column (the columns both have), replacing what
