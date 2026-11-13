@@ -85,7 +85,9 @@ def files_at(rev):
 
 
 def audit(result, p1, p2, title):
-    base = git('merge-base', p1, p2).strip()
+    # A criss-cross merge has several bases: a line is a side's own only if it is new against every one.
+    bases = git('merge-base', '--all', p1, p2).split()
+    base = bases[0]
     names = files_at(result)
     by_name = collections.defaultdict(list)
     for n in names:
@@ -110,7 +112,10 @@ def audit(result, p1, p2, title):
                 if blob(op, path) is not None:
                     report.append(f'{side}: changed {path}, result lacks it')
                 continue
-            b = collections.Counter(map(str.strip, blob(base, path) or []))
+            b = collections.Counter()
+            for one in bases:
+                for t, c in collections.Counter(map(str.strip, blob(one, path) or [])).items():
+                    b[t] = max(b[t], c)
             s = collections.Counter(map(str.strip, blob(sp, path) or []))
             o = collections.Counter(map(str.strip, blob(op, path) or []))
             r = collections.Counter(map(str.strip, res))
