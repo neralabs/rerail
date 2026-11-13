@@ -5,13 +5,21 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // F507(n): a finding at node n, from clause `percent-format-positional-count-mismatch`.
 // Each rule below is one way the JSON `rule` can match.
 .violation F507(at: node) "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError."
     suppress noqa "F507"
 F507(n) :- n ~ `$S % $R`,
-    ( ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"not": {"kind": "pair"}}}}})
-    ; ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"any": [{"kind": "star"}, {"kind": "placeholder", "not": {"has": {"kind": "mapping_key"}}}]}}}})
+    ( fa_percent_tree(n, _, _), fa_percent_unused(n, a1), !kind(a1, "pair")
+    ; fa_percent_tree(n, _, _), fa_percent_missing(n, f1), f507_alt_1(f1)
     ).
+
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f507_alt_1(n: node)
+f507_alt_1(n) :- kind(n, "star").
+f507_alt_1(n) :- kind(n, "placeholder"),
+    count : { child(n, c1, _), kind(c1, "mapping_key") } = 0.

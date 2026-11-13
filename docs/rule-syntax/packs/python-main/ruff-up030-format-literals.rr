@@ -5,7 +5,8 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl up030_plain_string(n: node)
@@ -103,11 +104,12 @@ up030_alt_3(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "ob
     up030_in_order(c2).
 up030_alt_3(n) :- up030_alt_2(n),
     count : { field(n, "arguments", c5), child(c5, c6, _), (kind(c6, "keyword_argument") ; kind(c6, "dictionary_splat")) } = 0,
-    !ast(n, {"language": "python", "rule": {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}}).
-up030_alt_3(n) :- kind(n, "call"), field(n, "arguments", c7),
-    kind(c7, "generator_expression"), field(n, "function", c8), kind(c8, "attribute"),
-    field(c8, "attribute", c9), glob("format", c9), field(c8, "object", c10),
-    up030_in_order(c10).
+    count : { fa_brace_tree(n, _, _), fa_brace_missing(n, f7), kind(f7, "field") } = 0,
+    !fa_unknown(n), !fa_brace_missing_open(n).
+up030_alt_3(n) :- kind(n, "call"), field(n, "arguments", c8),
+    kind(c8, "generator_expression"), field(n, "function", c9), kind(c9, "attribute"),
+    field(c9, "attribute", c10), glob("format", c10), field(c9, "object", c11),
+    up030_in_order(c11).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 .decl up030_alt_5(n: node)

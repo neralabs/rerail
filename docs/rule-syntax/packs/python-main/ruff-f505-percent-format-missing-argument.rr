@@ -5,11 +5,12 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // F505(n): a finding at node n, from clause `percent-format-missing-argument`.
 // Each rule below is one way the JSON `rule` can match.
 .violation F505(at: node) "`%`-format string is missing argument(s) for placeholder(s)"
     suppress noqa "F505"
-F505(n) :- n ~ `$S % $R`,
-    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"kind": "placeholder", "has": {"kind": "mapping_key"}}}}}).
+F505(n) :- n ~ `$S % $R`, fa_percent_tree(n, _, _), fa_percent_missing(n, f1),
+    kind(f1, "placeholder"), child(f1, c2, _), kind(c2, "mapping_key").

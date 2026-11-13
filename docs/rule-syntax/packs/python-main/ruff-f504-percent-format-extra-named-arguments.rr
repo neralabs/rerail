@@ -5,11 +5,12 @@
 .mode steer
 .scope include "**/*"
 // Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/format-args.rr"
 
 // F504(n): a finding at node n, from clause `percent-format-extra-named-arguments`.
 // Each rule below is one way the JSON `rule` can match.
 .violation F504(at: node) "`%`-format string has unused named argument(s)"
     suppress noqa "F504"
-F504(n) :- n ~ `$S % $R`,
-    ast(n, {"language": "python", "rule": {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"kind": "pair"}}}}).
+F504(n) :- n ~ `$S % $R`, fa_percent_tree(n, _, _), fa_percent_unused(n, a1),
+    kind(a1, "pair").
