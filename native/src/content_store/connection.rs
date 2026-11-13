@@ -324,9 +324,16 @@ impl ThreadConnection {
         });
         let mut guard = connection.lock_arc();
         if guard.is_none() {
-            *guard = Some(
-                open_runtime_connection(&self.database_path).map_err(|error| error.to_string())?,
-            );
+            let opened = open_runtime_connection(&self.database_path).map_err(|error| error.to_string())?;
+            // The file at the path is this handle's store only while its identity is: a store deleted and created
+            // again there is another, which this handle's writes (its atoms) must not reach.
+            let identity: i64 = opened
+                .query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))
+                .map_err(|error| error.to_string())?;
+            if identity != self.identity {
+                return Err(format!("the store at {} was created again: this handle's store is gone", self.database_path.display()));
+            }
+            *guard = Some(opened);
         }
         Ok(ConnectionGuard(guard))
     }
