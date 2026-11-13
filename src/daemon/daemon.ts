@@ -840,20 +840,21 @@ async function packageVersion(): Promise<string> {
  */
 export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
 
-/** The daemon options that make it reachable from other machines, each with how many values follow it. */
-const REMOTE_OPTIONS: ReadonlyMap<string, number> = new Map([
-  ["--host", 1], ["--public-host", 1], ["--tls-cert", 1], ["--tls-key", 1], ["--allow-remote", 0], ["--insecure-http", 0],
-]);
+/**
+ * The daemon flags and options (each followed by its value) that make it reachable from other machines: where it binds
+ * and answers, and every transport one (`DAEMON_TRANSPORT_FLAGS`, `DAEMON_TRANSPORT_OPTIONS`), so one added there is
+ * left out of a loopback daemon's arguments too.
+ */
+const REMOTE_FLAGS: readonly string[] = ["--allow-remote", ...DAEMON_TRANSPORT_FLAGS];
+const REMOTE_OPTIONS: readonly string[] = ["--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS];
 
-/** `argv` without the options that make a daemon reachable from other machines (`REMOTE_OPTIONS`): a loopback daemon's. */
+/** `argv` without the flags and options that make a daemon reachable from other machines: a loopback daemon's. */
 export function loopbackArguments(argv: readonly string[]): string[] {
   const kept: string[] = [];
-  let index = 0;
-  while (index < argv.length) {
+  for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
-    const remote = REMOTE_OPTIONS.get(argument);
-    if (remote === undefined) kept.push(argument);
-    index += 1 + (remote ?? 0);
+    if (REMOTE_OPTIONS.includes(argument)) index += 1;
+    else if (!REMOTE_FLAGS.includes(argument)) kept.push(argument);
   }
   return kept;
 }

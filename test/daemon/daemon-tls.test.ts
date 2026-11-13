@@ -65,6 +65,9 @@ describe("daemon transport arguments", () => {
     ];
     expect(loopbackArguments(remote)).toEqual(["--state-file", "daemon.json", "--port", "4737", "--dev", "--workspace-root", "repo"]);
     expect(loopbackArguments(["--insecure-http", "--host", "::"])).toEqual([]);
+    // Every transport flag and option the daemon reads, so one added later cannot ride into the loopback restart.
+    const transport = [...DAEMON_TRANSPORT_FLAGS, ...DAEMON_TRANSPORT_OPTIONS.flatMap(option => [option, "value"])];
+    expect(loopbackArguments(["--dev", ...transport, "--port", "4737"])).toEqual(["--dev", "--port", "4737"]);
   });
 });
 
