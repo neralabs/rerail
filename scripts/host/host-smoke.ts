@@ -380,6 +380,9 @@ async function enforceSandboxIsolation(
   if (leaks) throw new Error("Sandbox did not enforce write isolation");
 }
 
+// The smoke's conversation rule is experimental: this process runs the daemon, and the hosts get the variable too.
+process.env.RERAIL_EXPERIMENTAL_CONVERSATION_RULES = "1";
+
 async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
   const assertions: Assertion[] = [];
   const versions: Record<string, string> = { node: process.version };

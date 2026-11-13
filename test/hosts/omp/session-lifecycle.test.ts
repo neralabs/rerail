@@ -12,6 +12,9 @@ import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, RerailRuntime, SqliteSessi
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 /** The checkout rule's steer for a step of the conversation, as `host` sends it: Pi's says it is Rerail's. */
 function checkoutSteer(host: "omp" | "pi"): string {

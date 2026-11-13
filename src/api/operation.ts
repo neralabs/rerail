@@ -15,6 +15,7 @@ import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session
 import type { presentationDaemonSchema } from "./session-contracts.js";
 import type { MergeAssistService } from "../runtime/merge-assist/service.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
+import { experimentEnabled, experimentOffMessage, experimentVariable, type ExperimentalFeature } from "../engine/experimental-features.js";
 
 export interface RerailApiStores {
   /** Read-only view; tolerates a database that does not exist yet. */
@@ -64,6 +65,11 @@ export interface OperationDefinition<
   /** OpenAPI-style path, e.g. `/api/library-rules/{id}`. */
   path: string;
   summary: string;
+  /**
+   * The experimental feature this operation belongs to (docs/internal-testing.md). While the daemon runs without it,
+   * the operation answers `404 experimental-off` and is not an MCP tool at all.
+   */
+  experiment?: ExperimentalFeature;
   params?: z.ZodObject<Params>;
   query?: z.ZodObject<Query>;
   body?: z.ZodObject<Body>;
@@ -99,8 +105,22 @@ export class ApiError extends Error {
   }
 }
 
+/** Whether `operation` runs in this process: it belongs to no experimental feature, or to one that is on. */
+export function operationAvailable(operation: Operation, env: NodeJS.ProcessEnv = process.env): boolean {
+  return operation.experiment === undefined || experimentEnabled(operation.experiment, env);
+}
+
+/** A summary for an operation of `feature`, saying how it answers while the daemon runs without it. */
+export function experimentalSummary(feature: ExperimentalFeature, description: string): string {
+  return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
+}
+
 /** Run one operation for one caller; a write that returns counts toward the stores' change token. */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
+  // Refused before anything runs, and before a write could count toward the change token.
+  if (operation.experiment !== undefined && !operationAvailable(operation)) {
+    throw new ApiError(404, "experimental-off", experimentOffMessage(operation.experiment, "start the Rerail daemon with"));
+  }
   try {
     return await operation.handler(stores, input as never, caller);
   } catch (error) {

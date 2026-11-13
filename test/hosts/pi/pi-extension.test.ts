@@ -32,6 +32,9 @@ import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -175,6 +178,20 @@ describe("Pi conversation-rules extension", () => {
     ]);
     expect(harness.entries.filter((entry) => entry.customType === MATCH_ENTRY_TYPE)).toHaveLength(1);
     expect(receiptCount(harness)).toBe(1);
+  });
+
+  it.each([["on", "1"], ["off", "0"]] as const)("registers conversation_rules, /cosine-rules and the semantic tools only while their experiments are %s", (state, value) => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", value);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_SEMANTIC_TOOLS", value);
+    const harness = createHarness();
+    const tools: string[] = [];
+    harness.pi.registerTool = ((tool: { name: string }) => { tools.push(tool.name); }) as ExtensionAPI["registerTool"];
+    createPiConversationRulesExtension({ modelPath: resolve("model") })(harness.pi);
+    const experimental = ["conversation_rules", "rerail_mark", "rerail_select", "rerail_project", "rerail_relate"];
+    expect(tools.filter(name => experimental.includes(name)).sort()).toEqual(state === "on" ? [...experimental].sort() : []);
+    expect(harness.commands.has("cosine-rules")).toBe(state === "on");
+    // Rerail's own commands do not depend on any experiment.
+    expect(harness.commands.size).toBeGreaterThan(state === "on" ? 1 : 0);
   });
 
   it("draws no footer in a stopped checkout, without asking a daemon (#298)", async () => {

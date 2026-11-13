@@ -91,7 +91,8 @@ the calls just before it, even ones from before that time.
 Code rules check the files the agent edits; command rules check the commands it runs.
 
 - **A code rule** is a `rerail.policy/v1` document: globs for scope, clauses that match text, paths or syntax.
-- **A command rule** is a conversation rule that matches `input.command`.
+- **A command rule** is a conversation rule that matches `input.command`. Conversation rules are
+  [internal testing](internal-testing.md) and experimental: none runs unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1`.
 
 <details>
 <summary>What each kind catches</summary>

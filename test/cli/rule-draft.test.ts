@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   getLibraryRule,
   loadRuleCatalog,
@@ -25,6 +25,9 @@ import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES", "BLOCK_MODE");
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules, and show the typescript pack's
 // with option values set.
@@ -666,6 +669,33 @@ describe("rerail rules test", () => {
     expect(report.cases.map(({ caught, ok }) => ({ caught, ok }))).toEqual([{ caught: true, ok: true }, { caught: false, ok: true }]);
   });
 
+  it("refuses a tool-call rule while conversation rules are off, naming the variable, and adds nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, {
+      kind: "conversation",
+      rule: {
+        id: "acme:no-force-push",
+        mode: "steer",
+        match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
+        sample: { source: "tool:Bash", boundary: "tool-call" },
+        action: { content: "Do not force-push." },
+        repeat: { mode: "always" },
+      },
+    });
+
+    const { exit, report } = await testReport(file, repo);
+    expect(exit).not.toBe(0);
+    expect(report).toMatchObject({ ok: false, valid: false });
+    expect(report.error).toContain("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
+
+    const added = await run("add", [file, "--repo", repo]);
+    expect(added.exit).not.toBe(0);
+    expect(added.stderr).toContain("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1");
+    expect(rulesOf(repo).repository).toEqual([]);
+  });
+
   it.each(["test", "add"] as const)("rules %s --help prints the draft format and an example that passes rules test", async action => {
     const { exit, stdout } = await run(action, ["--help"]);
 
@@ -762,6 +792,19 @@ describe("rerail rules add", () => {
 
     const steering = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-steer" } });
     expect((await run("add", [steering, "--repo", repo])).stdout).not.toContain(BLOCK_STEERS_NOTE);
+  });
+
+  it("refuses a rule on Block while Block mode is off, naming the variable, and stores nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-block-while-off", mode: "block" } });
+
+    const { exit, stderr } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).not.toBe(0);
+    expect(stderr).toContain("Block mode is experimental and off: set RERAIL_EXPERIMENTAL_BLOCK_MODE=1");
+    expect(getLibraryRuleMode("acme:no-console-block-while-off")).toBeUndefined();
   });
 
   it("sets a repository that is not set up up with only the new rule", async () => {

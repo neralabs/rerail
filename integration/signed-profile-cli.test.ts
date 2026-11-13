@@ -12,6 +12,9 @@ import type {
   FlattenedJws,
   SignedActivationRequest,
 } from "../src/activation/index.js";
+import { withExperiments } from "../test/support/environment/experiments.js";
+
+withExperiments("ACTIVATION_PROFILES");
 
 interface CommandResult {
   code: number;

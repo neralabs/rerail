@@ -8,7 +8,9 @@ Unit tests, run by `npm test` (vitest over this directory). They mirror the laye
 - `support/`: shared test helpers (oracle paths, hook events, a native test daemon, the per-file Rerail home, and
   Merge Assist's stand-ins in `merge-assist/`: `git.ts`, repositories with a fixed identity and none of the machine's
   Git configuration, `workspace.ts`, real repositories and a database with a fake `gh`, and `status.ts`, sample
-  statuses and a recording service), and in `support/processes/` processes racing for one lock. A layer's own helpers live in
+  statuses and a recording service), in `support/processes/` processes racing for one lock, and in
+  `support/environment/experiments.ts` `withExperiments`, which turns experimental features on for a test file (every one
+  starts off). A layer's own helpers live in
   `test/<layer>/support/` (`runtime/merge-assist/support/` holds the files and session runtime the conflict tests
   share); a helper a second layer needs moves here.
 - `scripts/`: tests of the repository scripts under `scripts/`; `ensure-sqlite.test.mjs` runs under `node --test`

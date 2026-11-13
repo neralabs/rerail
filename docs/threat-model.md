@@ -685,6 +685,10 @@ should not widen it.
 - `RERAIL_ENGINE_PATH` is `require`d as a native addon (`src/engine/native/native.ts`).
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
+- `RERAIL_EXPERIMENTAL` and `RERAIL_EXPERIMENTAL_<FEATURE>` turn on [internal-testing](internal-testing.md) features
+  for the process that has them. A daemon started from an environment the repository controls (direnv, say) can so
+  run the remote sink, sending to a remote already added, or conversation rules the repository stores. Off, an
+  experimental feature's API operations are no MCP tools.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
@@ -835,10 +839,10 @@ first, except in an auto-approve mode.
 <summary>Mitigations</summary>
 
 - **Off by default**, twice: the experimental switch, then the per-repository opt-in. With the switch unset, its
-  operations answer `404 experimental-off`, the CLI refuses, and the daemon runs no hook command, even one saved
-  earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`). The switch keeps people from
-  coming on the feature by accident; it is no barrier to an agent with a shell, which can set the variable for its own
-  `rerail merge-assist` command and may be able to restart the daemon with it set.
+  operations answer `404 experimental-off` and are no MCP tools, the CLI refuses, and the daemon runs no hook command,
+  even one saved earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`). The switch keeps
+  people from coming on the feature by accident; it is no barrier to an agent with a shell, which can set the variable
+  for its own `rerail merge-assist` command and may be able to restart the daemon with it set.
 - **People only on MCP:** `merge_assist_settings_set` (turning it on, setting the command) and
   `merge_assist_conflict_dismiss` answer an `agent` `403 agent-not-permitted`. An agent may read the status and the
   settings of its own repository and scan only its own checkout.

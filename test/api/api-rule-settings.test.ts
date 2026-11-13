@@ -3,7 +3,7 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
@@ -23,6 +23,9 @@ import {
 import { fixturesPath } from "../support/oracles.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("BLOCK_MODE");
 
 const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")]);
@@ -114,6 +117,25 @@ describe("rule settings: suppressions and config", () => {
     };
     const upserted = await put("/api/library-rules/acme:no-eval", { kind: "code", rule });
     expect(upserted).toMatchObject({ status: 200, body: { rule: { rule: { mode: "block" } }, note: BLOCK_STEERS_NOTE } });
+  });
+
+  it("refuses every write that puts a rule on Block while Block mode is off, and keeps a rule already on Block", async () => {
+    expect((await setting({ mode: "block" })).status).toBe(200);
+    vi.stubEnv("RERAIL_EXPERIMENTAL_BLOCK_MODE", "0");
+    const refused = { status: 400, body: { error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_BLOCK_MODE=1") } };
+
+    expect(await setting({ mode: "block" })).toMatchObject(refused);
+    expect(await put("/api/repository/attachments", {
+      repository: repositoryKey, settings: [{ targetKind: "pack", targetId: "typescript", mode: "block" }],
+    })).toMatchObject(refused);
+    const rule = {
+      format: "rerail.policy/v1", id: "acme:no-eval", revision: 1, mode: "block", description: "No eval.",
+      scope: { include: ["**/*.ts"], exclude: [] },
+      clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message: "No eval." } }],
+    };
+    expect(await put("/api/library-rules/acme:no-eval", { kind: "code", rule })).toMatchObject(refused);
+    expect(await ruleView()).toMatchObject({ mode: "block" });
+    expect((await setting({ mode: "steer" })).status).toBe(200);
   });
 
   it("refuses a config the rule's document does not declare, or a value its option does not allow", async () => {

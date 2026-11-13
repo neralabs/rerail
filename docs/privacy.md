@@ -52,13 +52,15 @@ npm runs for updates, setup, listing and adding packs, and SQLite rebuilds (`src
 
 </details>
 
-Two internal-testing features also send to endpoints **you** supply.
+Two internal-testing features also send to endpoints **you** supply. Both are experimental and off by default
+(`RERAIL_EXPERIMENTAL_REMOTE_SINK`, `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES`; [Internal testing](internal-testing.md)).
 
 <details>
 <summary>Remote sink and signed customer profiles</summary>
 
 - **Remote sink:** `rerail remote add` targets get sessions, events (payloads unless `--no-content`), audits,
-  violations, their rules and headless scans, minus excluded repositories. With no remote, it sends nothing. See
+  violations, their rules and headless scans, minus excluded repositories. With no remote, or with the remote sink off
+  in the daemon, it sends nothing. See
   [Remote sink](remote-sink.md) for what it sends and where its token is kept (`src/runtime/remote-outbox.ts`).
 - **Signed customer profiles:** `rerail activate --code` sends the code, a device public key, platform, architecture
   and Rerail version to the activation URL **you** supply. `rerail activate --file` is offline

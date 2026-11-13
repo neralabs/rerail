@@ -256,6 +256,10 @@ export async function sandboxEnvironment(sandbox: string, project: string, rerai
     "NODE_EXTRA_CA_CERTS",
   ])
     if (process.env[key] !== undefined) env[key] = process.env[key];
+  // Experimental features the run turned on (docs/internal-testing.md) reach the hosts too, which run some of them.
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === "RERAIL_EXPERIMENTAL" || key.startsWith("RERAIL_EXPERIMENTAL_")) env[key] = value;
+  }
   return env;
 }
 

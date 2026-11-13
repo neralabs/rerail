@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
+import { conversationRulesEnabled } from "../experimental-features.js";
 import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
@@ -415,12 +416,16 @@ export class CheckoutCatalogs {
     return entry.catalog;
   }
 
-  /** The conversation rules of the session folder `folder` (relative to `root`), as they change. */
+  /**
+   * The conversation rules of the session folder `folder` (relative to `root`), as they change. Internal testing: none
+   * while conversation rules are off in this process ({@link conversationRulesEnabled}), wherever they are stored.
+   */
   conversationRules(root: string, folder: string): ConversationRuleSource {
     const entry = this.#entry(root);
     return {
       signature: () => this.#signature(entry),
       rules: () => {
+        if (!conversationRulesEnabled()) return [];
         const ruleSet = this.#ruleSet(entry);
         if (ruleSet === undefined || entry.eligibility !== "ok") return [];
         return ruleSet.conversationRules(folder).filter(rule => rule.on).map(rule => rule.document.rule as ConversationRule);

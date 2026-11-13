@@ -21,6 +21,7 @@ import { processState, type ProcessSignal } from "../engine/process-liveness.js"
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
+import type { ExperimentalFeature } from "../engine/experimental-features.js";
 
 /** What `rerail status` and the launcher need to find a running daemon. */
 export interface DaemonState {
@@ -243,6 +244,8 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   workspaceRoot: string;
   /** When Rerail was installed on this machine (epoch ms); null before the database exists. */
   installedAt: number | null;
+  /** The experimental features this daemon runs (docs/internal-testing.md); the dashboard shows only theirs. */
+  experiments: ExperimentalFeature[];
 }
 
 /**
