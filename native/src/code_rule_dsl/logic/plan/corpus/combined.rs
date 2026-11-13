@@ -96,7 +96,7 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// not read back as written is not kept.
 pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program) -> StoreResult<bool> {
     // A program that does not read back the same from its text is not kept: the next run combines it again.
-    let Some((digest, _)) = program_text::store(store, program)? else { return Ok(false) };
+    let Some((digest, text_source)) = program_text::store(store, program)? else { return Ok(false) };
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![vec![Value::Str(hex(&digest))]]);
     let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
@@ -110,7 +110,44 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     let set = plan();
     let entry = program_facts::encode(&facts);
     store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
+    // No manifest names the entry until the run that combined it records its own, and the run's hold comes after the
+    // combine. Meanwhile a collection (a batch's earlier run's, started once that run's manifest was written) took it:
+    // a batch combined its pack again every time. Pinned under the entry's own owner until that run holds it
+    // (`release`); a run that never names it leaves the pins to lapse.
+    let lease = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + LEASE_SECS;
+    for kept in [source, text_source] {
+        store.pin_source(kept, &owner(key), lease)?;
+    }
     Ok(true)
+}
+
+/// How long an entry stays pinned when no run names it: longer than a run.
+const LEASE_SECS: i64 = 6 * 3600;
+
+/// The owner of the pins `remember` makes for texts `key`'s entry.
+fn owner(key: &[u8; 32]) -> String {
+    format!("combined:{}", hex(key))
+}
+
+/// `remember`'s pins of texts `key`'s entry, held by the run that names it (`named`, `name_program`) and released
+/// when that run ends: queued after its manifest, which names the entry by then, as the run's own hold is
+/// (`HeldPlan`).
+pub(super) struct Pins<'a> {
+    cache: &'a ContentStore,
+    key: [u8; 32],
+}
+
+impl<'a> Pins<'a> {
+    pub(super) fn new(cache: &'a ContentStore, key: &[u8; 32]) -> Self {
+        Pins { cache, key: *key }
+    }
+}
+
+impl Drop for Pins<'_> {
+    fn drop(&mut self) {
+        let owner = owner(&self.key);
+        self.cache.write_back("the combined program's pins released", 0, Vec::new(), Box::new(move |store| store.release_pins(&owner).map(drop)));
+    }
 }
 
 /// Names the program text of texts `key`'s entry, when the store keeps it, among the run's late sources (the

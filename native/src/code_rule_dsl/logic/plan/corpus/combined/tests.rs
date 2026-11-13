@@ -1,5 +1,31 @@
     use super::*;
 
+    /// A batch's earlier run records its manifest and starts the store's collection while the pack's run has combined
+    /// its program and queued it, and names it only in its own manifest, later. The entry is pinned until that run
+    /// ends (`Pins`): the collection meanwhile keeps it. Before, it took the entry, and every batch combined its pack
+    /// again.
+    #[test]
+    fn a_combined_program_outlives_a_collection_before_its_run_names_it() {
+        let dir = std::env::temp_dir().join(format!("rerail-combined-pins-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let program = rr::parse(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
+        let key = [9u8; 32];
+        assert!(remember(&store, &key, &[], &program).unwrap());
+        // The collection another run of the batch starts: its passes, each of which ends a generation (a source is
+        // collectable once a pass has ended the generation it was made in).
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let passes = || (0..2).for_each(|_| drop(store.collect(now, 256).unwrap()));
+        passes();
+        assert!(lookup(&store, &key).unwrap().is_some(), "kept through another run's collection");
+        // Once the run that combined it ends, the pins go: named by no manifest here, the entry is collected.
+        drop(Pins::new(&store, &key));
+        store.written().unwrap();
+        passes();
+        assert!(lookup(&store, &key).unwrap().is_none(), "named by no manifest, collected once its pins are released");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_combined_program_is_read_back_until_a_library_file_it_read_changes() {
         let dir = std::env::temp_dir().join(format!("rerail-combined-{}", std::process::id()));

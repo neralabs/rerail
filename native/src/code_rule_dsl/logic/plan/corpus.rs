@@ -2540,6 +2540,8 @@ fn run_observed(
     let mut program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
     // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
+    // The pins the combine made (`combined::remember`), released once the run's manifest names the entry.
+    let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
         memo::named_source(store, text, false, &late_sources);
