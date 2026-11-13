@@ -8,11 +8,15 @@ pub mod derived;
 pub mod facts_only;
 /// This crate's own test binary, which the engine does not load: every connection is strict about SQL in the waves, as
 /// the engine's loader makes them (`crate::install_store_functions` in `native/src/lib.rs`); the store reports its
-/// hazards to the profile itself.
+/// hazards to the profile itself. And what the evaluator keeps per connection is dropped as the connection closes, as
+/// the engine registers it (`install_languages`): else a connection opened at a closed one's address reads the closed
+/// one's path, and with it the input relations read from that store (`native::INPUTS`).
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
+        use crate::code_rule_dsl::{facts::vtab, logic::native};
+        vtab::install_forget(vtab::Forget { scope: native::forget_scope, engine: native::forget_engine });
     }
     // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
     #[used]

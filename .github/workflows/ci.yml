@@ -447,9 +447,11 @@ jobs:
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time on
-  # a runner: the workspace's (much of it waiting out the store's busy timeouts) and the anchor index's, then every other,
-  # the second skipping exactly what the first runs.
+  # saved, so the job runs where that job does (the note at the top). The tests run in five legs, each inside the
+  # job's timeout on a 4-core runner with room to spare: the workspace's (much of it waiting out the store's busy
+  # timeouts) and the anchor index's, with the profiling labs' checks after them (`profiling`); the logic engine's rule
+  # files and converters; the rest of the logic engine with the typing phases; the SQL executor and the slice; then
+  # every other, skipping exactly what the first four run.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data]
@@ -475,9 +477,19 @@ jobs:
           - task: test
             name: tests, workspace and anchors
             run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
+            profiling: true
+          - task: test
+            name: tests, logic rules and converters
+            run: "npm run test:native -- -- code_rule_dsl::logic::rr:: code_rule_dsl::logic::convert::"
+          - task: test
+            name: tests, logic and typing
+            run: "npm run test:native -- -- code_rule_dsl::logic:: code_rule_dsl::typing:: --skip code_rule_dsl::logic::rr:: --skip code_rule_dsl::logic::convert::"
+          - task: test
+            name: tests, SQL executor and slice
+            run: "npm run test:native -- -- code_rule_dsl::sql_executor:: code_rule_dsl::slice::"
           - task: test
             name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors::"
+            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors:: --skip code_rule_dsl::logic:: --skip code_rule_dsl::typing:: --skip code_rule_dsl::sql_executor:: --skip code_rule_dsl::slice::"
     # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
     # bloats the cache, since dependencies never build incrementally.
     env:
@@ -492,7 +504,7 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
+      # The clippy leg only compiles the tests; the tests legs run them, and three read pack test data: Ruff's fixtures,
       # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
@@ -559,14 +571,14 @@ jobs:
           cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
 
       - name: Build isolated reachability extension
-        if: matrix.task == 'test'
+        if: matrix.profiling
         run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
 
       # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host. The runner's
       # Python links the system SQLite 3.45.1 (the CPython 3.13 put on PATH above links its own, older one, statically):
       # build the amalgamation the lock resolves and load it into the runner's Python for the tests.
       - name: Build the SQLite the reachability extension is bound to
-        if: matrix.task == 'test'
+        if: matrix.profiling
         run: |
           sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
             | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
@@ -575,7 +587,7 @@ jobs:
             -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
 
       - name: Test SQL and Rust reachability adapters
-        if: matrix.task == 'test'
+        if: matrix.profiling
         env:
           RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
           PYTHONDONTWRITEBYTECODE: "1"
@@ -594,28 +606,28 @@ jobs:
       # The shape gate requires profiling spans and must never silently skip on a production addon.
       # Keep this debug addon separate from the package's release artifact.
       - uses: ./.github/actions/node-deps
-        if: matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
 
       - name: Build profiling addon for the producer shape gate
-        if: matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
         run: |
           cargo build --manifest-path native/Cargo.toml --features code-rule-profile
           cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
 
       - name: Enforce broad producer execution shape
-        if: matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
       - name: Enforce 100 engine SQL submissions for the complete cold job
-        if: matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
 
       - name: Preserve SQL execution budget evidence
-        if: always() && matrix.task == 'test' && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: always() && matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
         uses: actions/upload-artifact@v7
         with:
           name: sql-execution-budget
@@ -632,11 +644,11 @@ jobs:
             ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
 
       - name: Test SQL statement capture and deferred explanations
-        if: matrix.task == 'test'
+        if: matrix.profiling
         run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
 
       - name: Check and test captured SQL replay and composition kernels
-        if: matrix.task == 'test'
+        if: matrix.profiling
         run: |
           cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
           cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings

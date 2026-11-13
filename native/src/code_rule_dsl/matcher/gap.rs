@@ -6,7 +6,9 @@
 //! `,` as a node. It asks the grammar instead: the parent's stored children, walked through its
 //! automaton, say which word each gap between them holds ([`TokenGrammar::gaps`]). That reads the
 //! kinds and fields of one parent's children and static tables, never the source; nothing is
-//! cached or indexed.
+//! indexed. A parent's reading is kept while its file is evaluated (`memo::parent_gaps`): each of
+//! its children, under every clause, asks about the same walk, which made again per child would
+//! be quadratic in the parent's children.
 //!
 //! ```text
 //! argument_list  f(a, b)       stored: a, b       gaps: before a "(", before b ",", end ")"
@@ -21,7 +23,7 @@
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::AstMatcher;
-use crate::code_rule_dsl::tape::tokens::TokenGrammar;
+use crate::code_rule_dsl::tape::tokens::{Gaps, TokenGrammar};
 pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
@@ -66,6 +68,7 @@ impl GapTest {
     /// Whether an implied token the regex matches is at the test's place.
     pub(in crate::code_rule_dsl) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         let matches = |token: &(&str, &str)| self.regex.is_match(token.0);
+        let read = |parent: &Node<'_, D>| super::memo::parent_gaps(Arc::as_ptr(&self.grammar) as usize, parent, || ParentGaps::read(&self.grammar, parent));
         // What a neighbour walk passes: the stored children its stop rule matches, and the implied
         // tokens its regexes do (no kind is an implied token's).
         let (past, skips) = match &self.past {
@@ -79,35 +82,38 @@ impl GapTest {
         let skipped = |token: &str| skips.iter().any(|skip| skip.is_match(token));
         match &self.place {
             Place::Own | Place::Field(_) => {
-                let Some((_, gaps)) = stored_gaps(&self.grammar, node) else { return false };
+                let Some(read) = read(node) else { return false };
                 let field = match &self.place {
                     Place::Field(field) => Some(field.as_str()),
                     _ => None,
                 };
-                gaps.before.iter().flatten().chain(&gaps.end).any(|token| field.is_none_or(|field| token.1 == field) && matches(token))
+                read.gaps.before.iter().flatten().chain(&read.gaps.end).any(|token| field.is_none_or(|field| token.1 == field) && matches(token))
             }
             Place::Before | Place::After | Place::Earlier | Place::Later => {
                 let Some(parent) = node.parent() else { return false };
-                let Some((children, gaps)) = stored_gaps(&self.grammar, &parent) else { return false };
-                let Some(at) = children.iter().position(|child| child.node_id() == node.node_id()) else { return false };
+                let Some(read) = read(&parent) else { return false };
+                let Some(&at) = read.at.get(&node.node_id()) else { return false };
+                let (gaps, stored) = (&read.gaps, read.extra.len());
                 // A stored child the walk passes: one its stop rule matches. The gap's word comes
                 // before the extras between the two stored children.
-                let passed = |child: &Node<'_, D>| {
+                let passed = |k: usize| {
                     use ast_grep_core::matcher::Matcher;
-                    past.is_some_and(|stop| stop.match_node_with_env(child.clone(), &mut std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new())).is_some())
+                    past.is_some_and(|stop| {
+                        parent.children().nth(k).is_some_and(|child| stop.match_node_with_env(child, &mut std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new())).is_some())
+                    })
                 };
                 match self.place {
                     // The first token back that the walk does not pass, through the gaps of the
                     // children it passes; a stored child is the relation's own walk's.
                     // An extra right before the node is its neighbour, unless the walk passes it.
-                    Place::Before if past.is_none() && at > 0 && self.grammar.is_extra(&children[at - 1].kind()) => false,
+                    Place::Before if past.is_none() && at > 0 && read.extra[at - 1] => false,
                     Place::Before => {
                         let mut k = at;
                         loop {
                             if let Some(token) = gaps.before[k].iter().rev().find(|token| !skipped(token.0)) {
                                 return matches(token);
                             }
-                            if k == 0 || !passed(&children[k - 1]) {
+                            if k == 0 || !passed(k - 1) {
                                 return false;
                             }
                             k -= 1;
@@ -120,11 +126,11 @@ impl GapTest {
                     _ => {
                         let mut k = at + 1;
                         loop {
-                            let word = if k < children.len() { &gaps.before[k] } else { &gaps.end };
+                            let word = if k < stored { &gaps.before[k] } else { &gaps.end };
                             if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
                                 return matches(token);
                             }
-                            if k >= children.len() || !passed(&children[k]) {
+                            if k >= stored || !passed(k) {
                                 return false;
                             }
                             k += 1;
@@ -133,6 +139,31 @@ impl GapTest {
                 }
             }
         }
+    }
+}
+
+/// A parent's stored children and the gaps between them (`stored_gaps`), as the gap tests read
+/// them: read once per parent of the file being evaluated (`memo::parent_gaps`).
+pub(super) struct ParentGaps {
+    /// Each stored child's position among them, by node id.
+    at: rustc_hash::FxHashMap<usize, usize>,
+    /// Whether each stored child is one of the grammar's extras.
+    extra: Vec<bool>,
+    /// The gaps' words, in the grammar's interned texts.
+    gaps: Gaps<'static>,
+}
+
+impl ParentGaps {
+    /// `parent`'s reading; `None` where its kind has no automaton or the automaton refuses its
+    /// children.
+    fn read<D: Doc>(grammar: &TokenGrammar, parent: &Node<'_, D>) -> Option<Self> {
+        let (children, gaps) = stored_gaps(grammar, parent)?;
+        let word = |word: Vec<(&str, &str)>| word.into_iter().map(|(token, field)| (grammar.intern(token), grammar.intern(field))).collect::<Vec<_>>();
+        Some(Self {
+            at: children.iter().enumerate().map(|(at, child)| (child.node_id(), at)).collect(),
+            extra: children.iter().map(|child| grammar.is_extra(&child.kind())).collect(),
+            gaps: Gaps { before: gaps.before.into_iter().map(word).collect(), end: word(gaps.end) },
+        })
     }
 }
 

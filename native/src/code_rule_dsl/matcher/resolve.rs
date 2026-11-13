@@ -806,9 +806,9 @@ struct FileScopes {
     path: Option<Arc<str>>,
     /// A build that stopped at its node budget stops again at any budget up to this one.
     failed_within: usize,
-    charged: Vec<usize>,
+    charged: rustc_hash::FxHashSet<usize>,
     /// The clauses that paid for a table's usage index, with the table (by address).
-    usage_charged: Vec<(usize, usize, bool)>,
+    usage_charged: rustc_hash::FxHashSet<(usize, usize, bool)>,
     /// Whether the file has syntax errors: its bindings are then not all known, so no name is
     /// read as an unshadowed builtin for a value.
     has_errors: bool,
@@ -848,7 +848,7 @@ struct FileScopes {
     php_names: Option<crate::code_rule_dsl::scope::NameTable>,
     php_names_failed_within: usize,
     /// The clauses that paid for `php_names`.
-    php_names_charged: Vec<usize>,
+    php_names_charged: rustc_hash::FxHashSet<usize>,
 }
 
 /// Values decoded so far, by node and the `Reading` instance that determines their semantics.
@@ -873,8 +873,8 @@ impl FileScopeSlot {
             module,
             failed_within: 0,
             path: None,
-            charged: Vec::new(),
-            usage_charged: Vec::new(),
+            charged: rustc_hash::FxHashSet::default(),
+            usage_charged: rustc_hash::FxHashSet::default(),
             has_errors,
             stub: false,
             source_type: Some(SourceType::Module),
@@ -890,7 +890,7 @@ impl FileScopeSlot {
             rerail_ignores: None,
             php_names: None,
             php_names_failed_within: 0,
-            php_names_charged: Vec::new(),
+            php_names_charged: rustc_hash::FxHashSet::default(),
         }));
         Self { previous }
     }
@@ -1371,11 +1371,7 @@ fn file_binding_index<D: Doc>(
         };
         // Charged to each clause once: what this one spends depends on whether it was.
         super::read_clause_state();
-        if slot.usage_charged.contains(&key) {
-            return true;
-        }
-        slot.usage_charged.push(key);
-        false
+        !slot.usage_charged.insert(key)
     });
     if !charged || built {
         let Some(left) = steps.checked_sub(usage.cost) else {
@@ -1477,7 +1473,7 @@ pub fn file_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Optio
         UTIL_STEPS_LEFT.set(left);
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
-                slot.php_names_charged.push(clause);
+                slot.php_names_charged.insert(clause);
             }
         });
     }
@@ -1623,7 +1619,7 @@ pub fn file_table<D: Doc>(
         super::filled(table.cost);
         FILE_SCOPES.with_borrow_mut(|slot| {
             if let Some(slot) = slot {
-                slot.charged.push(clause);
+                slot.charged.insert(clause);
             }
         });
     }
