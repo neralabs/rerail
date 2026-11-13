@@ -10,6 +10,51 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Native conversion and CLI parity on the integrated engine
+
+Merge `d9768cdc6` adopts integration hub `e65a89165`.
+The frozen CLI is `b1166aa8ff8f83c3…`. Its receipt binds the executable and all six engine source trees.
+The optimized build costs 240.89 seconds wall, 1,339.47 seconds user CPU, and 44.13 seconds system CPU.
+These compilation costs are separate from rule execution.
+
+Both native APIs pass all **105 conversion cases**.
+The cases cover complete DTOs, lexical paths, severity selection, integer casts, malformed values, Unicode decimal digits, digit limits, and exception boundaries.
+The native integer primitive uses the existing Python value representation. No interpreter executes rule logic.
+Two Rust tests cover decimal grammar, exact binary64 truncation, and integer digit limits.
+
+A further capture audit exposes three failures before repair.
+Each valid fact contains an unread 5,001-digit integer, a nested integer, or an integer key.
+The source returns a finding. The first transport fails while encoding the unread payload.
+Capture now projects only the native-declared field set.
+Both APIs pass all **three capture-demand cases** and all 105 conversion cases after this repair.
+The [conversion receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-conversion-current.json.gz) retains the source observations, failures, native results, and consumed bytes.
+Its ten checks reject omitted cases, swallowed exceptions, changed values, mixed program revisions, and missing source bytes.
+
+Both APIs also pass all **42 CLI and report cases**.
+The rule supplies the argument schema, repository root, report text, report errors, and exit status.
+The adapter transports parsed arguments and passive DTO fields.
+Coverage includes exact streams, Unicode uppercase, duplicate findings, caller-supplied order, audit-only checks, help, unknown options, and partial output before an error.
+All 42 cases fail the source-execution guard before the CLI port.
+The [CLI receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-cli-current.json.gz) retains that failure and the final results.
+All nine CLI receipt checks pass.
+
+The same CLI passes all **seven unchanged upstream tests, 35 scanner cases, and 47 filesystem cases through both APIs**.
+Eleven planner tests, nine parser tests, and three stored-program tests pass.
+The parser suite retains its existing ignored manual calibration.
+The headless library-test build fails because storage tests call a task implementation excluded by that feature.
+The normal library-test target builds and runs the stored-program checks.
+The production CLI build and both execution APIs pass independently of this test-target limitation.
+
+Production acceptance now records selected files, fact presence, complete fact payloads, plugin metadata, and complete findings.
+The first replay passes 22 of 23 cases through each API.
+The remaining case is a broken file symlink: the source raises `FileNotFoundError`, but the native reader silently refuses the failed resolution.
+The committed regression requires that read error, retained snapshot behavior, cache invalidation after repair, and unchanged scope boundaries.
+Production acceptance remains open pending that repair.
+
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+History, retained updates, effective removal controls, and strict admission remain open for this rule.
+No full-repository or whole-batch cold benchmark runs. No Linear issues are created.
+
 ## 2026-11-13 — Relative-root composition and final filesystem replay
 
 Eight additional cases check relative roots through discovery, repository scans, explicit scopes, and the content API.
