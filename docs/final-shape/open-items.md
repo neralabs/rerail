@@ -3978,17 +3978,22 @@ corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which
 Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
 setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
 
-## O-pha000-kept-part. A constant finding is lost when the cross-file part is kept
+## O-pha000-kept-part (closed 2026-11-12). A negation-only reader of a demanded relation reported a false finding
 
-**Seen (2026-11-12).** `plan-helpers-allowlist.rr` alone over dl1, strict: no store gives `PHA000`; any store,
-even an empty one, gives no finding. `PHA000(@place(...)) :- !allow_status("plan_helpers", "valid")` is rewritten
-to `rr_place_PHA000__sup0(150, 1) :- !allow_status(82, 151)`: a rule with no positive atom. `allow_status` is
-empty (dl1 has no linter file), so the row holds. It comes back only with both `RERAIL_CROSS_K4=off` and
-`RERAIL_KEPT_PART=off`; `RERAIL_WAVE0=kept` does not bring it back. The batch of 44 loses it the same way with a
-store (48 of 49 findings).
+**Seen (2026-11-12).** `plan-helpers-allowlist.rr` over dl1, strict: with no store it reported `PHA000`; with any
+store, even an empty one, it reported nothing. **The run with a store was right.** `allow_status` holds
+`("plan_helpers", "valid")` (the allowlist's signature is in the policy's tables), so `PHA000 :-
+!allow_status("plan_helpers", "valid")` must not hold.
 
-**Closure:** the finding with a store, first run and later ones; a session test of a rule whose body is only a
-negation, against the from-scratch oracle.
+**Cause.** Demand (decision 0048) computes `allow_status` only for the keys its readers reach. A reader whose body
+is only demanded negations has nothing to make a `pre_<i>` of, and was left as written, demanding nothing: its key
+was never computed, and the negation held. A run that keeps its cross-file part (K4 or the kept part) does not
+demand there, so it was right; the session tests' oracle (both off) had the fault.
+
+**Fixed** (`demand::split_with`): such a reader refuses demand for the relations it reads, which are built whole.
+`a_reader_that_only_negates_a_demanded_relation_reads_it_whole` runs the policy from nothing kept and by default
+and asserts they agree, with no `PHA000` (it fails without the fix). The 44 policies give 48 findings over dl1 and
+over dl10, with a store and without; the 49th of the earlier measurements was this false one.
 
 ## O-store-single-program. A single program's combined form cannot be kept in the store yet
 
@@ -4023,7 +4028,8 @@ phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands
 reaches a bridged relation. The 15–20% is that one run's own cost, not a rerun per policy, so the closure as
 written holds. What is left is O91 (the same run across batches and edits) and the typing run's own planning.
 A combined run of the batch (all policies of a language as one, decision 0051) was tried: 202.4 G against
-212.3 G instructions on dl1, and it loses PHA000 (O-pha000-kept-part); not kept.
+212.3 G instructions on dl1. It gave 48 findings to the per-policy runs' 49; the 49th was false
+(O-pha000-kept-part, closed).
 
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
@@ -4079,7 +4085,8 @@ and not kept:
 - the hidden program kept in the store by its text for one program too (`combine_stored` keeps it for packs
   only): the third batch over one store failed (`leg-083-typed.rr: _internal/__init__.py: its memo entry is
   gone`), and the warm batch with a store (206 G) cost more than one without (187 G);
-- one run of the batch (above): the library held once, hidden once (decision 0089), but it loses a finding.
+- one run of the batch (above): the library held once, hidden once (decision 0089); its findings were right
+  (O-pha000-kept-part), so it is open again as the way to share the library's analysis.
 The closure is a hiding analysis kept per library module (its relations' carried columns depend only on its
 rules and what they read), or a combined run that is exact.
 
