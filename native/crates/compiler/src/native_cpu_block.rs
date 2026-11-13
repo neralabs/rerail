@@ -671,8 +671,11 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
     let mut ran = vec![false; native.groups.len()];
     let mut gates = 0;
     let mut stack: Vec<(Node, bool)> = Vec::new();
-    for root in 0..n {
-        if done[root] || (e.live[root] && read[root]) {
+    // Each walk's call first, before the body's other values are live: what is live across a
+    // call stays in a callee-saved register, or spills.
+    let walks_first: Vec<usize> = native.walks.iter().filter(|w| !w.kinds.is_empty() && e.live[usize::from(w.hidden)]).map(|w| usize::from(w.hidden)).collect();
+    for root in walks_first.iter().copied().chain(0..n) {
+        if done[root] || (e.live[root] && read[root] && !walks_first.contains(&root)) {
             continue;
         }
         stack.push((Node::Value(root), false));
@@ -934,10 +937,9 @@ impl Emit<'_, '_> {
             self.carry(&mut *f, at);
             return;
         }
-        for x in inst.operands() {
-            plain(&mut *f, &self.syms, &mut self.values, x);
-        }
-        let v = |x: u16| self.values[usize::from(x)].expect("made plain");
+        let operands = inst.operands();
+        let given: Vec<Value> = operands.iter().map(|&x| plain(&mut *f, &self.syms, &mut self.values, x)).collect();
+        let v = |x: u16| given[operands.iter().position(|&o| o == usize::from(x)).expect("an operand")];
         let (i, len, even) = (self.i, self.len, self.even);
         let value = match inst {
             // The bits below the stream's end: t = clamp(len - 64 i, 0, 64) ones, by two
@@ -1062,8 +1064,7 @@ impl Emit<'_, '_> {
         self.put(&mut *f, field, state_out);
         self.walked[w] = true;
         for (j, &v) in made.iter().enumerate() {
-            let value = f.ins().stack_load(types::I64, slot, 8 * (1 + 2 * walk.kinds.len() + j) as i32);
-            self.set(usize::from(v), Sym::Value(value, false));
+            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 2 * walk.kinds.len() + j) as i32, false));
             self.carry(&mut *f, usize::from(v));
         }
     }
@@ -2412,10 +2413,14 @@ fn stores_flags() -> MemFlags {
 }
 
 /// A value of the bit logic: a known word, or a value that is the word itself or its complement.
+/// `Slot`: a word in a stack slot (a walk's result, `Emit::walk`), or its complement, loaded at
+/// each use and never held: a value held from the call to its last reader would cost a
+/// register through the loop, or a spill.
 #[derive(Clone, Copy)]
 pub enum Sym {
     Known(u64),
     Value(Value, bool),
+    Slot(cranelift_codegen::ir::StackSlot, i32, bool),
 }
 
 impl Sym {
@@ -2423,12 +2428,25 @@ impl Sym {
         match self {
             Sym::Known(c) => Sym::Known(!c),
             Sym::Value(v, neg) => Sym::Value(v, !neg),
+            Sym::Slot(s, at, neg) => Sym::Slot(s, at, !neg),
+        }
+    }
+
+    /// A slot's word loaded here; any other as it is.
+    fn loaded(self, f: &mut FunctionBuilder<'_>) -> Sym {
+        match self {
+            Sym::Slot(s, at, neg) => Sym::Value(f.ins().stack_load(types::I64, s, at), neg),
+            other => other,
         }
     }
 
     /// `a & b`, one instruction at most: a complemented side is a `bic`; both complemented,
     /// the complement of an `or`.
     fn and(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        if let (Sym::Known(0), _) | (_, Sym::Known(0)) = (a, b) {
+            return Sym::Known(0);
+        }
+        let (a, b) = (a.loaded(&mut *f), b.loaded(&mut *f));
         match (a, b) {
             (Sym::Known(x), Sym::Known(y)) => Sym::Known(x & y),
             (Sym::Known(0), _) | (_, Sym::Known(0)) => Sym::Known(0),
@@ -2440,10 +2458,12 @@ impl Sym {
             (Sym::Value(x, false), Sym::Value(y, false)) => Sym::Value(f.ins().band(x, y), false),
             (Sym::Value(x, false), Sym::Value(y, true)) | (Sym::Value(y, true), Sym::Value(x, false)) => Sym::Value(f.ins().band_not(x, y), false),
             (Sym::Value(x, true), Sym::Value(y, true)) => Sym::Value(f.ins().bor(x, y), true),
+            (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
         }
     }
 
     fn xor(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        let (a, b) = (a.loaded(&mut *f), b.loaded(&mut *f));
         match (a, b) {
             (Sym::Known(x), Sym::Known(y)) => Sym::Known(x ^ y),
             (Sym::Known(0), s) | (s, Sym::Known(0)) => s,
@@ -2453,11 +2473,12 @@ impl Sym {
                 Sym::Value(f.ins().bxor(v, k), neg)
             }
             (Sym::Value(x, nx), Sym::Value(y, ny)) => Sym::Value(f.ins().bxor(x, y), nx != ny),
+            (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
         }
     }
 }
 
-/// Value `x` plain (not complemented), made once.
+/// Value `x` plain (not complemented), made once; a slot's word loaded at each use, not kept.
 fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>], x: usize) -> Value {
     if let Some(v) = values[x] {
         return v;
@@ -2466,6 +2487,10 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
         Sym::Known(c) => f.ins().iconst(types::I64, c as i64),
         Sym::Value(v, false) => v,
         Sym::Value(v, true) => f.ins().bnot(v),
+        Sym::Slot(s, at, neg) => {
+            let w = f.ins().stack_load(types::I64, s, at);
+            return if neg { f.ins().bnot(w) } else { w };
+        }
     };
     values[x] = Some(v);
     v
