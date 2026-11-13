@@ -333,17 +333,23 @@ describe("gitBehindLauncher", () => {
     expect(gitBehindLauncher(launcher, search, installed())).toBe(launcher);
   });
 
-  it("runs the git.exe of Git for Windows 2.56's x64 build from ucrt64, and another build's where an install also holds one", () => {
-    // Joined, not written in a template: there `\u` starts a Unicode escape, and a parser that holds to that skips
-    // the whole file.
-    const ucrt = win32.join(git, "ucrt64", "bin", "git.exe");
-    const x64 = String.raw`${git}\mingw64\bin\git.exe`;
-    const arm = String.raw`${git}\clangarm64\bin\git.exe`;
+  // Joined, not written in a template: there `\u` starts a Unicode escape, and a parser that holds to that skips the
+  // whole file.
+  const ucrt = win32.join(git, "ucrt64", "bin", "git.exe");
+
+  it("runs the git.exe of the x64 build of Git for Windows from 2.56 on, in ucrt64", () => {
     expect(gitBehindLauncher(launcher, search, installed(ucrt))).toBe(ucrt);
     expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, search, installed(ucrt))).toBe(ucrt);
     expect(gitBehindLauncher(ucrt, search, installed(ucrt))).toBe(ucrt);
-    expect(gitBehindLauncher(launcher, search, installed(x64, ucrt))).toBe(x64);
-    expect(gitBehindLauncher(launcher, search, installed(arm, ucrt))).toBe(arm);
+  });
+
+  // The same answers as before ucrt64 was known: these pass on the code without it too.
+  it("keeps running another build's git.exe where an install also holds ucrt64", () => {
+    for (const build of ["mingw64", "clangarm64", "mingw32"]) {
+      const other = win32.join(git, build, "bin", "git.exe");
+      expect(gitBehindLauncher(launcher, search, installed(other, ucrt)), build).toBe(other);
+      expect(gitBehindLauncher(launcher, search, installed(ucrt, other)), build).toBe(other);
+    }
   });
 
   it.runIf(process.platform === "win32")("is what Rerail runs on this Windows machine", () => {
