@@ -17,8 +17,8 @@ const HOLDER_FILE = "daemon.json";
 
 /**
  * How long a daemon keeps trying for a lock another process holds. A start that asks whether a daemon runs
- * ({@link homeDaemonLockHeld}) holds it for an instant, and a daemon restarting itself lets go just before its successor
- * starts; only a running daemon holds it for longer.
+ * ({@link homeDaemonLockHeld}) holds it for an instant, and a daemon restarting itself lets go as it exits, just after it
+ * launches the next one; only a running daemon holds it for longer.
  */
 const ACQUIRE_WAIT_MS = 1_000;
 const ACQUIRE_POLL_MS = 50;
@@ -43,8 +43,8 @@ let held: NativeExclusiveFileLock | undefined;
 /** The pid the holder of `home`'s lock recorded, if it recorded one. */
 export function homeDaemonHolder(home: string): number | undefined {
   try {
-    const value: unknown = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8"));
-    const pid = typeof value === "object" && value !== null && "pid" in value ? value.pid : undefined;
+    // JSON null throws here too, and is no record.
+    const { pid } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown };
     return typeof pid === "number" && Number.isInteger(pid) ? pid : undefined;
   } catch {
     return undefined;

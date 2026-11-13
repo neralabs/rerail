@@ -95,7 +95,7 @@ export interface RerailDaemonOptions {
   stateFile?: string;
   /**
    * How often the daemon checks that `stateFile` still holds what it wrote, and writes it again when it is gone or
-   * differs. The daemon of a Rerail home passes it (`runRerailDaemon`), since it alone holds the home's lock; omitted,
+   * differs. The daemon of a Rerail home passes it (`runHomeDaemon`), since it alone holds the home's lock; omitted,
    * the state file is written once.
    */
   recordCheckMs?: number;
@@ -882,23 +882,37 @@ async function packageVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }
 
-/** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+/**
+ * What runs the daemon supplies beyond its arguments: the layers above it (the process entry point,
+ * `src/cli/daemon-entry.ts`), and the record check of the home's one daemon (`runHomeDaemon`).
+ */
+export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheckMs">;
+
+/**
+ * Runs the daemon (`runRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
+ * daemon lock before anything opens a store or binds a pipe, a socket or a port, so a second daemon stops here naming
+ * the first: two starts at once, or a start whose wait for a slow daemon ran out, could otherwise leave two, one holding
+ * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheckMs`): two daemons
+ * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
+ * holder's record beside it. A restart at the heap ceiling launches the next daemon just before this one exits, and
+ * that one keeps trying for the lock for a second.
+ */
+export async function runHomeDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  const homeLock = await holdHomeDaemonLock(defaultRerailHome());
+  if (homeLock === undefined) return await runRerailDaemon(argv, services);
+  process.once("exit", () => homeLock.release());
+  await runRerailDaemon(argv, { ...services, recordCheckMs: RECORD_CHECK_MS });
+}
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
-  // Before anything opens a store or binds a pipe, a socket or a port: a Rerail home has one daemon, and a second one
-  // stops here naming the first, whatever the build. Two starts at once, or a start whose wait for a slow daemon ran
-  // out, could otherwise leave two, one holding the port and the other the one daemon.json names.
-  const home = defaultRerailHome();
-  const homeLock = await holdHomeDaemonLock(home);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
   const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
   searchGitFrom(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
-  // here naming the first. A checkout's daemon is a dev build with its own content store and takes no such lock.
+  // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
   const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
   const mainInstance = build?.kind === "main" ? acquireMainInstance(build) : undefined;
   // `--dev` serves the committed page straight from `ui/`, so an edit needs only a reload.
@@ -919,14 +933,12 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     host: arguments_.host,
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
-    portFile: join(home, DAEMON_PORT_FILE),
-    accessTokenFile: join(home, DAEMON_ACCESS_TOKEN_FILE),
+    portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
+    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
     ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
-    // Only the holder of the home keeps its state file: two daemons that each did would write over each other.
-    ...(homeLock === undefined ? {} : { recordCheckMs: RECORD_CHECK_MS }),
     ...(tls === undefined ? {} : { tls }),
   });
   const health = daemon.health();
@@ -950,14 +962,10 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   }
   const way = daemonExit({
     close: async () => await daemon.close(),
-    release: () => {
-      mainInstance?.release();
-      homeLock?.release();
-    },
-    // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket, state and home
-    // lock are free.
+    release: () => mainInstance?.release(),
+    // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
     relaunch: () => {
-      relaunchDaemon(process.argv.slice(1), join(home, DAEMON_LOG_FILE));
+      relaunchDaemon(process.argv.slice(1), join(defaultRerailHome(), DAEMON_LOG_FILE));
     },
     exit: code => process.exit(code),
     log: line => process.stderr.write(line),

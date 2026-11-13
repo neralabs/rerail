@@ -5,7 +5,7 @@
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
-import { runRerailDaemon } from "../daemon/daemon.js";
+import { runHomeDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 
@@ -22,7 +22,7 @@ if (!node.ok) {
 }
 
 try {
-  await runRerailDaemon(process.argv.slice(2), {
+  await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
   });
 } catch (error) {
