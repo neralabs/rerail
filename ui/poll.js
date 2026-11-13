@@ -542,8 +542,10 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
-    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
+    // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
+    // still out must not leave their failures unhandled.
+    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();

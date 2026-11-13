@@ -476,8 +476,10 @@ Off loopback:
 
 ### The dashboard says "Needs the dashboard link"
 
-Run `rerail manage` (or `rerail daemon start --open`) to open the page with the daemon's access capability, a secret
-carried in the dashboard link.
+Every view then shows "This browser doesn't have access to Rerail's data yet" in place of its data. Run
+`rerail manage` (or `rerail daemon start --open`) in a terminal to open the page with the daemon's access capability,
+a secret carried in the dashboard link. If it opens in a browser other than the one you want, paste the link it prints
+into that one.
 
 <details>
 <summary>Why the link is needed, scripts, and a refused capability</summary>

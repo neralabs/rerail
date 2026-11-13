@@ -18,8 +18,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
-  and the review, `create`, `history`, `sessions`, `settings`) and the pages shown in their place (`no-repo`,
-  `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
+  and the review, `create`, `history`, `sessions`, `settings`) and the pages shown in their place (`access`,
+  `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
 - `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
