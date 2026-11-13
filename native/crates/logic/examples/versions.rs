@@ -820,9 +820,124 @@ fn main() {
     }
     unsafe { OVERHEAD = over };
     println!("measurement overhead: {over} instructions a measure (subtracted)");
+    if dirs.first().is_some_and(|d| d == "--validate") {
+        for dir in &dirs[1..] {
+            validate(Path::new(dir));
+        }
+        return;
+    }
+    if dirs.first().is_some_and(|d| d == "--reads") {
+        for dir in &dirs[1..] {
+            reads(Path::new(dir));
+        }
+        return;
+    }
     for dir in &dirs {
         replay(Path::new(dir));
     }
+}
+
+/// What reading a stored program costs, as its text and as its image (decision 0173, stage 1), over every distinct
+/// program of the trace: the text parsed (`read_in`, today's warm read); the image decoded into the tree
+/// (`decode`, stage 1's read, which every caller still needs); and the image opened alone (`Image::open`, what a
+/// reader by id, stage 2, pays). The store's decompression and its query are the same for both and not counted.
+fn reads(dir: &Path) {
+    use rerail_logic::code_rule_dsl::logic::program_image::{self, Image};
+    let lists = Lists::default();
+    let mut names: Vec<_> = std::fs::read_dir(dir).expect("trace dir").filter_map(|e| {
+        let p = e.ok()?.path();
+        (p.extension()? == "rr").then_some(p)
+    }).collect();
+    names.sort();
+    let (mut text, mut image, mut open, mut rules) = (Cost::default(), Cost::default(), Cost::default(), 0usize);
+    let (mut text_bytes, mut image_bytes) = (0usize, 0usize);
+    for path in &names {
+        let t = std::fs::read_to_string(path).expect("program text");
+        let (p, c) = measure(|| program_text::read_in(&t, &lists).expect("reads"));
+        text += c;
+        let bytes = program_image::encode(&p).expect("encodes");
+        let (q, c) = measure(|| program_image::decode(&bytes, &lists).expect("decodes"));
+        image += c;
+        assert_eq!(format!("{p:?}"), format!("{q:?}"), "{}: the image is not the program", path.display());
+        let (_, c) = measure(|| Image::open(&bytes).expect("opens"));
+        open += c;
+        rules += p.rules.len();
+        text_bytes += t.len();
+        image_bytes += bytes.len();
+    }
+    println!("\n==== {}: {} programs, {} rules; texts {:.2} MB, images {:.2} MB", dir.display(), names.len(), rules, text_bytes as f64 / 1e6, image_bytes as f64 / 1e6);
+    for (what, c) in [("text, parsed", text), ("image, decoded to the tree", image), ("image, opened", open)] {
+        println!("  {what:<28} {:>9.1} Minsn {:>8.1} MB allocated {:>9} allocations", c.insn as f64 / 1e6, c.bytes as f64 / 1e6, c.allocs);
+    }
+}
+
+/// Every making of the trace, made by the real `program_image::Version::edit` from its parent's version (each
+/// `to` stated as an edit of its `from`, by `diff`): each version must be its program, rule for rule (an overlay
+/// appends what it adds, so rules are compared as a multiset) and part for part, and its digest the digest of that
+/// program made whole.
+fn validate(dir: &Path) {
+    use rerail_logic::code_rule_dsl::logic::program_facts;
+    use rerail_logic::code_rule_dsl::logic::program_image::{self, version::Made, Version};
+    let text = std::fs::read_to_string(dir.join("trace.tsv")).expect("trace.tsv");
+    let ops: Vec<(String, String, String)> = text.lines().filter_map(|l| {
+        let mut f = l.split('\t');
+        Some((f.next()?.to_owned(), f.next()?.to_owned(), f.next()?.to_owned()))
+    }).collect();
+    let lists = Lists::default();
+    let mut progs: HashMap<String, Program> = HashMap::new();
+    let mut load = |d: &str, progs: &mut HashMap<String, Program>| {
+        if !progs.contains_key(d) {
+            let t = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
+            progs.insert(d.to_owned(), program_text::read_in(&t, &lists).expect("reads"));
+        }
+    };
+    let key = |p: &Program| {
+        let mut rules: Vec<String> = p.rules.iter().map(|r| format!("{r:?}")).collect();
+        rules.sort();
+        let mut rest = p.clone();
+        rest.rules.clear();
+        (rules, format!("{rest:?}"))
+    };
+    let mut versions: HashMap<String, std::sync::Arc<Version>> = HashMap::new();
+    let (mut ok, mut made_count): (usize, BTreeMap<String, usize>) = (0, BTreeMap::new());
+    let (mut edit_insn, mut tree_insn, mut delta_bytes, mut whole_bytes) = (0u64, 0u64, 0usize, 0usize);
+    for (site, from, to) in &ops {
+        load(from, &mut progs);
+        load(to, &mut progs);
+        let (f, t) = (&progs[from], &progs[to]);
+        let parent = versions.entry(from.clone()).or_insert_with(|| Version::open(&program_image::encode(f).expect("encodes")).expect("opens")).clone();
+        let mut about = program_facts::Facts::new();
+        program_facts::write_about(&mut about, "a", t);
+        let ((v, made), c) = measure(|| {
+            let edit = parent.diff(t, &about, &lists).expect("diff");
+            Version::edit(&parent, edit, &lists).expect("edit")
+        });
+        edit_insn += c.insn;
+        let (_, c) = measure(|| {
+            let mut p = f.clone();
+            p.rules.retain(|_| true);
+            p
+        });
+        tree_insn += c.insn;
+        if let Version::Overlay { delta, .. } = &*v {
+            delta_bytes += delta.bytes().len();
+            whole_bytes += program_image::encode(t).expect("encodes").len();
+        }
+        *made_count.entry(format!("{site} {made:?}")).or_default() += 1;
+        let got = v.program(&lists).expect("reads");
+        assert_eq!(key(&got), key(t), "{site}: {from} → {to}");
+        let whole = Version::open(&program_image::encode(t).expect("encodes")).expect("opens");
+        assert_eq!(v.digest(&lists).unwrap(), whole.digest(&lists).unwrap(), "{site}: {from} → {to}: digest");
+        let _ = Made::View;
+        versions.insert(to.clone(), v);
+        ok += 1;
+    }
+    println!("\n==== {}: {ok} of {} makings made by Version::edit are their programs, digests equal", dir.display(), ops.len());
+    for (k, n) in &made_count {
+        println!("  {k:<36} {n:>6}");
+    }
+    println!("  diff + edit {:.1} Minsn (the diff stands in for a pass's own statement of its edit); overlays' deltas {:.2} MB, against {:.2} MB for the same programs whole", edit_insn as f64 / 1e6, delta_bytes as f64 / 1e6, whole_bytes as f64 / 1e6);
+    let _ = tree_insn;
 }
 
 fn replay(dir: &Path) {

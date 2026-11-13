@@ -102,6 +102,7 @@ pub mod profile {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
 }
 pub mod program_facts;
+pub mod program_image;
 pub mod program_text;
 pub mod version_trace;
 #[allow(dead_code)]

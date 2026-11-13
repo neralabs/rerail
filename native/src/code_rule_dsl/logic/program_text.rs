@@ -277,11 +277,45 @@ fn assemble(parts: Parts) -> Result<Program, String> {
     Ok(prog)
 }
 
-/// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95): the digest and the
-/// source. `None` when the text does not read back as `prog`: nothing is kept.
-pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], SourceId)>> {
+/// Whether stored programs are kept and read as images too (decision 0173): `RERAIL_PROGRAM_IMAGE=off` keeps and
+/// reads texts only; `require` reads images only, refusing a program kept as text alone (a validation aid).
+fn images() -> &'static str {
+    match std::env::var("RERAIL_PROGRAM_IMAGE").as_deref() {
+        Ok("off") => "off",
+        Ok("require") => "require",
+        _ => "on",
+    }
+}
+
+/// The alias the store keeps the image of the program whose text has sha256 `digest` under: the program's identity
+/// stays its text's digest, which the rows that name a program hold, and the image's source is its own bytes' sha256,
+/// as every source's is. The format is in the key, so another format's image is never found for it.
+pub fn image_key(digest: &[u8; 32]) -> HashKey {
+    HashKey::sha256(&[b"rerail program image 1\0".as_slice(), digest.as_slice()].concat())
+}
+
+/// What the store keeps of a program, as read: its image (decision 0173), or its text where it has no image.
+pub enum Stored {
+    Image(Vec<u8>),
+    Text(String),
+}
+
+/// The program `stored` holds, its lists taken from the run's `lists`.
+pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
+    match stored {
+        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::decode(bytes, lists),
+        Stored::Text(text) => read_in(text, lists),
+    }
+}
+
+/// Keeps `prog` in `store` as its text, a source by its sha256 (held, so the run keeps it, O95), and as its image,
+/// a source by `image_key` (decision 0173): the digest, and the sources written, which the caller names so collection
+/// keeps them. `None` when the text does not read back as `prog`: nothing is kept. An image that does not read back as
+/// `prog` is not kept; the text is.
+pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 32], Vec<SourceId>)>> {
     let Ok(text) = print(prog) else { return Ok(None) };
-    if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(prog)) {
+    let want = program_facts::debug_digest(prog);
+    if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
         return Ok(None);
     }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
@@ -290,30 +324,63 @@ pub fn store(store: &ContentStore, prog: &Program) -> StoreResult<Option<([u8; 3
         Some(id) => id,
         None => store.put_source_hashed(text.as_bytes(), hash, &[])?,
     };
-    Ok(Some((Sha256::digest(text.as_bytes()).into(), source)))
+    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+    let mut sources = vec![source];
+    if images() != "off" {
+        let key = image_key(&digest);
+        if let Some(id) = store.source_by_alias(key)? {
+            store.pin_held_sources(&[id])?;
+            sources.push(id);
+        } else if let Ok(bytes) = crate::code_rule_dsl::logic::program_image::encode(prog)
+            && crate::code_rule_dsl::logic::program_image::decode(&bytes, &crate::code_rule_dsl::logic::front::Lists::default()).is_ok_and(|back| program_facts::debug_digest(&back) == want)
+        {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+            // An image the store refuses (its alias taken by other bytes) is not kept; the text is.
+            if let Ok(id) = store.put_source(&bytes, &[key]) {
+                store.pin_held_sources(&[id])?;
+                sources.push(id);
+            }
+        }
+    }
+    Ok(Some((digest, sources)))
 }
 
-/// The texts `store` keeps of sha256 `digests` (`store`), by digest, with their sources, in two reads: for a caller
-/// that must read before its run's waves (decision 0104) and parse later. One the store has lost is left out.
-pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (String, SourceId)>> {
+/// What `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources, in two reads: for
+/// a caller that must read before its run's waves (decision 0104) and parse later. Each is its image where it has
+/// one, else its text; one the store has lost is left out.
+pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Stored, Vec<SourceId>)>> {
+    let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
-    let ids = store.held_sources_by_hash(&hashes)?;
-    let requests: Vec<(SourceId, HashKey)> = ids.iter().zip(&hashes).filter_map(|(id, h)| Some(((*id)?, *h))).collect();
+    let text_ids = store.held_sources_by_hash(&hashes)?;
+    let mut out = std::collections::HashMap::new();
+    let mut want_text = Vec::new();
+    for (k, d) in digests.iter().enumerate() {
+        let image = if mode == "off" { None } else { store.source_by_alias(image_key(d))? };
+        match image {
+            Some(id) => {
+                store.pin_held_sources(&[id])?;
+                let bytes = store.get_source(id)?;
+                out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().chain([id]).collect()));
+            }
+            None if mode != "require" => want_text.push(k),
+            None => {}
+        }
+    }
+    let requests: Vec<(SourceId, HashKey)> = want_text.iter().filter_map(|&k| Some((text_ids[k]?, hashes[k]))).collect();
     let mut bytes = store.get_sources_by_hash_bulk(&requests, usize::MAX)?;
-    Ok(ids
-        .iter()
-        .zip(digests)
-        .filter_map(|(id, d)| {
-            let id = (*id)?;
-            Some((*d, (String::from_utf8(bytes.remove(&id)?).ok()?, id)))
-        })
-        .collect())
+    for k in want_text {
+        let Some(id) = text_ids[k] else { continue };
+        let Some(text) = bytes.remove(&id).and_then(|b| String::from_utf8(b).ok()) else { continue };
+        out.insert(digests[k], (Stored::Text(text), vec![id]));
+    }
+    Ok(out)
 }
 
-/// The program `store` keeps as the text of sha256 `digest` (`store`), and its source; `None` when the store has
-/// lost it, or it no longer reads. Its lists are taken from the run's `lists`.
-pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, SourceId)>> {
-    let Some(source) = store.held_source_by_hash(HashKey::from_sha256_digest(*digest))? else { return Ok(None) };
-    let Ok(text) = String::from_utf8(store.get_source(source)?) else { return Ok(None) };
-    Ok(read_in(&text, lists).ok().map(|p| (p, source)))
+/// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
+/// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
+/// run's `lists`.
+pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
+    let mut found = texts(store, &[*digest])?;
+    let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
+    Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
 }
