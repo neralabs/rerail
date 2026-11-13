@@ -133,6 +133,28 @@ describe("Rerail daemon CLI", () => {
     }
   }, 60_000);
 
+  // A --tls-key that names no file is a mistake in the command, not a key others can read: the start fails, naming the
+  // key, and no daemon runs, on this computer or for others.
+  test("refuses to start when --tls-key names no file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    const cli = join(process.cwd(), "dist", "cli", "cli.js");
+    const env = { ...process.env, RERAIL_HOME: root };
+    const certFile = join(root, "cert.pem");
+    try {
+      await writeFile(certFile, selfSignedCertificate().cert);
+      // A misspelled name, and a path through a file.
+      for (const keyFile of [join(root, "keyy.pem"), join(certFile, "key.pem")]) {
+        const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", certFile, "--tls-key", keyFile];
+        const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(`Could not read who may read ${keyFile}: `) });
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await promisify(execFile)(process.execPath, [cli, "daemon", "stop"], { env }).catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test("reads the start state from the database --database names, not the home's default", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
     try {

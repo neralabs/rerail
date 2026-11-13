@@ -640,10 +640,10 @@ capability.
 **Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
 - `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and never serves with a key file other users
-  could read, or whose readers it could not read: the daemon then starts without `--host`, `--public-host` and the TLS
-  files (`serveRerailDaemon`), so it binds loopback alone, as a daemon started with no options does, and other
-  machines reach nothing. `daemon.json` (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name
-  the key and the command that makes it private.
+  could read: the daemon then starts without `--host`, `--public-host` and the TLS files (`serveRerailDaemon`), so it
+  binds loopback alone, as a daemon started with no options does, and other machines reach nothing. `daemon.json`
+  (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name the key and the command that makes it
+  private. A key file whose readers it cannot read, a missing one included, stops the start.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)

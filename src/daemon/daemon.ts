@@ -757,8 +757,8 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
- * A TLS private key the daemon may not serve with: other accounts can read it, or who may read it could not be read.
- * Its message names the key and the command that makes it its owner's alone.
+ * A TLS private key the daemon may not serve with because other accounts can read it. Its message names the key and
+ * the command that makes it its owner's alone.
  */
 export class TlsKeyExposedError extends Error {
   override readonly name = "TlsKeyExposedError";
@@ -769,8 +769,9 @@ export class TlsKeyExposedError extends Error {
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. Either refusal is a `TlsKeyExposedError`, on which
- * the daemon serves this computer alone (`serveRerailDaemon`). `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. A key others can read is a `TlsKeyExposedError`,
+ * on which the daemon serves this computer alone (`serveRerailDaemon`). A key whose readers cannot be read, a missing
+ * or misspelled one among them, is a mistake in the command and stops the start. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -778,7 +779,7 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     others = await openToOthers(tls.keyFile, access);
   } catch (error) {
     // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
-    throw new TlsKeyExposedError(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
+    throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
   }
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.

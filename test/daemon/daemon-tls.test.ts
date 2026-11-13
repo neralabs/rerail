@@ -132,9 +132,13 @@ describe("TLS daemon", () => {
       throw new Error("Get-Acl failed");
     } } };
     await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
-    // Both refusals are the one the daemon answers by serving this computer alone.
+    // Only a key others can read is answered by serving this computer alone. One whose readers could not be read, a
+    // missing one too, is a mistake in the command and stops the start.
     await expect(loadDaemonTls(files, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
-    await expect(loadDaemonTls(files, unread)).rejects.toBeInstanceOf(TlsKeyExposedError);
+    await expect(loadDaemonTls(files, unread)).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    const missing = { ...files, keyFile: join(root, "keyy.pem") };
+    await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.toThrow(`Could not read who may read ${missing.keyFile}: ENOENT`);
+    await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.not.toBeInstanceOf(TlsKeyExposedError);
   });
 
   it("records in its state file why it serves this computer alone, for rerail status to say", async () => {
