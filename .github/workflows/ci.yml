@@ -1304,8 +1304,9 @@ jobs:
         )
       }}
     runs-on: macos-15
-    # Three provider attempts of up to 3 minutes each, on top of a cold native build.
-    timeout-minutes: 25
+    # Three provider attempts of up to 3 minutes each, on top of a cold native build: about 26 minutes on
+    # macos-15 for the split engine (its release build with one codegen unit and thin LTO).
+    timeout-minutes: 45
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
       ANTHROPIC_FOUNDRY_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
