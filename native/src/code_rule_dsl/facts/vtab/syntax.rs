@@ -123,7 +123,7 @@ impl Projection {
         crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
-        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
+        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str())) { Shape::Core } else { Shape::T };
         let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
@@ -244,10 +244,10 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
                 let Literal::Atom(text) = &twin.body[i] else { continue };
                 let v = text.args[0].clone();
                 let t = match &text.args[1] {
-                    Term::Var(t) if t != "_" => Term::Var(t.clone()),
+                    Term::Var(t) if t != "_" => Term::Var(t.clone().into()),
                     _ => {
                         fresh += 1;
-                        Term::Var(format!("rr_long_text{fresh}_{bit}"))
+                        Term::Var(format!("rr_long_text{fresh}_{bit}").into())
                     }
                 };
                 twin.body[i] = Literal::Cmp { l: t, op: "=", r: Term::Call("rr_node_text".into(), vec![v.clone()]) };
@@ -471,7 +471,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
         body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "field").filter_map(|a| match (a.args.get(1), a.args.get(2)) {
             (Some(Term::Str(f)), Some(Term::Var(x))) if x == v => Some(f.clone()),
             _ => None,
-        }).collect()
+        }).map(String::from).collect()
     };
     let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
     let mut read = Some(TextNodes::default());
@@ -616,8 +616,8 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         for l in &r.body {
             match l {
                 Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => {
-                    edges.push((a.clone(), b.clone()));
-                    edges.push((b.clone(), a.clone()));
+                    edges.push((a.to_string(), b.to_string()));
+                    edges.push((b.to_string(), a.to_string()));
                 }
                 _ => {}
             }
@@ -626,28 +626,28 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
             match rel {
                 "kind" => {
                     if let (Some(v), Some(Term::Str(k))) = (var(a.args.first()), a.args.get(1)) {
-                        kinds.push((v, bare(k)));
+                        kinds.push((v.to_string(), bare(k)));
                     }
                 }
                 "child" | "field" => {
                     if let (Some(p), Some(c)) = (var(a.args.first()), var(a.args.get(down(rel).unwrap_or(1)))) {
-                        edges.push((p, c));
+                        edges.push((p.to_string(), c.to_string()));
                     }
                 }
                 _ if rel.starts_with(ast) => {
                     if let Some(root) = var(a.args.first()) {
                         if let Some(Some(k)) = roots.get(rel) {
-                            kinds.push((root.clone(), k.clone()));
+                            kinds.push((root.to_string(), k.clone()));
                         }
                         for c in a.args.iter().skip(1).filter_map(|t| var(Some(t))) {
-                            edges.push((root.clone(), c));
+                            edges.push((root.to_string(), c.to_string()));
                         }
                     }
                 }
                 _ if derived(rel) => {
                     for (c, t) in a.args.iter().enumerate() {
                         if let Some(v) = var(Some(t)).filter(|_| cols.contains(&(rel.to_owned(), c))) {
-                            grounded.insert(v);
+                            grounded.insert(v.to_string());
                         }
                     }
                 }
@@ -690,7 +690,7 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
             let rel = r.head.rel.as_str();
             for (c, t) in r.head.args.iter().enumerate() {
                 let key = (rel.to_owned(), c);
-                if proven_cols.contains(&key) && !matches!(t, Term::Var(v) if proven.contains(v)) {
+                if proven_cols.contains(&key) && !matches!(t, Term::Var(v) if proven.contains(v.as_str())) {
                     proven_cols.remove(&key);
                     changed = true;
                 }
@@ -705,7 +705,7 @@ pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, 
         let (proven, anchors, kinds) = prove(r, &proven_cols);
         for a in r.body.iter().filter_map(Literal::atom) {
             for (c, t) in a.args.iter().enumerate() {
-                if let Term::Var(v) = t && node_col(a.rel.as_str(), c) && !proven.contains(v) {
+                if let Term::Var(v) = t && node_col(a.rel.as_str(), c) && !proven.contains(v.as_str()) {
                     return Err(format!("{}'s ${v} is in no anchor's subtree", r.head.rel.as_str()));
                 }
             }
@@ -730,7 +730,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| !atom.neg) {
                 for (column, term) in atom.args.iter().enumerate() {
                     if let Term::Var(value) = term {
-                        *vars.entry(value.clone()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
+                        *vars.entry(value.to_string()).or_default() |= columns.get(&(atom.rel.to_string(), column)).copied().unwrap_or(0);
                     }
                 }
             }
@@ -738,9 +738,9 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
                 let mut aliases_changed = false;
                 for literal in &rule.body {
                     if let Literal::Cmp { l: Term::Var(left), op: "=", r: Term::Var(right) } = literal {
-                        let mask = vars.get(left).copied().unwrap_or(0) | vars.get(right).copied().unwrap_or(0);
+                        let mask = vars.get(left.as_str()).copied().unwrap_or(0) | vars.get(right.as_str()).copied().unwrap_or(0);
                         for value in [left, right] {
-                            let entry = vars.entry(value.clone()).or_default();
+                            let entry = vars.entry(value.to_string()).or_default();
                             aliases_changed |= *entry != (*entry | mask);
                             *entry |= mask;
                         }
@@ -750,7 +750,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             }
             for (column, term) in rule.head.args.iter().enumerate() {
                 if let Term::Var(value) = term {
-                    let mask = vars.get(value).copied().unwrap_or(0);
+                    let mask = vars.get(value.as_str()).copied().unwrap_or(0);
                     if mask != 0 {
                         let entry = columns.entry((rule.head.rel.to_string(), column)).or_default();
                         changed |= *entry != (*entry | mask);
@@ -760,7 +760,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
             }
             for atom in rule.body.iter().filter_map(Literal::atom).filter(|atom| atom.rel == "text") {
                 if let Some(Term::Var(value)) = atom.args.first() {
-                    requested |= vars.get(value).copied().unwrap_or(0);
+                    requested |= vars.get(value.as_str()).copied().unwrap_or(0);
                 }
             }
         }

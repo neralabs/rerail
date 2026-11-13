@@ -309,7 +309,7 @@ fn decode_chosen(texts: &HashMap<[u8; 32], String>, entry: &[u8]) -> Option<Chos
             .into_iter()
             .flatten()
             .filter_map(|row| match row.as_slice() {
-                [Value::Int(k), Value::Str(s)] => Some((*k, s.clone())),
+                [Value::Int(k), Value::Str(s)] => Some((*k, s.to_string())),
                 _ => None,
             })
             .collect();
@@ -345,10 +345,10 @@ fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Cho
         // chooses again.
         let Some((digest, text)) = program_text::store(store, program)? else { return Ok(false) };
         late.lock().expect("the late sources").push(text);
-        facts.insert(REWRITTEN.to_owned(), vec![vec![Value::Str(hex(&digest))]]);
+        facts.insert(REWRITTEN.to_owned(), vec![vec![Value::Str(hex(&digest).into())]]);
     }
     facts.insert(SCALE.to_owned(), vec![vec![Value::Int(chosen.nodes.round() as i64)]]);
-    let list = |names: &[String]| names.iter().enumerate().map(|(k, s)| vec![Value::Int(k as i64), Value::Str(s.clone())]).collect();
+    let list = |names: &[String]| names.iter().enumerate().map(|(k, s)| vec![Value::Int(k as i64), Value::Str(s.clone().into())]).collect();
     facts.insert(INLINED.to_owned(), list(&chosen.inlined));
     facts.insert(DEMANDED.to_owned(), list(&chosen.demanded));
     let text = source_text(prepared);

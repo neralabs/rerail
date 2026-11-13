@@ -87,7 +87,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             let at: Vec<usize> = (0..a.args.len()).filter(|&k| !matches!(a.args[k], Term::Wild)).collect();
             let ad: String = (0..a.args.len()).map(|k| if at.contains(&k) { 'b' } else { 'f' }).collect();
             let key: Vec<Term> = at.iter().map(|&k| a.args[k].clone()).collect();
-            let cols: Vec<(String, String)> = at.iter().map(|&k| (format!("c{k}"), prog.decls.get(a.rel.as_str()).and_then(|d| d.get(k)).map_or("int".to_owned(), |(_, t)| t.clone()))).collect();
+            let cols: Vec<(String, String)> = at.iter().map(|&k| (format!("c{k}"), prog.decls.get(a.rel.as_str()).and_then(|d| d.get(k)).map_or("int".to_owned(), |(_, t)| t.to_string()))).collect();
             // Keyed when the literals before the negation read the component, so its keys grow with it; otherwise the
             // keys are fixed before it runs, and the whole relation's gate holds them all (as demand's does).
             let asks_inside = r.body[..i].iter().filter_map(Literal::atom).any(|b| comp.get(b.rel.as_str()) == Some(&c));
@@ -114,16 +114,16 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
     let names: BTreeSet<String> = made.iter().map(|(d, ..)| d.clone()).collect();
     let mut gates = Vec::new();
     for (done, ask, rel, cols) in &made {
-        prog.decls.insert(done.clone(), cols.clone());
+        prog.decls.insert(done.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         // Placement only: it puts `done` in the component (`native_stratum` drops a gate's rule).
         match ask {
             Some(ask) => {
-                prog.decls.insert(ask.clone(), cols.clone());
-                let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}"))).collect();
+                prog.decls.insert(ask.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+                let vs: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("_g{i}").into())).collect();
                 rules.push(Rule { head: atom(done.clone(), vs.clone()), body: vec![Literal::Atom(atom(ask.clone(), vs))] });
             }
             None => {
-                let wild = vec![Term::Wild; prog.decls.get(rel).map_or(0, Vec::len)];
+                let wild = vec![Term::Wild; prog.decls.get(rel.as_str()).map_or(0, Vec::len)];
                 rules.push(Rule { head: atom(done.clone(), vec![Term::Int(0)]), body: vec![Literal::Atom(atom(rel.clone(), wild))] });
             }
         }

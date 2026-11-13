@@ -294,15 +294,15 @@ fn cmp(l: Term, op: &'static str, r: Term) -> Literal {
 }
 
 fn call(f: &str, args: Vec<Term>) -> Term {
-    Term::Call(f.to_owned(), args)
+    Term::Call(f.to_owned().into(), args)
 }
 
 fn s(x: &str) -> Term {
-    Term::Str(x.to_owned())
+    Term::Str(x.to_owned().into())
 }
 
 fn v(x: &str) -> Term {
-    Term::Var(x.to_owned())
+    Term::Var(x.to_owned().into())
 }
 
 fn set(items: &[&str]) -> Term {
@@ -341,7 +341,7 @@ best(n, @dot("a", x)) :- name(n, x).
 "#,
     )
     .unwrap();
-    assert_eq!(p.decls["name"], vec![("n".to_owned(), "node".to_owned()), ("s".to_owned(), "sym".to_owned())]);
+    assert_eq!(p.decls["name"], [("n", "node"), ("s", "sym")].map(|(c, t)| (c.into(), t.into())));
     assert_eq!(p.kindsets["scope"], vec!["module".to_owned(), "class_definition".to_owned()]);
     assert!(!p.decls.contains_key("scope") && !p.facts.contains_key("scope"));
     let best = &p.lattice["best"];
@@ -766,7 +766,7 @@ fn authored() -> Vec<(String, String, PathBuf)> {
 fn normalized(mut p: front::Program) -> front::Program {
     let r = |name: &str| translate::relation(name);
     let rename = |a: &mut front::Atom| a.rel = r(&a.rel).into();
-    p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k), v)).collect();
+    p.decls = std::mem::take(&mut p.decls).into_iter().map(|(k, v)| (r(&k).into(), v)).collect();
     p.lattice = std::mem::take(&mut p.lattice).into_iter().map(|(k, v)| (r(&k), v)).collect();
     p.facts = std::mem::take(&mut p.facts).into_iter().map(|(k, v)| (r(&k), v)).collect();
     for list in [&mut p.inputs, &mut p.outputs, &mut p.demand] {
@@ -783,7 +783,7 @@ fn normalized(mut p: front::Program) -> front::Program {
     }
     // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
-    let v = |s: &str| front::Term::Var(s.to_owned());
+    let v = |s: &str| front::Term::Var(s.to_owned().into());
     let mut at = 0;
     for (rel, head, args) in [
         ("kind", [v("n"), v("k")], [front::Term::Wild, v("n"), v("k"), front::Term::Wild, front::Term::Wild]),
@@ -815,7 +815,7 @@ fn without_requests(mut p: front::Program) -> front::Program {
         }
         gone.extend(more);
     }
-    p.decls.retain(|k, _| !gone.contains(k));
+    p.decls.retain(|k, _| !gone.contains(k.as_str()));
     p
 }
 
@@ -976,7 +976,7 @@ fn sum_and_join_lower() {
     assert!(op == front::AggOp::Sum && over.starts_with("rr_val"), "{over}");
     let cols = &p.decls[atom.rel.as_str()];
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
+    assert!(cols.contains(&(over.clone().into(), "int".into())), "{cols:?}");
     let (_, _, atom) = agg("r");
     assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
@@ -997,7 +997,7 @@ fn aggregates_inside_terms_lower() {
     .unwrap();
     let cc = p.rules.iter().find(|r| r.head.rel == "cc").unwrap();
     let Some(Literal::Agg { var, op: front::AggOp::Count, .. }) = cc.body.iter().find(|l| matches!(l, Literal::Agg { .. })) else { panic!("{cc}") };
-    assert_eq!(cc.head.args[1], Term::Call("add".to_owned(), vec![Term::Int(1), Term::Var(var.clone())]), "{cc}");
+    assert_eq!(cc.head.args[1], Term::Call("add".into(), vec![Term::Int(1), Term::Var(var.clone().into())]), "{cc}");
     let two = p.rules.iter().find(|r| r.head.rel == "two").unwrap();
     assert_eq!(two.body.iter().filter(|l| matches!(l, Literal::Agg { .. })).count(), 2, "{two}");
 }
@@ -1124,8 +1124,8 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     )
     .unwrap();
     let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
-    let v = |s: &str| Term::Var(s.to_owned());
-    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".to_owned().into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    let v = |s: &str| Term::Var(s.to_owned().into());
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "rr_has_fn".into(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
     assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
     assert!(rules[1].body.iter().any(|l| matches!(l, Literal::Atom(x) if x.rel.starts_with("rr_up") && x.args == [v("n"), v("a")])), "{}", rules[1]);
@@ -3324,7 +3324,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             }).collect();
             rules.sort();
             let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
-            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(*r)).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
+            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", renumber(r), c.len()) } else { renumber(&format!("{r}{c:?}")) }).collect();
             decls.sort();
             let natives: BTreeSet<String> = p.natives.keys().map(|n| renumber(n)).collect();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause

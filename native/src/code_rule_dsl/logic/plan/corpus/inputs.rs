@@ -67,7 +67,7 @@ fn select<'a>(value: &'a Json, steps: &[&str], prefix: Vec<Json>, out: &mut Vec<
 
 fn scalar(value: &Json, ty: &str, text: bool) -> ReadResult<Value> {
     match (ty, value) {
-        ("sym", Json::String(s)) => Ok(Value::Str(s.clone())),
+        ("sym", Json::String(s)) => Ok(Value::Str(s.clone().into())),
         ("int", Json::Number(n)) => n.as_i64().map(Value::Int).ok_or_else(|| malformed("number is outside the signed integer domain")),
         ("int", Json::Bool(b)) => Ok(Value::Int(i64::from(*b))),
         ("int", Json::String(s)) if text => s.parse().map(Value::Int).map_err(|_| malformed("invalid integer field")),
@@ -75,12 +75,12 @@ fn scalar(value: &Json, ty: &str, text: bool) -> ReadResult<Value> {
     }
 }
 
-fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult<Vec<Value>> {
+fn typed(row: Vec<Json>, columns: &[(front::Name, front::Name)], text: bool) -> ReadResult<Vec<Value>> {
     if row.len() != columns.len() { return Err(malformed(format!("expected {} columns, found {}", columns.len(), row.len()))); }
     row.iter().zip(columns).map(|(v, (_, ty))| scalar(v, ty, text)).collect()
 }
 
-fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
+fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(front::Name, front::Name)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
     let mut selected = Vec::new();
@@ -92,7 +92,7 @@ fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, colu
             items.iter().map(|item| {
                 let Json::Object(map) = item else { return Err(malformed("record is not an object")); };
                 columns[prefix.len().min(columns.len())..].iter().map(|(key, _)|
-                    map.get(key).cloned().ok_or_else(|| malformed(format!("record is missing {key}")))).collect()
+                    map.get(key.as_str()).cloned().ok_or_else(|| malformed(format!("record is missing {key}")))).collect()
             }).collect::<ReadResult<_>>()?
         } else { match value {
             Json::Object(map) => map.iter().map(|(k, v)| vec![Json::String(k.clone()), v.clone()]).collect(),
@@ -113,7 +113,7 @@ impl Readers {
     fn read<'a>(&'a mut self, path: &str, read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<&'a str> {
         self.bytes.entry(path.to_owned()).or_insert_with(|| read(path)).as_ref().map(String::as_str).map_err(Clone::clone)
     }
-    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
+    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(front::Name, front::Name)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
         if matches!(io, "json" | "yaml") {
             let key = (path.to_owned(), io.to_owned());
             if !self.documents.contains_key(&key) {
@@ -477,7 +477,7 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n), Value::Str(id)]));
+            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n.into()), Value::Str(id.into())]));
             if base.is_none() {
                 return;
             }
@@ -485,7 +485,7 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
             program.inputs.retain(|n| n != "input_error");
-            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone())]);
+            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())]);
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -590,7 +590,7 @@ fn populate_with(
             match result {
                 Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
                 Err(error) => {
-                    let row = vec![Value::Str(format!("artifact:{name}")), Value::Str(error.kind.to_owned()), Value::Str(error.detail.clone())];
+                    let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
                         errors.push(row);
                     }
@@ -634,13 +634,13 @@ fn populate_with(
         match result {
             Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
             Err(error) if at_base => {
-                let row = vec![Value::Str(format!("{path}@base")), Value::Str(error.kind.to_owned()), Value::Str(error.detail.clone())];
+                let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
                     errors.push(row);
                 }
                 incomplete.insert(rel.to_owned(), format!("{path}@base {}", error.kind));
             }
-            Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
+            Err(error) => errors.push(vec![Value::Str(path.clone().into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.into())]),
         }
     }
     if !errors.is_empty() {
@@ -737,7 +737,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 pub mod tests {
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
-        let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();
+        let cols = columns.iter().map(|(name, ty)| ((*name).into(), (*ty).into())).collect::<Vec<_>>();
         Readers::default().rows("fixture", io, pointer, records, Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
     }
 

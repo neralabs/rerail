@@ -143,7 +143,7 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     };
     // One rule's guards: on each read whose location no read of `covers` gives. Returns the guards added.
     let guard_rule = |rule: &mut front::Rule, covers: &BTreeSet<String>, outside: &str| -> usize {
-        let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.clone()) } else { None };
+        let var = |t: Option<&Term>| if let Some(Term::Var(v)) = t { Some(v.to_string()) } else { None };
         let mut covered: BTreeSet<String> = BTreeSet::new();
         for a in rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg && covers.contains(a.rel.as_str())) {
             let (docs, nodes, spans) = place(&a.rel);
@@ -152,24 +152,24 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         let mut guards: Vec<(usize, Vec<Literal>)> = Vec::new();
         let mut fresh = 0;
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
-        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: vec![Term::Var(d.to_owned())], neg: true, gated: false });
+        let at = |d: &str| Literal::Atom(Atom { rel: outside.to_owned().into(), args: vec![Term::Var(d.to_owned().into())], neg: true, gated: false });
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(n.to_owned())]) }, at(&g)]
+            vec![Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("doc".into(), vec![Term::Var(n.to_owned().into())]) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Literal> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
-            vec![Literal::Atom(Atom { rel: "docof".to_owned().into(), args: vec![Term::Var(n.to_owned()), Term::Var(g.clone())], neg: false, gated: false }), at(&g)]
+            vec![Literal::Atom(Atom { rel: "docof".into(), args: vec![Term::Var(n.to_owned().into()), Term::Var(g.clone().into())], neg: false, gated: false }), at(&g)]
         };
         for (k, l) in rule.body.iter().enumerate() {
             match l {
                 Literal::Atom(a) if !a.neg && !covers.contains(a.rel.as_str()) && !machinery(&a.rel) => {
                     let (docs, nodes, spans) = place(&a.rel);
-                    let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).collect();
-                    let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).collect();
-                    let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).collect();
+                    let dvs: Vec<String> = docs.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
+                    let nvs: Vec<String> = nodes.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
+                    let svs: Vec<String> = spans.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
                     let mut g = Vec::new();
                     if !derived.contains(a.rel.as_str()) {
                         // A base row is one document's: one guard, unless a location of it is covered.

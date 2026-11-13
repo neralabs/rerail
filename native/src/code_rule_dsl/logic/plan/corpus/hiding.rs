@@ -131,7 +131,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         carried = carry(prog, &base_locations, &seeds, &view, &reaches);
         let snapshot = prog.rules.clone();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
-        let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         for (i, rule) in prog.rules.iter_mut().enumerate() {
@@ -193,13 +193,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         let mut seed = BTreeMap::new();
                         for (c, g) in &cols {
                             if let Some(Term::Var(v)) = copy.head.args.get(*c) {
-                                seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
+                                seed.insert(v.to_string(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                             }
                         }
                         copies.push((copy, seed));
                     }
-                    if let Some(d) = prog.decls.get(&orig) {
-                        decls.push((name.clone(), d.clone()));
+                    if let Some(d) = prog.decls.get(orig.as_str()) {
+                        decls.push((name.clone().into(), d.clone()));
                     }
                     specialized.insert(name.clone(), (orig, cols));
                 }
@@ -236,11 +236,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
             let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
-            let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
+            let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v.as_str()).is_some_and(|f| f.scoped)));
             if atom_scoped {
                 // Named in the guest's grammar only where the node is the guest's (a clone's seed), not maybe one.
                 let grammar = cols.iter().find_map(|&c| match a.args.get(c) {
-                    Some(Term::Var(v)) => facts.get(v).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
+                    Some(Term::Var(v)) => facts.get(v.as_str()).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
                     _ => None,
                 });
                 if let Some(g) = grammar {
@@ -251,12 +251,12 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             for &c in cols {
                 match a.args.get_mut(c) {
                     Some(Term::Var(v)) => {
-                        bounded.entry(v.clone()).or_insert(Some(c) == doc_col);
+                        bounded.entry(v.to_string()).or_insert(Some(c) == doc_col);
                     }
                     Some(t @ Term::Wild) => {
                         let v = format!("rr_shown{fresh}");
                         fresh += 1;
-                        *t = Term::Var(v.clone());
+                        *t = Term::Var(v.clone().into());
                         bounded.insert(v, Some(c) == doc_col);
                     }
                     _ => {}
@@ -264,7 +264,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
         }
         for (v, doc_column) in bounded {
-            rule.body.push(Literal::Cmp { l: Term::Var(v), op: "<", r: Term::Int(bound_of(doc_column)) });
+            rule.body.push(Literal::Cmp { l: Term::Var(v.into()), op: "<", r: Term::Int(bound_of(doc_column)) });
         }
     }
     // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
@@ -284,13 +284,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             let mut inner = atom.clone();
             for (c, t) in inner.args.iter_mut().enumerate() {
                 if matches!(t, Term::Wild) {
-                    *t = Term::Var(format!("rr_shown_agg_c{c}"));
+                    *t = Term::Var(format!("rr_shown_agg_c{c}").into());
                 }
             }
             let bounds: Vec<Literal> = cols
                 .iter()
                 .filter_map(|&c| match inner.args.get(c) {
-                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
+                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone().into()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
                     _ => None,
                 })
                 .collect();
@@ -299,11 +299,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 if let Term::Var(v) = t
                     && !vars.iter().any(|(x, _)| x == v)
                 {
-                    vars.push((v.clone(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.clone())));
+                    vars.push((v.to_string(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
             let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
+            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -314,7 +314,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     for (head, vars, body) in helpers {
-        prog.decls.insert(head.rel.to_string(), vars);
+        prog.decls.insert(head.rel.clone(), vars.iter().map(|(c, t)| (c.into(), t.into())).collect());
         prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body });
     }
 }
@@ -352,7 +352,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         // The longest original that leaves an own prefix.
         let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(mid));
         if let Some((_, orig)) = orig {
-            folded.insert(rel.clone(), orig.to_owned());
+            folded.insert(rel.to_string(), orig.to_owned());
         }
     }
     let sets: HashMap<String, String> = prog
@@ -377,7 +377,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
             && let Some(name) = s.strip_prefix(plain.as_str())
         {
-            *s = name.to_owned();
+            *s = name.to_owned().into();
         }
     };
     for rule in &mut prog.rules {
@@ -399,7 +399,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         }
     }
     for rel in folded.keys() {
-        prog.decls.remove(rel);
+        prog.decls.remove(rel.as_str());
         prog.qualifiers.remove(rel);
     }
     for k in sets.keys() {
@@ -497,7 +497,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
         }
     };
     fixpoint(&mut carried, &|facts, t, slot| match t {
-        Term::Var(v) => facts.get(v).is_some_and(|f| slot.join(f)),
+        Term::Var(v) => facts.get(v.as_str()).is_some_and(|f| slot.join(f)),
         _ => false,
     });
     // Which scoped columns only guest values fill: every column scoped is taken as definite, then a rule filling it
@@ -508,7 +508,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
         }
     }
     fixpoint(&mut carried, &|facts, t, slot| {
-        let definite = matches!(t, Term::Var(v) if facts.get(v).is_some_and(|f| f.definite));
+        let definite = matches!(t, Term::Var(v) if facts.get(v.as_str()).is_some_and(|f| f.definite));
         if slot.definite && !definite {
             slot.definite = false;
             true
@@ -534,13 +534,13 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
     for a in positive() {
         let Some(&(_, cols, grammar, tape)) = ENTRIES.iter().find(|(e, ..)| *e == a.rel) else { continue };
         let grammar = grammar.and_then(|g| match a.args.get(g) {
-            Some(Term::Str(s)) => Some(s.clone()),
+            Some(Term::Str(s)) => Some(s.to_string()),
             _ => None,
         });
         let fact = Fact { scoped: true, grammar, definite: true };
         for &c in cols.iter().chain(tape.iter()) {
             if let Some(v) = var(a.args.get(c)) {
-                facts.entry(v).or_default().join(&fact);
+                facts.entry(v.to_string()).or_default().join(&fact);
             }
         }
     }
@@ -549,7 +549,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
         if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
-                    facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
+                    facts.entry(v.to_string()).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
                 }
             }
         }
@@ -564,7 +564,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
             "tape" => vec![0, 1],
             r => base.get(r).cloned().unwrap_or_default(),
         };
-        let vars: Vec<String> = cols.iter().filter_map(|&c| var(a.args.get(c))).collect();
+        let vars: Vec<String> = cols.iter().filter_map(|&c| var(a.args.get(c))).map(String::from).collect();
         if vars.len() > 1 {
             groups.push(vars);
         }
@@ -573,7 +573,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
         match l {
             Literal::Nearest { n, a, .. } => groups.push(vec![n.clone(), a.clone()]),
             // `t = rr_tape1`: a hoisted value is the variable it is named by.
-            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => groups.push(vec![a.clone(), b.clone()]),
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => groups.push(vec![a.to_string(), b.to_string()]),
             _ => {}
         }
     }
@@ -611,7 +611,7 @@ fn qualify(a: &mut Atom, label: &str) {
     if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
         && qualified(s).is_none()
     {
-        *s = format!("{label}:{s}");
+        *s = format!("{label}:{s}").into();
     }
 }
 

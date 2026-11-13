@@ -183,3 +183,18 @@ impl From<&Name> for String {
         name.as_str().to_owned()
     }
 }
+
+/// A name serializes as the text it holds.
+impl serde::Serialize for Name {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+/// A name deserializes from its text, interned.
+impl<'de> serde::Deserialize<'de> for Name {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+        Ok(Name::new(&text))
+    }
+}

@@ -192,7 +192,7 @@ pub fn optimize(program: &mut Program) {
             || program.inputs.contains(&name)
             || program.natives.contains_key(name.as_str())
             || program.facts.contains_key(name.as_str())
-            || program.decls.contains_key(&format!("rr_demand_agg_{name}"))
+            || program.decls.contains_key(format!("rr_demand_agg_{name}").as_str())
         {
             continue;
         }
@@ -214,7 +214,7 @@ pub fn optimize(program: &mut Program) {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, t)| match t {
-                        Term::Var(v) if Some(v) != over.as_ref() => Some(i),
+                        Term::Var(v) if Some(v.as_str()) != over.as_deref() => Some(i),
                         Term::Int(_) | Term::Str(_) => Some(i),
                         _ => None,
                     })
@@ -268,7 +268,7 @@ pub fn optimize(program: &mut Program) {
         let closes = known.as_ref().is_none_or(|edges| guards.iter().any(|g| depends(edges, g, &name))) || full_checks();
         // Placed: the demand declared, read first by the aggregate's rules, made by its demand rules.
         let decl = positions.iter().map(|&i| program.decls[name.as_str()][i].clone()).collect();
-        program.decls.insert(demand.clone(), decl);
+        program.decls.insert(demand.clone().into(), decl);
         for &mi in makers.get(&name).into_iter().flatten() {
             let rule = &mut program.rules[mi];
             let args = positions.iter().map(|&i| rule.head.args[i].clone()).collect();
@@ -285,7 +285,7 @@ pub fn optimize(program: &mut Program) {
                     for &mi in makers.get(&name).into_iter().flatten() {
                         program.rules[mi].body.remove(0);
                     }
-                    program.decls.remove(&demand);
+                    program.decls.remove(demand.as_str());
                     continue;
                 }
             }
@@ -360,11 +360,11 @@ pub fn retype_helpers(program: &mut Program) {
     let mut changed = true;
     while changed {
         changed = false;
-        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().collect();
+        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().map(String::from).collect();
         for rel in helpers {
-            let width = program.decls[&rel].len();
+            let width = program.decls[rel.as_str()].len();
             for i in 0..width {
-                if program.decls[&rel][i].1 != "sym" {
+                if program.decls[rel.as_str()][i].1 != "sym" {
                     continue;
                 }
                 let (mut found, mut symbol) = (None::<String>, false);
@@ -383,7 +383,7 @@ pub fn retype_helpers(program: &mut Program) {
                                     let ty = if front::is_axis(&a.rel) {
                                         Some("node".to_owned())
                                     } else {
-                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.clone())
+                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.to_string())
                                     };
                                     match ty.as_deref() {
                                         Some("sym") if !helper(&a.rel) => symbol = true,
@@ -398,7 +398,7 @@ pub fn retype_helpers(program: &mut Program) {
                     }
                 }
                 if let (Some(ty), false) = (found, symbol) {
-                    program.decls.get_mut(&rel).expect("a helper")[i].1 = ty;
+                    program.decls.get_mut(rel.as_str()).expect("a helper")[i].1 = ty.into();
                     changed = true;
                 }
             }

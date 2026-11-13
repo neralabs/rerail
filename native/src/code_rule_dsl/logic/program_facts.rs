@@ -25,6 +25,7 @@
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
+use super::front::Name;
 use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
@@ -54,7 +55,7 @@ impl Cell for Value {
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<Name, Vec<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -126,14 +127,14 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     SCHEMA
         .iter()
         .map(|(rel, cols)| {
-            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.to_owned(), t.to_owned())).collect();
-            ((*rel).to_owned(), cols)
+            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.into(), t.into())).collect();
+            ((*rel).into(), cols)
         })
         .collect()
 }
 
 fn s(x: &str) -> Value {
-    Value::Str(x.to_owned())
+    Value::Str(x.to_owned().into())
 }
 
 fn n(x: impl TryInto<i64>) -> Value {
@@ -555,14 +556,14 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn term(&self, t: i64) -> Result<Term, String> {
         let row = self.terms.get(t).ok_or_else(|| bad(format!("no term {t}")))?;
         Ok(match str_of(&row[1])? {
-            "var" => Term::Var(text(&row[3])?),
+            "var" => Term::Var(text(&row[3])?.into()),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
-            "str" => Term::Str(text(&row[3])?),
+            "str" => Term::Str(text(&row[3])?.into()),
             "top" => Term::Top,
             "call" => {
                 let args = self.call_args.of_owner(t).iter().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()?;
-                Term::Call(text(&row[3])?, args)
+                Term::Call(text(&row[3])?.into(), args)
             }
             other => return Err(bad(format!("no term kind {other}"))),
         })
@@ -643,7 +644,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             if cols.len() as i64 != int(&row[1])? {
                 return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
             }
-            prog.decls.insert(rel, cols);
+            prog.decls.insert(rel.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         }
         prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         for row in self.get("qualifier") {
@@ -665,7 +666,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("fact") {
             let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
-                _ => Value::Str(text(&row[5])?),
+                _ => Value::Str(text(&row[5])?.into()),
             };
             values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
@@ -810,7 +811,7 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows.
-pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<Name, Vec<(Name, Name)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -900,7 +901,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             for _ in 0..width {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
-                    1 => Value::Str(string(at.u64()?)?),
+                    1 => Value::Str(string(at.u64()?)?.into()),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });
             }

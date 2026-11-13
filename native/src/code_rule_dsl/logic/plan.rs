@@ -139,7 +139,7 @@ pub enum Constant {
 fn constant(t: &Term) -> Option<Constant> {
     match t {
         Term::Int(i) => Some(Constant::Int(*i)),
-        Term::Str(s) => Some(Constant::Str(s.clone())),
+        Term::Str(s) => Some(Constant::Str(s.to_string())),
         _ => None,
     }
 }
@@ -231,7 +231,7 @@ fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
         .iter()
         .enumerate()
         .filter_map(|(c, t)| match t {
-            Term::Var(v) if bound.contains(v) => Some((c, None)),
+            Term::Var(v) if bound.contains(v.as_str()) => Some((c, None)),
             _ => constant(t).map(|k| (c, Some(k))),
         })
         .collect();
@@ -954,18 +954,18 @@ fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
 /// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
 /// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
 /// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
-fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t String> {
+fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t crate::code_rule_dsl::logic::front::Name> {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
         return None;
     }
     let Term::Var(y) = r else { return None };
     let ready = match l {
-        Term::Var(x) => bound.contains(x),
+        Term::Var(x) => bound.contains(x.as_str()),
         Term::Int(_) | Term::Str(_) => true,
         _ => false,
     };
-    (ready && !bound.contains(y)).then_some(y)
+    (ready && !bound.contains(y.as_str())).then_some(y)
 }
 
 fn is_join(l: &Literal) -> bool {
@@ -2430,7 +2430,7 @@ impl Model {
             // not a property of the join, so it is priced from the relation's own estimate (below). What was
             // observed comes before any rule that estimates: an absence proof from a snapshot was kept over 733,692
             // rows seen (`pfn`'s `pcall__ins`).
-            let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
+            let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v.as_str())));
             if !crossed
                 && let Some(seen) = stats.obs.get(&rule).and_then(|o| o.get(&atom_sig(a, bound)))
                 && seen[0] >= OBS_MIN
@@ -2447,13 +2447,13 @@ impl Model {
                 && let Some(k) = a.args.get(1).and_then(constant)
             {
                 basis.set("kind frequency");
-                if matches!(&a.args[0], Term::Var(v) if bound.contains(v)) {
+                if matches!(&a.args[0], Term::Var(v) if bound.contains(v.as_str())) {
                     return 1.0;
                 }
                 return self.kind_frequency(&k).map_or(0.5, |n| (n as f64).max(0.01));
             }
             let cols: Vec<usize> = (0..a.args.len())
-                .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
+                .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v.as_str())))
                 .collect();
             if cols.is_empty() {
                 basis.set("relation size");
@@ -2576,7 +2576,7 @@ impl Model {
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
             let delta_atom = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
-            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) && rows < 1.0 {
+            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v.as_str()))) && rows < 1.0 {
                 rows = 1.0;
                 basis.set("cross product");
             }
@@ -2589,7 +2589,7 @@ impl Model {
             // once: its card, measured then (`Stats::sized`). A whole plan priced by the floor took `pv` (65 k rows)
             // first, tied with `decfn` (1 k) at the corpus's 180 k, and read it in full (O125 step 07).
             let sized = bound.is_empty() && stats.sized.contains(a.rel.as_str());
-            if !delta && !sized && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+            if !delta && !sized && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v.as_str()))) {
                 let mut floor = stats.nodes;
                 for (c, t) in a.args.iter().enumerate() {
                     if constant(t).is_some() {
@@ -2619,12 +2619,12 @@ impl Model {
                 }
                 let Some(&(nc, dc)) = self.docof.get(d.rel.as_str()) else { continue };
                 let (Term::Var(v), dv) = (&d.args[nc], &d.args[dc]) else { continue };
-                if bound.contains(v) || !(constant(dv).is_some() || matches!(dv, Term::Var(x) if bound.contains(x))) {
+                if bound.contains(v.as_str()) || !(constant(dv).is_some() || matches!(dv, Term::Var(x) if bound.contains(x.as_str()))) {
                     continue;
                 }
                 let rcols: Vec<usize> = (0..a.args.len()).filter(|&c| matches!(&a.args[c], Term::Var(x) if x == v)).collect();
                 let bcols: Vec<usize> = (0..a.args.len())
-                    .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(x) if bound.contains(x)))
+                    .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(x) if bound.contains(x.as_str())))
                     .collect();
                 if rcols.len() != 1 || bcols.len() != 1 {
                     continue;
@@ -2650,7 +2650,7 @@ impl Model {
             // step look free (decision 0038). The search keeps T's pricing, which takes a cross product after an
             // unfilled relation (`magic_returns`) on purpose; a kept plan made where a relation was empty is re-priced
             // in the next chunk and replanned where it grew.
-            let unbound = matches!(l, Literal::Atom(a) if !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))));
+            let unbound = matches!(l, Literal::Atom(a) if !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v.as_str()))));
             let rows = if long && unbound && !bound.is_empty() { rows.max(1.0) } else { rows };
             match l {
                 Literal::Atom(a) => {
@@ -3180,7 +3180,7 @@ impl Model {
                 placed.insert(s.at);
                 let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
                     (0..a.args.len())
-                        .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
+                        .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v.as_str())))
                         .map(|c| self.col(&a.rel, c))
                         .collect()
                 };
@@ -3385,7 +3385,7 @@ pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<
         // batch source is scanned.
         Arc::make_mut(&mut stats.indexes).insert(rel.clone(), vtab_indexes(rel));
         let names = super::sql::select::input_columns(rel);
-        for col in 0..prog.decls.get(rel).map_or(0, Vec::len) {
+        for col in 0..prog.decls.get(rel.as_str()).map_or(0, Vec::len) {
             // A base relation's distinct values by column: a chunk's documents, kinds, child indexes, fields
             // and parents are far fewer than its rows. Other columns are taken as keys.
             let distinct = match names.and_then(|names| names.get(col)).copied() {
@@ -3545,7 +3545,7 @@ fn partial(t: &Term) -> bool {
 
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
     Ok(match t {
-        Term::Var(v) => env.get(v).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
+        Term::Var(v) => env.get(v.as_str()).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
         Term::Int(i) => integer(*i),
         Term::Str(s) => string(s),
         Term::Top => integer(TOP),
@@ -3700,7 +3700,7 @@ impl Model {
             Relation::Batch { rel, .. } => self.inputs.batch.contains_key(rel),
             Relation::Derived { rel, .. } | Relation::Bound { rel, .. } => {
                 // Or a view the run made and planned from (`rdl_kinds`: its statistics are the model's).
-                prog.decls.contains_key(rel) || prog.rules.iter().any(|rule| rule.head.rel == *rel) || self.stats.card.contains_key(rel)
+                prog.decls.contains_key(rel.as_str()) || prog.rules.iter().any(|rule| rule.head.rel == *rel) || self.stats.card.contains_key(rel)
             }
             _ => true,
         }
@@ -3788,7 +3788,7 @@ impl Model {
                             let &(nc, dc) = self.docof.get(d.rel.as_str())?;
                             let Term::Var(v) = &d.args[nc] else { return None };
                             let dv = &d.args[dc];
-                            (lv.contains(v) && (constant(dv).is_some() || matches!(dv, Term::Var(x) if env.contains_key(x))))
+                            (lv.contains(v.as_str()) && (constant(dv).is_some() || matches!(dv, Term::Var(x) if env.contains_key(x.as_str()))))
                                 .then(|| (v.clone(), dv.clone()))
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
@@ -3810,10 +3810,10 @@ impl Model {
                     for (c, t) in l.args.iter().enumerate() {
                         let column = col(&al, &self.col(&l.rel, c));
                         match t {
-                            Term::Var(v) => match env.get(v) {
+                            Term::Var(v) => match env.get(v.as_str()) {
                                 Some(e) => conds.push(eq(column, e.clone())),
                                 None => {
-                                    env.insert(v.clone(), column);
+                                    env.insert(v.to_string(), column);
                                 }
                             },
                             Term::Int(_) | Term::Str(_) | Term::Top => conds.push(eq(column, sql_term(t, &env, atoms)?)),
@@ -3835,17 +3835,17 @@ impl Model {
                 }
                 Literal::Cmp { l, op, r } => {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
-                    if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
+                    if *op == "=" && lv.is_some_and(|v| !env.contains_key(v.as_str())) {
                         let e = sql_term(r, &env, atoms)?;
                         // A partial scalar has no binding on failure. CTEs do not have the old
                         // derived tables' NOT NULL constraints, including for discarded bindings.
                         if partial(r) {
                             wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
                         }
-                        env.insert(lv.expect("a variable").clone(), e);
+                        env.insert(lv.expect("a variable").to_string(), e);
                     } else if let Some(y) = binds_right(l, op, r, &env.keys().cloned().collect()) {
                         let e = sql_term(l, &env, atoms)?;
-                        env.insert(y.clone(), e);
+                        env.insert(y.to_string(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
                         && r.is_cat()
@@ -3859,29 +3859,29 @@ impl Model {
                         // part places, or at every "." with a part before it (`rdl_int`). In atoms mode the text
                         // is `sym_text`'s, and the parts are interned (`sym_atom`).
                         let inputs = &self.inputs;
-                        let w = inputs.text_of(&env[lv]);
+                        let w = inputs.text_of(&env[lv.as_str()]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
                         // A later equality can already constrain the prefix. Enumerating every
                         // position first both amplifies work and loses prefixes beyond rdl_int's cap.
                         // Only nonempty constants use this rewrite: an unconstrained reverse cat
                         // and cat with an empty prefix have different enumeration contracts.
-                        if !env.contains_key(q) && !env.contains_key(x) {
+                        if !env.contains_key(q.as_str()) && !env.contains_key(x.as_str()) {
                             let prefix = order.iter().find_map(|step| match &step.lit {
                                 Literal::Cmp { l: Term::Var(v), op: "=", r } if v == q &&
                                     (matches!(r, Term::Str(s) if !s.is_empty()) ||
                                      inputs.atoms.is_some() && matches!(r, Term::Int(n) if *n > 0)) => Some(r),
                                 _ => None,
                             });
-                            if let Some(prefix) = prefix { env.insert(q.clone(), sql_term(prefix, &env, atoms)?); }
+                            if let Some(prefix) = prefix { env.insert(q.to_string(), sql_term(prefix, &env, atoms)?); }
                         }
                         let case = |when: Expr, then: Expr, otherwise: Expr| Expr::Case { branches: vec![(when, then)], fallback: Box::new(otherwise) };
-                        if let Some(eq_) = env.get(q).map(|e| inputs.text_of(e)) {
+                        if let Some(eq_) = env.get(q.as_str()).map(|e| inputs.text_of(e)) {
                             let empty = eq(eq_.clone(), string(""));
                             let prefix = eq(substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]), bin(Op::Concatenate, eq_.clone(), string(".")));
                             wh.push(bin(Op::Or, empty.clone(), prefix));
-                            env.insert(x.clone(), inputs.symbol_of(case(empty, w.clone(), substr(vec![w, bin(Op::Add, length(&eq_), integer(2))]))));
-                        } else if let Some(ex) = env.get(x).map(|e| inputs.text_of(e)) {
+                            env.insert(x.to_string(), inputs.symbol_of(case(empty, w.clone(), substr(vec![w, bin(Op::Add, length(&eq_), integer(2))]))));
+                        } else if let Some(ex) = env.get(x.as_str()).map(|e| inputs.text_of(e)) {
                             let whole = eq(w.clone(), ex.clone());
                             let negated = Expr::Unary { operator: SqlUnaryOperator::Negate, input: Box::new(length(&ex)) };
                             let suffix = bin(
@@ -3891,7 +3891,7 @@ impl Model {
                             );
                             wh.push(bin(Op::Or, whole.clone(), suffix));
                             let end = bin(Op::Subtract, bin(Op::Subtract, length(&w), length(&ex)), integer(1));
-                            env.insert(q.clone(), inputs.symbol_of(case(whole, string(""), substr(vec![w, integer(1), end]))));
+                            env.insert(q.to_string(), inputs.symbol_of(case(whole, string(""), substr(vec![w, integer(1), end]))));
                         } else {
                             // Position 1 stands for `"" . w`: a "." there has no part before it.
                             let al = a_name();
@@ -3902,8 +3902,8 @@ impl Model {
                                 bin(Op::Or, first.clone(), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))),
                             ];
                             frm.push((FromItem::cross(Relation::Integers, al), conds));
-                            env.insert(q.clone(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
-                            env.insert(x.clone(), inputs.symbol_of(case(first, w.clone(), substr(vec![w, bin(Op::Add, at, integer(1))]))));
+                            env.insert(q.to_string(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
+                            env.insert(x.to_string(), inputs.symbol_of(case(first, w.clone(), substr(vec![w, bin(Op::Add, at, integer(1))]))));
                         }
                     } else {
                         let operator = match *op {
@@ -4421,7 +4421,7 @@ fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
         .filter_map(|(rel, rules)| {
             let [r] = rules.as_slice() else { return None };
             let [Literal::Atom(a)] = r.body.as_slice() else { return None };
-            let vars: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+            let vars: Vec<&crate::code_rule_dsl::logic::front::Name> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
             let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
             let eqs = a.args.iter().enumerate().filter_map(|(c, t)| if let Term::Int(v) = t { Some((c, *v)) } else { None }).collect();
             plain.then(|| (rel.to_owned(), eqs))
@@ -4451,7 +4451,7 @@ impl Run<'_, '_> {
                     .args
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| constant(t).is_some() || matches!(t, Term::Var(v) if bound.contains(v)))
+                    .filter(|(_, t)| constant(t).is_some() || matches!(t, Term::Var(v) if bound.contains(v.as_str())))
                     .filter_map(|(c, _)| cols[c].as_ref())
                     .collect();
                 let served = self.model.stats.indexes.get(base).into_iter().flatten().any(|ix| ix.first().is_some_and(|c| probed.contains(c)));
@@ -4471,7 +4471,7 @@ impl Run<'_, '_> {
                 && !self.views.contains(a.rel.as_str())
             {
                 let cols: Vec<usize> = (0..a.args.len())
-                    .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
+                    .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v.as_str())))
                     .collect();
                 if !cols.is_empty() && self.made.insert((a.rel.to_string(), cols.clone())) {
                     self.index_for(&a.rel, &cols)?;
@@ -5445,7 +5445,7 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
 fn const_tok(t: &Term) -> Option<Tok> {
     match t {
         Term::Int(i) => Some(Tok::Int(*i)),
-        Term::Str(s) => Some(Tok::Sym(s.clone())),
+        Term::Str(s) => Some(Tok::Sym(s.to_string())),
         _ => None,
     }
 }
@@ -5777,8 +5777,8 @@ impl<'a> Run<'a, '_> {
                 // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
                 Literal::Cmp { l, op, r: Term::Call(f, args) } if *op == "=" && f == "cat" => { add(l); args.iter().for_each(&mut add) }
                 Literal::Cmp { l, op, r } if *op == "=" => { add(l); add(r) }
-                Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone())); add(&Term::Var(a.clone())) }
-                Literal::Agg { var, .. } => add(&Term::Var(var.clone())),
+                Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone().into())); add(&Term::Var(a.clone().into())) }
+                Literal::Agg { var, .. } => add(&Term::Var(var.clone().into())),
                 _ => {}
             }
         }
@@ -5896,7 +5896,7 @@ impl<'a> Run<'a, '_> {
                             .args
                             .iter()
                             .position(|x| matches!(x, Term::Var(v) if v == n))
-                            .and_then(|c| Some(prog.decls.get(l.rel.as_str())?.get(c)?.1.clone())),
+                            .and_then(|c| Some(prog.decls.get(l.rel.as_str())?.get(c)?.1.to_string())),
                         Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
                         Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
                         // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
@@ -5913,7 +5913,7 @@ impl<'a> Run<'a, '_> {
                 Term::Wild => Some(Tok::Wild),
                 Term::Var(n) => {
                     let len = slots.len();
-                    Some(Tok::Slot(*slots.entry(n.clone()).or_insert(len)))
+                    Some(Tok::Slot(*slots.entry(n.to_string()).or_insert(len)))
                 }
                 Term::Int(_) | Term::Str(_) => const_tok(t),
                 _ => None,
@@ -5925,14 +5925,14 @@ impl<'a> Run<'a, '_> {
         // unbound variable, a call with no native function) has none.
         fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<JoinItem>) -> Option<Term> {
             match t {
-                Term::Var(v) => slots.contains_key(v).then(|| t.clone()),
+                Term::Var(v) => slots.contains_key(v.as_str()).then(|| t.clone()),
                 Term::Int(_) | Term::Str(_) => Some(t.clone()),
                 // `@cat(a, b)` (what `@dot` lowers to) inside another term: the head's `Cat`, made into a slot first
                 // (`sym(f, @concat(@cat(q, x), …))`).
                 Term::Call(f, args) if f == "cat" && args.len() == 2 => {
                     let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
                     let (a, b) = (tok(&made[0], slots)?, tok(&made[1], slots)?);
-                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
+                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()).into());
                     lines.push(JoinItem::Cat { out: tok(&out, slots)?, a, b });
                     Some(out)
                 }
@@ -5940,7 +5940,7 @@ impl<'a> Run<'a, '_> {
                     let name = call_name(f, args.len())?;
                     let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
                     let args: Vec<Tok> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
-                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
+                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()).into());
                     lines.push(JoinItem::Func { name: name.to_owned(), out: tok(&out, slots)?, args });
                     Some(out)
                 }
@@ -6025,7 +6025,7 @@ impl<'a> Run<'a, '_> {
                     if (*op == "=" || *op == "!=") && fl == "doc" && fr == "doc" && xl.len() == 1 && xr.len() == 1 =>
                 {
                     // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
-                    let bound = |t: &Term| matches!(t, Term::Var(v) if slots.contains_key(v));
+                    let bound = |t: &Term| matches!(t, Term::Var(v) if slots.contains_key(v.as_str()));
                     if !bound(&xl[0]) || !bound(&xr[0]) {
                         return None;
                     }
@@ -6034,18 +6034,18 @@ impl<'a> Run<'a, '_> {
                 }
                 Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, args) } if f == "doc" && args.len() == 1 => {
                     // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
-                    if !matches!(&args[0], Term::Var(v) if slots.contains_key(v)) {
+                    if !matches!(&args[0], Term::Var(v) if slots.contains_key(v.as_str())) {
                         return None;
                     }
                     let n = tok(&args[0], &mut slots)?;
-                    lines.push(JoinItem::DocOf { out: tok(&Term::Var(d.clone()), &mut slots)?, n });
+                    lines.push(JoinItem::DocOf { out: tok(&Term::Var(d.clone().into()), &mut slots)?, n });
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if (f == "in" || f == "equals")
                         && let [x, Term::Call(set, members)] = args.as_slice()
                         && set == crate::code_rule_dsl::logic::strings::SET
                         && members.iter().all(|m| matches!(m, Term::Int(_)))
-                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                        && matches!(x, Term::Var(v) if slots.contains_key(v.as_str())) =>
                 {
                     // `@equals($q, {"a", "b"}) = 1` once lowered (the strings are symbols): membership, natively.
                     let set: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
@@ -6056,12 +6056,12 @@ impl<'a> Run<'a, '_> {
                         && let [x, Term::Call(set, members)] = args.as_slice()
                         && set == crate::code_rule_dsl::logic::strings::SET
                         && members.iter().all(|m| matches!(m, Term::Int(_)))
-                        && matches!(x, Term::Var(v) if slots.contains_key(v)) =>
+                        && matches!(x, Term::Var(v) if slots.contains_key(v.as_str())) =>
                 {
                     // `@contains($w, {"dolt_", "dolt log"}) = 1` once lowered (the patterns are symbols): one matcher
                     // of the symbols' names, made with the spec.
                     let members: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
-                    lines.push(JoinItem::TestSet { op: f.clone(), s: tok(x, &mut slots)?, want: *want == 1, members });
+                    lines.push(JoinItem::TestSet { op: f.to_string(), s: tok(x, &mut slots)?, want: *want == 1, members });
                 }
                 Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
                     if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
@@ -6069,7 +6069,7 @@ impl<'a> Run<'a, '_> {
                     // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
                     // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
                     let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
-                        Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
+                        Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string()).into()),
                         // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
                         None if matches!(&args[1], Term::Call(..)) => expr(&args[1], idx, &mut slots, &mut lines)?,
                         None => args[1].clone(),
@@ -6077,7 +6077,7 @@ impl<'a> Run<'a, '_> {
                     // A constant string is a symbol (`Int`) once lowered; a computed string (`@lower($s)`) is made first.
                     let tested = expr(&args[0], idx, &mut slots, &mut lines)?;
                     let bound = |t: &Term| match t {
-                        Term::Var(v) => slots.contains_key(v),
+                        Term::Var(v) => slots.contains_key(v.as_str()),
                         Term::Str(_) | Term::Int(_) => true,
                         _ => false,
                     };
@@ -6085,13 +6085,13 @@ impl<'a> Run<'a, '_> {
                         return None;
                     }
                     let (ts, tp) = (tok(&tested, &mut slots)?, tok(&pattern, &mut slots)?);
-                    lines.push(JoinItem::Test { op: f.clone(), s: ts, p: tp, want: *want == 1 });
+                    lines.push(JoinItem::Test { op: f.to_string(), s: ts, p: tp, want: *want == 1 });
                 }
                 Literal::Cmp { l, op, r } if (*op == "=" || *op == "!=") && !matches!(r, Term::Call(f, _) if f == "cat") => {
                     // `$v = @f(…)` (a text or number function, `@concat`, nested calls): the call's value straight into
                     // `$v`, bound or tested; any other `=` or `!=`, of variables, constants or computed terms, as a test
                     // (or `$v = <bound term>`, binding `$v`). Calls on either side are made first, inner ones first.
-                    let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                    let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()));
                     let (l, r) = if matches!(r, Term::Var(_)) && matches!(l, Term::Call(..)) { (r, l) } else { (l, r) };
                     if *op == "="
                         && let (Term::Var(_), Term::Call(f, args)) = (l, r)
@@ -6127,7 +6127,7 @@ impl<'a> Run<'a, '_> {
                         if matches!(t, Term::Call(..)) {
                             return !numeric_call(t);
                         }
-                        matches!(t, Term::Var(v) if !slots.contains_key(v)) || matches!(typ(t).as_deref(), None | Some("sym"))
+                        matches!(t, Term::Var(v) if !slots.contains_key(v.as_str())) || matches!(typ(t).as_deref(), None | Some("sym"))
                     };
                     if bad(l) || bad(r) {
                         return None;
@@ -6139,7 +6139,7 @@ impl<'a> Run<'a, '_> {
                 }
                 Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
                     // The over-variable belongs to the bag even if an outer step bound the same name.
-                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v)==over.as_ref()).then_some(c)).collect::<Vec<_>>();
+                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v.as_str())==over.as_deref()).then_some(c)).collect::<Vec<_>>();
                     if self.model.inputs.atoms.is_none() && (*op != AggOp::Count || local.len() > 1) {
                         return None;
                     }
@@ -6153,9 +6153,9 @@ impl<'a> Run<'a, '_> {
                         if *op != AggOp::Count && self.model.inputs.atoms.is_none() && typ == Some("sym") { return None; }
                     }
                     for term in &mut a.args {
-                        if matches!(term, Term::Var(v) if Some(&*v)==over.as_ref()) { *term=Term::Wild; }
+                        if matches!(term, Term::Var(v) if Some(v.as_str())==over.as_deref()) { *term=Term::Wild; }
                     }
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) { return None; }
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()))) { return None; }
                     // Input constant filters are projected out by `atom`; its value column uses that projection too.
                     let value_col = col.map(|c| if scc.contains(a.rel.as_str()) || native_rels.contains(a.rel.as_str()) {c} else {
                         a.args[..c].iter().filter(|t| !matches!(t, Term::Int(_) | Term::Str(_))).count()
@@ -6167,7 +6167,7 @@ impl<'a> Run<'a, '_> {
                             args[c]=Arg::Local("0".into());
                         }
                     }
-                    let out=tok(&Term::Var(var.clone()),&mut slots)?;
+                    let out=tok(&Term::Var(var.clone().into()),&mut slots)?;
                     lines.push(match op {
                         AggOp::Count => JoinItem::Count { src, args, out },
                         _ => JoinItem::Extreme { op: match op {AggOp::Sum=>Extreme::Sum,AggOp::Min=>Extreme::Min,_=>Extreme::Max}, src, args, col: value_col?, out },
@@ -6183,7 +6183,7 @@ impl<'a> Run<'a, '_> {
                     if slots.contains_key(o) || local.iter().any(|v| uses(v) != 1) {
                         return None;
                     }
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v) && !local.contains(&v))) {
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()) && !local.iter().any(|l| l.as_str() == v.as_str()))) {
                         return None;
                     }
                     let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
@@ -6207,17 +6207,17 @@ impl<'a> Run<'a, '_> {
                         a.args[c] = Term::Wild;
                     }
                     let (src, args) = atom(&a, None, &mut slots)?;
-                    let sep = const_tok(&Term::Str(sep.clone()))?;
-                    let out = tok(&Term::Var(var.clone()), &mut slots)?;
+                    let sep = const_tok(&Term::Str(sep.clone().into()))?;
+                    let out = tok(&Term::Var(var.clone().into()), &mut slots)?;
                     lines.push(JoinItem::StrJoin { src, args, x: (read(xc), sym(xc) == 1), by: bycols, sep, out });
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
-                    let tn = tok(&Term::Var(n.clone()), &mut slots)?;
-                    lines.push(JoinItem::Near { down: false, n: tn, a: tok(&Term::Var(a.clone()), &mut slots)?, kinds: kinds(kindset) });
+                    let tn = tok(&Term::Var(n.clone().into()), &mut slots)?;
+                    lines.push(JoinItem::Near { down: false, n: tn, a: tok(&Term::Var(a.clone().into()), &mut slots)?, kinds: kinds(kindset) });
                 }
                 Literal::Nearest { n, a, kindset } if slots.contains_key(a) && !slots.contains_key(n) => {
-                    let tn = tok(&Term::Var(n.clone()), &mut slots)?;
-                    lines.push(JoinItem::Near { down: true, n: tn, a: tok(&Term::Var(a.clone()), &mut slots)?, kinds: kinds(kindset) });
+                    let tn = tok(&Term::Var(n.clone().into()), &mut slots)?;
+                    lines.push(JoinItem::Near { down: true, n: tn, a: tok(&Term::Var(a.clone().into()), &mut slots)?, kinds: kinds(kindset) });
                 }
                 _ => return None,
             }
@@ -6225,19 +6225,19 @@ impl<'a> Run<'a, '_> {
         let mut head = Vec::new();
         for (k, t) in h.args.iter().enumerate() {
             match t {
-                Term::Call(f, args) if f == "cat" && args.len() == 2 && args.iter().all(|x| matches!(x, Term::Var(v) if slots.contains_key(v))) => {
+                Term::Call(f, args) if f == "cat" && args.len() == 2 && args.iter().all(|x| matches!(x, Term::Var(v) if slots.contains_key(v.as_str()))) => {
                     let (Some(Tok::Slot(a)), Some(Tok::Slot(b))) = (tok(&args[0], &mut slots), tok(&args[1], &mut slots)) else { return None };
                     head.push(HeadTok::Cat(a, b));
                 }
                 // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
                 // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
                 Term::Call(f, args) if f == "cat" && args.len() == 2 => {
-                    let part = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Int(_) | Term::Str(_)) || matches!(t, Term::Var(v) if slots.contains_key(v));
+                    let part = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Int(_) | Term::Str(_)) || matches!(t, Term::Var(v) if slots.contains_key(v.as_str()));
                     if !args.iter().all(|x| part(x, &slots)) {
                         return None;
                     }
                     let (a, b) = (tok(&args[0], &mut slots)?, tok(&args[1], &mut slots)?);
-                    let out = tok(&Term::Var(format!("rr_head_cat{k}")), &mut slots)?;
+                    let out = tok(&Term::Var(format!("rr_head_cat{k}").into()), &mut slots)?;
                     lines.push(JoinItem::Cat { out: out.clone(), a, b });
                     head.push(HeadTok::Tok(out));
                 }
@@ -6696,7 +6696,7 @@ impl<'a> Run<'a, '_> {
         let mut rel_lines = Vec::new();
         for r in &rels {
             if produced_inputs.contains(r.as_str()) {
-                let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
+                let cols = (0..prog.decls[r.as_str()].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
                 let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::From(sql) });
             } else if let Some((old, gone)) = based.get(*r) {
@@ -7148,7 +7148,7 @@ impl<'a> Run<'a, '_> {
                 .iter()
                 .filter_map(|r| {
                     let rows = *self.model.stats.card.get(*r)?;
-                    let width = prog.decls.get(*r).map_or(0, Vec::len);
+                    let width = prog.decls.get(r.as_str()).map_or(0, Vec::len);
                     let cols = (0..width).map(|c| (self.model.ndv.get(&((*r).clone(), c)).copied(), self.model.stats.fan.get(&((*r).clone(), c)).copied())).collect();
                     Some(keeps::Seen { rel: r.as_str(), rows, cols })
                 })
@@ -7263,7 +7263,7 @@ impl<'a> Run<'a, '_> {
         let prog = self.prog;
         let native = &self.model.inputs.native;
         let [rel] = scc.iter().collect::<Vec<_>>()[..] else { return Ok(false) };
-        if !prog.lattice.contains_key(rel) || prog.decls[rel].len() != 2 {
+        if !prog.lattice.contains_key(rel) || prog.decls[rel.as_str()].len() != 2 {
             return Ok(false);
         }
         let mut parts: Vec<(&str, Atom, Vec<Literal>)> = Vec::new();
@@ -7274,8 +7274,8 @@ impl<'a> Run<'a, '_> {
             if rec.iter().any(|a| a.neg) {
                 return Ok(false);
             }
-            let rvals: BTreeSet<&String> = rec.iter().filter_map(|a| if let Term::Var(v) = &a.args[1] { Some(v) } else { None }).collect();
-            if rvals.len() != rec.len() || rest.iter().any(|l| l.vars().iter().any(|v| rvals.contains(v))) {
+            let rvals: BTreeSet<&crate::code_rule_dsl::logic::front::Name> = rec.iter().filter_map(|a| if let Term::Var(v) = &a.args[1] { Some(v) } else { None }).collect();
+            if rvals.len() != rec.len() || rest.iter().any(|l| l.vars().iter().any(|v| rvals.iter().any(|r| r.as_str() == v.as_str()))) {
                 return Ok(false);
             }
             let (key, val) = (&h.args[0], &h.args[1]);
@@ -7293,8 +7293,8 @@ impl<'a> Run<'a, '_> {
                 (Term::Var(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
                     let Literal::Atom(ka) = &body[*ki] else { unreachable!() };
                     matches!(&ka.args[1], Term::Var(_))
-                        && body.iter().enumerate().all(|(i, l)| i == *ki || !l.vars().contains(kn))
-                        && !val_vars.contains(kn)
+                        && body.iter().enumerate().all(|(i, l)| i == *ki || !l.vars().contains(kn.as_str()))
+                        && !val_vars.contains(kn.as_str())
                 }
                 _ => false,
             };
@@ -7428,12 +7428,12 @@ impl<'a> Run<'a, '_> {
                     if hvars.iter().any(|v| !avars.contains(v) && !restvars.contains(v)) {
                         return Ok(Err("head variable from nowhere".to_owned()));
                     }
-                    let slot: HashMap<&String, usize> = avars.iter().chain(&ecols).enumerate().map(|(i, v)| (v, i)).collect();
+                    let slot: HashMap<&str, usize> = avars.iter().chain(&ecols).enumerate().map(|(i, v)| (v.as_str(), i)).collect();
                     let mut pat = Vec::new();
                     for t in &a.args {
                         pat.push(match t {
                             Term::Wild => Tok::Wild,
-                            Term::Var(v) => Tok::Slot(slot[v]),
+                            Term::Var(v) => Tok::Slot(slot[v.as_str()]),
                             Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
@@ -7441,11 +7441,11 @@ impl<'a> Run<'a, '_> {
                     let mut head = Vec::new();
                     for t in &h.args {
                         head.push(match t {
-                            Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v])),
+                            Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v.as_str()])),
                             Term::Int(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
                             Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
                                 let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
-                                HeadTok::Cat(slot[x0], slot[x1])
+                                HeadTok::Cat(slot[x0.as_str()], slot[x1.as_str()])
                             }
                             _ => return Ok(Err("head term".to_owned())),
                         });
@@ -7459,7 +7459,7 @@ impl<'a> Run<'a, '_> {
                         if key.is_empty() && ecols.is_empty() {
                             return Ok(Err("rest binds no variable".to_owned()));
                         }
-                        let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone())).collect());
+                        let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone().into())).collect());
                         let Ok((order, work, _)) = self.model.plan_rule(prog, &ehead, &rest, None) else {
                             return Ok(Err("rest cannot be planned alone".to_owned()));
                         };
@@ -7477,7 +7477,7 @@ impl<'a> Run<'a, '_> {
                     } else {
                         None
                     };
-                    let vs = |vs: &[String]| vs.iter().map(|v| slot[v]).collect::<Vec<_>>();
+                    let vs = |vs: &[String]| vs.iter().map(|v| slot[v.as_str()]).collect::<Vec<_>>();
                     let line = SpecLine::Edge(EdgeSpec { head: ri[h.rel.as_str()], src: ri[a.rel.as_str()], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
                     Ok(Ok((line, edge)))
                 };
@@ -7901,7 +7901,7 @@ pub fn identities(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&
         h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
         for rel in scc {
             h.update(rel.as_bytes());
-            let shape = (prog.decls.get(rel), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
+            let shape = (prog.decls.get(rel.as_str()), prog.facts.get(rel), prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
             h.update(format!("\0{shape:?}\0").as_bytes());
         }
         let mut texts: Vec<String> = rules.iter().map(|r| format!("{r:?}")).collect();
@@ -8135,7 +8135,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
             sorted_h.sort();
             sorted_a.sort();
             if sorted_h == sorted_a {
-                let pos = |x: &String| names.iter().position(|v| *v == x).expect("a head variable");
+                let pos = |x: &crate::code_rule_dsl::logic::front::Name| names.iter().position(|v| *v == x).expect("a head variable");
                 Arc::make_mut(&mut model.docof).insert(rel.to_owned(), (pos(n), pos(d)));
             }
         }
@@ -8242,9 +8242,9 @@ fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
     for rel in moved {
         let apart = format!("{rel}__stated");
         let facts = prog.facts.remove(&rel).expect("stated facts");
-        let cols = prog.decls[&rel].clone();
-        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_s{i}"))).collect();
-        prog.decls.insert(apart.clone(), cols);
+        let cols = prog.decls[rel.as_str()].clone();
+        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_s{i}").into())).collect();
+        prog.decls.insert(apart.clone().into(), cols);
         prog.facts.insert(apart.clone(), facts);
         prog.rules.push(Rule {
             head: Atom { rel: rel.clone().into(), args: args.clone(), neg: false, gated: false },
@@ -8265,7 +8265,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let prog=&normalized;
     let adjusted=lowered.map(|l|{
         let mut domains=l.domains.clone();
-        for rel in &sentinels {if let Some(columns)=domains.get_mut(rel){while columns.len()<prog.decls[rel].len(){columns.insert(0,lower::Domain::Int);}}}
+        for rel in &sentinels {if let Some(columns)=domains.get_mut(rel){while columns.len()<prog.decls[rel.as_str()].len(){columns.insert(0,lower::Domain::Int);}}}
         for (rel, apart) in &stated {if let Some(columns)=domains.get(rel).cloned(){domains.insert(apart.clone(),columns);}}
         lower::Lowered{program:prog.clone(),domains,ops:l.ops,dialect:l.dialect}
     });
@@ -8281,7 +8281,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         if let Some(load)=hooks.load.as_deref_mut(){load(&reads)?;}
         for rel in super::native::component::adopted(db).into_iter().filter(|r|reads.contains(r)) {
             let held=super::native::component::held(db,&rel).ok_or_else(||Error::Plan(format!("missing retained input {rel}")))?;
-            let source=held.source((0..prog.decls[&rel].len()).map(|c|sql_col(&rel,c)).collect());
+            let source=held.source((0..prog.decls[rel.as_str()].len()).map(|c|sql_col(&rel,c)).collect());
             if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())? {
                 connection::bind(db,&rel,source)?;
             }
@@ -8508,7 +8508,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         .collect();
     let produced_rels = super::answers::produced(prog);
     for (rel, cols) in &prog.decls {
-        if prog.inputs.contains(rel) || run.views.contains(rel) || !named.contains(rel.as_str()) {
+        if prog.inputs.iter().any(|i| i == rel.as_str()) || run.views.contains(rel.as_str()) || !named.contains(rel.as_str()) {
             continue;
         }
         // Typed columns: an untyped column compared with an INTEGER one gets numeric affinity applied to it, and
@@ -8526,7 +8526,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             .join(", ");
         // Clustered on the key (WITHOUT ROWID), so an insert writes one b-tree, and every secondary index carries the
         // whole row.
-        let key = match prog.lattice.get(rel) {
+        let key = match prog.lattice.get(rel.as_str()) {
             Some(l) => (0..l.keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
@@ -8538,15 +8538,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         // has it made then; one that does not makes no table its next run on the connection drops. (With a native
         // reader it is held empty in the engine, below.)
         let neither = native.is_empty() && !rules_by.contains_key(rel.as_str());
-        if atoms && (rules_by.contains_key(rel.as_str()) || produced_rels.contains_key(rel.as_str()) || neither) && prog.facts.get(rel).is_none_or(|f| f.is_empty()) {
-            run.pending.insert(rel.clone(), create);
+        if atoms && (rules_by.contains_key(rel.as_str()) || produced_rels.contains_key(rel.as_str()) || neither) && prog.facts.get(rel.as_str()).is_none_or(|f| f.is_empty()) {
+            run.pending.insert(rel.to_string(), create);
             continue;
         }
         // A relation of stated facts alone (or of none) is held in the engine, as any relation is, when the run has it: its
         // facts are not loaded into a SQL table inside the run's waves (decision 0104). SQL that reads it has it made
         // then (`materialize`).
-        if atoms && !native.is_empty() && !cols.is_empty() && !rules_by.contains_key(rel.as_str()) && !prog.lattice.contains_key(rel) {
-            let facts = prog.facts.get(rel).map(Vec::as_slice).unwrap_or_default();
+        if atoms && !native.is_empty() && !cols.is_empty() && !rules_by.contains_key(rel.as_str()) && !prog.lattice.contains_key(rel.as_str()) {
+            let facts = prog.facts.get(rel.as_str()).map(Vec::as_slice).unwrap_or_default();
             let texts: Vec<&str> = facts.iter().flatten().filter_map(|v| if let Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
             let mut ids = super::native::intern_batch(db, texts.iter().copied())?.into_iter();
             let mut rows: Vec<i64> = Vec::with_capacity(facts.len() * cols.len());
@@ -8573,31 +8573,31 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let n = if cols.is_empty() { usize::from(!facts.is_empty()) } else { unique.len() / cols.len() };
             for c in 0..cols.len() {
                 let (d, fan) = postings(unique.iter().skip(c).step_by(cols.len()).copied());
-                run.model.ndv.insert((rel.clone(), c), d);
-                run.model.stats.fan.insert((rel.clone(), c), fan);
+                run.model.ndv.insert((rel.to_string(), c), d);
+                run.model.stats.fan.insert((rel.to_string(), c), fan);
             }
-            run.model.stats.card.insert(rel.clone(), (n as f64).max(1.0));
+            run.model.stats.card.insert(rel.to_string(), (n as f64).max(1.0));
             super::native::component::hold_rows(db, rel, types, unique, n);
-            run.native_rels.insert(rel.clone());
-            run.pending.insert(rel.clone(), create);
+            run.native_rels.insert(rel.to_string());
+            run.pending.insert(rel.to_string(), create);
             continue;
         }
         db.execute(&create, [])?;
         let rows: Vec<Vec<SqlValue>> = prog
             .facts
-            .get(rel)
+            .get(rel.as_str())
             .into_iter()
             .flatten()
             .map(|row| {
                 row.iter()
                     .map(|v| match v {
                         Value::Int(i) => SqlValue::Integer(*i),
-                        Value::Str(s) => SqlValue::Text(s.clone()),
+                        Value::Str(s) => SqlValue::Text(s.to_string()),
                     })
                     .collect()
             })
             .collect();
-        if prog.lattice.contains_key(rel) && !rows.is_empty(){
+        if prog.lattice.contains_key(rel.as_str()) && !rows.is_empty(){
             let select=rows.iter().map(|row|format!("SELECT {}",row.iter().enumerate().map(|(i,v)|match v {
                 SqlValue::Integer(n)=>format!("{n} AS c{i}"),
                 SqlValue::Text(s)=>format!("'{}' AS c{i}",s.replace(char::from(39),"''")),
@@ -9447,7 +9447,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     Some(rows) => rows,
                     None => {
                         let req = produced[rel.as_str()].to_owned();
-                        let width = prog.decls[&req].len();
+                        let width = prog.decls[req.as_str()].len();
                         // The request's rows where they are: the engine's (a relation it holds), none (one still to be
                         // made: no table, no rows), or its table's.
                         let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rows(db, &req)).flatten();
@@ -9682,7 +9682,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let n = run.native_relation(rel, native)?;
             super::profile::note(format!("{rel} rows"), || n.to_string());
             run.refresh(rel, false)?;
-            for c in 0..prog.decls[*rel].len() {
+            for c in 0..prog.decls[rel.as_str()].len() {
                 let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
                 run.model.ndv.insert(((*rel).clone(), c), if d == 0 { 1.0 } else { d as f64 });
             }
@@ -9749,7 +9749,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let _refresh = super::profile::span(|| "refresh and distinct counts".into());
         for r in scc {
             run.refresh(r, false)?;
-            for c in 0..prog.decls[r].len() {
+            for c in 0..prog.decls[r.as_str()].len() {
                 let d = run.count(&format!("SELECT count(DISTINCT c{c}) FROM {}", crate::code_rule_dsl::logic::sql::ident(r)))?;
                 run.model.ndv.insert((r.clone(), c), if d == 0 { 1.0 } else { d as f64 });
             }
@@ -10121,7 +10121,7 @@ fn decoded_outputs(
     for rel in prog.outputs.iter().filter(|r| !kept.contains(*r)) {
         // The findings form `finding(key, n)` is written as `finding_at` (key, path, start); a `finding` of another
         // shape (a data-layer program's `finding(clause, code, n)`) is an output like any other.
-        let findings_form = rel == "finding" && prog.decls.get(rel).is_none_or(|cols| cols.len() == 2);
+        let findings_form = rel == "finding" && prog.decls.get(rel.as_str()).is_none_or(|cols| cols.len() == 2);
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
         let domains: Vec<lower::Domain> = match lowered {
             Some(l) if !findings_form => l.domains.get(rel).cloned().ok_or_else(|| Error::Plan(format!("the output {rel} has no columns' domains")))?,

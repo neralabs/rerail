@@ -64,7 +64,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
                 let width = decl.len() - rule.head.args.len();
                 let mut args = rule.head.args.clone();
                 args.extend((0..width).map(|_| Term::Wild));
-                out.program.decls.insert(name.clone(), decl);
+                out.program.decls.insert(name.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 if let Some(d) = cross.domains.get(h.as_str()).cloned() {
                     out.domains.entry(name.clone()).or_insert(d);
                 }
@@ -83,7 +83,7 @@ pub(in crate::code_rule_dsl) fn supports(cross: &lower::Lowered) -> (lower::Lowe
 }
 
 /// Rule `i` of a head as a support relation: its name, columns and rule. `None`: the rule keeps its form.
-fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<(String, String)>, Rule)> {
+fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<(front::Name, front::Name)>, Rule)> {
     let h = &rule.head.rel;
     let hdecl = prog.decls.get(h.as_str())?;
     if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
@@ -103,15 +103,15 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
                     let t = match t {
                         Term::Wild => {
                             fresh += 1;
-                            Term::Var(format!("rr_w{fresh}"))
+                            Term::Var(format!("rr_w{fresh}").into())
                         }
                         t => t.clone(),
                     };
                     if let Term::Var(v) = &t
-                        && !types.contains_key(v)
+                        && !types.contains_key(v.as_str())
                     {
-                        types.insert(v.clone(), decl.get(c)?.1.clone());
-                        order.push(v.clone());
+                        types.insert(v.to_string(), decl.get(c)?.1.to_string());
+                        order.push(v.to_string());
                     }
                     args.push(t);
                 }
@@ -127,12 +127,12 @@ fn support(prog: &front::Program, rule: &Rule, i: usize) -> Option<(String, Vec<
             return None;
         }
     }
-    let head_vars: BTreeSet<String> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect();
+    let head_vars: BTreeSet<String> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).map(String::from).collect();
     let mut decl = hdecl.clone();
     let mut args = rule.head.args.clone();
     for v in order.iter().filter(|v| !head_vars.contains(*v)) {
-        decl.push((v.clone(), types[v].clone()));
-        args.push(Term::Var(v.clone()));
+        decl.push((v.clone().into(), types[v].clone().into()));
+        args.push(Term::Var(v.clone().into()));
     }
     let name = format!("{h}__sup{i}");
     Some((name.clone(), decl, Rule { head: Atom { rel: name.into(), args, neg: false, gated: false }, body }))

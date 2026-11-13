@@ -41,14 +41,14 @@ pub fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
             return Err(Error::Syntax(format!("policy {policy}: a forbid clause holds one `ast` matcher")));
         };
         let id = str_field(clause, "id", "a clause")?;
-        let args = vec![Term::Str(policy.clone()), Term::Str(id.to_owned()), Term::Var("D".to_owned()), Term::Var("N".to_owned())];
+        let args = vec![Term::Str(policy.clone().into()), Term::Str(id.to_owned().into()), Term::Var("D".into()), Term::Var("N".into())];
         let body =
             vec![Literal::Ast { document: "D".to_owned(), node: "N".to_owned(), matcher: matcher.to_string(), captures: Vec::new() }];
         prog.rules.push(Rule { head: Atom { rel: HEAD.to_owned().into(), args, neg: false, gated: false }, body });
         clause["forbid"] = Value::String(MARK.to_owned());
     }
-    prog.decls.entry(HEAD.to_owned()).or_insert_with(|| {
-        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec()
+    prog.decls.entry(HEAD.to_owned().into()).or_insert_with(|| {
+        [("policy", "sym"), ("clause", "sym"), ("d", "int"), ("n", "node")].map(|(c, t)| (c.to_owned(), t.to_owned())).to_vec().iter().map(|(c, t)| (c.into(), t.into())).collect()
     });
     if !prog.outputs.iter().any(|o| o == HEAD) {
         prog.outputs.push(HEAD.to_owned());
@@ -71,7 +71,7 @@ pub fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
             let matcher = prog
                 .rules
                 .iter()
-                .filter(|r| r.head.rel == HEAD && r.head.args.get(..2) == Some(&[Term::Str(policy.clone()), Term::Str(id.clone())]))
+                .filter(|r| r.head.rel == HEAD && r.head.args.get(..2) == Some(&[Term::Str(policy.clone().into()), Term::Str(id.clone().into())]))
                 .find_map(|r| match r.body.as_slice() {
                     [Literal::Ast { matcher, .. }] => Some(matcher),
                     _ => None,

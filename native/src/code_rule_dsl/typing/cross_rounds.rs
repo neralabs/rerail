@@ -99,13 +99,13 @@ pub(crate) struct Bounded {
 fn first_node_var(prog: &Program, a: &Atom) -> Option<String> {
     let cols = prog.decls.get(a.rel.as_str())?;
     a.args.iter().zip(cols).find_map(|(t, (_, ty))| match t {
-        Term::Var(v) if ty == "node" => Some(v.clone()),
+        Term::Var(v) if ty == "node" => Some(v.to_string()),
         _ => None,
     })
 }
 
 fn doc(v: &str) -> Term {
-    Term::Call("doc".to_owned(), vec![Term::Var(v.to_owned())])
+    Term::Call("doc".into(), vec![Term::Var(v.to_owned().into())])
 }
 
 /// The variables of `body` that its positive atoms of `same_doc` relations join to `v` through their same-document
@@ -188,7 +188,7 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     }
     for rel in &hops {
         let prev = format!("{rel}{PREV}");
-        out.decls.insert(prev.clone(), prog.decls[rel.as_str()].clone());
+        out.decls.insert(prev.clone().into(), prog.decls[rel.as_str()].clone());
         if let Some(l) = prog.lattice.get(rel.as_str()) {
             out.lattice.insert(prev.clone(), l.clone());
         }
@@ -259,7 +259,7 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
     rest.lattice.retain(|rel, _| !in_cone(rel));
     rest.gates.retain(|(rel, _)| !in_cone(rel));
     for rel in &reads {
-        rest.decls.insert(format!("{rel}{DONE}"), prog.decls[rel].clone());
+        rest.decls.insert(format!("{rel}{DONE}").into(), prog.decls[rel.as_str()].clone());
         rest.inputs.push(format!("{rel}{DONE}"));
     }
     Some(Split { cone: c, rest, reads })
@@ -328,7 +328,7 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
     rounds.outputs.retain(|o| !(in_pre(o) && cone.rules.iter().any(|r| r.head.rel == *o)));
     rounds.lattice.retain(|rel, _| !in_pre(rel) || !cone.rules.iter().any(|r| r.head.rel == *rel));
     for rel in &reads {
-        rounds.decls.insert(format!("{rel}{PRE}"), cone.decls[rel].clone());
+        rounds.decls.insert(format!("{rel}{PRE}").into(), cone.decls[rel.as_str()].clone());
         rounds.inputs.push(format!("{rel}{PRE}"));
     }
     Some(PreSplit { pre, rounds, reads })

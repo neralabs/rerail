@@ -88,8 +88,8 @@ fn test_of(rel: &str) -> Option<&'static str> {
 
 /// The whole-string regex of a pattern computed in a rule, `p`: `^(?:p)$` made as the row's pattern is.
 pub(super) fn anchored(p: Term) -> Term {
-    let concat = |a: Term, b: Term| Term::Call("concat".to_owned(), vec![a, b]);
-    concat(Term::Str("^(?:".to_owned()), concat(p, Term::Str(")$".to_owned())))
+    let concat = |a: Term, b: Term| Term::Call("concat".into(), vec![a, b]);
+    concat(Term::Str("^(?:".into()), concat(p, Term::Str(")$".into())))
 }
 
 /// The pattern `anchored` made `p` of, if `p` is one.
@@ -408,7 +408,7 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     // A program lowered without `core.rr` (its own part, `parse_own`) still declares the `within` it reads.
     if reads_within {
         use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        l.prog.decls.entry(WITHIN.to_owned()).or_insert_with(|| vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        l.prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| vec![("n".into(), "node".into()), ("a".into(), "node".into())]);
         if !l.prog.inputs.iter().any(|i| i == WITHIN) {
             l.prog.inputs.push(WITHIN.to_owned());
         }
@@ -483,7 +483,7 @@ fn unit(prog: &mut Program) {
         }
     }
     if used {
-        prog.decls.insert(UNIT.to_owned(), vec![("x".to_owned(), "int".to_owned())]);
+        prog.decls.insert(UNIT.to_owned().into(), vec![("x".into(), "int".into())]);
         prog.facts.insert(UNIT.to_owned(), vec![vec![Value::Int(0)]]);
     }
 }
@@ -496,10 +496,10 @@ fn lower_boolean_relations(prog: &mut Program) {
     if names.is_empty() {
         return;
     }
-    prog.nullary.extend(names.iter().cloned());
+    prog.nullary.extend(names.iter().map(|n| n.to_string()));
     for name in &names {
-        prog.decls.get_mut(name).unwrap().push(("rr_unit".to_owned(), "int".to_owned()));
-        if let Some(rows) = prog.facts.get_mut(name) {
+        prog.decls.get_mut(name).unwrap().push(("rr_unit".into(), "int".into()));
+        if let Some(rows) = prog.facts.get_mut(name.as_str()) {
             for row in rows {
                 row.push(Value::Int(1));
             }
@@ -530,7 +530,7 @@ fn facts(heads: &[Head]) -> Option<Vec<(String, Vec<Value>)>> {
                 .iter()
                 .map(|a| match a {
                     STerm::Num(n) => Some(Value::Int(*n)),
-                    STerm::Str(s) => Some(Value::Str(s.clone())),
+                    STerm::Str(s) => Some(Value::Str(s.clone().into())),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -546,7 +546,7 @@ impl Lowerer {
         loop {
             self.next += 1;
             let name = format!("rr_{stem}{}", self.next);
-            if !self.prog.decls.contains_key(&name) {
+            if !self.prog.decls.contains_key(name.as_str()) {
                 return name;
             }
         }
@@ -601,7 +601,7 @@ impl Lowerer {
         if widen.is_some() && !self.prog.lattice.contains_key(&name) {
             return Err(Error::Syntax(format!("{name}: `widen` on a relation with no lattice column")));
         }
-        self.prog.decls.insert(name, out);
+        self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
         Ok(())
     }
 
@@ -658,8 +658,8 @@ impl Lowerer {
         }
         self.prog.rules = rules;
         for rel in &three {
-            if let Some(cols) = self.prog.decls.get(rel).cloned() {
-                self.prog.decls.insert(must(rel), cols);
+            if let Some(cols) = self.prog.decls.get(rel.as_str()).cloned() {
+                self.prog.decls.insert(must(rel).into(), cols);
             }
             if let Some(rows) = self.prog.facts.get(rel).cloned() {
                 self.prog.facts.insert(must(rel), rows);
@@ -672,7 +672,7 @@ impl Lowerer {
     /// declares both for every program). `core.rr`'s `docof(x: loc, d)` stays an input, for spans have a document
     /// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
     fn projections(&mut self) {
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let read: BTreeSet<String> = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
         for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
             if !read.contains(rel) || !self.prog.inputs.iter().any(|i| i == rel) || (rel == "docof" && (self.docof_of_locs || !self.prog.decls.contains_key("node"))) {
@@ -686,7 +686,7 @@ impl Lowerer {
             let at = usize::from(rel == "docof" && self.prog.rules.first().is_some_and(|r| r.head.rel == "kind"));
             self.prog.rules.insert(at, Rule {
                 head: Atom { rel: rel.to_owned().into(), args: head, neg: false, gated: false },
-                body: vec![Literal::Atom(Atom { rel: "node".to_owned().into(), args: args.to_vec(), neg: false, gated: false })],
+                body: vec![Literal::Atom(Atom { rel: "node".into(), args: args.to_vec(), neg: false, gated: false })],
             });
         }
     }
@@ -758,12 +758,12 @@ impl Lowerer {
             .unwrap_or_default()
             .to_owned();
         let scoped = self.scope_filter();
-        self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        self.prog.decls.insert("violation".to_owned().into(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         // Where it is already (a printed program's `.output`), else last.
         if !self.prog.outputs.iter().any(|o| o == "violation") {
             self.prog.outputs.push("violation".to_owned());
         }
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
@@ -774,11 +774,11 @@ impl Lowerer {
                 _ => None,
             };
             let code = match &f.code {
-                FindingCode::Name => Term::Str(f.name.clone()),
+                FindingCode::Name => Term::Str(f.name.clone().into()),
                 FindingCode::Column(i) => v(&format!("rr_v{i}")),
-                FindingCode::Constant(c) => Term::Str(c.clone()),
+                FindingCode::Constant(c) => Term::Str(c.clone().into()),
             };
-            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str(f.name.clone()), code, v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".into(), args: vec![Term::Str(policy.clone().into()), Term::Str(f.name.clone().into()), code, v("rr_p"), v("rr_l")], neg: false, gated: false };
             let cols: Vec<Term> = (0..f.arity).map(|i| if i == 0 || Some(i) == code_col { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
             let at = if f.node {
                 vec![atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")])]
@@ -787,7 +787,7 @@ impl Lowerer {
             };
             self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
             if !f.node && place_values {
-                let of = |g: &str| Term::Call(g.to_owned(), vec![v("rr_v0")]);
+                let of = |g: &str| Term::Call(g.to_owned().into(), vec![v("rr_v0")]);
                 let mut found = head.clone();
                 found.args[3] = of(PLACE_PATH);
                 found.args[4] = of(PLACE_LINE);
@@ -807,11 +807,11 @@ impl Lowerer {
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
         for (what, code, line_one) in on {
-            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str(what.clone()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let head = Atom { rel: "violation".into(), args: vec![Term::Str(policy.clone().into()), Term::Str(what.clone().into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l")], neg: false, gated: false };
             let body = if what == "syntax_error" {
                 let line = if line_one { Term::Wild } else { v("rr_l") };
                 // A file's own error: a guest's is `.on guest_error`'s.
-                let not_guest = Literal::Atom(Atom { rel: "guest".to_owned().into(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
+                let not_guest = Literal::Atom(Atom { rel: "guest".into(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
                 body.extend(scoped.iter().cloned());
                 if line_one {
@@ -834,14 +834,14 @@ impl Lowerer {
         }
         // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
         for (grammar, code) in guest_errors {
-            let head = Atom { rel: "violation".to_owned().into(), args: vec![Term::Str(policy.clone()), Term::Str("guest_error".to_owned()), Term::Str(code.clone()), v("rr_p"), v("rr_l")], neg: false, gated: false };
-            let g = grammar.map_or(Term::Wild, Term::Str);
+            let head = Atom { rel: "violation".into(), args: vec![Term::Str(policy.clone().into()), Term::Str("guest_error".into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l")], neg: false, gated: false };
+            let g = grammar.map_or(Term::Wild, |g| Term::Str(g.into()));
             let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
             for (rel, cols) in [
                 ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
                 ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
             ] {
-                self.prog.decls.entry(rel.to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+                self.prog.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
                 if !self.prog.inputs.iter().any(|i| i == rel) {
                     self.prog.inputs.push(rel.to_owned());
                 }
@@ -871,23 +871,23 @@ impl Lowerer {
         if !within.is_empty() || !out.is_empty() {
             self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
         }
-        let v = |s: &str| Term::Var(s.to_owned());
-        let doc = Literal::Atom(Atom { rel: "doc".to_owned().into(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
-        let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };
+        let v = |s: &str| Term::Var(s.to_owned().into());
+        let doc = Literal::Atom(Atom { rel: "doc".into(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
+        let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".into(), vec![v("p"), Term::Str(g.to_owned().into())]), op: "=", r: Term::Int(1) };
         // An entry from a policy option (`front::OPTION_GLOB`): the option's values, as `option_item` holds them; a
         // directory's documents are those under it.
         let option_entry = |g: &str| g.strip_prefix(crate::code_rule_dsl::logic::front::OPTION_GLOB).and_then(|r| r.split_once(':')).map(|(f, n)| (f.to_owned(), n.to_owned()));
         let by_option = |form: &str, name: &str| -> Vec<Literal> {
-            let item = Literal::Atom(Atom { rel: "option_item".to_owned().into(), args: vec![Term::Str(name.to_owned()), Term::Wild, v("rr_o")], neg: false, gated: false });
+            let item = Literal::Atom(Atom { rel: "option_item".into(), args: vec![Term::Str(name.to_owned().into()), Term::Wild, v("rr_o")], neg: false, gated: false });
             let test = if form == "dirs" {
-                Literal::Cmp { l: Term::Call("prefix".to_owned(), vec![v("p"), Term::Call("concat".to_owned(), vec![v("rr_o"), Term::Str("/".to_owned())])]), op: "=", r: Term::Int(1) }
+                Literal::Cmp { l: Term::Call("prefix".into(), vec![v("p"), Term::Call("concat".into(), vec![v("rr_o"), Term::Str("/".into())])]), op: "=", r: Term::Int(1) }
             } else {
-                Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), v("rr_o")]), op: "=", r: Term::Int(1) }
+                Literal::Cmp { l: Term::Call("glob".into(), vec![v("p"), v("rr_o")]), op: "=", r: Term::Int(1) }
             };
             vec![item, test]
         };
         if within.iter().chain(&out).chain(&report).any(|g| option_entry(g).is_some()) {
-            self.prog.decls.entry("option_item".to_owned()).or_insert_with(|| [("name", "sym"), ("i", "int"), ("v", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+            self.prog.decls.entry("option_item".to_owned().into()).or_insert_with(|| [("name", "sym"), ("i", "int"), ("v", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
             if !self.prog.inputs.iter().any(|i| i == "option_item") {
                 self.prog.inputs.push("option_item".to_owned());
             }
@@ -900,14 +900,14 @@ impl Lowerer {
         };
         let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
         let head = |rel: &str, var: &str| Atom { rel: rel.to_owned().into(), args: vec![v(var)], neg: false, gated: false };
-        self.prog.decls.entry("doc".to_owned()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        self.prog.decls.entry("doc".to_owned().into()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         if !self.prog.inputs.iter().any(|i| i == "doc") {
             self.prog.inputs.push("doc".to_owned());
         }
         // rr_scope_drop(p): a document's path out of the scope.
-        self.prog.decls.insert("rr_scope_drop".to_owned(), vec![("p".to_owned(), "sym".to_owned())]);
+        self.prog.decls.insert("rr_scope_drop".to_owned().into(), vec![("p".into(), "sym".into())]);
         if !within.is_empty() {
-            self.prog.decls.insert("rr_scope_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            self.prog.decls.insert("rr_scope_in".to_owned().into(), vec![("d".into(), "int".into())]);
             for g in &within {
                 self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
@@ -919,7 +919,7 @@ impl Lowerer {
         // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
         // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
         if !within.is_empty() || !out.is_empty() {
-            self.prog.decls.insert(SCOPE_NOT.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            self.prog.decls.insert(SCOPE_NOT.to_owned().into(), vec![("d".into(), "int".into())]);
             if !within.is_empty() {
                 self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
             }
@@ -929,7 +929,7 @@ impl Lowerer {
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {
-            self.prog.decls.insert("rr_report_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            self.prog.decls.insert("rr_report_in".to_owned().into(), vec![("d".into(), "int".into())]);
             for g in &report {
                 self.prog.rules.push(Rule { head: head("rr_report_in", "d"), body: vec![doc.clone(), glob(g)] });
             }
@@ -941,7 +941,7 @@ impl Lowerer {
     /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
     fn guest_input(&mut self) {
         let cols = [("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")];
-        self.prog.decls.entry("guest".to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        self.prog.decls.entry("guest".to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         if !self.prog.inputs.iter().any(|i| i == "guest") {
             self.prog.inputs.push("guest".to_owned());
         }
@@ -1003,9 +1003,9 @@ impl Lowerer {
             facts.push(("library".to_owned(), "on".to_owned()));
         }
         if !facts.is_empty() {
-            self.prog.decls.insert(GUEST_POLICY.to_owned(), vec![("k".to_owned(), "sym".to_owned()), ("v".to_owned(), "sym".to_owned())]);
+            self.prog.decls.insert(GUEST_POLICY.to_owned().into(), vec![("k".into(), "sym".into()), ("v".into(), "sym".into())]);
             let rows = self.prog.facts.entry(GUEST_POLICY.to_owned()).or_default();
-            rows.extend(facts.into_iter().map(|(k, v)| vec![Value::Str(k), Value::Str(v)]));
+            rows.extend(facts.into_iter().map(|(k, v)| vec![Value::Str(k.into()), Value::Str(v.into())]));
         }
         findings
     }
@@ -1050,8 +1050,8 @@ impl Lowerer {
                 if !self.violations[k].places {
                     self.violations[k].places = true;
                     let mut cols = vec![("path".to_owned(), "sym".to_owned()), ("line".to_owned(), "int".to_owned())];
-                    cols.extend(self.prog.decls[&head.rel].iter().skip(1).cloned());
-                    self.prog.decls.insert(place_relation(&head.rel), cols);
+                    cols.extend(self.prog.decls[head.rel.as_str()].iter().skip(1).map(|(c, t)| (c.to_string(), t.to_string())));
+                    self.prog.decls.insert(place_relation(&head.rel).into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
                 }
                 rel = place_relation(&head.rel);
                 written = [path.clone(), line.clone()].into_iter().chain(head.args.iter().skip(1).cloned()).collect();
@@ -1127,7 +1127,7 @@ impl Lowerer {
                 out.push(Lit::Atom { rel: rel.to_owned(), args: atom_args, neg: false });
                 if !self.prog.inputs.iter().any(|i| i == rel) {
                     self.prog.inputs.push(rel.to_owned());
-                    self.prog.decls.insert(rel.to_owned(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).collect());
+                    self.prog.decls.insert(rel.to_owned().into(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
                     self.prog.tapes.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel));
                 }
             }
@@ -1140,7 +1140,7 @@ impl Lowerer {
                 out.push(Lit::Atom { rel: "tree_digest".to_owned(), args: vec![n, v], neg: false });
                 if !self.prog.inputs.iter().any(|i| i == "tree_digest") {
                     self.prog.inputs.push("tree_digest".to_owned());
-                    self.prog.decls.insert("tree_digest".to_owned(), vec![("n".to_owned(), "node".to_owned()), ("s".to_owned(), "sym".to_owned())]);
+                    self.prog.decls.insert("tree_digest".to_owned().into(), vec![("n".into(), "node".into()), ("s".into(), "sym".into())]);
                 }
             }
             STerm::Call { args, .. } => args.iter_mut().for_each(|a| self.hoist(a, out, true)),
@@ -1208,7 +1208,7 @@ impl Lowerer {
             // `!match_all("re", s)`: no match anywhere in s, a search (captures bind nothing outside the `!`).
             Lit::Atom { rel, args, neg: true } if rel == "match_all" && args.len() != 3 => {
                 let [STerm::Str(re), s] = args.as_slice() else { return Err(Error::Syntax("match_all takes a regex and a text".to_owned())) };
-                vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(0) }]]
+                vec![vec![Literal::Cmp { l: Term::Call("rx".into(), vec![self.term(s)?, Term::Str(re.clone().into())]), op: "=", r: Term::Int(0) }]]
             }
             Lit::Atom { rel, args, neg } => {
                 // core.rr's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
@@ -1232,7 +1232,7 @@ impl Lowerer {
                     for t in &mut a.args {
                         if matches!(t, Term::Call(..)) {
                             let v = self.fresh("t");
-                            out.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: std::mem::replace(t, Term::Var(v)) });
+                            out.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: std::mem::replace(t, Term::Var(v.into())) });
                         }
                     }
                 }
@@ -1256,7 +1256,7 @@ impl Lowerer {
     /// `unparse_of` asks for nothing: every guest and value has its text.
     fn value_demand(&mut self, rel: &str, args: &[STerm]) -> Result<(), Error> {
         match (rel, args) {
-            ("parse_of", [x, g, t]) => self.demand("rr_parse_req", &[(STerm::Var(LOCATED.to_owned()), "int"), (g.clone(), "sym"), (x.clone(), "sym")], t, false),
+            ("parse_of", [x, g, t]) => self.demand("rr_parse_req", &[(STerm::Var(LOCATED.to_owned().into()), "int"), (g.clone(), "sym"), (x.clone(), "sym")], t, false),
             ("splice_of", [_, n, t2, t3]) => self.demand("rr_splice_req", &[(n.clone(), "node"), (t2.clone(), "sym")], t3, false),
             _ => Ok(()),
         }
@@ -1340,7 +1340,7 @@ impl Lowerer {
             self.siblings.retain(|_| joined.next().unwrap_or(false));
             let loc = self.siblings.iter().find_map(|l| match l {
                 Lit::Atom { rel, args, neg: false } => {
-                    let decl = self.prog.decls.get(rel);
+                    let decl = self.prog.decls.get(rel.as_str());
                     let doc = crate::code_rule_dsl::logic::front::document_column(rel);
                     args.iter().enumerate().find_map(|(c, a)| match a {
                         STerm::Var(v) if Some(c) == doc || decl.and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
@@ -1352,7 +1352,7 @@ impl Lowerer {
             match loc {
                 Some(v) => given[0] = (STerm::Var(v), "int"),
                 None => {
-                    given[0] = (STerm::Var("rr_demand_doc".to_owned()), "int");
+                    given[0] = (STerm::Var("rr_demand_doc".into()), "int");
                     every_chunk_doc = true;
                 }
             }
@@ -1377,16 +1377,16 @@ impl Lowerer {
             return Ok(());
         }
         let ctx = ctx.transpose()?;
-        self.prog.decls.insert(req.to_owned(), given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())).collect());
+        self.prog.decls.insert(req.to_owned().into(), given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         let args: Vec<Term> = given.iter().map(|(t, _)| match t {
-            STerm::Var(v) => Term::Var(v.clone()),
-            STerm::Str(s) => Term::Str(s.clone()),
+            STerm::Var(v) => Term::Var(v.clone().into()),
+            STerm::Str(s) => Term::Str(s.clone().into()),
             _ => unreachable!("checked above"),
         }).collect();
         let head = Atom { rel: req.to_owned().into(), args, neg: false, gated: false };
         let mut body: Vec<Literal> = ctx.into_iter().map(Literal::Atom).collect();
         if every_chunk {
-            body.push(Literal::Atom(Atom { rel: "doc".to_owned().into(), args: vec![Term::Var("rr_demand_doc".to_owned()), Term::Wild, Term::Wild], neg: false, gated: false }));
+            body.push(Literal::Atom(Atom { rel: "doc".into(), args: vec![Term::Var("rr_demand_doc".into()), Term::Wild, Term::Wild], neg: false, gated: false }));
         }
         let rule = Rule { head, body };
         if !self.prog.rules.contains(&rule) {
@@ -1405,11 +1405,11 @@ impl Lowerer {
         }
         let Some(key) = args.first() else { return Ok(()) };
         let head = |key: Term| Atom { rel: demand.to_owned().into(), args: vec![key], neg: false, gated: false };
-        self.prog.decls.insert(demand.to_owned(), vec![("k".to_owned(), "sym".to_owned())]);
+        self.prog.decls.insert(demand.to_owned().into(), vec![("k".into(), "sym".into())]);
         let s = match key {
             // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
             STerm::Str(k) => {
-                let row = vec![Value::Str(k.clone())];
+                let row = vec![Value::Str(k.clone().into())];
                 let rows = self.prog.facts.entry(demand.to_owned()).or_default();
                 if !rows.contains(&row) {
                     rows.push(row);
@@ -1449,7 +1449,7 @@ impl Lowerer {
         let ctx = if binds { Some(self.context(std::slice::from_ref(s))) } else { None };
         self.siblings = saved;
         let Some(ctx) = ctx.transpose()? else { return Ok(()) };
-        let rule = Rule { head: head(Term::Var(s.clone())), body: vec![Literal::Atom(ctx)] };
+        let rule = Rule { head: head(Term::Var(s.clone().into())), body: vec![Literal::Atom(ctx)] };
         if !self.prog.rules.contains(&rule) {
             self.prog.rules.push(rule);
         }
@@ -1482,9 +1482,9 @@ impl Lowerer {
         let (cols, args): (Vec<(String, String)>, Vec<Term>) = if shared.is_empty() {
             (vec![("unit".to_owned(), "int".to_owned())], vec![Term::Int(0)])
         } else {
-            (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone())).collect())
+            (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone().into())).collect())
         };
-        self.prog.decls.insert(name.clone(), cols);
+        self.prog.decls.insert(name.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let head = Atom { rel: name.into(), args, neg: false, gated: false };
         for body in bodies {
             self.prog.rules.push(Rule { head: head.clone(), body });
@@ -1500,15 +1500,15 @@ impl Lowerer {
             _ => "set".to_owned(),
         };
         let name = format!("{RESERVED}prec_{label}");
-        if self.prog.decls.contains_key(&name) {
+        if self.prog.decls.contains_key(name.as_str()) {
             return name;
         }
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
         let cmp = |l: &str, r: &str| Literal::Cmp { l: v(l), op: "<", r: v(r) };
         let member = match (set, self.node_set(set)) {
             (_, Some(nodes)) => vec![atom(&nodes, vec![v("s")], false)],
-            (STerm::Str(k), _) => vec![atom("kind", vec![v("s"), Term::Str(k.clone())], false)],
+            (STerm::Str(k), _) => vec![atom("kind", vec![v("s"), Term::Str(k.clone().into())], false)],
             (STerm::Var(kinds), _) => vec![atom("kind", vec![v("s"), v("sk")], false), atom(kinds, vec![v("sk")], false)],
             _ => vec![],
         };
@@ -1516,9 +1516,9 @@ impl Lowerer {
         let after = format!("{RESERVED}prec_after_{label}");
         let first = format!("{RESERVED}prec_first_{label}");
         let node_int = vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
-        self.prog.decls.insert(after.clone(), node_int.clone());
-        self.prog.decls.insert(first.clone(), node_int);
-        self.prog.decls.insert(name.clone(), vec![("a".to_owned(), "node".to_owned()), ("b".to_owned(), "node".to_owned())]);
+        self.prog.decls.insert(after.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.decls.insert(first.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.decls.insert(name.clone().into(), vec![("a".into(), "node".into()), ("b".into(), "node".into())]);
         let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args, neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
@@ -1544,13 +1544,13 @@ impl Lowerer {
     /// A set argument that names a relation of nodes (`.decl block_node(n: node)`), not of kinds.
     fn node_set(&self, set: &STerm) -> Option<String> {
         let STerm::Var(name) = set else { return None };
-        let cols = self.prog.decls.get(name)?;
+        let cols = self.prog.decls.get(name.as_str())?;
         (cols.len() == 1 && cols[0].1 == "node").then(|| name.clone())
     }
 
     /// `tape(n, par, size, depth)`, read by the tree's ranges and climbs.
     fn need_tape(&mut self) {
-        self.prog.decls.entry("tape".to_owned()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
+        self.prog.decls.entry("tape".to_owned().into()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         if !self.prog.inputs.iter().any(|i| i == "tape") {
             self.prog.inputs.push("tape".to_owned());
         }
@@ -1562,8 +1562,8 @@ impl Lowerer {
     fn climb(&mut self, seed: Vec<Literal>, x: &str, stop: Option<&str>) -> String {
         self.need_tape();
         let rel = self.fresh("up");
-        self.prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
-        let v = |s: &str| Term::Var(s.to_owned());
+        self.prog.decls.insert(rel.clone().into(), vec![("n".into(), "node".into()), ("a".into(), "node".into())]);
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned().into(), args, neg, gated: false });
         let up = |p: &str, q: &str| atom("tape", vec![v(p), v(q), Term::Wild, Term::Wild], false);
         let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
@@ -1587,7 +1587,7 @@ impl Lowerer {
             self.siblings = siblings;
             return Ok(vec![Literal::Atom(ctx?)]);
         }
-        Ok(vec![Literal::Atom(Atom { rel: "node".to_owned().into(), args: vec![Term::Wild, Term::Var(n.to_owned()), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false })])
+        Ok(vec![Literal::Atom(Atom { rel: "node".into(), args: vec![Term::Wild, Term::Var(n.to_owned().into()), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false })])
     }
 
     /// The axes over a set of nodes S (`core.rr`: a set may be a relation of nodes), as climbs up the tree:
@@ -1608,7 +1608,7 @@ impl Lowerer {
             }
         };
         let (first, second) = (named(self, &args[0])?, named(self, &args[1])?);
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let positive = match rel {
             "inside" | "nearest" => {
                 let (n, a) = (first.clone(), second.clone());
@@ -1623,7 +1623,7 @@ impl Lowerer {
             }
             _ => {
                 let (n, a) = (first.clone(), second.clone());
-                let below = self.within("within", &[STerm::Var(n.clone()), STerm::Var(a.clone())], false)?;
+                let below = self.within("within", &[STerm::Var(n.clone().into()), STerm::Var(a.clone().into())], false)?;
                 let seed = self.climb_seed(&n)?;
                 let up = self.climb(seed, &n, Some(&set));
                 let s = self.fresh("stop");
@@ -1665,7 +1665,7 @@ impl Lowerer {
         }
         let (n, a) = (self.term(n)?, self.term(a)?);
         let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        self.prog.decls.insert(within.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        self.prog.decls.insert(within.to_owned().into(), vec![("n".into(), "node".into()), ("a".into(), "node".into())]);
         if !self.prog.inputs.iter().any(|i| i == within) {
             self.prog.inputs.push(within.to_owned());
         }
@@ -1675,20 +1675,20 @@ impl Lowerer {
         let set = self.set_name("within_stop", stop)?;
         let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
         let s = self.fresh("stop");
-        let nearest = Literal::Nearest { n: nv.clone(), a: s.clone(), kindset: set.clone() };
+        let nearest = Literal::Nearest { n: nv.to_string(), a: s.clone(), kindset: set.clone() };
         // The nearest stop against a is by the tree, not by comparing ids (ids need not follow preorder, decision
         // 0083 §3).
         if neg {
             // n is not below a, or its nearest stop is strictly below a.
-            let between = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![Term::Var(s.clone()), a.clone()], neg: false, gated: false });
+            let between = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![Term::Var(s.clone().into()), a.clone()], neg: false, gated: false });
             return Ok(vec![below(true), below(false).into_iter().chain([nearest, between]).collect()]);
         }
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
         // The nearest stop is a, or a is below it.
-        let above = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
+        let above = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![a.clone(), Term::Var(s.clone().into())], neg: false, gated: false });
         Ok(vec![
             below(false).into_iter().chain([none]).collect(),
-            below(false).into_iter().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
+            below(false).into_iter().chain([nearest.clone(), cmp(&Term::Var(s.clone().into()), "=", &a)]).collect(),
             below(false).into_iter().chain([nearest, above]).collect(),
         ])
     }
@@ -1701,8 +1701,8 @@ impl Lowerer {
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
-        self.prog.decls.insert(name.to_owned(), cols);
-        let x = |n: &str| Term::Var(n.to_owned());
+        self.prog.decls.insert(name.to_owned().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        let x = |n: &str| Term::Var(n.to_owned().into());
         let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: vec![x("s")], neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
         let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
@@ -1733,7 +1733,7 @@ impl Lowerer {
             return false;
         }
         let gs = groups(re);
-        let want: Vec<STerm> = std::iter::once(STerm::Var(s.clone())).chain(gs.iter().map(|g| STerm::Var(g.clone()))).chain(coordinates.iter().cloned()).collect();
+        let want: Vec<STerm> = std::iter::once(STerm::Var(s.clone().into())).chain(gs.iter().map(|g| STerm::Var(g.clone().into()))).chain(coordinates.iter().cloned()).collect();
         if h.args != want {
             return false;
         }
@@ -1800,19 +1800,19 @@ impl Lowerer {
             }
             let pattern = if all { re.clone() } else { format!("^(?:{re})$") };
             self.rx_span_input();
-            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".to_owned().into(), args, neg: false, gated: false });
-            let (p, c) = (Term::Str(pattern), Term::Var(v.clone()));
+            let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args, neg: false, gated: false });
+            let (p, c) = (Term::Str(pattern.into()), Term::Var(v.clone().into()));
             if gs.is_empty() {
-                return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new()), Term::Wild])]]);
+                return Ok(vec![vec![atom(vec![p, c, Term::Wild, Term::Str(String::new().into()), Term::Wild])]]);
             }
-            let j = Term::Var(self.fresh("j"));
-            return Ok(vec![gs.iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone()), Term::Var(g.clone())])).collect()]);
+            let j = Term::Var(self.fresh("j").into());
+            return Ok(vec![gs.iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.clone().into())])).collect()]);
         }
         if !all {
             return self.captures(args);
         }
         if gs.is_empty() && positions.is_empty() {
-            return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![self.term(s)?, Term::Str(re.clone())]), op: "=", r: Term::Int(1) }]]);
+            return Ok(vec![vec![Literal::Cmp { l: Term::Call("rx".into(), vec![self.term(s)?, Term::Str(re.clone().into())]), op: "=", r: Term::Int(1) }]]);
         }
         let STerm::Var(v) = s else { return not_yet(format!("match_all over a computed text, {s:?} (bind it to a variable first)")) };
         // The texts asked about: the rule's other literals, those that read no capture (they are bound by the matches).
@@ -1829,7 +1829,7 @@ impl Lowerer {
         let ctx = ctx?;
         let name = self.fresh("mall");
         self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
-        let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone())))
+        let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })]])
     }
@@ -1840,10 +1840,10 @@ impl Lowerer {
         let [STerm::Str(re), STerm::Var(n), m] = args else { unreachable!("a node match_all") };
         self.rx_span_input();
         let atom = |args: Vec<Term>| Literal::Atom(Atom { rel: "rx_span".into(), args, neg: false, gated: false });
-        let (p, c, j) = (Term::Str(re.clone()), Term::Var(n.clone()), Term::Var(self.fresh("j")));
+        let (p, c, j) = (Term::Str(re.clone().into()), Term::Var(n.clone().into()), Term::Var(self.fresh("j").into()));
         let m = self.term(m)?;
-        let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new()), m])];
-        out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone()), Term::Var(g)])));
+        let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m])];
+        out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())])));
         Ok(vec![out])
     }
 
@@ -1886,8 +1886,8 @@ impl Lowerer {
                 ("source", [_, Term::Var(y)]) if y == x => Some([SpanIn::Source].into()),
                 ("src_line", [_, _, Term::Var(y)]) if y == x => Some([SpanIn::Line].into()),
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.clone())].into()),
-                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.clone(), g.clone())].into()),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.to_string())].into()),
+                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
                 _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.to_string(), i)).cloned()).flatten()),
             })
         };
@@ -1897,9 +1897,9 @@ impl Lowerer {
             let heads: BTreeSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
             let inputs: BTreeSet<&str> = self.prog.inputs.iter().map(String::as_str).collect();
             for (rel, cols) in &self.prog.decls {
-                if !heads.contains(rel.as_str()) && !inputs.contains(rel.as_str()) && !self.prog.natives.contains_key(rel) {
+                if !heads.contains(rel.as_str()) && !inputs.contains(rel.as_str()) && !self.prog.natives.contains_key(rel.as_str()) {
                     for i in 0..cols.len() {
-                        columns.insert((rel.clone(), i), BTreeSet::new());
+                        columns.insert((rel.to_string(), i), BTreeSet::new());
                     }
                 }
             }
@@ -2004,13 +2004,13 @@ impl Lowerer {
                                         return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
                 };
                 for w in within {
-                    self.prog.rx_spans.insert((w, p.clone()));
+                    self.prog.rx_spans.insert((w, p.to_string()));
                 }
             }
             // The AST patterns, read off the rules too.
             for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
                 if let Some(Term::Str(p)) = a.args.first() {
-                    self.prog.ast_patterns.insert(p.clone());
+                    self.prog.ast_patterns.insert(p.to_string());
                 }
             }
         }
@@ -2028,11 +2028,11 @@ impl Lowerer {
             && self.span_container(v).is_some()
         {
             self.rx_span_input();
-            let args = vec![Term::Str(format!("^(?:{re})$")), Term::Var(v.clone()), Term::Wild, Term::Str(String::new()), Term::Wild];
-            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".to_owned().into(), args, neg, gated: false })]]);
+            let args = vec![Term::Str(format!("^(?:{re})$").into()), Term::Var(v.clone().into()), Term::Wild, Term::Str(String::new().into()), Term::Wild];
+            return Ok(vec![vec![Literal::Atom(Atom { rel: "rx_span".into(), args, neg, gated: false })]]);
         }
         let t = self.fresh("text");
-        let text = Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false });
+        let text = Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(v.clone().into()), Term::Var(t.clone().into())], neg: false, gated: false });
         let test = self.atom(rel, &[p.clone(), STerm::Var(t)], neg)?;
         Ok(vec![vec![text, test]])
     }
@@ -2049,16 +2049,16 @@ impl Lowerer {
         if !self.prog.inputs.iter().any(|i| i == "ast_match") {
             self.prog.inputs.push("ast_match".to_owned());
             let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
-            self.prog.decls.insert("ast_match".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+            self.prog.decls.insert("ast_match".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         }
         let atom = |g: &str, c: Term, neg: bool| {
-            Literal::Atom(Atom { rel: "ast_match".to_owned().into(), args: vec![Term::Str(pattern.to_owned()), Term::Var(n.clone()), Term::Str(g.to_owned()), c], neg, gated: false })
+            Literal::Atom(Atom { rel: "ast_match".into(), args: vec![Term::Str(pattern.to_owned().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c], neg, gated: false })
         };
         if neg {
             return Ok(vec![vec![atom("", Term::Wild, true)]]);
         }
         let mut out = vec![atom("", Term::Wild, false)];
-        out.extend(super::single_metavars(pattern).into_iter().map(|x| atom(&x, Term::Var(x.clone()), false)));
+        out.extend(super::single_metavars(pattern).into_iter().map(|x| atom(&x, Term::Var(x.clone().into()), false)));
         Ok(vec![out])
     }
 
@@ -2067,7 +2067,7 @@ impl Lowerer {
         if !self.prog.inputs.iter().any(|i| i == "rx_span") {
             self.prog.inputs.push("rx_span".to_owned());
             let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
-            self.prog.decls.insert("rx_span".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+            self.prog.decls.insert("rx_span".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         }
     }
 
@@ -2117,7 +2117,7 @@ impl Lowerer {
     /// (`(php_arg(c, 1, l) ; php_named_arg(c, "level", l)), match("…", l)` tests l's text, not its id).
     fn node_in(&self, l: &Lit, v: &str) -> bool {
         match l {
-            Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
+            Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel.as_str()).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),
             Lit::Group { alts, neg: false } => !alts.is_empty() && alts.iter().all(|alt| alt.iter().any(|l| self.node_in(l, v))),
@@ -2129,13 +2129,13 @@ impl Lowerer {
     /// `x = @rx_group(s, "^(?:…)$", "x")`, which has no value when s does not match (`strings::group`).
     fn captures(&mut self, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
         let [STerm::Str(re), s] = args else { unreachable!("match with a pattern") };
-        let whole = Term::Str(format!("^(?:{re})$"));
+        let whole = Term::Str(format!("^(?:{re})$").into());
         let s = self.term(s)?;
         // The test as well as the groups: a group the head alone reads is a column, which SQL does not filter on, so
         // a text that does not match would make a row with no value (`pct_rest`'s `%%` step).
-        let mut out = vec![Literal::Cmp { l: Term::Call("rx".to_owned(), vec![s.clone(), whole.clone()]), op: "=", r: Term::Int(1) }];
+        let mut out = vec![Literal::Cmp { l: Term::Call("rx".into(), vec![s.clone(), whole.clone()]), op: "=", r: Term::Int(1) }];
         for g in groups(re) {
-            out.push(Literal::Cmp { l: Term::Var(g.clone()), op: "=", r: Term::Call("rx_group".to_owned(), vec![s.clone(), whole.clone(), Term::Str(g)]) });
+            out.push(Literal::Cmp { l: Term::Var(g.clone().into()), op: "=", r: Term::Call("rx_group".into(), vec![s.clone(), whole.clone(), Term::Str(g.into())]) });
         }
         Ok(vec![out])
     }
@@ -2165,13 +2165,13 @@ impl Lowerer {
             let s = match &tests[0].1 {
                 STerm::Var(v) if self.span_container(v).is_some() || self.node_typed(v) => {
                     let t = self.fresh("text");
-                    out.push(Literal::Atom(Atom { rel: "text".to_owned().into(), args: vec![Term::Var(v.clone()), Term::Var(t.clone())], neg: false, gated: false }));
-                    Term::Var(t)
+                    out.push(Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(v.clone().into()), Term::Var(t.clone().into())], neg: false, gated: false }));
+                    Term::Var(t.into())
                 }
                 s => self.term(s)?,
             };
-            let set = Term::Call(SET.to_owned(), tests.iter().map(|(_, _, p)| Term::Str(p.clone())).collect());
-            out.push(Literal::Cmp { l: Term::Call(tests[0].0.to_owned(), vec![s, set]), op: "=", r: Term::Int(1) });
+            let set = Term::Call(SET.to_owned().into(), tests.iter().map(|(_, _, p)| Term::Str(p.clone().into())).collect());
+            out.push(Literal::Cmp { l: Term::Call(tests[0].0.to_owned().into(), vec![s, set]), op: "=", r: Term::Int(1) });
             return Ok(Some(out));
         }
         let members: Option<Vec<(String, String)>> = alts
@@ -2187,8 +2187,8 @@ impl Lowerer {
             && members.iter().all(|(x, _)| *x == members[0].0)
             && (neg || self.bound_beside(&members[0].0))
         {
-            let set = Term::Call(SET.to_owned(), members.iter().map(|(_, c)| Term::Str(c.clone())).collect());
-            return Ok(Some(vec![Literal::Cmp { l: Term::Call("equals".to_owned(), vec![Term::Var(members[0].0.clone()), set]), op: "=", r: Term::Int(1) }]));
+            let set = Term::Call(SET.to_owned().into(), members.iter().map(|(_, c)| Term::Str(c.clone().into())).collect());
+            return Ok(Some(vec![Literal::Cmp { l: Term::Call("equals".into(), vec![Term::Var(members[0].0.clone().into()), set]), op: "=", r: Term::Int(1) }]));
         }
         Ok(None)
     }
@@ -2235,11 +2235,11 @@ impl Lowerer {
             // option's) is anchored as it runs.
             if op == "rx" {
                 p = match p {
-                    Term::Str(re) => Term::Str(format!("^(?:{re})$")),
+                    Term::Str(re) => Term::Str(format!("^(?:{re})$").into()),
                     other => anchored(other),
                 };
             }
-            return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
+            return Ok(Literal::Cmp { l: Term::Call(op.to_owned().into(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
         }
         match (rel, args) {
             // `nearest(n, _, set)`: n has an ancestor in the set, which is `inside(n, _, set)`; and negated.
@@ -2287,12 +2287,12 @@ impl Lowerer {
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
                 if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
-                    if !self.prog.decls.get(name).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                    if !self.prog.decls.get(name.as_str()).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
                     let mut serial=self.prog.natives.len();
-                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()){break name;}serial+=1;};
                     self.python_candidates_native(&rel, native);
                     rel
                 };
@@ -2332,13 +2332,13 @@ impl Lowerer {
     /// from these documents).
     fn python_candidates_native(&mut self, name: &str, native: Native) {
         let Native::PythonCandidates { input, targets, .. } = &native else { unreachable!("python candidates") };
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let a = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.into(), args, neg: false, gated: false });
         let mut body = vec![a(input, vec![v("d")]), a(targets, vec![v("q")])];
         for n in ["c", "f", "r", "o"] {
             body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
         }
-        self.prog.decls.insert(name.to_owned(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
+        self.prog.decls.insert(name.to_owned().into(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
         self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body });
         self.prog.natives.insert(name.to_owned(), native);
     }
@@ -2354,19 +2354,19 @@ impl Lowerer {
             rel = format!("{base}__{collision}");
         }
         let vars=if kind=="arguments" {vec![("n","node"),("i","int"),("keyword","sym"),("spread","sym"),("value","node")]}else if kind=="qualified"{vec![("n","node"),("q","sym")]}else{vec![("n","node"),("value","node")]};
-        let v=|s:&str|Term::Var(s.to_owned());
+        let v=|s:&str|Term::Var(s.to_owned().into());
         let atom=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
         let mut body=vec![atom(input,vec![v("n")]),atom("node",vec![v("d"),v("n"),Term::Wild,Term::Wild,Term::Wild])];
         if let Some(t)=targets {body.push(atom(t,vec![v("q")]));}
         else {
             body.push(atom("node",vec![v("d"),v("value"),Term::Wild,Term::Wild,Term::Wild]));
             if kind=="arguments" {
-                for (name,value) in [("i",Term::Int(0)),("keyword",Term::Str(String::new())),("spread",Term::Str(String::new()))] {
+                for (name,value) in [("i",Term::Int(0)),("keyword",Term::Str(String::new().into())),("spread",Term::Str(String::new().into()))] {
                     body.push(Literal::Cmp{l:v(name),op:"=",r:value});
                 }
             }
         }
-        self.prog.decls.insert(rel.clone(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).collect());
+        self.prog.decls.insert(rel.clone().into(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body});
         self.prog.natives.insert(rel.clone(),native);
         rel
@@ -2383,7 +2383,7 @@ impl Lowerer {
         if self.prog.natives.contains_key(&rel) {
             return rel;
         }
-        let v = |n: &str| Term::Var(n.to_owned());
+        let v = |n: &str| Term::Var(n.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         let mut body = vec![atom(edge, vec![v("r"), v("hit"), v("first")]), atom(target, vec![v("hit")])];
         if let Some(roots) = roots {
@@ -2391,9 +2391,9 @@ impl Lowerer {
         }
         self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v("r"), v("hit"), v("first")], neg: false, gated: false }, body });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
-        let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
+        let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.to_string());
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
-        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
         rel
     }
@@ -2406,12 +2406,12 @@ impl Lowerer {
         if self.prog.natives.contains_key(&rel) {
             return rel;
         }
-        let v = |n: &str| Term::Var(n.to_owned());
+        let v = |n: &str| Term::Var(n.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
         self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: vec![v("d"), v("e"), v("k")], neg: false, gated: false }, body });
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
-        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
     }
@@ -2455,7 +2455,7 @@ impl Lowerer {
                 let other = self.term(other)?;
                 // `$v = 0` with `$v` unbound would assign it (`front::cmp_binds`), and the planner may place it
                 // before the aggregate: an equality is written `0 = $v`, a test that waits for the aggregate.
-                let (l, r) = if matches!(l, STerm::Agg { .. }) && op != "=" { (Term::Var(v), other) } else { (other, Term::Var(v)) };
+                let (l, r) = if matches!(l, STerm::Agg { .. }) && op != "=" { (Term::Var(v.into()), other) } else { (other, Term::Var(v.into())) };
                 out.push(Literal::Cmp { l, op, r });
                 Ok(vec![out])
             }
@@ -2554,9 +2554,9 @@ impl Lowerer {
         let context = self.covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars)?;
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
-        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-        self.prog.decls.insert(ctx.clone(), types);
-        let head = Atom { rel: ctx.into(), args: vars.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+        let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).map(|(c, t)| (c.into(), t.into())).collect();
+        self.prog.decls.insert(ctx.clone().into(), types);
+        let head = Atom { rel: ctx.into(), args: vars.iter().map(|c| Term::Var(c.clone().into())).collect(), neg: false, gated: false };
         for b in alts {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
@@ -2733,9 +2733,9 @@ impl Lowerer {
                 lits
             };
             let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
-            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
-            self.prog.decls.insert(rel.clone(), types);
-            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).map(|(c, t)| (c.into(), t.into())).collect();
+            self.prog.decls.insert(rel.clone().into(), types);
+            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| Term::Var(c.clone().into())).collect(), neg: false, gated: false };
             for b in alts {
                 self.prog.rules.push(Rule { head: head.clone(), body: b });
             }
@@ -2881,7 +2881,7 @@ impl Lowerer {
             STerm::Var(v) => v.clone(),
             t => {
                 let v = me.fresh("val");
-                body.push(Lit::Cmp { l: STerm::Var(v.clone()), op: "=", r: t.clone() });
+                body.push(Lit::Cmp { l: STerm::Var(v.clone().into()), op: "=", r: t.clone() });
                 v
             }
         };
@@ -2907,8 +2907,8 @@ impl Lowerer {
             return Err(Error::Syntax(format!("{agg} needs the variable it aggregates")));
         }
         // The body's own variables the aggregate reads: its value, and a join's keys.
-        let own = |v: &String| over.as_ref() == Some(v) || by.contains(v);
-        let ours = |v: &String| !outer.contains(v);
+        let own = |v: &str| over.as_deref() == Some(v) || by.iter().any(|b| b == v);
+        let ours = |v: &str| !outer.contains(v);
         // One plain atom: the engine's aggregate reads it. The built-ins lowering writes out (axes, core.rr's tree
         // arithmetic, …) are no relations of the program, so a body of one of them goes through the helper.
         if let [Lit::Atom { rel, args, neg: false }] = body
@@ -2998,16 +2998,16 @@ impl Lowerer {
                 b.insert(0, Literal::Atom(ctx.clone()));
             }
         }
-        let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect();
-        self.prog.decls.insert(name.clone(), types);
-        let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone())).collect();
+        let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).map(|(c, t)| (c.into(), t.into())).collect();
+        self.prog.decls.insert(name.clone().into(), types);
+        let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone().into())).collect();
         for b in bodies {
             // The empty value inside the body is the constant, as in a rule's own body.
             let (args, b) = unset(args.clone(), b)?;
             self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args, neg: false, gated: false }, body: b });
         }
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
-        let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
+        let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone().into()) } else { Term::Wild }).collect();
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name.into(), args, neg: false, gated: false } }])
     }
 
@@ -3018,14 +3018,14 @@ impl Lowerer {
             match literal {
                 Literal::Atom(a) if !a.neg => {
                     for (i, t) in a.args.iter().enumerate() {
-                        if *t == Term::Var(v.to_owned()) {
+                        if *t == Term::Var(v.to_owned().into()) {
                             if crate::code_rule_dsl::logic::front::is_axis(&a.rel) {
                                 return "node".to_owned();
                             }
                             if let Some(cols) = self.prog.decls.get(a.rel.as_str())
                                 && let Some((_, ty)) = cols.get(i)
                             {
-                                return ty.clone();
+                                return ty.to_string();
                             }
                         }
                     }
@@ -3049,8 +3049,8 @@ impl Lowerer {
                         AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
                         AggOp::Join { .. } => "sym".to_owned(),
                         AggOp::Min | AggOp::Max => {
-                            let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone())));
-                            col.and_then(|c| self.prog.decls.get(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
+                            let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone().into())));
+                            col.and_then(|c| self.prog.decls.get(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".into()).to_string()
                         }
                     };
                 }
@@ -3065,10 +3065,10 @@ impl Lowerer {
     fn term(&mut self, t: &STerm) -> Result<Term, Error> {
         Ok(match t {
             STerm::Var(v) if v == "top" && !self.top_is_var => Term::Top,
-            STerm::Var(v) => Term::Var(v.clone()),
+            STerm::Var(v) => Term::Var(v.clone().into()),
             STerm::Wild => Term::Wild,
             STerm::Num(n) => Term::Int(*n),
-            STerm::Str(s) => Term::Str(s.clone()),
+            STerm::Str(s) => Term::Str(s.clone().into()),
             STerm::Call { name, functor: true, args } => {
                 let mut args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
                 // The data-layer programs' SQL builtins (decision 0107): the engine's functions of SQLite's meaning.
@@ -3076,7 +3076,7 @@ impl Lowerer {
                     if swap {
                         args.swap(0, 1);
                     }
-                    return Ok(Term::Call(f.to_owned(), args));
+                    return Ok(Term::Call(f.to_owned().into(), args));
                 }
                 // `@printf` of a constant format: its pieces concatenated (`printf_pieces`), each one a function every
                 // executor has.
@@ -3090,9 +3090,9 @@ impl Lowerer {
                 if name == "concat" && args.len() > 2 {
                     let mut args = args.into_iter();
                     let first = args.next().expect("three or more");
-                    return Ok(args.fold(first, |acc, a| Term::Call("concat".to_owned(), vec![acc, a])));
+                    return Ok(args.fold(first, |acc, a| Term::Call("concat".into(), vec![acc, a])));
                 }
-                Term::Call(if name == "dot" { "cat".to_owned() } else { name.clone() }, args)
+                Term::Call(if name == "dot" { "cat".into() } else { name.clone().into() }, args)
             }
             STerm::Call { name, functor: false, args } => {
                 // Soufflé's functions: `cat` joins strings (the engine's `cat` joins with a dot, so it is `concat`).
@@ -3110,9 +3110,9 @@ impl Lowerer {
                 if f == "concat" {
                     let mut args = args.into_iter();
                     let first = args.next().expect("two or more");
-                    return Ok(args.fold(first, |acc, a| Term::Call("concat".to_owned(), vec![acc, a])));
+                    return Ok(args.fold(first, |acc, a| Term::Call("concat".into(), vec![acc, a])));
                 }
-                Term::Call(f.to_owned(), args)
+                Term::Call(f.to_owned().into(), args)
             }
             STerm::Bin { op, l, r } => {
                 // Float arithmetic is on floats' keys (`strings::functions::float_key`), by functions of them.
@@ -3129,7 +3129,7 @@ impl Lowerer {
                     "%" if !float => "mod",
                     other => return not_yet(format!("arithmetic ({other})")),
                 };
-                Term::Call(f.to_owned(), vec![self.term(l)?, self.term(r)?])
+                Term::Call(f.to_owned().into(), vec![self.term(l)?, self.term(r)?])
             }
             STerm::Agg { op, .. } => return not_yet(format!("the aggregate {op} as a term")),
             STerm::Tick(t) => return not_yet(format!("the template `{t}`")),
@@ -3164,7 +3164,7 @@ impl Lowerer {
                 .prog
                 .kindsets
                 .keys()
-                .filter(|set| self.prog.decls.contains_key(*set) || self.prog.facts.contains_key(*set) || self.prog.rules.iter().any(|r| r.head.rel == set.as_str()))
+                .filter(|set| self.prog.decls.contains_key(set.as_str()) || self.prog.facts.contains_key(*set) || self.prog.rules.iter().any(|r| r.head.rel == set.as_str()))
                 .filter(|set| !self.prog.rules.iter().filter(|r| r.head.rel != set.as_str()).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set.as_str())))
                 .cloned()
                 .collect();
@@ -3173,7 +3173,7 @@ impl Lowerer {
             }
             for set in unread {
                 self.prog.facts.remove(&set);
-                self.prog.decls.remove(&set);
+                self.prog.decls.remove(set.as_str());
                 self.prog.rules.retain(|r| r.head.rel != set);
             }
         }
@@ -3206,7 +3206,7 @@ impl Lowerer {
         for rule in &mut self.prog.rules {
             for l in &mut rule.body {
                 let (set, helper, args, neg) = match l {
-                    Literal::Nearest { n, a, kindset } if derived.contains(kindset) => (kindset.clone(), "near", vec![Term::Var(n.clone()), Term::Var(a.clone())], false),
+                    Literal::Nearest { n, a, kindset } if derived.contains(kindset) => (kindset.clone(), "near", vec![Term::Var(n.clone().into()), Term::Var(a.clone().into())], false),
                     Literal::Atom(x) => match axis(&x.rel) {
                         Some((set, has)) if derived.contains(set) => {
                             let (helper, args) = match (has, x.args.as_slice()) {
@@ -3234,13 +3234,13 @@ impl Lowerer {
         for rel in ["child", "node"] {
             self.base(rel);
         }
-        let v = |s: &str| Term::Var(s.to_owned());
+        let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false });
         let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
         for (set, helper) in need {
             let member = format!("rr_in_{set}");
-            if !self.prog.decls.contains_key(&member) {
-                self.prog.decls.insert(member.clone(), vec![("x".to_owned(), "node".to_owned())]);
+            if !self.prog.decls.contains_key(member.as_str()) {
+                self.prog.decls.insert(member.clone().into(), vec![("x".into(), "node".into())]);
                 let body = vec![atom("node", vec![Term::Wild, v("x"), v("k"), Term::Wild, Term::Wild], false), atom(&set, vec![v("k")], false)];
                 self.prog.rules.push(Rule { head: Atom { rel: member.clone().into(), args: vec![v("x")], neg: false, gated: false }, body });
             }
@@ -3253,7 +3253,7 @@ impl Lowerer {
                 "desc" => (&["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["n", "p"]), child("a", "p")]]),
                 _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
             };
-            self.prog.decls.insert(rel.clone(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).collect());
+            self.prog.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
             let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
             for body in bodies {
                 self.prog.rules.push(Rule { head: head.clone(), body });
@@ -3268,7 +3268,7 @@ impl Lowerer {
             "node" => &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")],
             other => unreachable!("no base relation {other}"),
         };
-        self.prog.decls.entry(rel.to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        self.prog.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         if !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.rules.iter().any(|r| r.head.rel == rel) {
             self.prog.inputs.push(rel.to_owned());
         }
@@ -3290,17 +3290,17 @@ impl Lowerer {
             terms.push(match t {
                 Term::Var(_) => t,
                 _ if neg => t,
-                Term::Wild => Term::Var(self.fresh("part")),
+                Term::Wild => Term::Var(self.fresh("part").into()),
                 constant => {
-                    let v = Term::Var(self.fresh("part"));
+                    let v = Term::Var(self.fresh("part").into());
                     out.push(Literal::Cmp { l: v.clone(), op: "=", r: constant });
                     v
                 }
             });
         }
         let [q, m, x] = <[Term; 3]>::try_from(terms).expect("three columns");
-        let dotted = |b: i64| Literal::Cmp { l: Term::Call("contains".to_owned(), vec![x.clone(), Term::Str(".".to_owned())]), op: "=", r: Term::Int(b) };
-        let cat = Term::Call("cat".to_owned(), vec![m, x.clone()]);
+        let dotted = |b: i64| Literal::Cmp { l: Term::Call("contains".into(), vec![x.clone(), Term::Str(".".into())]), op: "=", r: Term::Int(b) };
+        let cat = Term::Call("cat".into(), vec![m, x.clone()]);
         if neg {
             return Ok(vec![vec![Literal::Cmp { l: q, op: "!=", r: cat }], vec![dotted(1)]]);
         }
@@ -3325,7 +3325,7 @@ impl Lowerer {
         let mut kinds: Vec<String> = Vec::new();
         for row in self.prog.facts.get(set).into_iter().flatten() {
             let [Value::Str(k)] = row.as_slice() else { return None };
-            kinds.push(k.clone());
+            kinds.push(k.to_string());
         }
         for r in self.prog.rules.iter().filter(|r| r.head.rel == set) {
             let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
@@ -3369,7 +3369,7 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
         match l {
             Literal::Atom(a) if a.rel == "unset" && !a.neg => match a.args.as_slice() {
                 [Term::Var(v)] => {
-                    vars.insert(v.clone());
+                    vars.insert(v.to_string());
                 }
                 [Term::Wild] => {}
                 _ => return not_yet("`unset` of a value"),
@@ -3386,7 +3386,7 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
     }
     fn put(t: &mut Term, vars: &BTreeSet<String>) {
         match t {
-            Term::Var(v) if vars.contains(v) => *t = Term::Int(UNSET),
+            Term::Var(v) if vars.contains(v.as_str()) => *t = Term::Int(UNSET),
             Term::Call(_, args) => args.iter_mut().for_each(|a| put(a, vars)),
             _ => {}
         }
@@ -3417,7 +3417,7 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
                 match (t, a.neg) {
                     (Term::Wild, false) => None,
                     (Term::Wild, true) => Some(Literal::Cmp { l: Term::Int(1), op: "=", r: Term::Int(0) }),
-                    (t, neg) => Some(Literal::Cmp { l: t, op: if neg { "!=" } else { "=" }, r: Term::Str(String::new()) }),
+                    (t, neg) => Some(Literal::Cmp { l: t, op: if neg { "!=" } else { "=" }, r: Term::Str(String::new().into()) }),
                 }
             }
             l => Some(l),
@@ -3585,7 +3585,7 @@ pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
                 }
             };
             patterns.push(p);
-            *last = Literal::Cmp { l: Term::Call(op, vec![s, Term::Call(SET.to_owned(), patterns)]), op: "=", r: Term::Int(0) };
+            *last = Literal::Cmp { l: Term::Call(op, vec![s, Term::Call(SET.to_owned().into(), patterns)]), op: "=", r: Term::Int(0) };
             continue;
         }
         out.push(literal);
@@ -3640,13 +3640,13 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
                 literal.push('%');
                 continue;
             }
-            ('d', "") => Term::Call("rr_to_string".to_owned(), vec![args.next()?.clone()]),
-            ('d', w) if w.starts_with('0') && w.len() > 1 => Term::Call("zero_pad".to_owned(), vec![args.next()?.clone(), Term::Int(w[1..].parse().ok()?)]),
+            ('d', "") => Term::Call("rr_to_string".into(), vec![args.next()?.clone()]),
+            ('d', w) if w.starts_with('0') && w.len() > 1 => Term::Call("zero_pad".into(), vec![args.next()?.clone(), Term::Int(w[1..].parse().ok()?)]),
             ('s', "") => args.next()?.clone(),
             _ => return None,
         };
         if !literal.is_empty() {
-            pieces.push(Term::Str(std::mem::take(&mut literal)));
+            pieces.push(Term::Str(std::mem::take(&mut literal).into()));
         }
         pieces.push(piece);
     }
@@ -3654,9 +3654,9 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
         return None;
     }
     if !literal.is_empty() || pieces.is_empty() {
-        pieces.push(Term::Str(literal));
+        pieces.push(Term::Str(literal.into()));
     }
     let mut pieces = pieces.into_iter();
     let first = pieces.next()?;
-    Some(pieces.fold(first, |acc, p| Term::Call("concat".to_owned(), vec![acc, p])))
+    Some(pieces.fold(first, |acc, p| Term::Call("concat".into(), vec![acc, p])))
 }

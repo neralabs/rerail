@@ -5,9 +5,9 @@ use super::*;
 
 const OUTPUT: &str = "rr_diagnostic";
 
-fn v(name: &str) -> Term { Term::Var(name.to_owned()) }
-fn s(text: &str) -> Term { Term::Str(text.to_owned()) }
-fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned(), args) }
+fn v(name: &str) -> Term { Term::Var(name.to_owned().into()) }
+fn s(text: &str) -> Term { Term::Str(text.to_owned().into()) }
+fn call(name: &str, args: Vec<Term>) -> Term { Term::Call(name.to_owned().into(), args) }
 fn atom(rel: &str, args: Vec<Term>) -> Literal {
     Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false })
 }
@@ -20,7 +20,7 @@ fn number(value: Term) -> Term { call("to_string", vec![value]) }
 impl Lowerer {
     /// Error directives use the same public diagnostic transport as ordinary violations.
     pub(super) fn error_diagnostic(&mut self, policy: &str, clause: &str, code: &str, body: Vec<Literal>) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned(), vec![("json".to_owned(), "sym".to_owned())]);
+        self.prog.decls.insert(OUTPUT.to_owned().into(), vec![("json".into(), "sym".into())]);
         if !self.prog.outputs.iter().any(|name| name == OUTPUT) { self.prog.outputs.push(OUTPUT.to_owned()); }
         let finding = Violation {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
@@ -30,7 +30,7 @@ impl Lowerer {
     }
 
     pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
-        self.prog.decls.insert(OUTPUT.to_owned(), vec![("json".to_owned(), "sym".to_owned())]);
+        self.prog.decls.insert(OUTPUT.to_owned().into(), vec![("json".into(), "sym".into())]);
         if !self.prog.outputs.iter().any(|name| name == OUTPUT) {
             self.prog.outputs.push(OUTPUT.to_owned());
         }

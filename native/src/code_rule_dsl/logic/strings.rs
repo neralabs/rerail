@@ -159,8 +159,8 @@ impl Matcher {
 /// A test's patterns: one string, or a set `{a, b}`.
 pub fn patterns(t: &Term) -> Option<Vec<String>> {
     match t {
-        Term::Str(s) => Some(vec![s.clone()]),
-        Term::Call(f, args) if f == SET => args.iter().map(|a| if let Term::Str(s) = a { Some(s.clone()) } else { None }).collect(),
+        Term::Str(s) => Some(vec![s.to_string()]),
+        Term::Call(f, args) if f == SET => args.iter().map(|a| if let Term::Str(s) = a { Some(s.to_string()) } else { None }).collect(),
         _ => None,
     }
 }
@@ -323,8 +323,8 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
         let mut found = Vec::new();
         for (relation, declaration) in &prog.decls {
             // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
-            if prog.facts.get(relation).is_some_and(|rows| !rows.is_empty())
-                || (inputs.contains(relation.as_str()) && !columns.contains_key(relation)) {
+            if prog.facts.get(relation.as_str()).is_some_and(|rows| !rows.is_empty())
+                || (inputs.contains(relation.as_str()) && !columns.contains_key(relation.as_str())) {
                 continue;
             }
             let writers: &[&super::front::Rule] = by_head.get(relation.as_str()).map_or(&[], Vec::as_slice);
@@ -332,7 +332,7 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
                 continue;
             }
             for (column, (_, ty)) in declaration.iter().enumerate() {
-                if ty != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
+                if ty != "sym" || columns.get(relation.as_str()).is_some_and(|cols| cols.contains(&column)) {
                     continue;
                 }
                 // Every producer must copy a prepared symbol. One computed or constant arm is enough
@@ -354,7 +354,7 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
             return columns;
         }
         for (relation, column) in found {
-            columns.entry(relation).or_default().insert(column);
+            columns.entry(relation.to_string()).or_default().insert(column);
         }
     }
 }
@@ -414,7 +414,7 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
             return None;
         }
         let rows = prog.facts.get(rel)?;
-        return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+        return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.to_string()), _ => None }).collect();
     }
     visiting.push((rel.to_owned(), col));
     // Its facts' values too: a relation of facts and rules holds both.
@@ -424,11 +424,11 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
             visiting.pop();
             return None;
         };
-        out.insert(s.clone());
+        out.insert(s.to_string());
     }
     for rule in rules {
         let got = match rule.head.args.get(col) {
-            Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),
+            Some(Term::Str(s)) => Some(BTreeSet::from([s.to_string()])),
             Some(Term::Var(v)) => rule.body.iter().find_map(|l| {
                 let Literal::Atom(a) = l else { return None };
                 if a.neg {
@@ -446,7 +446,7 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
                     if prog.inputs.iter().any(|x| x == &a.rel) {
                         return None;
                     }
-                    return rows.iter().filter(|r| matches(r)).map(|row| match row.get(c) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+                    return rows.iter().filter(|r| matches(r)).map(|row| match row.get(c) { Some(super::front::Value::Str(s)) => Some(s.to_string()), _ => None }).collect();
                 }
                 constant_domain(prog, &a.rel, c, visiting)
             }),
@@ -489,7 +489,7 @@ fn implied_set_tests(prog: &mut Program) {
                 _ => None,
             });
             if let Some(values) = domain.filter(|d| !d.is_empty() && d.len() <= IMPLIED_SET_MAX) {
-                extra.push(Literal::Cmp { l: Term::Call(op.clone(), vec![Term::Var(s.clone()), Term::Call(SET.to_owned(), values.into_iter().map(Term::Str).collect())]), op: "=", r: Term::Int(1) });
+                extra.push(Literal::Cmp { l: Term::Call(op.clone().into(), vec![Term::Var(s.clone().into()), Term::Call(SET.to_owned().into(), values.into_iter().map(|v| Term::Str(v.into())).collect())]), op: "=", r: Term::Int(1) });
             }
         }
         added += extra.len();
@@ -524,7 +524,7 @@ pub fn node_subject_tests(prog: &mut Program) {
                     _ => None,
                 })
             })
-            .collect();
+            .map(String::from).collect();
         let mut added = Vec::new();
         for literal in &mut rule.body {
             let Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0 | 1) } = literal else { continue };
@@ -537,8 +537,8 @@ pub fn node_subject_tests(prog: &mut Program) {
             }
             fresh += 1;
             let t = format!("rr_node_text{fresh}");
-            added.push(Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(s.clone()), Term::Var(t.clone())], neg: false, gated: false }));
-            *s = t;
+            added.push(Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var(s.clone().into()), Term::Var(t.clone().into())], neg: false, gated: false }));
+            *s = t.into();
         }
         rule.body.extend(added);
     }
@@ -576,7 +576,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                 vocabulary_columns.get(a.rel.as_str()).into_iter().flatten()
                     .filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
             })
-            .collect();
+            .map(String::from).collect();
         for literal in &mut rule.body {
             let Some((op, s, mut pats, holds)) = as_test(literal) else { continue };
             if !texts.contains(s) {
@@ -601,7 +601,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                     rel
                 }
             };
-            *literal = Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
+            *literal = Literal::Atom(Atom { rel: rel.into(), args: vec![Term::Var(s.to_owned().into())], neg: !holds, gated: false });
         }
     }
     let mut markers: Vec<String> = Vec::new();
@@ -615,8 +615,8 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                 let [_, Term::Str(marker), _] = a.args.as_slice() else {
                     return Err(format!("fstring_template takes a constant marker: fstring_template(n, \"{{...}}\", v), not {a}"));
                 };
-                if !markers.contains(marker) {
-                    markers.push(marker.clone());
+                if !markers.iter().any(|m| m == marker.as_str()) {
+                    markers.push(marker.to_string());
                 }
                 continue;
             }
@@ -630,12 +630,12 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                 _ => continue,
             };
             let Term::Str(re) = &a.args[0] else { unreachable!("matched above") };
-            let k = match regexes.get(re) {
+            let k = match regexes.get(re.as_str()) {
                 Some(&k) => k,
                 None => {
                     let regex = regex::Regex::new(re).map_err(|e| format!("{}({re:?}, …): {e}", a.rel))?;
                     matches.push(Arc::new(regex));
-                    regexes.insert(re.clone(), matches.len() - 1);
+                    regexes.insert(re.to_string(), matches.len() - 1);
                     matches.len() - 1
                 }
             };
@@ -646,15 +646,15 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
         }
     }
     for (rel, _) in &tests {
-        prog.decls.insert(rel.clone(), vec![("s".to_owned(), "sym".to_owned())]);
+        prog.decls.insert(rel.clone().into(), vec![("s".into(), "sym".into())]);
         if !prog.inputs.contains(rel) {
             prog.inputs.push(rel.clone());
         }
     }
     for (rel, group) in made {
-        let node = |c: &str| (c.to_owned(), "node".to_owned());
-        let columns = if group { vec![node("sp"), node("m"), ("g".to_owned(), "sym".to_owned()), node("gsp")] } else { vec![node("sp"), node("m")] };
-        prog.decls.insert(rel.clone(), columns);
+        let node = |c: &str| (c.into(), "node".into());
+        let columns = if group { vec![node("sp"), node("m"), ("g".into(), "sym".into()), node("gsp")] } else { vec![node("sp"), node("m")] };
+        prog.decls.insert(rel.clone().into(), columns);
         if !prog.inputs.contains(&rel) {
             prog.inputs.push(rel);
         }

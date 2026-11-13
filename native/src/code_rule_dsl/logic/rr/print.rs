@@ -209,7 +209,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
     let prog = if prog.nullary.is_empty() { prog } else {
         logical=prog.clone();
         for name in &prog.nullary {
-            if let Some(cols)=logical.decls.get_mut(name){cols.clear();}
+            if let Some(cols)=logical.decls.get_mut(name.as_str()){cols.clear();}
             for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
         }
         let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
@@ -228,7 +228,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
     }
     // A set that is no relation of the program (no rule reads it) is printed by its kinds; one that is stays a
     // relation, declared and stated below with the rest, once.
-    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(*name)) {
+    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(name.as_str())) {
         writeln!(out, ".decl {name}(kind: symbol)").expect("a string");
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }
@@ -239,7 +239,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
         if made(name) {
             continue;
         }
-        let lattice = prog.lattice.get(name);
+        let lattice = prog.lattice.get(name.as_str());
         let mut printed = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             match lattice {
@@ -257,7 +257,7 @@ pub fn print(prog: &Program) -> Result<String, Error> {
                 }
                 // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
                 _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
-                _ if prog.tapes.get(name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
+                _ if prog.tapes.get(name.as_str()).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }

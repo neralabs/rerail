@@ -103,7 +103,7 @@ pub(crate) fn parse(text: &str) -> PNode {
         Err(error) => {
             let mut node = PNode::new(G, "error", 0, text.len());
             node.error = true;
-            node.value = Some(Value::Str(error.message().to_owned()));
+            node.value = Some(Value::Str(error.message().to_owned().into()));
             root.children = vec![node];
         }
     }
@@ -143,13 +143,13 @@ fn field_node(
         let at = offset(base, conversion);
         node.children.push(
             PNode::new(G, "conversion", at, at + conversion.len())
-                .with_value(Value::Str(conversion.to_owned())),
+                .with_value(Value::Str(conversion.to_owned().into())),
         );
     }
     if let Some(spec) = field.spec {
         let at = offset(base, spec);
         let mut spec_node = PNode::new(G, "format_spec", at, at + spec.len())
-            .with_value(Value::Str(spec.to_owned()));
+            .with_value(Value::Str(spec.to_owned().into()));
         if top {
             let nested = template(base, spec, autos, false)?;
             if nested.iter().any(|part| part.kind == G.kind_id("field")) {
@@ -177,7 +177,7 @@ fn field_name(base: &str, name: &str, autos: &mut i64) -> Result<PNode, ParseErr
     } else if let Ok(index) = first.parse::<usize>() {
         PNode::new(G, "index", start, start + first_len).with_value(Value::int(index as i64))
     } else {
-        PNode::new(G, "name", start, start + first_len).with_value(Value::Str(first.to_owned()))
+        PNode::new(G, "name", start, start + first_len).with_value(Value::Str(first.to_owned().into()))
     };
     node.value = head.value.clone();
     node.children.push(head);
@@ -193,7 +193,7 @@ fn field_name(base: &str, name: &str, autos: &mut i64) -> Result<PNode, ParseErr
                 let at = offset(base, body);
                 node.children.push(
                     PNode::new(G, "attribute", at, at + len)
-                        .with_value(Value::Str(body[..len].to_owned())),
+                        .with_value(Value::Str(body[..len].to_owned().into())),
                 );
                 rest = &body[len..];
             }
@@ -208,7 +208,7 @@ fn field_name(base: &str, name: &str, autos: &mut i64) -> Result<PNode, ParseErr
                 }
                 let value = match index.parse::<usize>() {
                     Ok(number) => Value::int(number as i64),
-                    Err(_) => Value::Str(index.to_owned()),
+                    Err(_) => Value::Str(index.to_owned().into()),
                 };
                 let at = offset(base, index);
                 node.children
@@ -363,7 +363,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
             "conversion",
             rest,
             after,
-            Some(Value::Str(c.to_string())),
+            Some(Value::Str(c.to_string().into())),
             &mut nodes,
         );
         rest = after;
@@ -380,7 +380,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
                 "fill",
                 rest,
                 after_fill,
-                Some(Value::Str(fill.to_string())),
+                Some(Value::Str(fill.to_string().into())),
                 &mut nodes,
             );
             let after = &after_fill[align.len_utf8()..];
@@ -388,7 +388,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
                 "align",
                 after_fill,
                 after,
-                Some(Value::Str(align.to_string())),
+                Some(Value::Str(align.to_string().into())),
                 &mut nodes,
             );
             rest = after;
@@ -399,7 +399,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
                 "align",
                 rest,
                 after,
-                Some(Value::Str(align.to_string())),
+                Some(Value::Str(align.to_string().into())),
                 &mut nodes,
             );
             rest = after;
@@ -416,7 +416,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
             && accepted.contains(&c)
         {
             let after = &rest[1..];
-            let value = (kind == "sign").then(|| Value::Str(c.to_string()));
+            let value = (kind == "sign").then(|| Value::Str(c.to_string().into()));
             piece(kind, rest, after, value, &mut nodes);
             rest = after;
         }
@@ -446,7 +446,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
             "grouping",
             rest,
             after,
-            Some(Value::Str(c.to_string())),
+            Some(Value::Str(c.to_string().into())),
             &mut nodes,
         );
         rest = after;
@@ -502,7 +502,7 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
             "type",
             rest,
             after,
-            Some(Value::Str(c.to_string())),
+            Some(Value::Str(c.to_string().into())),
             &mut nodes,
         );
         rest = after;

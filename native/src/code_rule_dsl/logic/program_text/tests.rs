@@ -11,7 +11,7 @@ fn atom(rel: &str, args: Vec<Term>) -> Atom {
 }
 
 fn v(x: &str) -> Term {
-    Term::Var(x.to_owned())
+    Term::Var(x.to_owned().into())
 }
 
 /// Every part of a program reads back as written: escaped names, the least number, strings that need escapes, each
@@ -23,7 +23,7 @@ fn a_program_reads_back_from_its_text() {
     prog.decls.insert("nearest".into(), vec![("x".into(), "int".into())]);
     prog.inputs = vec!["a".into(), "b".into()];
     prog.outputs = vec!["r".into()];
-    prog.facts.insert("k".into(), vec![vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())], vec![Value::Int(-3), Value::Str(String::new())]]);
+    prog.facts.insert("k".into(), vec![vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())], vec![Value::Int(-3), Value::Str(String::new().into())]]);
     prog.facts.insert("empty".into(), vec![]);
     let mut gated = atom("done_x", vec![v("x")]);
     gated.neg = true;

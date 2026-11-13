@@ -82,8 +82,8 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     }
     // A relation the program declares stays as the program has it: its own columns, and an input or a rule as its
     // lowering made it (`docof` over nodes is a rule over `node`, not an input). Only what it lacks is added.
-    let missing: BTreeSet<String> = needed.iter().filter(|rel| !prog.decls.contains_key(*rel)).cloned().collect();
-    for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel)) {
+    let missing: BTreeSet<String> = needed.iter().filter(|rel| !prog.decls.contains_key(rel.as_str())).cloned().collect();
+    for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
         prog.decls.insert(rel, cols);
     }
     // And what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
@@ -138,7 +138,7 @@ fn free(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String> 
         .iter()
         .filter(|rel| !cross.natives.contains_key(*rel))
         // A head that drops the node (`isqmod(q) :- modname(_, q)`) is a set over every document, not a view.
-        .filter(|rel| cross.decls.get(*rel).is_some_and(|c| c.iter().any(|(_, t)| t == "node")))
+        .filter(|rel| cross.decls.get(rel.as_str()).is_some_and(|c| c.iter().any(|(_, t)| t == "node")))
         .filter(|rel| rules_of(cross, rel).all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && input(&a.rel) && !a.rel.ends_with("__cross"))))
         .cloned()
         .collect();
@@ -166,7 +166,7 @@ fn free(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String> 
 fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String> {
     let mut set: BTreeSet<String> = derived
         .iter()
-        .filter(|r| !r.starts_with(PREFIX) && !cross.natives.contains_key(*r) && cross.decls.get(*r).is_some_and(|c| c.iter().any(|(_, t)| t == "node")))
+        .filter(|r| !r.starts_with(PREFIX) && !cross.natives.contains_key(*r) && cross.decls.get(r.as_str()).is_some_and(|c| c.iter().any(|(_, t)| t == "node")))
         .cloned()
         .collect();
     loop {
@@ -283,7 +283,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         if cross.natives.contains_key(rel) {
             return Err(Error::Plan(format!("{rel}: a native relation cannot be declared `{PRAGMA}`: it is made whole, not by rules")));
         }
-        let cols = &cross.decls[rel];
+        let cols = &cross.decls[rel.as_str()];
         let first = cols.iter().position(|(_, t)| t == "node").ok_or_else(|| Error::Plan(format!("{rel}: a `{PRAGMA}` relation needs a node column, the document its rows are about")))?;
         memo.insert(rel.to_string(), (first, cols.len()));
     }
@@ -301,16 +301,16 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         return Ok(Some(Plan { components, memo, digest }));
     }
     // Replay: an input and a copy per memoised relation; its other rules derive no row about a replayed document.
-    cross.decls.insert(DOCS.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+    cross.decls.insert(DOCS.to_owned().into(), vec![("d".into(), "int".into())]);
     cross.inputs.push(DOCS.to_owned());
     for rel in memo.keys() {
         // Stored, never inlined into its readers (decision 0099): its derived rows are read from its table to be
         // recorded (`record`), and replayed into it.
         cross.qualifiers.entry(rel.clone()).or_default().insert("no_inline".to_owned());
-        let cols = cross.decls[rel].clone();
+        let cols = cross.decls[rel.as_str()].clone();
         let input = format!("{rel}{SUFFIX}");
-        let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_x{i}"))).collect();
-        cross.decls.insert(input.clone(), cols);
+        let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_x{i}").into())).collect();
+        cross.decls.insert(input.clone().into(), cols);
         cross.inputs.push(input.clone());
         cross.rules.push(Rule {
             head: Atom { rel: rel.clone().into(), args: vars.clone(), neg: false, gated: false },
@@ -341,7 +341,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
                     })
                 })
                 .collect();
-            let mut guarded: Vec<String> = vec![v.clone()];
+            let mut guarded: Vec<String> = vec![v.to_string()];
             for x in crate::code_rule_dsl::typing::cross_rounds::same_document(&rule.body, same_doc, v) {
                 if x != *v && nodes.contains(x.as_str()) {
                     guarded.push(x);
@@ -349,8 +349,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             }
             for (i, x) in guarded.into_iter().enumerate() {
                 let d = if i == 0 { "rr_xd".to_owned() } else { format!("rr_xd{i}") };
-                rule.body.push(Literal::Cmp { l: Term::Var(d.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(x)]) });
-                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned().into(), args: vec![Term::Var(d)], neg: true, gated: false }));
+                rule.body.push(Literal::Cmp { l: Term::Var(d.clone().into()), op: "=", r: Term::Call("doc".into(), vec![Term::Var(x.into())]) });
+                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned().into(), args: vec![Term::Var(d.into())], neg: true, gated: false }));
             }
         }
     }
@@ -374,14 +374,14 @@ pub(super) fn drop_guards(cross: &mut front::Program) -> usize {
                 },
                 _ => None,
             })
-            .collect();
+            .map(String::from).collect();
         if guards.is_empty() {
             continue;
         }
         let before = rule.body.len();
         rule.body.retain(|l| match l {
             Literal::Atom(a) => !(a.rel == DOCS && a.neg),
-            Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, _) } => !(f == "doc" && guards.contains(d)),
+            Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, _) } => !(f == "doc" && guards.contains(d.as_str())),
             _ => true,
         });
         dropped += (before - rule.body.len()) / 2;

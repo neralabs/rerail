@@ -119,7 +119,7 @@ pub fn facts_of(prepared: &Prepared) -> Facts {
 /// `prepared`'s facts other than its programs'.
 fn rest_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
-    let s = |x: &str| Value::Str(x.to_owned());
+    let s = |x: &str| Value::Str(x.to_owned().into());
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values);
     for (rel, domains) in &prepared.lowered.domains {
@@ -207,7 +207,7 @@ fn int(v: &Value) -> Result<i64, String> {
 
 fn text(v: &Value) -> Result<String, String> {
     match v {
-        Value::Str(x) => Ok(x.clone()),
+        Value::Str(x) => Ok(x.to_string()),
         Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
     }
 }
@@ -378,7 +378,7 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         let [Value::Str(name), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
         let Some(digest) = unhex(digest) else { return Ok(None) };
-        texts.insert(name.clone(), digest);
+        texts.insert(name.to_string(), digest);
     }
     let (Some(front), Some(lowered)) = (texts.get("front"), texts.get("lowered")) else { return Ok(None) };
     let mut documents = Vec::new();
@@ -416,7 +416,7 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let mut documents = Vec::new();
     for (name, prog) in [("front", &prepared.prog), ("lowered", &prepared.lowered.program)] {
         let Some((digest, document)) = program_text::store(store, prog)? else { return Ok(None) };
-        facts.entry(PROGRAM.to_owned()).or_default().push(vec![Value::Str(name.to_owned()), Value::Str(hex(&digest))]);
+        facts.entry(PROGRAM.to_owned()).or_default().push(vec![Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())]);
         documents.push(document);
     }
     let entry = program_facts::encode(&facts);

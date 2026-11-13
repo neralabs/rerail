@@ -15,15 +15,15 @@ pub fn physical(program: &mut front::Program) {
         .decls
         .iter()
         .filter(|(name, cols)| {
-            cols.is_empty() || program.lattice.get(*name).is_some_and(|l| l.keys == 0)
+            cols.is_empty() || program.lattice.get(name.as_str()).is_some_and(|l| l.keys == 0)
         })
         .map(|(name, _)| name.clone())
-        .collect();
-    program.nullary.extend(program.decls.iter().filter(|(_,cols)|cols.is_empty()).map(|(name,_)|name.clone()));
+        .map(String::from).collect();
+    program.nullary.extend(program.decls.iter().filter(|(_,cols)|cols.is_empty()).map(|(name,_)|name.to_string()));
     for name in &sentinel {
         program
             .decls
-            .get_mut(name)
+            .get_mut(name.as_str())
             .unwrap()
             .insert(0, ("__presence".into(), "int".into()));
         if let Some(lattice) = program.lattice.get_mut(name) {
@@ -79,7 +79,7 @@ pub fn tops(
             if let Some((col, top)) = lattices.get(atom.rel.as_str())
                 && let Some(front::Term::Var(v)) = atom.args.get(*col)
             {
-                known.entry(v.clone()).or_default().insert(*top);
+                known.entry(v.to_string()).or_default().insert(*top);
             }
         }
         loop {
@@ -99,7 +99,7 @@ pub fn tops(
                                 .copied()
                                 .collect();
                             if !values.is_empty() {
-                                known.entry(target.clone()).or_default().extend(values);
+                                known.entry(target.to_string()).or_default().extend(values);
                             }
                         }
                     }
@@ -153,7 +153,7 @@ pub fn tops(
             .iter()
             .map(|t| match t {
                 front::Term::Int(n) => Some(front::Value::Int(*n)),
-                front::Term::Str(s) => Some(front::Value::Str(s.clone())),
+                front::Term::Str(s) => Some(front::Value::Str(s.clone().into())),
                 _ => None,
             })
             .collect::<Option<Vec<_>>>();

@@ -66,7 +66,7 @@ pub fn program(prog: &Program) -> Program {
     let declared = |r: &str| prog.decls.contains_key(r) && !prog.nullary.contains(r);
     let mut targets: BTreeSet<String> = BTreeSet::new();
     for o in prog.outputs.iter().filter(|o| declared(o)) {
-        let args: Vec<Term> = (0..prog.decls[o].len()).map(|i| Term::Var(format!("liveof_vo{i}"))).collect();
+        let args: Vec<Term> = (0..prog.decls[o.as_str()].len()).map(|i| Term::Var(format!("liveof_vo{i}").into())).collect();
         out.rules.push(Rule { head: atom(live(o), args.clone()), body: vec![Literal::Atom(atom(o.clone(), args))] });
         targets.insert(o.clone());
     }
@@ -86,13 +86,13 @@ pub fn program(prog: &Program) -> Program {
             .iter()
             .enumerate()
             .map(|(i, t)| match t {
-                _ if lattice_keys.is_some_and(|k| i >= k) => Term::Var(var()),
+                _ if lattice_keys.is_some_and(|k| i >= k) => Term::Var(var().into()),
                 Term::Call(..) => {
                     let v = var();
-                    computed.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: t.clone() });
-                    Term::Var(v)
+                    computed.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: t.clone() });
+                    Term::Var(v.into())
                 }
-                Term::Wild | Term::Top => Term::Var(var()),
+                Term::Wild | Term::Top => Term::Var(var().into()),
                 other => other.clone(),
             })
             .collect();
@@ -106,7 +106,7 @@ pub fn program(prog: &Program) -> Program {
             if !declared(&read.rel) {
                 continue;
             }
-            let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var()) } else { t.clone() }).collect();
+            let args: Vec<Term> = read.args.iter().map(|t| if matches!(t, Term::Wild) { Term::Var(var().into()) } else { t.clone() }).collect();
             let positive = Literal::Atom(atom(read.rel.to_string(), args.clone()));
             let mut body = Vec::with_capacity(rule.body.len() + 2);
             if !negated {
@@ -130,21 +130,21 @@ pub fn program(prog: &Program) -> Program {
         }
     }
     let count = |n: &str, rel: &str, what: &str, of: Atom| Rule {
-        head: atom(COUNTS.to_owned(), vec![Term::Str(rel.to_owned()), Term::Str(what.to_owned()), Term::Var(n.to_owned())]),
+        head: atom(COUNTS.to_owned(), vec![Term::Str(rel.to_owned().into()), Term::Str(what.to_owned().into()), Term::Var(n.to_owned().into())]),
         body: vec![Literal::Agg { var: n.to_owned(), op: AggOp::Count, over: None, atom: of }],
     };
-    out.decls.insert(COUNTS.to_owned(), vec![("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())]);
+    out.decls.insert(COUNTS.to_owned().into(), vec![("rel".into(), "symbol".into()), ("what".into(), "symbol".into()), ("n".into(), "number".into())]);
     let library = prog.decls.contains_key("doc") && prog.decls.contains_key("loaded");
     for t in &targets {
-        let cols = &prog.decls[t];
-        let vars = |prefix: &str| -> Vec<Term> { (0..cols.len()).map(|i| Term::Var(format!("{prefix}{i}"))).collect() };
-        out.decls.insert(live(t), cols.clone());
+        let cols = &prog.decls[t.as_str()];
+        let vars = |prefix: &str| -> Vec<Term> { (0..cols.len()).map(|i| Term::Var(format!("{prefix}{i}").into())).collect() };
+        out.decls.insert(live(t).into(), cols.clone());
         out.rules.push(count("n", t, MEASURES[0], atom(t.clone(), vars("c"))));
         out.rules.push(count("n", t, MEASURES[1], atom(live(t), vars("c"))));
         // Keys: the first column's values, of all rows and of the live ones.
         let key = |of: &str| format!("liveof_key{of}_{t}");
         for (name, rel) in [(key(""), t.clone()), (key("l"), live(t))] {
-            out.decls.insert(name.clone(), vec![cols[0].clone()]);
+            out.decls.insert(name.clone().into(), vec![cols[0].clone()]);
             let mut args = vec![Term::Var("k".into())];
             args.extend((1..cols.len()).map(|_| Term::Wild));
             out.rules.push(Rule { head: atom(name.clone(), vec![Term::Var("k".into())]), body: vec![Literal::Atom(atom(rel, args))] });
@@ -154,7 +154,7 @@ pub fn program(prog: &Program) -> Program {
         // Rows about a loaded document: a library's.
         if library && cols[0].1 == "node" {
             for (name, rel, what) in [(format!("liveof_lib_{t}"), t.clone(), MEASURES[4]), (format!("liveof_libl_{t}"), live(t), MEASURES[5])] {
-                out.decls.insert(name.clone(), cols.clone());
+                out.decls.insert(name.clone().into(), cols.clone());
                 let args = vars("c");
                 let d = Term::Var("liveof_vd".into());
                 let p = Term::Var("liveof_vp".into());

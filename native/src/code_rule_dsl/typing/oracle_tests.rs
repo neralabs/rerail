@@ -1681,7 +1681,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&types).unwrap().exports;
     let mut reader = String::new();
     for e in &exports {
-        let cols = &types.decls[e];
+        let cols = &types.decls[e.as_str()];
         let decl = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ");
         let vars = (0..cols.len()).map(|i| format!("v{i}")).collect::<Vec<_>>().join(", ");
         reader.push_str(&format!(".decl types__{e}({decl})\n.decl out_{e}({decl})\nout_{e}({vars}) :- types__{e}({vars}).\n.output out_{e}\n"));

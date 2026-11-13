@@ -146,7 +146,7 @@ fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
 }
 
 fn row(width: usize) -> Vec<Term> {
-    (0..width).map(|i| Term::Var(format!("_m{i}"))).collect()
+    (0..width).map(|i| Term::Var(format!("_m{i}").into())).collect()
 }
 
 /// Why a stratum's rules cannot be maintained, if they cannot: joins, negations, comparisons, `nearest` and aggregates over
@@ -199,7 +199,7 @@ fn named_heads(rule: &Rule) -> Rule {
     let mut rule = rule.clone();
     for (i, t) in rule.head.args.iter_mut().enumerate() {
         if matches!(t, Term::Call(..)) {
-            let v = Term::Var(format!("_h{i}"));
+            let v = Term::Var(format!("_h{i}").into());
             let call = std::mem::replace(t, v.clone());
             rule.body.push(Literal::Cmp { l: v, op: "=", r: call });
         }
@@ -371,20 +371,20 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
                     }
                     let grp = format!("{h}__grp{r}_{k}");
                     let cols = &part.program.decls[at.rel.as_str()];
-                    let mut decl: Vec<(String, String)> = g
+                    let mut decl: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)> = g
                         .iter()
                         .map(|v| {
                             let c = at.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("a group variable is the atom's");
-                            (v.clone(), cols[c].1.clone())
+                            (v.into(), cols[c].1.clone())
                         })
                         .collect();
-                    let mut key: Vec<Term> = g.iter().cloned().map(Term::Var).collect();
+                    let mut key: Vec<Term> = g.iter().map(|v| Term::Var(v.into())).collect();
                     if decl.is_empty() {
-                        decl.push(("rr_unit".to_owned(), "int".to_owned()));
+                        decl.push(("rr_unit".into(), "int".into()));
                         key.push(Term::Int(1));
                         part.program.nullary.insert(grp.clone());
                     }
-                    part.program.decls.insert(grp.clone(), decl);
+                    part.program.decls.insert(grp.clone().into(), decl.iter().map(|(c, t)| (c.into(), t.into())).collect());
                     for d in ["minus", "plus"] {
                         rules.push(Rule { head: Atom { rel: grp.clone().into(), args: key.clone(), neg: false, gated: false }, body: vec![atom(named(&at.rel, d), at.args.clone(), false)] });
                     }
@@ -467,7 +467,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         }
         let exact = exact || projection;
         for rel in scc {
-            let width = part.program.decls[rel].len();
+            let width = part.program.decls[rel.as_str()].len();
             let v = row(width);
             olds.insert(rel.clone());
             if projection {
@@ -534,7 +534,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         Rule { head: Atom { rel: named(rel, suffix).into(), ..view.head.clone() }, body: vec![atom(named(&a.rel, suffix), a.args.clone(), false)] }
     };
     for rel in &deltas {
-        let v = row(part.program.decls[rel].len());
+        let v = row(part.program.decls[rel.as_str()].len());
         let head = |suffix: &str| Atom { rel: named(rel, suffix).into(), args: v.clone(), neg: false, gated: false };
         if one.is_some_and(|o| !maint.contains(rel) && (o.has_delta)(rel)) {
             // A relation of the run already: an earlier stratum's form made it, or it was given.
@@ -596,7 +596,7 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
             .collect();
         let mut again_deltas = Vec::new();
         for rel in scc.iter().filter(|r| deltas.contains(*r)) {
-            let v = row(part.program.decls[rel].len());
+            let v = row(part.program.decls[rel.as_str()].len());
             let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
             again_deltas.push(Rule { head: Atom { rel: named(rel, "minus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
             again_deltas.push(Rule { head: Atom { rel: named(rel, "plus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
@@ -619,8 +619,8 @@ pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>,
         part.program.inputs.push(named(rel, "old"));
     }
     for (rel, made) in fresh {
-        let decl = part.program.decls[&rel].clone();
-        part.program.decls.insert(made.clone(), decl);
+        let decl = part.program.decls[rel.as_str()].clone();
+        part.program.decls.insert(made.clone().into(), decl);
         if let Some(d) = part.domains.get(&rel).cloned() {
             part.domains.insert(made.clone(), d);
         }
@@ -773,8 +773,8 @@ fn together(prog: &mut front::Program) {
             let deps: BTreeSet<String> = quiet.iter().flat_map(|h| rules_of[h].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && negated.contains(x) && x != n).map(|(x, _)| ready(&x)).collect();
             let level = depth(n);
             prog.gates.push((ready(n), crate::code_rule_dsl::logic::magic::Gate { src: None, rel: n.clone(), level, quiet: quiet.into_iter().collect(), deps: deps.into_iter().collect() }));
-            prog.decls.insert(ready(n), vec![("k".to_owned(), "int".to_owned())]);
-            let wild = vec![Term::Wild; prog.decls[n].len()];
+            prog.decls.insert(ready(n).into(), vec![("k".into(), "int".into())]);
+            let wild = vec![Term::Wild; prog.decls[n.as_str()].len()];
             prog.rules.push(Rule { head: Atom { rel: ready(n).into(), args: vec![Term::Int(0)], neg: false, gated: false }, body: vec![atom(n.clone(), wild, false)] });
             members.insert(ready(n));
         }

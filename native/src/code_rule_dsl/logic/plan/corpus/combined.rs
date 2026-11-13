@@ -67,7 +67,7 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
     let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
-        [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path), sha256: unhex(digest) }),
+        [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path.as_str()), sha256: unhex(digest) }),
         _ => None,
     });
     for file in read {
@@ -98,8 +98,8 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     // A program that does not read back the same from its text is not kept: the next run combines it again.
     let Some((digest, _)) = program_text::store(store, program)? else { return Ok(false) };
     let mut facts = Facts::new();
-    facts.insert(PROGRAM.to_owned(), vec![vec![Value::Str(hex(&digest))]]);
-    let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
+    facts.insert(PROGRAM.to_owned(), vec![vec![Value::Str(hex(&digest).into())]]);
+    let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())]).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let text = source_text(key);
     let hash = HashKey::sha256(text.as_bytes());

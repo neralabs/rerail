@@ -4,21 +4,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use crate::code_rule_dsl::logic::front::name::Name;
 
+/// A term. Its names and texts are `Name`s, interned for the process as relation names are: a program read or
+/// copied makes no string for a name it has met before (decision 0166).
 #[derive(Clone, Debug, PartialEq, Hash)]
 pub enum Term {
-    Var(String),
+    Var(Name),
     Wild,
     Int(i64),
-    Str(String),
+    Str(Name),
     Top,
-    Call(String, Vec<Term>),
+    Call(Name, Vec<Term>),
 }
 
 impl Term {
     pub fn vars(&self, out: &mut BTreeSet<String>) {
         match self {
             Term::Var(v) => {
-                out.insert(v.clone());
+                out.insert(v.to_string());
             }
             Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
             _ => {}
@@ -117,8 +119,8 @@ impl Literal {
 pub fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
     let mut rv = BTreeSet::new();
     r.vars(&mut rv);
-    if op == "=" && let Term::Var(x) = l && !bound.contains(x) {
-        return rv.is_subset(bound).then(|| BTreeSet::from([x.clone()]));
+    if op == "=" && let Term::Var(x) = l && !bound.contains(x.as_str()) {
+        return rv.is_subset(bound).then(|| BTreeSet::from([x.to_string()]));
     }
     let mut all = rv.clone();
     l.vars(&mut all);
@@ -220,13 +222,13 @@ impl LatticeDecl {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i64),
-    Str(String),
+    Str(Name),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     /// Each relation's columns: (name, type).
-    pub decls: BTreeMap<String, Vec<(String, String)>>,
+    pub decls: BTreeMap<Name, Vec<(Name, Name)>>,
     /// Logically nullary relations encoded with one physical unit column.
     pub nullary: BTreeSet<String>,
     pub lattice: BTreeMap<String, LatticeDecl>,

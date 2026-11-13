@@ -122,7 +122,7 @@ pub(in crate::code_rule_dsl) fn run(
     let rows = derived
         .iter()
         .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()))
-        .map(|rel| (rel, part.program.decls[rel].len()))
+        .map(|rel| (rel, part.program.decls[rel.as_str()].len()))
         .filter(|(_, width)| *width > 0)
         .map(|(rel, width)| {
             let held = got
@@ -134,7 +134,7 @@ pub(in crate::code_rule_dsl) fn run(
             let held = match held {
                 Some(h) => h,
                 None => {
-                    let types = part.program.decls[rel].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
+                    let types = part.program.decls[rel.as_str()].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
                     InRel::flat(&held_rows(db, &got, rel, width)?, types)
                 }
             };
