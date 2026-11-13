@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { once } from "node:events";
 import { request, type RequestOptions } from "node:http";
 import { connect, type Socket } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import { isNamedPipe, pipeListed, pipeNameOf } from "./engine-pipe.js";
 
 /**
@@ -18,6 +19,8 @@ const CHALLENGE = /^[0-9a-f]{64}$/u;
 const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
+/** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
+const PIPE_RETRY_MS = 50;
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -84,26 +87,31 @@ async function connected(socket: Socket): Promise<true | { error: unknown }> {
 }
 
 /**
- * A socket connected to the Windows named pipe `path` ({@link pipeConnectPath}), or the verdict when there is none: a
- * pipe whose instances are all taken is no answer (`silent`); a pipe that is gone, or that this user may not open, is
- * `refused`.
+ * A socket connected to the Windows named pipe `path` ({@link pipeConnectPath}), or the verdict when there is none by
+ * `deadline` (epoch ms). A pipe whose instances are all taken is tried again every {@link PIPE_RETRY_MS}, since a busy
+ * engine frees one as soon as its event loop runs again, and is no answer (`silent`) while it stays busy; a pipe that
+ * is gone, or that this user may not open, is `refused`.
  */
-async function connectPipe(path: string): Promise<Socket | EngineProofAnswer> {
-  const socket = connect(pipeConnectPath(path));
-  const outcome = await connected(socket);
-  if (outcome === true) return socket;
-  socket.destroy();
-  return pipeBusy(outcome.error, path) ? "silent" : "refused";
+async function connectPipe(path: string, deadline: number): Promise<Socket | EngineProofAnswer> {
+  for (;;) {
+    const socket = connect(pipeConnectPath(path));
+    const outcome = await connected(socket);
+    if (outcome === true) return socket;
+    socket.destroy();
+    if (!pipeBusy(outcome.error, path)) return "refused";
+    if (Date.now() >= deadline) return "silent";
+    await sleep(PIPE_RETRY_MS);
+  }
 }
 
 /**
- * How a proof's request reaches the listener on `socketPath`: a Windows pipe connected by {@link connectPipe} before the
- * request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux a path spelled like one is a Unix
- * socket's. A pipe with no connection is the verdict.
+ * How a proof's request reaches the listener on `socketPath`: a Windows pipe connected by {@link connectPipe} by
+ * `deadline` (epoch ms) before the request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux
+ * a path spelled like one is a Unix socket's. A pipe with no connection is the verdict.
  */
-async function proofRoute(socketPath: string): Promise<RequestOptions | EngineProofAnswer> {
+async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
   if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
-  const socket = await connectPipe(socketPath);
+  const socket = await connectPipe(socketPath, deadline);
   return typeof socket === "string" ? socket : { createConnection: () => socket };
 }
 
@@ -166,7 +174,7 @@ export async function engineCapabilityProof(
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<EngineProofAnswer> {
   const deadline = Date.now() + timeoutMs;
-  const route = await proofRoute(socketPath);
+  const route = await proofRoute(socketPath, deadline);
   return typeof route === "string" ? route : await askForProof(route, accessToken, challenge, deadline);
 }
 
