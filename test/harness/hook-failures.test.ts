@@ -494,6 +494,23 @@ describe("the hook failure log", () => {
     expect(countOf(said)).toBe(full);
   });
 
+  // On Windows every hook that opened the full log by name as it filled moves it on in turn, so a burst of hooks keeps it
+  // moving from one hook's name to the next for many milliseconds. Here it moves on at each listing for the first 20 ms.
+  it("counts a log hooks keep moving from name to name for a while as status lists the home", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    renameSync(join(rerailHome, HOOK_FAILURES_FILE), takenName(rerailHome, 1_000));
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      if (String(args[0]) !== HOME) return readdir(...args);
+      globalThis.firstListing ??= Date.now();
+      const names = readdir(...args);
+      const held = names.find(name => name.endsWith(".old"));
+      if (Date.now() - globalThis.firstListing < 20) fs.renameSync(HOME + "/" + held, HOME + "/${HOOK_FAILURES_FILE}." + process.pid + "." + crypto.randomUUID() + ".old");
+      return names;
+    }`);
+    expect(countOf(said)).toBe(full);
+  });
+
   // A hook on Windows can move `.1` on to its own name for a moment, and back. Here it does so as status lists the home:
   // away just after the first listing, back just before the third, so the second finds it under the hook's name.
   it("says since when it counts when a hook holds .1 under its own name as status lists the home", async () => {

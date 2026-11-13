@@ -256,13 +256,19 @@ function copyLines(descriptor: number, taken: string, path: string): void {
 function heldElsewhere(descriptor: number, taken: string, path: string): boolean {
   const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
   const home = dirname(path);
-  for (let listing = 0; listing < LOG_LISTINGS; listing += 1) {
+  for (let listing = 0; listing < HELD_ELSEWHERE_LISTINGS; listing += 1) {
     const names = listLog(home);
     if ([...names].some(([name, other]) => other === id && join(home, name) !== taken)) return true;
     if (![...names.values()].includes(null)) return false;
   }
   return false;
 }
+
+/**
+ * How many times a hook lists the log's names as it looks for another name of a log it gives back: once, and up to 3
+ * more with no pause, as it holds the copy lock and its hook's event.
+ */
+const HELD_ELSEWHERE_LISTINGS = 4;
 
 /** The {@link fileId} of the file named `name`; undefined when it is missing or cannot be read. */
 function fileIdAt(name: string): string | undefined {
@@ -372,8 +378,11 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
   return { failures, keptSince };
 }
 
-/** How many times a read lists the files of the log: once, and up to 3 more while files move under it. */
-const LOG_LISTINGS = 4;
+/**
+ * The pauses, in ms, before each listing a status read makes after its first while files of the log move under it:
+ * 255 ms in all at most, spent only while hooks keep moving the log.
+ */
+const RELISTING_PAUSES_MS = [1, 2, 4, 8, 16, 32, 64, 128];
 
 /**
  * Every file of the log in the Rerail home `home`, read once each by its {@link fileId}.
@@ -382,11 +391,12 @@ const LOG_LISTINGS = 4;
  * live name when a hook gives it back. A read takes the live log first, so a log a hook takes from there while the read
  * goes on was met already. Then it lists the files of the log, takes each one's file id and reads each file it has not
  * met. When a file moved under it (a name gone by the time it looked, a file it found but could not read, another file
- * at the live name or `.1`), it lists them again, up to 3 more times. On Windows a rename opens the file by name and
- * then renames what it opened, so a log can move from one hook's name to another's, or from `.1` to a hook's name,
- * between a listing and its read: the next listing finds it where it went. After the last listing the read stands: a
- * log that moved on between each listing and its read is missed by that status, and a status that no move overlaps
- * counts it.
+ * at the live name or `.1`), it pauses and lists them again, until a listing finds nothing moved. On Windows a rename
+ * opens the file by name and then renames what it opened, so every hook that opened the full log by name as it filled
+ * moves it on in turn, from one hook's name to the next and from `.1` to a hook's name, until the last of them moves it
+ * to `.1`: a burst of hooks keeps the log moving for many milliseconds, faster than a listing and its reads, and the
+ * pauses let that end. After the last pause the read stands: a log still moving then is missed by that status, and a
+ * status that no move overlaps counts it.
  *
  * A give-back by copy moves lines, not a file. Between the removal of the taken name and the append to the live log the
  * lines are under no name, so a read in that moment misses them; a read that met the taken log, then a live log it had
@@ -396,8 +406,11 @@ const LOG_LISTINGS = 4;
 function readLogParts(home: string): LogPart[] {
   const parts = new Map<string, LogPart>();
   readPart(home, HOOK_FAILURES_FILE, parts);
-  for (let listing = 0; listing < LOG_LISTINGS; listing += 1) {
-    if (!readUnmet(home, parts)) break;
+  let moved = readUnmet(home, parts);
+  for (const ms of RELISTING_PAUSES_MS) {
+    if (!moved) break;
+    Atomics.wait(PAUSE, 0, 0, ms);
+    moved = readUnmet(home, parts);
   }
   return [...parts.values()];
 }
@@ -483,13 +496,14 @@ function giveName(parts: ReadonlyMap<string, LogPart>, name: string, id: string)
 
 /**
  * Whether no file of the log is known as `.1` though a part holds a start ({@link PartStart}), which a hook writes only
- * once it has moved a full log to `.1`, where a log stays until the next replaces it: a hook on Windows holds it under
- * its own name for a moment, and a read that stopped there would say it counts the last 24 hours though the part
- * before was dropped.
+ * once it has moved a full log to `.1`, where a log stays until the next replaces it, and a hook holds a log under its
+ * own name: a hook on Windows moves `.1` on to its own name for a moment, and a read that stopped there would say it
+ * counts the last 24 hours though the part before was dropped.
  */
 function awaitingMovedAside(parts: ReadonlyMap<string, LogPart>): boolean {
   const all = [...parts.values()];
-  return !all.some(part => part.name === MOVED_ASIDE_FILE) && all.some(part => part.name !== MOVED_ON && part.startedAt !== undefined);
+  return !all.some(part => part.name === MOVED_ASIDE_FILE) && all.some(part => part.name !== MOVED_ON && part.startedAt !== undefined)
+    && all.some(part => TAKEN_LOG.test(part.name));
 }
 
 /**
